@@ -308,7 +308,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 type="tool_calls",
                 tool_calls=[{
                     "name": "new_answer",
-                    "arguments": {"answer": full_answer},
+                    "arguments": {"content": full_answer},
                     "id": f"synth-{agent_id}",
                 }],
                 source=agent_id,

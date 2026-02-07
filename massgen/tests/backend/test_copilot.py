@@ -126,7 +126,7 @@ async def test_stream_with_tools_create_session(copilot_backend):
     # Bug fix: synthetic new_answer emitted when model doesn't call workflow tools
     assert chunks[2].type == "tool_calls"
     assert chunks[2].tool_calls[0]["name"] == "new_answer"
-    assert chunks[2].tool_calls[0]["arguments"] == {"answer": "Hello World"}
+    assert chunks[2].tool_calls[0]["arguments"] == {"content": "Hello World"}
     
     copilot_backend.client.create_session.assert_called_once()
     mock_session.send.assert_called_with({"prompt": "[user]: Hello"})

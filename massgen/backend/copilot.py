@@ -12,7 +12,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 try:
     from copilot import CopilotClient
     from copilot.types import Tool
-    from copilot.generated.session_events import SessionEvent
+
     COPILOT_SDK_AVAILABLE = True
 except ImportError:
     COPILOT_SDK_AVAILABLE = False
@@ -32,15 +32,14 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """Initialize Copilot backend."""
         if not COPILOT_SDK_AVAILABLE:
             raise ImportError(
-                "github-copilot-sdk is required for CopilotBackend. "
-                "Install it with: pip install github-copilot-sdk"
+                "github-copilot-sdk is required for CopilotBackend. " "Install it with: pip install github-copilot-sdk",
             )
-            
+
         super().__init__(api_key, **kwargs)
         self.client = CopilotClient()
         self.sessions: Dict[str, Any] = {}
         self._started = False
-        
+
     def get_provider_name(self) -> str:
         return "copilot"
 
@@ -91,7 +90,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     ) -> AsyncGenerator[StreamChunk, None]:
         """Stream with tool support using Copilot Sessions."""
         await self._ensure_started()
-        
+
         agent_id = kwargs.get("agent_id", self.agent_id or "default")
 
         # Create a queue for events (mixed SessionEvent and StreamChunk)
@@ -104,7 +103,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             tool_def = t
             if "function" in t:
                 tool_def = t["function"]
-            
+
             t_name = tool_def.get("name")
             if not t_name:
                 logger.warning(f"Skipping tool without name: {t}")
@@ -114,24 +113,26 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 async def handler(params, invocation):
                     # 1. Emit tool call event
                     call_id = getattr(invocation, "id", "unknown")
-                    
+
                     # Convert params to dict if string
                     args_dict = params
                     if isinstance(params, str):
                         try:
                             args_dict = json.loads(params)
-                        except:
+                        except (json.JSONDecodeError, ValueError):
                             args_dict = {"raw": params}
 
                     # Notify Orchestrator of tool call
-                    queue.put_nowait(StreamChunk(
-                        type="tool_calls",
-                        tool_calls=[{"name": t_name, "arguments": args_dict, "id": call_id}],
-                        source=agent_id
-                    ))
+                    queue.put_nowait(
+                        StreamChunk(
+                            type="tool_calls",
+                            tool_calls=[{"name": t_name, "arguments": args_dict, "id": call_id}],
+                            source=agent_id,
+                        ),
+                    )
 
                     # 2. Execute Tool
-                    
+
                     # Special handling for workflow tools which shouldn't be executed by generic runner
                     if t_name in ["vote", "new_answer"]:
                         result = "Action accepted."
@@ -142,9 +143,9 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     call_dict = {
                         "name": t_name,
                         "arguments": params,
-                        "id": call_id
+                        "id": call_id,
                     }
-                    
+
                     result_text = ""
                     try:
                         async for chunk in self.stream_custom_tool_execution(call_dict, agent_id_override=agent_id):
@@ -156,14 +157,17 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         queue.put_nowait(StreamChunk(type="error", error=str(e), source=agent_id))
 
                     return result_text
+
                 return handler
 
-            copilot_tools.append(Tool(
-                name=t_name,
-                description=tool_def.get("description", "") or "",
-                parameters=tool_def.get("parameters"),
-                handler=make_handler(t_name)
-            ))
+            copilot_tools.append(
+                Tool(
+                    name=t_name,
+                    description=tool_def.get("description", "") or "",
+                    parameters=tool_def.get("parameters"),
+                    handler=make_handler(t_name),
+                ),
+            )
 
         # Get or Update session
         session = self.sessions.get(agent_id)
@@ -175,10 +179,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 content = msg.get("content", "")
                 if isinstance(content, list):
                     # Handle structured content blocks
-                    content = "\n".join(
-                        block.get("text", "") if isinstance(block, dict) else str(block)
-                        for block in content
-                    )
+                    content = "\n".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content)
                 if content:
                     system_message = content
                 break
@@ -192,7 +193,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         if system_message:
             # SDK expects SystemMessageAppendConfig, not a plain string
             session_config["system_message"] = {"mode": "append", "content": system_message}
-        
+
         try:
             if session:
                 # Reuse/Update session
@@ -206,7 +207,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         except Exception as e:
             yield StreamChunk(type="error", error=f"Session creation failed: {e}", source=agent_id)
             return
-            
+
         # Build prompt from full conversation history (Bug 2 fix)
         # Include all non-system messages so the model sees conversation context,
         # assistant history, and orchestrator enforcement/retry messages.
@@ -217,10 +218,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             role = msg["role"]
             content = msg.get("content", "")
             if isinstance(content, list):
-                content = "\n".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block)
-                    for block in content
-                )
+                content = "\n".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in content)
             if content:
                 prompt_parts.append(f"[{role}]: {content}")
 
@@ -236,19 +234,19 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         # Track accumulated content and whether workflow tools were called
         accumulated_content = []
         workflow_tool_called = False
-        
+
         try:
             # Send message
             await session.send({"prompt": prompt})
-            
+
             # Event processing loop
             while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=300)
                 except asyncio.TimeoutError:
-                     yield StreamChunk(type="error", error="Response timeout", source=agent_id)
-                     break
-                
+                    yield StreamChunk(type="error", error="Response timeout", source=agent_id)
+                    break
+
                 # Handle StreamChunk (from our tool handler)
                 if isinstance(event, StreamChunk):
                     if event.type == "tool_calls" and event.tool_calls:
@@ -269,7 +267,7 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 event_type = event.type
                 if hasattr(event_type, "value"):
                     event_type = event_type.value
-                
+
                 # Streaming content
                 if event_type == "assistant.message_delta":
                     if hasattr(event, "data") and hasattr(event.data, "delta_content"):
@@ -277,10 +275,10 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         if content:
                             accumulated_content.append(content)
                             yield StreamChunk(type="content", content=content, source=agent_id)
-                            
+
                 # Streaming reasoning
                 elif event_type == "assistant.reasoning_delta":
-                     if hasattr(event, "data") and hasattr(event.data, "delta_content"):
+                    if hasattr(event, "data") and hasattr(event.data, "delta_content"):
                         content = event.data.delta_content
                         if content:
                             yield StreamChunk(type="content", content=content, source=agent_id)
@@ -288,13 +286,13 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 # Handle termination
                 elif event_type == "session.idle":
                     break
-                    
+
                 # Handle errors
                 elif "error" in str(event_type).lower():
                     pass
 
         except Exception as e:
-             yield StreamChunk(type="error", error=str(e), source=agent_id)
+            yield StreamChunk(type="error", error=str(e), source=agent_id)
         finally:
             unsubscribe()
 
@@ -306,11 +304,13 @@ class CopilotBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             logger.info(f"Copilot agent {agent_id} did not call workflow tools; synthesizing new_answer")
             yield StreamChunk(
                 type="tool_calls",
-                tool_calls=[{
-                    "name": "new_answer",
-                    "arguments": {"content": full_answer},
-                    "id": f"synth-{agent_id}",
-                }],
+                tool_calls=[
+                    {
+                        "name": "new_answer",
+                        "arguments": {"content": full_answer},
+                        "id": f"synth-{agent_id}",
+                    },
+                ],
                 source=agent_id,
             )
 

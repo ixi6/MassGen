@@ -6728,7 +6728,7 @@ FinalPresentationCard.completed #final_card_context_paths {
 FinalPresentationCard #final_card_header {
     width: 100%;
     height: auto;
-    padding: 0 1;
+    padding: 1 1 0 1;
     background: transparent;
 }
 
@@ -6902,7 +6902,8 @@ FinalPresentationCard .context-path-modified {
 FinalPresentationCard #final_card_footer {
     width: 100%;
     height: auto;
-    padding: 0 1;
+    padding: 1 1 0 1;
+    border-top: dashed $surface-lighten-1;
     background: transparent;
 }
 
@@ -6946,21 +6947,20 @@ FinalPresentationCard #continue_message {
 FinalPresentationCard #final_card_view_btn {
     color: $accent;
     text-style: bold;
-    border: solid $accent 40%;
-    padding: 0 2;
+    padding: 0 0;
     height: 1;
     width: auto;
 }
 
 FinalPresentationCard #final_card_view_btn:hover {
     color: $accent-lighten-1;
-    border: solid $accent;
+    text-style: bold underline;
 }
 
 FinalPresentationCard.completed #final_card_votes {
     padding-bottom: 0;
-    margin-bottom: 0;
-    border-bottom: none;
+    margin-bottom: 1;
+    border-bottom: dashed $surface-lighten-1;
 }
 
 FinalPresentationCard.completed #final_card_content {

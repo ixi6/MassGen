@@ -2087,16 +2087,17 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         try:
             result = await asyncio.wait_for(result_future, timeout=300)
-            # Store the result so re-opening from "View Full Answer" knows the action taken
-            self._last_final_answer_result = result
-            return result
         except asyncio.TimeoutError:
             logger.warning("[FinalAnswer] Modal timed out after 5 minutes")
             try:
                 self._app.call_from_thread(self._app.pop_screen)
             except Exception:
                 pass
-            return ReviewResult(approved=False, metadata={"error": "timeout"})
+            result = ReviewResult(approved=False, metadata={"error": "timeout"})
+
+        # Store the result so re-opening from "View Full Answer" knows the action taken
+        self._last_final_answer_result = result
+        return result
 
     def _dispatch_review_rework(self, rework_info: Dict[str, Any]) -> None:
         """Dispatch a review rework by submitting feedback as a new question.

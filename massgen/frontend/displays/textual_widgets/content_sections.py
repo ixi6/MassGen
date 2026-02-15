@@ -2729,7 +2729,7 @@ class FinalPresentationCard(Vertical):
         with Vertical(id="final_card_footer", classes="hidden"):
             with Horizontal(id="final_card_buttons"):
                 # View Full Answer button - opens FinalAnswerModal
-                yield Static("View Full Answer ▸", id="final_card_view_btn", classes="footer-link")
+                yield Static("▶ View Full Answer", id="final_card_view_btn", classes="footer-link")
                 # Verified indicator - faded, shown when post-eval verified
                 verified = Static("✓ Verified", id="final_card_verified", classes="verified-indicator")
                 yield verified
@@ -3031,14 +3031,16 @@ class FinalPresentationCard(Vertical):
             tui_log(f"[ContentSections] {e}")
         self._timing("complete", (time.perf_counter() - started) * 1000.0, f"chunks={len(self._final_content)}")
 
-        # Auto-scroll so the completed card is fully visible at the bottom
-        def _scroll_card_visible():
+        # Auto-scroll so the footer (with "View Full Answer" button) is visible.
+        # Use a short timer to let the footer layout settle before measuring.
+        def _scroll_footer_visible():
             try:
-                self.scroll_visible(animate=True, top=False)
+                footer = self.query_one("#final_card_footer")
+                footer.scroll_visible(animate=True, top=False)
             except Exception:
                 pass
 
-        self.call_after_refresh(_scroll_card_visible)
+        self.set_timer(0.2, _scroll_footer_visible)
 
     def _truncate_to_preview(self) -> None:
         """Replace displayed content with a compact preview for the timeline card.

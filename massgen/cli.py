@@ -2536,6 +2536,7 @@ def _parse_coordination_config(coord_cfg: Dict[str, Any]) -> "CoordinationConfig
         write_mode=coord_cfg.get("write_mode"),
         drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
         enable_changedoc=coord_cfg.get("enable_changedoc", True),
+        novelty_injection=coord_cfg.get("novelty_injection", "none"),
     )
 
 
@@ -2829,6 +2830,11 @@ async def run_question_with_history(
         orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
     if "checklist_require_gap_report" in orchestrator_cfg:
         orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
+    if "gap_report_mode" in orchestrator_cfg:
+        orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
+    elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
+        # Backward compat: convert bool to gap_report_mode
+        orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
 
     # Apply answer novelty requirement if specified
     if "answer_novelty_requirement" in orchestrator_cfg:
@@ -3527,6 +3533,10 @@ async def run_single_question(
             orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
         if "checklist_require_gap_report" in orchestrator_cfg:
             orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
+        if "gap_report_mode" in orchestrator_cfg:
+            orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
+        elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
+            orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
 
         # Apply answer novelty requirement if specified
         if "answer_novelty_requirement" in orchestrator_cfg:
@@ -6066,6 +6076,10 @@ async def run_textual_interactive_mode(
                     orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
                 if "checklist_require_gap_report" in orchestrator_cfg:
                     orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
+                if "gap_report_mode" in orchestrator_cfg:
+                    orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
+                elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
+                    orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
                 if "answer_novelty_requirement" in orchestrator_cfg:
                     orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
                 if "fairness_enabled" in orchestrator_cfg:
@@ -8257,6 +8271,37 @@ async def main(args):
 
         set_save_streaming_buffers(True)
 
+    _metadata_saved_for_failure = False
+
+    def _save_prompt_metadata_failure_fallback(
+        failure_stage: str,
+        failure_error: Optional[Exception] = None,
+    ) -> None:
+        """Persist prompt metadata even when execution stops early."""
+        nonlocal _metadata_saved_for_failure
+
+        if _metadata_saved_for_failure:
+            return
+
+        if not getattr(args, "question", None):
+            return
+
+        try:
+            cli_args = vars(args).copy()
+            cli_args["failure_stage"] = failure_stage
+            if failure_error is not None:
+                cli_args["failure_error"] = str(failure_error)
+
+            save_execution_metadata(
+                query=args.question,
+                config_path=str(resolved_path) if "resolved_path" in locals() and resolved_path else None,
+                config_content=raw_config_for_metadata if "raw_config_for_metadata" in locals() else None,
+                cli_args=cli_args,
+            )
+            _metadata_saved_for_failure = True
+        except Exception as exc:  # pragma: no cover - best-effort metadata write
+            logger.debug(f"Failed to save fallback execution metadata: {exc}")
+
     # Check if bare `massgen` with no args - use default config if it exists
     if not args.backend and not args.model and not args.config:
         # Use resolve_config_path to check project-level then global config
@@ -8278,6 +8323,7 @@ async def main(args):
                     file=sys.stderr,
                     flush=True,
                 )
+                _save_prompt_metadata_failure_fallback("missing_default_config")
                 sys.exit(EXIT_CONFIG_ERROR)
             # No question and no config - wizard will be triggered in cli_main()
             return
@@ -8306,6 +8352,7 @@ async def main(args):
                 file=sys.stderr,
                 flush=True,
             )
+            _save_prompt_metadata_failure_fallback("missing_execution_source")
             sys.exit(EXIT_CONFIG_ERROR)
 
     # Track config path for error messages
@@ -8323,6 +8370,10 @@ async def main(args):
             if args.debug:
                 logger.debug(f"Resolved config path: {resolved_path}")
                 logger.debug(f"Config content: {json.dumps(config, indent=2)}")
+
+            # Capture prompt from config as early as possible for metadata capture on early failures
+            if not args.question and "prompt" in config:
+                args.question = config["prompt"]
 
             # Check if this is a computer use docker example - setup required
             config_filename = resolved_path.name if resolved_path else ""
@@ -9015,8 +9066,17 @@ async def main(args):
                                         f"[CLI] Cleanup failed for agent {agent_id}: {e}",
                                     )
 
+    except SystemExit as e:
+        exit_code = getattr(e, "code", EXIT_EXECUTION_ERROR)
+        if exit_code not in (None, 0):
+            _save_prompt_metadata_failure_fallback(
+                "system_exit",
+                failure_error=SystemExit(exit_code),
+            )
+        raise
     except ConfigurationError as e:
         print(f"❌ Configuration error: {e}", file=sys.stderr, flush=True)
+        _save_prompt_metadata_failure_fallback("configuration_error", failure_error=e)
         sys.exit(EXIT_CONFIG_ERROR)
     except KeyboardInterrupt:
         # Show spinner while cleaning up
@@ -9069,12 +9129,15 @@ async def main(args):
                         pass
 
         rich_console.print("[green]👋 Goodbye![/green]")
+        _save_prompt_metadata_failure_fallback("keyboard_interrupt")
         sys.exit(EXIT_INTERRUPTED)
     except TimeoutError as e:
         print(f"❌ Timeout error: {e}", flush=True)
+        _save_prompt_metadata_failure_fallback("timeout_error", failure_error=e)
         sys.exit(EXIT_TIMEOUT)
     except Exception as e:
         print(f"❌ Error: {e}", flush=True)
+        _save_prompt_metadata_failure_fallback("execution_error", failure_error=e)
         sys.exit(EXIT_EXECUTION_ERROR)
 
 

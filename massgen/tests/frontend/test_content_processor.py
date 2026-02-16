@@ -108,3 +108,75 @@ def test_content_between_tools_prevents_batch_conversion():
     assert first_out is not None and first_out.batch_action == "pending"
     assert thinking_out is None
     assert second_out is not None and second_out.batch_action == "pending"
+
+
+def test_server_name_stored_on_tool_display_data():
+    """server_name from event should be preserved on ToolDisplayData."""
+    processor = ContentProcessor()
+    event = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        args={"command": "ls"},
+        server_name="codex",
+    )
+
+    output = processor.process_event(event, round_number=1)
+    assert output is not None
+    assert output.tool_data.server_name == "codex"
+
+
+def test_server_name_preserved_through_tool_complete():
+    """server_name should survive from tool_start through tool_complete."""
+    processor = ContentProcessor()
+    start = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        args={"command": "ls"},
+        server_name="codex",
+    )
+    complete = MassGenEvent.create(
+        EventType.TOOL_COMPLETE,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        result="file1.txt",
+        elapsed_seconds=0.5,
+    )
+
+    processor.process_event(start, round_number=1)
+    output = processor.process_event(complete, round_number=1)
+    assert output is not None
+    assert output.tool_data.server_name == "codex"
+
+
+def test_consecutive_codex_shell_tools_batch():
+    """codex_shell tools with server_name should batch like mcp__ tools."""
+    processor = ContentProcessor()
+
+    first = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        args={"command": "ls"},
+        server_name="codex",
+    )
+    second = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t2",
+        tool_name="codex_shell",
+        args={"command": "pwd"},
+        server_name="codex",
+    )
+
+    first_out = processor.process_event(first, round_number=1)
+    second_out = processor.process_event(second, round_number=1)
+
+    assert first_out is not None and first_out.batch_action == "pending"
+    assert second_out is not None and second_out.batch_action == "convert_to_batch"
+    assert second_out.pending_tool_id == "t1"

@@ -1,5 +1,5 @@
 [1] separator: Round 1
-[1] tool pending | filesystem/read_text_file | id=t_fs | status=running | args={"path": "/tmp/a.txt"}
-[1] tool pending | web/fetch_url | id=t_web | status=running | args={"url": "https://example.com"}
-[1] tool update_standalone | filesystem/read_text_file | id=t_fs | status=success | result=done
-[1] tool update_standalone | web/fetch_url | id=t_web | status=success | result=ok
+[1] tool pending | filesystem/read_text_file | id=t_fs | status=running | server=filesystem | args={"path": "/tmp/a.txt"}
+[1] tool pending | web/fetch_url | id=t_web | status=running | server=web | args={"url": "https://example.com"}
+[1] tool update_standalone | filesystem/read_text_file | id=t_fs | status=success | server=filesystem | result=done
+[1] tool update_standalone | web/fetch_url | id=t_web | status=success | server=web | result=ok

@@ -608,6 +608,54 @@ Example: Async Research
    4. On next tool call, OAuth research results injected
    5. Use research to inform authentication implementation
 
+Evaluation Delegation Pattern
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A key use case for async subagents is **delegating procedural evaluation work** so the main
+agent can focus on implementation. Without this, agents often spend their entire token budget
+on evaluation (serving websites, running tests, taking screenshots, writing reports) and run
+out of budget before implementing improvements.
+
+**The pattern:** Spawn an async subagent with ``async_=True, refine=False`` to handle
+procedural evaluation, then continue building while it runs.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 50 50
+
+   * - Subagent handles (procedural)
+     - Main agent handles (analytical)
+   * - Serve website, take screenshots, run Playwright tests
+     - Analyze previous answers and peer approaches
+   * - Execute test suites, linters, validation scripts
+     - Make quality judgments and prioritize improvements
+   * - Run benchmarks, profiling, performance measurements
+     - Synthesize insights into a coherent strategy
+   * - Check file integrity, link resolution, cross-references
+     - Decide what to build or fix next
+   * - Compare output against specs with automated tools
+     - Weigh tradeoffs and make architectural decisions
+
+The subagent returns a **descriptive report** — what it measured, what passed, what failed,
+what it observed. The main agent trusts these observations but makes its own quality judgments,
+since it has full context and the subagent may run on a simpler or cheaper model.
+
+.. code-block:: text
+
+   Parent Agent Workflow:
+   1. Implement website features
+   2. Spawn async subagent: "Serve index.html, take full-page screenshots,
+      run Playwright accessibility checks, report all findings"
+   3. Continue implementing next feature while subagent evaluates
+   4. Subagent results arrive → read descriptive report
+   5. Use findings to fix issues, then spawn another eval subagent
+
+.. note::
+
+   For backends without automatic result injection (hook support), agents can manually
+   poll for async subagent completion using ``check_subagent_status`` and
+   ``get_subagent_result``.
+
 Best Practices
 --------------
 

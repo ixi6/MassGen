@@ -306,7 +306,8 @@ async def create_server() -> fastmcp.FastMCP:
             tasks: List of task dicts (max {_max_concurrent}). Each MUST have:
                    - "task": (REQUIRED) string describing what to do
                    - "subagent_id": (optional) custom identifier
-                   - "context_files": (optional) files to share
+                   - "context_files": (optional) files to copy into subagent workspace
+                   - "context_paths": (optional) files/dirs to mount read-only. Use "./" for entire parent workspace
             async_: (optional) If True, spawn subagents in the background and return immediately.
                     Results will be automatically injected into your context when subagents complete.
                     Default is False (blocking - waits for all subagents to complete).
@@ -430,6 +431,7 @@ async def create_server() -> fastmcp.FastMCP:
                         task=task_config["task"],
                         subagent_id=task_config.get("subagent_id"),
                         context_files=task_config.get("context_files"),
+                        context_paths=task_config.get("context_paths"),
                         timeout_seconds=_default_timeout,
                         refine=refine,
                     )

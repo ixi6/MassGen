@@ -178,6 +178,32 @@ class CoordinationUI:
             if attr_name.startswith("_summary_active_"):
                 delattr(self, attr_name)
 
+    def _check_and_dispatch_rework_signal(self, orchestrator: Any) -> None:
+        """Consume a pending rework signal from the orchestrator and dispatch it.
+
+        The orchestrator sets ``_pending_review_rework`` when the user requests
+        a rework/quick-fix from the review modal.  This helper is called from
+        the three final-presentation code-paths so the signal is consumed
+        exactly once and forwarded to the display layer.
+        """
+        import logging
+
+        _logger = logging.getLogger(__name__)
+
+        pending_rework = getattr(orchestrator, "_pending_review_rework", None)
+        if not pending_rework:
+            return
+
+        orchestrator._pending_review_rework = None  # Consume the signal
+        _logger.info("[CoordinationUI] Consumed rework signal: action=%s", pending_rework.get("action"))
+
+        if self.display and hasattr(self.display, "_dispatch_review_rework"):
+            self.display._dispatch_review_rework(pending_rework)
+        else:
+            _logger.warning(
+                "[CoordinationUI] Rework signal dropped — display lacks _dispatch_review_rework",
+            )
+
     def _handle_coordination_chunk(
         self,
         chunk_type: str,
@@ -608,6 +634,9 @@ class CoordinationUI:
                 stored_answer = orchestrator.agent_states[selected_agent].answer
                 if stored_answer:
                     orchestrator_final_answer = stored_answer.strip()
+
+            # Check for review rework signal from orchestrator
+            self._check_and_dispatch_rework_signal(orchestrator)
 
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
@@ -1285,6 +1314,9 @@ class CoordinationUI:
                 if stored_answer:
                     orchestrator_final_answer = stored_answer.strip()
 
+            # Check for review rework signal from orchestrator
+            self._check_and_dispatch_rework_signal(orchestrator)
+
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
 
@@ -1307,8 +1339,8 @@ class CoordinationUI:
                     final_result if "final_result" in locals() else (final_answer if "final_answer" in locals() else ""),
                     success=True,
                 )
-                print(f"💾 Session log: {session_info['filename']}")
-                print(f"⏱️  Duration: {session_info['duration']:.1f}s | Chunks: {session_info['total_chunks']} | Events: {session_info['orchestrator_events']}")
+                print(f"\U0001f4be Session log: {session_info['filename']}")
+                print(f"\u23f1\ufe0f  Duration: {session_info['duration']:.1f}s | Chunks: {session_info['total_chunks']} | Events: {session_info['orchestrator_events']}")
 
             return final_result
 
@@ -1810,6 +1842,9 @@ class CoordinationUI:
                 if stored_answer:
                     orchestrator_final_answer = stored_answer.strip()
 
+            # Check for review rework signal from orchestrator
+            self._check_and_dispatch_rework_signal(orchestrator)
+
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
 
@@ -1832,8 +1867,8 @@ class CoordinationUI:
                     final_result if "final_result" in locals() else (final_answer if "final_answer" in locals() else ""),
                     success=True,
                 )
-                print(f"💾 Session log: {session_info['filename']}")
-                print(f"⏱️  Duration: {session_info['duration']:.1f}s | Chunks: {session_info['total_chunks']} | Events: {session_info['orchestrator_events']}")
+                print(f"\U0001f4be Session log: {session_info['filename']}")
+                print(f"\u23f1\ufe0f  Duration: {session_info['duration']:.1f}s | Chunks: {session_info['total_chunks']} | Events: {session_info['orchestrator_events']}")
 
             return final_result
 

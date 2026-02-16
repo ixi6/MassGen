@@ -33,6 +33,7 @@ async def test_mid_stream_hook_clears_stale_restart_when_no_new_answers(mock_orc
     state = orchestrator.agent_states[agent_id]
     state.restart_pending = True
     state.injection_count = 1
+    state.answer = "Agent A's existing answer"  # Has produced an answer already
     orchestrator.agent_states[peer_id].answer = "Known peer answer"
 
     agent = orchestrator.agents[agent_id]
@@ -63,6 +64,7 @@ async def test_mid_stream_hook_injects_new_answers_after_first_restart(mock_orch
     state = orchestrator.agent_states[agent_id]
     state.restart_pending = True
     state.injection_count = 1
+    state.answer = "Agent A's existing answer"  # Has produced an answer already
     orchestrator.agent_states[peer_id].answer = "New answer from peer"
 
     # Register the answer revision in coordination_tracker so

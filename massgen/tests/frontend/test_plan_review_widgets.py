@@ -94,7 +94,7 @@ def test_plan_review_modal_routes_continue_action():
         revision=2,
     )
 
-    modal._feedback_value = "Tighten scope and rebalance chunks."
+    modal._rework_feedback_value = "Tighten scope and rebalance chunks."
     modal.refresh = lambda *args, **kwargs: None
     captured = {}
     modal.dismiss = lambda result: captured.setdefault("result", result)
@@ -118,7 +118,7 @@ def test_plan_review_modal_blocks_continue_without_feedback():
     modal.on_button_pressed(_ButtonEvent("continue_btn"))
 
     assert "result" not in captured
-    assert "Enter a planning prompt" in modal._action_status
+    assert "Enter a planning prompt" in modal._rework_action_status
 
 
 def test_plan_review_modal_routes_finalize_action():

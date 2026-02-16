@@ -196,6 +196,12 @@ Documentation must be consistent with implementation, concise, and usable. Full 
 
 Checklists for adding new models and new YAML parameters. Full guide: `docs/modules/registry.md`. Key rule: when adding YAML params, update both `base.py` and `_api_params_handler_base.py` exclusion lists.
 
+## Code-Based Tools and FRAMEWORK_MCPS
+
+When `enable_code_based_tools` is on (CodeAct paradigm), MCP tools are converted to Python wrapper scripts that agents call via filesystem execution — **unless** the MCP server name is in `FRAMEWORK_MCPS` (`massgen/filesystem_manager/_constants.py`). Framework MCPs stay as direct protocol tools sent to the model.
+
+**When adding a new MCP server that must be called directly by the model** (not via code execution), add its server name to `FRAMEWORK_MCPS`. If you forget, the tool will silently work but only through the code-based path — the model won't see it as a native tool call. This is critical for tools like `massgen_checklist` where the orchestrator depends on the tool result to control agent flow.
+
 ## CodeRabbit Integration
 
 Automated PR reviews via CodeRabbit. Full guide: `docs/modules/code_review.md`. Quick command: `coderabbit --prompt-only`.

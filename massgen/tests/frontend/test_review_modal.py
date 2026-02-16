@@ -591,6 +591,242 @@ class TestDiffHeader:
 
 
 # ---------------------------------------------------------------------------
+# Rework flow
+# ---------------------------------------------------------------------------
+
+
+class TestReworkFlow:
+    """Test rework/quick_fix dismiss actions and feedback validation."""
+
+    def _capture_dismiss(self, modal):
+        captured = {}
+        modal.dismiss = lambda result: captured.update({"result": result})
+        return captured
+
+    def test_rework_returns_correct_action(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        modal.refresh = lambda *a, **kw: None
+        captured = self._capture_dismiss(modal)
+        modal._rework_feedback_value = "fix the imports"
+        modal._rework()
+        result = captured["result"]
+        assert isinstance(result, ReviewResult)
+        assert result.approved is False
+        assert result.action == "rework"
+        assert result.feedback == "fix the imports"
+
+    def test_quick_fix_returns_correct_action(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        modal.refresh = lambda *a, **kw: None
+        captured = self._capture_dismiss(modal)
+        modal._rework_feedback_value = "add error handling"
+        modal._quick_fix()
+        result = captured["result"]
+        assert isinstance(result, ReviewResult)
+        assert result.approved is False
+        assert result.action == "quick_fix"
+        assert result.feedback == "add error handling"
+
+    def test_rework_without_feedback_does_not_dismiss(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        modal.refresh = lambda *a, **kw: None
+        captured = self._capture_dismiss(modal)
+        modal._rework_feedback_value = ""
+        modal._rework()
+        # Should NOT have dismissed since no feedback
+        assert "result" not in captured
+
+    def test_quick_fix_without_feedback_does_not_dismiss(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        modal.refresh = lambda *a, **kw: None
+        captured = self._capture_dismiss(modal)
+        modal._rework_feedback_value = ""
+        modal._quick_fix()
+        assert "result" not in captured
+
+    def test_rework_feedback_whitespace_only_does_not_dismiss(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        modal.refresh = lambda *a, **kw: None
+        captured = self._capture_dismiss(modal)
+        modal._rework_feedback_value = "   "
+        modal._rework()
+        assert "result" not in captured
+
+    def test_has_rework_mixin_ids(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        # Should have the review-specific rework widget IDs
+        assert modal.REWORK_FEEDBACK_INPUT_ID == "review_rework_feedback_input"
+        assert modal.REWORK_CONTINUE_BTN_ID == "review_rework_continue_btn"
+        assert modal.REWORK_QUICK_EDIT_BTN_ID == "review_rework_quick_edit_btn"
+
+
+# ---------------------------------------------------------------------------
+# FileEditorModal
+# ---------------------------------------------------------------------------
+
+
+class TestFileEditorModal:
+    """Test the file editor modal construction and dismiss behavior."""
+
+    def test_construction(self):
+        from massgen.frontend.displays.textual.widgets.modals.review_modal import (
+            FileEditorModal,
+        )
+
+        editor = FileEditorModal(file_path="src/app.py", initial_content="hello world")
+        assert editor._file_path == "src/app.py"
+        assert editor._initial_content == "hello world"
+
+    def test_dismiss_with_none_on_cancel(self):
+        from massgen.frontend.displays.textual.widgets.modals.review_modal import (
+            FileEditorModal,
+        )
+
+        editor = FileEditorModal(file_path="src/app.py", initial_content="original")
+        captured = {}
+        editor.dismiss = lambda result: captured.update({"result": result})
+        editor._cancel_edit()
+        assert captured["result"] is None
+
+    def test_dismiss_with_content_on_save(self):
+        from massgen.frontend.displays.textual.widgets.modals.review_modal import (
+            FileEditorModal,
+        )
+
+        editor = FileEditorModal(file_path="src/app.py", initial_content="original")
+        captured = {}
+        editor.dismiss = lambda result: captured.update({"result": result})
+        editor._edited_content = "modified content"
+        editor._save_edit()
+        assert captured["result"] == "modified content"
+
+
+# ---------------------------------------------------------------------------
+# Review modal edit file context mapping
+# ---------------------------------------------------------------------------
+
+
+class TestEditFileContextMapping:
+    """Test that _context_to_isolated mapping is built from changes data."""
+
+    def test_context_to_isolated_mapping_built(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        # The mapping should contain isolated_path keyed by original_path
+        assert hasattr(modal, "_context_to_isolated")
+        assert modal._context_to_isolated.get("/project") == "/tmp/worktree"
+
+    def test_multi_context_mapping(self):
+        modal = GitDiffReviewModal(changes=_make_multi_context_changes())
+        assert modal._context_to_isolated.get("/project_a") == "/tmp/worktree_a"
+        assert modal._context_to_isolated.get("/project_b") == "/tmp/worktree_b"
+
+
+# ---------------------------------------------------------------------------
+# Hunk scroll-to-navigation
+# ---------------------------------------------------------------------------
+
+
+class TestHunkScrolling:
+    """Test per-hunk Static widgets and scroll target IDs."""
+
+    def test_render_diff_sections_returns_per_hunk_ids(self):
+        """_render_diff_sections should return unique IDs per hunk."""
+        modal = GitDiffReviewModal(changes=_make_changes())
+        file_key = modal._all_file_paths[0]
+        sections = modal._render_diff_sections(file_key)
+
+        # Meta section + 2 hunks = 3 sections
+        assert len(sections) == 3
+        ids = [s[0] for s in sections]
+        # All IDs should be unique
+        assert len(ids) == len(set(ids))
+        # First should be meta, rest should be hunks
+        assert ids[0].startswith("meta_")
+        assert ids[1].startswith("hunk_")
+        assert ids[2].startswith("hunk_")
+
+    def test_render_diff_sections_multi_hunk(self):
+        """Multi-hunk diffs should produce matching section count."""
+        changes = _make_changes(
+            diff=MULTI_HUNK_DIFF,
+            files=[{"status": "M", "path": "utils.py"}],
+        )
+        modal = GitDiffReviewModal(changes=changes)
+        file_key = modal._all_file_paths[0]
+        sections = modal._render_diff_sections(file_key)
+
+        # Meta section + 3 hunks
+        assert len(sections) == 4
+
+    def test_render_diff_sections_no_file_returns_single(self):
+        """When no file is selected, should return one section with prompt."""
+        modal = GitDiffReviewModal(changes=_make_changes())
+        sections = modal._render_diff_sections(None)
+        assert len(sections) == 1
+        assert "Select a file" in sections[0][1]
+
+    def test_scroll_target_hunk_id_matches(self):
+        """The scroll target for selected hunk should match section IDs."""
+        changes = _make_changes(
+            diff=MULTI_HUNK_DIFF,
+            files=[{"status": "M", "path": "utils.py"}],
+        )
+        modal = GitDiffReviewModal(changes=changes)
+        file_key = modal._all_file_paths[0]
+
+        sections = modal._render_diff_sections(file_key)
+        hunk_ids = [s[0] for s in sections if s[0].startswith("hunk_")]
+
+        # Move to hunk 1
+        modal._selected_hunk_index_by_file[file_key] = 1
+        target_id = modal._get_scroll_target_id(file_key)
+        assert target_id == hunk_ids[1]
+
+    def test_hunk_ids_stable_across_renders(self):
+        """Hunk IDs should be deterministic for the same file."""
+        modal = GitDiffReviewModal(changes=_make_changes())
+        file_key = modal._all_file_paths[0]
+        sections1 = modal._render_diff_sections(file_key)
+        sections2 = modal._render_diff_sections(file_key)
+        assert [s[0] for s in sections1] == [s[0] for s in sections2]
+
+
+# ---------------------------------------------------------------------------
+# Rework result construction
+# ---------------------------------------------------------------------------
+
+
+class TestReworkResultConstruction:
+    """Verify rework/quick_fix ReviewResult objects have the correct shape."""
+
+    def test_rework_result_has_all_fields(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        modal.refresh = lambda *a, **kw: None
+        captured = {}
+        modal.dismiss = lambda result: captured.update({"result": result})
+        modal._rework_feedback_value = "fix the order"
+        modal._rework()
+        result = captured["result"]
+        assert result.action == "rework"
+        assert result.feedback == "fix the order"
+        assert result.approved is False
+        assert result.metadata.get("selection_mode") == "rework"
+
+    def test_quick_fix_result_has_all_fields(self):
+        modal = GitDiffReviewModal(changes=_make_changes())
+        modal.refresh = lambda *a, **kw: None
+        captured = {}
+        modal.dismiss = lambda result: captured.update({"result": result})
+        modal._rework_feedback_value = "add tests"
+        modal._quick_fix()
+        result = captured["result"]
+        assert result.action == "quick_fix"
+        assert result.feedback == "add tests"
+        assert result.approved is False
+        assert result.metadata.get("selection_mode") == "quick_fix"
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator error-handling safety (tests the orchestrator's behavior)
 # ---------------------------------------------------------------------------
 
@@ -610,3 +846,64 @@ class TestOrchestratorSafety:
 
         result = await display.show_change_review_modal([])
         assert result.approved is False
+
+    @pytest.mark.asyncio
+    async def test_show_final_answer_modal_workspace_only_skips_review_status_update(self, monkeypatch):
+        """Workspace-only final modal should not mark changes as approved/applied."""
+        from massgen.frontend.displays.textual_terminal_display import (
+            TextualTerminalDisplay,
+        )
+
+        class FakeApp:
+            def call_from_thread(self, fn):
+                fn()
+
+            def push_screen(self, _modal, callback):
+                callback(ReviewResult(approved=True))
+
+        display = TextualTerminalDisplay.__new__(TextualTerminalDisplay)
+        display._app = FakeApp()
+
+        update_calls = []
+        monkeypatch.setattr(display, "_update_card_review_status", lambda _result: update_calls.append(True))
+
+        result = await display.show_final_answer_modal(
+            changes=[],
+            answer_content="final answer",
+            vote_results={},
+            agent_id="agent_a",
+            workspace_path="/tmp/workspace",
+        )
+
+        assert result.approved is True
+        assert update_calls == []
+
+    @pytest.mark.asyncio
+    async def test_show_final_answer_modal_with_changes_updates_review_status(self, monkeypatch):
+        """Real reviewed changes should still update review status."""
+        from massgen.frontend.displays.textual_terminal_display import (
+            TextualTerminalDisplay,
+        )
+
+        class FakeApp:
+            def call_from_thread(self, fn):
+                fn()
+
+            def push_screen(self, _modal, callback):
+                callback(ReviewResult(approved=True))
+
+        display = TextualTerminalDisplay.__new__(TextualTerminalDisplay)
+        display._app = FakeApp()
+
+        update_calls = []
+        monkeypatch.setattr(display, "_update_card_review_status", lambda _result: update_calls.append(True))
+
+        result = await display.show_final_answer_modal(
+            changes=_make_changes(),
+            answer_content="final answer",
+            vote_results={},
+            agent_id="agent_a",
+        )
+
+        assert result.approved is True
+        assert update_calls == [True]

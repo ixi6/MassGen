@@ -16,10 +16,7 @@ from massgen.frontend.displays.textual_terminal_display import TextualTerminalDi
 from massgen.frontend.displays.textual_widgets.collapsible_text_card import (
     CollapsibleTextCard,
 )
-from massgen.frontend.displays.textual_widgets.content_sections import (
-    FinalPresentationCard,
-    TimelineSection,
-)
+from massgen.frontend.displays.textual_widgets.content_sections import TimelineSection
 from massgen.frontend.displays.textual_widgets.tool_batch_card import (
     ToolBatchCard,
     ToolBatchItem,
@@ -145,50 +142,6 @@ def test_timeline_snapshot_batch_card(snap_compare, monkeypatch) -> None:  # noq
         _TimelineBatchSnapshotApp(),
         terminal_size=(120, 32),
         run_before=_settle_scaffold_snapshot,
-    )
-
-
-class _TimelineFinalLockSnapshotApp(App):
-    def compose(self) -> ComposeResult:
-        yield TimelineSection(id="timeline")
-
-    def on_mount(self) -> None:
-        timeline = self.query_one(TimelineSection)
-        timeline.add_separator("Round 2", round_number=2)
-        timeline.add_widget(Static("intermediate output", id="middle_card"), round_number=2)
-
-        final_card = FinalPresentationCard(
-            agent_id="agent_a",
-            vote_results={
-                "vote_counts": {"A1.2": 2, "B1.1": 1},
-                "winner": "A1.2",
-                "is_tie": False,
-            },
-            context_paths={"new": ["deliverable/final.txt"], "modified": []},
-            id="final_presentation_card",
-        )
-        timeline.add_widget(final_card, round_number=2)
-        final_card.append_chunk("Final answer content\n\n- point one\n- point two")
-        final_card.complete()
-
-
-async def _lock_final_card_before_snapshot(pilot) -> None:  # noqa: ANN001 - fixture-provided type
-    timeline = pilot.app.query_one(TimelineSection)
-    final_card = pilot.app.query_one("#final_presentation_card", FinalPresentationCard)
-    final_card.set_locked_mode(True)
-    timeline.lock_to_final_answer("final_presentation_card")
-    _complete_tool_appearance_states(pilot.app)
-    _stop_all_tui_timers(pilot.app)
-    await pilot.pause()
-
-
-def test_timeline_snapshot_final_presentation_lock_mode(snap_compare, monkeypatch) -> None:  # noqa: ANN001 - pytest fixture type
-    """Snapshot for final-presentation answer-only locked view."""
-    _configure_snapshot_terminal_environment(monkeypatch)
-    assert snap_compare(
-        _TimelineFinalLockSnapshotApp(),
-        terminal_size=(120, 32),
-        run_before=_lock_final_card_before_snapshot,
     )
 
 
@@ -335,58 +288,6 @@ def test_timeline_snapshot_real_tui_round_view(snap_compare, monkeypatch, tmp_pa
         _build_real_tui_snapshot_app(tmp_path),
         terminal_size=(140, 42),
         run_before=_seed_real_tui_round_snapshot,
-    )
-
-
-async def _seed_real_tui_final_lock_snapshot(pilot) -> None:  # noqa: ANN001 - fixture-provided type
-    app = pilot.app
-    panel = app.agent_widgets["agent_a"]
-    panel._hide_loading()
-    _stop_round_timers_if_running(app)
-
-    panel.start_final_presentation(
-        vote_counts={"agent_a": 2, "agent_b": 1},
-        answer_labels={"agent_a": "A1.2", "agent_b": "B1.1"},
-    )
-    timeline = panel._get_timeline()
-    assert timeline is not None
-
-    final_card = FinalPresentationCard(
-        agent_id="agent_a",
-        vote_results={
-            "vote_counts": {"A1.2": 2, "B1.1": 1},
-            "winner": "A1.2",
-            "is_tie": False,
-        },
-        context_paths={"new": ["deliverable/final.txt"], "modified": []},
-        id="final_presentation_card",
-    )
-    timeline.add_widget(final_card, round_number=panel.get_current_round())
-    final_card.append_chunk("Final answer content\n\n- point one\n- point two")
-    final_card.complete()
-    final_card.set_locked_mode(True)
-    timeline.lock_to_final_answer("final_presentation_card")
-    app.query_one("#timeout_display", Label).update("⏱ 0:00 / 10:00")
-    app.query_one("#status_cwd", Static).update("[dim]📁[/] /workspace")
-    if app._tab_bar:
-        app._tab_bar.set_winner("agent_a")
-    app._refresh_input_modes_row_layout()
-    if app._mode_bar:
-        app._mode_bar._refresh_responsive_labels()
-    app.set_focus(None)
-    _complete_tool_appearance_states(app)
-    _stop_all_tui_timers(app)
-    await pilot.pause()
-    await pilot.pause()
-
-
-def test_timeline_snapshot_real_tui_final_presentation_lock_mode(snap_compare, monkeypatch, tmp_path: Path) -> None:
-    """Snapshot of runtime Textual app with final-presentation answer lock enabled."""
-    _configure_real_tui_snapshot_environment(monkeypatch)
-    assert snap_compare(
-        _build_real_tui_snapshot_app(tmp_path),
-        terminal_size=(140, 42),
-        run_before=_seed_real_tui_final_lock_snapshot,
     )
 
 

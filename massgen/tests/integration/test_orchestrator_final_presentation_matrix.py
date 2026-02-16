@@ -601,3 +601,192 @@ async def test_review_isolated_changes_fail_policy_blocks_apply_on_drift(mock_or
     assert (repo_path / "safe.py").read_text() == "print('base-safe')\n"
     assert any("Drift conflict policy is 'fail'" in ((getattr(chunk, "error", "") or "") + (getattr(chunk, "content", "") or "")) for chunk in chunks)
     assert any("app.py" in (getattr(chunk, "content", "") or "") for chunk in chunks)
+
+
+@pytest.mark.asyncio
+async def test_show_workspace_modal_if_needed_opens_modal_without_workspace_path(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """No-git final answer modal should still open even when workspace path is unavailable."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    orchestrator._selected_agent = agent_id
+    orchestrator._final_presentation_content = "Final answer content"
+    orchestrator._isolation_manager = None
+
+    display = SimpleNamespace(
+        show_final_answer_modal=AsyncMock(return_value=ReviewResult(approved=True)),
+    )
+    orchestrator.coordination_ui = SimpleNamespace(display=display)
+
+    monkeypatch.setattr(orchestrator, "_resolve_final_workspace_path", lambda _agent_id: None)
+    orchestrator.agents[agent_id].backend.filesystem_manager = None
+
+    await orchestrator._show_workspace_modal_if_needed()
+
+    display.show_final_answer_modal.assert_awaited_once()
+    kwargs = display.show_final_answer_modal.await_args.kwargs
+    assert kwargs["changes"] == []
+    assert kwargs["answer_content"] == "Final answer content"
+    assert kwargs["agent_id"] == agent_id
+    assert kwargs["workspace_path"] is None
+
+
+@pytest.mark.asyncio
+async def test_show_workspace_modal_if_needed_opens_modal_with_empty_isolation_contexts(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """Final modal should auto-open when write_mode created an isolation manager with no contexts."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    orchestrator._selected_agent = agent_id
+    orchestrator._final_presentation_content = "Final answer content"
+    orchestrator._isolation_manager = SimpleNamespace(list_contexts=lambda: [])
+
+    display = SimpleNamespace(
+        show_final_answer_modal=AsyncMock(return_value=ReviewResult(approved=True)),
+    )
+    orchestrator.coordination_ui = SimpleNamespace(display=display)
+
+    monkeypatch.setattr(orchestrator, "_resolve_final_workspace_path", lambda _agent_id: None)
+    orchestrator.agents[agent_id].backend.filesystem_manager = None
+
+    await orchestrator._show_workspace_modal_if_needed()
+
+    display.show_final_answer_modal.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_review_isolated_changes_rework_preserves_isolation(mock_orchestrator, tmp_path):
+    """Rework ReviewResult preserves isolation and sets _pending_review_rework signal."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    agent = orchestrator.agents[agent_id]
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path, {"app.py": "print('v1')\n"})
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    isolation_manager = IsolationContextManager(
+        session_id="test-rework",
+        write_mode="worktree",
+        workspace_path=str(workspace),
+    )
+    isolated_path = isolation_manager.initialize_context(str(repo_path), agent_id=agent_id)
+    (Path(isolated_path) / "app.py").write_text("print('v2-reworked')\n")
+
+    # Wire up a display that returns a rework ReviewResult
+    rework_result = ReviewResult(
+        approved=False,
+        action="rework",
+        feedback="fix the import order",
+    )
+    display = SimpleNamespace(
+        show_final_answer_modal=AsyncMock(return_value=rework_result),
+    )
+    orchestrator.coordination_ui = SimpleNamespace(display=display)
+
+    chunks = await _collect_chunks(
+        orchestrator._review_isolated_changes(
+            agent=agent,
+            isolation_manager=isolation_manager,
+            selected_agent_id=agent_id,
+        ),
+    )
+
+    # Rework signal should be set on orchestrator
+    assert orchestrator._pending_review_rework is not None
+    assert orchestrator._pending_review_rework["action"] == "rework"
+    assert orchestrator._pending_review_rework["feedback"] == "fix the import order"
+    assert orchestrator._pending_review_rework["agent_id"] == agent_id
+
+    # Status chunk should be yielded
+    assert any("Rework requested" in (getattr(chunk, "content", "") or "") for chunk in chunks)
+
+    # Source file should NOT be modified (changes not applied)
+    assert (repo_path / "app.py").read_text() == "print('v1')\n"
+
+    # Isolation worktree should still exist (preserved, not cleaned up)
+    assert Path(isolated_path).exists()
+
+
+@pytest.mark.asyncio
+async def test_review_isolated_changes_quick_fix_preserves_isolation(mock_orchestrator, tmp_path):
+    """quick_fix ReviewResult also preserves isolation."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    agent = orchestrator.agents[agent_id]
+
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    _init_git_repo(repo_path, {"app.py": "print('v1')\n"})
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    isolation_manager = IsolationContextManager(
+        session_id="test-quickfix",
+        write_mode="worktree",
+        workspace_path=str(workspace),
+    )
+    isolated_path = isolation_manager.initialize_context(str(repo_path), agent_id=agent_id)
+    (Path(isolated_path) / "app.py").write_text("print('v2-quickfix')\n")
+
+    quick_fix_result = ReviewResult(
+        approved=False,
+        action="quick_fix",
+        feedback="add error handling",
+    )
+    display = SimpleNamespace(
+        show_final_answer_modal=AsyncMock(return_value=quick_fix_result),
+    )
+    orchestrator.coordination_ui = SimpleNamespace(display=display)
+
+    await _collect_chunks(
+        orchestrator._review_isolated_changes(
+            agent=agent,
+            isolation_manager=isolation_manager,
+            selected_agent_id=agent_id,
+        ),
+    )
+
+    # Rework signal populated with quick_fix action
+    assert orchestrator._pending_review_rework is not None
+    assert orchestrator._pending_review_rework["action"] == "quick_fix"
+    assert orchestrator._pending_review_rework["feedback"] == "add error handling"
+
+    # Source NOT modified
+    assert (repo_path / "app.py").read_text() == "print('v1')\n"
+
+    # Isolation preserved
+    assert Path(isolated_path).exists()
+
+
+@pytest.mark.asyncio
+async def test_show_workspace_modal_if_needed_skips_with_active_contexts(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """Modal should NOT open when isolation manager has active contexts."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    orchestrator._selected_agent = agent_id
+    orchestrator._final_presentation_content = "Final answer content"
+    orchestrator._isolation_manager = SimpleNamespace(
+        list_contexts=lambda: ["some-active-context"],
+    )
+
+    display = SimpleNamespace(
+        show_final_answer_modal=AsyncMock(return_value=ReviewResult(approved=True)),
+    )
+    orchestrator.coordination_ui = SimpleNamespace(display=display)
+
+    await orchestrator._show_workspace_modal_if_needed()
+
+    # Modal should NOT have been called
+    display.show_final_answer_modal.assert_not_awaited()

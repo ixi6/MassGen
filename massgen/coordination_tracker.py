@@ -293,6 +293,22 @@ class CoordinationTracker:
         sorted_ids = sorted(self.agent_ids)
         return {real_id: f"agent{i}" for i, real_id in enumerate(sorted_ids, 1)}
 
+    def get_answer_label_mapping(self) -> Dict[str, str]:
+        """Get mapping from real agent ID to their latest versioned answer label.
+
+        Returns:
+            Dict mapping real IDs to versioned labels, e.g.:
+            {"agent_a": "agent1.2", "agent_b": "agent2.1"}
+
+        Only includes agents that have at least one answer.
+        """
+        mapping = {}
+        for agent_id in self.agent_ids:
+            label = self.get_latest_answer_label(agent_id)
+            if label:
+                mapping[agent_id] = label
+        return mapping
+
     def get_agents_with_answers_anon(self, answers: Dict[str, Any]) -> List[str]:
         """
         Get list of anonymous IDs for agents that have answers.

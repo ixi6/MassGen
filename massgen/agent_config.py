@@ -171,12 +171,14 @@ class CoordinationConfig:
     write_mode: Optional[str] = None  # "auto" | "worktree" | "isolated" | "legacy"
     enable_changedoc: bool = True  # Write changedoc.md decision journal during coordination
     drift_conflict_policy: str = "skip"  # "skip" | "prefer_presenter" | "fail"
+    novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
 
     def __post_init__(self):
         """Validate configuration after initialization."""
         self._validate_broadcast_config()
         self._validate_timeout_config()
         self._validate_drift_conflict_policy()
+        self._validate_novelty_injection()
 
     def _validate_timeout_config(self):
         """Validate subagent timeout configuration."""
@@ -233,6 +235,14 @@ class CoordinationConfig:
                 "Invalid drift_conflict_policy: " f"{self.drift_conflict_policy}. " f"Must be one of: {sorted(valid_policies)}",
             )
 
+    def _validate_novelty_injection(self):
+        """Validate novelty_injection setting."""
+        valid_values = {"none", "gentle", "moderate", "aggressive"}
+        if self.novelty_injection not in valid_values:
+            raise ValueError(
+                f"Invalid novelty_injection: '{self.novelty_injection}'. " f"Must be one of: {sorted(valid_values)}",
+            )
+
 
 @dataclass
 class AgentConfig:
@@ -271,6 +281,7 @@ class AgentConfig:
     max_new_answers_per_agent: Optional[int] = None
     max_new_answers_global: Optional[int] = None
     checklist_require_gap_report: bool = True
+    gap_report_mode: str = "changedoc"  # "changedoc" | "separate" | "none"
     answer_novelty_requirement: str = "lenient"
     fairness_enabled: bool = True
     fairness_lead_cap_answers: int = 2

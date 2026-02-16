@@ -1275,3 +1275,62 @@ class TestMemoryValidation:
 
         assert not result.is_valid()
         assert any("must be a string" in error.message for error in result.errors)
+
+
+class TestGapReportModeValidation:
+    """Tests for gap_report_mode config validation."""
+
+    def test_valid_gap_report_mode_changedoc(self):
+        """gap_report_mode='changedoc' is accepted."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"gap_report_mode": "changedoc"},
+        }
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+        assert result.is_valid()
+
+    def test_valid_gap_report_mode_separate(self):
+        """gap_report_mode='separate' is accepted."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"gap_report_mode": "separate"},
+        }
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+        assert result.is_valid()
+
+    def test_valid_gap_report_mode_none(self):
+        """gap_report_mode='none' is accepted."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"gap_report_mode": "none"},
+        }
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+        assert result.is_valid()
+
+    def test_invalid_gap_report_mode_produces_error(self):
+        """gap_report_mode with invalid value produces an error."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"gap_report_mode": "invalid"},
+        }
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+        assert not result.is_valid()
+        assert any("gap_report_mode" in error.message for error in result.errors)
+
+    def test_checklist_gated_without_changedoc_warns(self):
+        """checklist_gated voting with enable_changedoc=False produces warning."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {
+                "voting_sensitivity": "checklist_gated",
+                "coordination": {"enable_changedoc": False},
+            },
+        }
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+        assert result.has_warnings()
+        assert any("checklist_gated" in w.message and "changedoc" in w.message.lower() for w in result.warnings)

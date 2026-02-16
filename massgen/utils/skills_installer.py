@@ -62,7 +62,7 @@ SKILL_PACKAGE_METADATA = {
     },
 }
 
-# Marker skills from anthropics/skills. Used to detect installs done outside MassGen.
+# Marker skills per package. Used to detect installs by scanning .agent/skills/.
 ANTHROPIC_MARKER_SKILLS = {
     "algorithmic-art",
     "artifacts-builder",
@@ -72,6 +72,25 @@ ANTHROPIC_MARKER_SKILLS = {
     "mcp-builder",
     "theme-factory",
     "webapp-testing",
+}
+
+OPENAI_MARKER_SKILLS = {
+    "openai-docs",
+    "gh-fix-ci",
+    "develop-web-game",
+    "sora",
+    "imagegen",
+    "playwright",
+    "screenshot",
+    "yeet",
+}
+
+VERCEL_MARKER_SKILLS = {
+    "react-best-practices",
+    "web-design-guidelines",
+    "react-native-guidelines",
+    "composition-patterns",
+    "vercel-deploy-claimable",
 }
 
 
@@ -467,6 +486,11 @@ def list_available_skills() -> dict:
 def check_skill_packages_installed() -> dict:
     """Check installation status of skill packages.
 
+    Detection is filesystem-based: we scan .agent/skills/ directories (both
+    user-level and project-level) and look for marker skills from each package.
+    The manifest file is NOT used for detection since it can become stale when
+    skills are removed outside of MassGen.
+
     Returns:
         Dict with package info including installation status.
     """
@@ -474,24 +498,20 @@ def check_skill_packages_installed() -> dict:
     # Installed skills = user + project (excluding builtin)
     installed_skills = skills["user"] + skills["project"]
     installed_skill_names = {s["name"].strip().lower() for s in installed_skills}
-    manifest = _load_package_manifest()
 
-    # Check for Anthropic skills. Use marker skills for better specificity and
-    # fallback to MassGen install metadata.
+    # Detect each package by checking for marker skills on disk.
     anthropic_skills = [s for s in installed_skills if s["name"].lower() in ANTHROPIC_MARKER_SKILLS]
-    has_anthropic = bool(anthropic_skills) or _is_package_recorded("anthropic")
-    has_openai = _is_package_recorded("openai")
-    has_vercel = _is_package_recorded("vercel")
+    has_anthropic = bool(anthropic_skills)
 
-    # Check for Agent Browser and Crawl4AI by installed skill names
-    has_agent_browser = "agent-browser" in installed_skill_names or _is_package_recorded("agent_browser")
+    openai_skills = [s for s in installed_skills if s["name"].lower() in OPENAI_MARKER_SKILLS]
+    has_openai = bool(openai_skills)
+
+    vercel_skills = [s for s in installed_skills if s["name"].lower() in VERCEL_MARKER_SKILLS]
+    has_vercel = bool(vercel_skills)
+
+    has_agent_browser = "agent-browser" in installed_skill_names
+
     has_crawl4ai = any(s["name"].lower().startswith("crawl4ai") for s in installed_skills)
-
-    # Keep legacy compatibility with potential older manifest formats.
-    if not has_openai and isinstance(manifest.get("openai"), dict):
-        has_openai = bool(manifest["openai"].get("source"))
-    if not has_vercel and isinstance(manifest.get("vercel"), dict):
-        has_vercel = bool(manifest["vercel"].get("source"))
 
     return {
         "anthropic": {

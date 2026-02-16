@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """Tests for quickstart skill setup helpers."""
 
+import json
+
 import yaml
 
 import massgen.cli as cli
@@ -331,3 +333,115 @@ def test_ensure_quickstart_skills_ready_skips_when_user_declines(monkeypatch):
 
     assert cli._ensure_quickstart_skills_ready("config.yaml", install_requested=False) is True
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# check_skill_packages_installed: filesystem-based detection
+# ---------------------------------------------------------------------------
+
+
+def _fake_available_skills(user_skills=None, project_skills=None):
+    """Build a mock return value for list_available_skills."""
+    user_skills = user_skills or []
+    project_skills = project_skills or []
+    return {
+        "builtin": [],
+        "user": [{"name": s, "location": "user", "description": ""} for s in user_skills],
+        "project": [{"name": s, "location": "project", "description": ""} for s in project_skills],
+    }
+
+
+def test_stale_manifest_does_not_report_packages_as_installed(monkeypatch, tmp_path):
+    """Packages recorded in the manifest but absent from disk should NOT be reported installed."""
+    # Manifest says vercel and agent_browser were installed, but no skills exist on disk.
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "vercel": {"source": "vercel-labs/agent-skills", "installed_at": "2026-01-01T00:00:00+00:00"},
+                "agent_browser": {"source": "vercel-labs/agent-browser", "installed_at": "2026-01-01T00:00:00+00:00"},
+            },
+        ),
+    )
+    monkeypatch.setattr(skills_installer, "_get_package_manifest_path", lambda: manifest_path)
+
+    # No skills on disk at all.
+    monkeypatch.setattr(skills_installer, "list_available_skills", lambda: _fake_available_skills())
+
+    result = skills_installer.check_skill_packages_installed()
+
+    assert result["vercel"]["installed"] is False
+    assert result["agent_browser"]["installed"] is False
+
+
+def test_agent_browser_detected_from_skill_directory(monkeypatch, tmp_path):
+    """Agent browser should be detected when the skill directory exists, not from the manifest."""
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({}))
+    monkeypatch.setattr(skills_installer, "_get_package_manifest_path", lambda: manifest_path)
+
+    # agent-browser skill exists in user skills dir.
+    monkeypatch.setattr(
+        skills_installer,
+        "list_available_skills",
+        lambda: _fake_available_skills(user_skills=["agent-browser"]),
+    )
+
+    result = skills_installer.check_skill_packages_installed()
+
+    assert result["agent_browser"]["installed"] is True
+
+
+def test_vercel_detected_from_marker_skills(monkeypatch, tmp_path):
+    """Vercel should be detected when marker skills exist on disk."""
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({}))
+    monkeypatch.setattr(skills_installer, "_get_package_manifest_path", lambda: manifest_path)
+
+    # Vercel marker skill exists in project skills dir.
+    monkeypatch.setattr(
+        skills_installer,
+        "list_available_skills",
+        lambda: _fake_available_skills(project_skills=["react-best-practices", "web-design-guidelines"]),
+    )
+
+    result = skills_installer.check_skill_packages_installed()
+
+    assert result["vercel"]["installed"] is True
+
+
+def test_openai_detected_from_marker_skills(monkeypatch, tmp_path):
+    """OpenAI should be detected when marker skills exist on disk."""
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(json.dumps({}))
+    monkeypatch.setattr(skills_installer, "_get_package_manifest_path", lambda: manifest_path)
+
+    monkeypatch.setattr(
+        skills_installer,
+        "list_available_skills",
+        lambda: _fake_available_skills(user_skills=["openai-docs", "gh-fix-ci"]),
+    )
+
+    result = skills_installer.check_skill_packages_installed()
+
+    assert result["openai"]["installed"] is True
+
+
+def test_anthropic_detected_from_marker_skills_not_manifest(monkeypatch, tmp_path):
+    """Anthropic detection should rely on marker skills, not the manifest."""
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "anthropic": {"source": "anthropics/skills", "installed_at": "2026-01-01T00:00:00+00:00"},
+            },
+        ),
+    )
+    monkeypatch.setattr(skills_installer, "_get_package_manifest_path", lambda: manifest_path)
+
+    # Manifest says installed, but no anthropic marker skills on disk.
+    monkeypatch.setattr(skills_installer, "list_available_skills", lambda: _fake_available_skills())
+
+    result = skills_installer.check_skill_packages_installed()
+
+    assert result["anthropic"]["installed"] is False

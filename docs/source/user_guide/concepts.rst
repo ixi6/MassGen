@@ -219,7 +219,7 @@ Here's how agents asynchronously evaluate and respond during coordination:
 * **Asynchronous evaluation** - Agents evaluate continuously and independently (no synchronized rounds)
 * **Anonymized answers** - Agents don't know who provided which answer, reducing bias
 * **Actual agent prompt** - Agents evaluate "Does best CURRENT ANSWER address ORIGINAL MESSAGE well?"
-* **Inject-and-continue** - When any agent uses ``new_answer``, other agents receive an update appended to their conversation and continue (preserving their conversation history, though a new API call is made). Future versions will inject mid-stream within tool responses for true mid-thought continuation.
+* **Inject-and-continue** - When any agent uses ``new_answer``, other agents receive an update appended to their conversation and continue (preserving their conversation history, though a new API call is made). Agents that haven't produced their first answer yet are protected from interruption (see :ref:`first-answer-protection` below).
 * **Natural consensus** - Coordination ends only when all agents vote (no ``new_answer`` calls)
 * **Democratic selection** - Winner determined by peer voting
 
@@ -350,6 +350,39 @@ When Agent A provides a ``new_answer``, other agents receive an injection:
 3. **New injection** - The update from Agent A, formatted as a new user message
 
 This allows agents to seamlessly continue their work with full awareness of what other agents have discovered.
+
+.. _first-answer-protection:
+
+First-Answer Protection
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+When an agent submits a ``new_answer``, MassGen signals all other agents to restart
+or receive a mid-stream injection with the new context. However, agents that have not
+yet produced their **first answer** are protected from these interruptions.
+
+**Why?** Independent first answers are critical for diversity. If Agent A finishes
+quickly and Agent B is immediately restarted before completing its first round,
+Agent B never contributes an independent perspective -- it only ever sees Agent A's
+work. This undermines the parallel exploration that makes multi-agent coordination
+valuable.
+
+**How it works:**
+
+1. When any agent submits ``new_answer``, all agents are flagged with ``restart_pending``
+2. Before acting on the flag, MassGen checks whether the target agent has produced
+   at least one answer
+3. If the agent has **no answer yet**, the flag is cleared and the agent continues
+   working undisturbed
+4. If the agent **already has an answer**, the restart or injection proceeds normally
+
+This guard applies to all injection paths: full restarts, mid-stream hook injection,
+and no-hook enforcement fallbacks. It does **not** apply to fairness gate restarts,
+which correctly prevent agents from voting before they have sufficient context.
+
+.. note::
+   The ``restart_pending`` flag will be re-set if additional answers arrive while
+   the agent is still working on its first round. The protection only defers the
+   action -- it does not permanently suppress updates.
 
 What Agents See
 ~~~~~~~~~~~~~~~

@@ -124,19 +124,58 @@ A good first draft is rarely perfect. Look for what can be *better*, not just wh
 # ---------------------------------------------------------------------------
 
 _CHECKLIST_ITEMS = [
-    "The best answer comprehensively addresses all important aspects of the question.",
-    "Looking at the actual output or deliverable — not the code — it achieves a high level of quality, depth, and polish that goes well beyond adequacy.",
-    "I cannot identify specific, concrete improvements that would make the answer meaningfully better.",
-    "The best answer would genuinely impress the person who asked — they would not wish it were better.",
-    "Any remaining ideas for improvement are truly minor or cosmetic, not substantive.",
+    ("The output genuinely impresses — quality, depth, and polish go well" " beyond adequacy. Would make the person who asked say" ' "this is exceptional."'),
+    (
+        "The most impactful weaknesses were addressed — including this"
+        " answer's own known gaps, strengths from other answers that this one"
+        " lacks, and problems other answers identified but didn't solve."
+        " Critical problems (broken functionality, performance issues, missing"
+        " core requirements) were fixed before lower-value additions. Effort"
+        " went to the highest-value improvements, not just the easiest."
+    ),
+    ("The output would genuinely satisfy a demanding user — they would not" " wish it were better in any significant way."),
+    (
+        "At least one element shows creative ambition or meaningful craft that"
+        " goes beyond the safe, obvious approach. Thoughtful synthesis that"
+        " combines the best of multiple approaches and improves on them"
+        " counts."
+    ),
 ]
 
 _CHECKLIST_ITEMS_CHANGEDOC = [
-    "The changedoc captures every significant decision the task demands. No important " "choices were made implicitly in code but missing from the changedoc.",
-    "Each decision has strong, specific rationale tied to task requirements. No weak " '"Why" fields or strawman alternatives.',
-    "Every decision is traceable to specific artifacts — Implementation fields reference " "actual code locations, and the output implements what was decided.",
-    "The actual deliverable achieves genuine quality, depth, and polish. Would impress " "the person who asked.",
-    "At least one genuinely novel or ambitious element (NEW markers or evident in output). " "Goes beyond the safe, obvious approach.",
+    (
+        "The deliverable works, impresses, and shows genuine depth. Output is"
+        " functional and internally consistent. Quality, polish, and content"
+        " depth go beyond adequacy — would genuinely impress the person who"
+        " asked. A working output with fewer features beats a broken one with"
+        " more."
+    ),
+    (
+        "The most impactful gaps were addressed — or justified as not worth"
+        " the cost. Gaps come from three sources: (1) open gaps identified in"
+        " this answer's own changedoc, (2) strengths from other agents'"
+        " answers that this one lacks, and (3) open gaps identified in other"
+        " agents' changedocs — problems they spotted but didn't solve."
+        " Critical gaps (broken functionality, severe performance problems,"
+        " accessibility failures) that persist unaddressed are a failure here,"
+        " regardless of what new features were added. If a gap was"
+        " deliberately skipped, the changedoc explains why."
+    ),
+    (
+        "Changedoc is honest, complete, and traceable. Every significant"
+        " decision is documented with genuine rationale. Implementation"
+        " references point to code that actually exists. No fabricated claims."
+        " Alternatives are real, not strawmen."
+    ),
+    (
+        "At least one element shows creative ambition or meaningful craft."
+        " Something goes beyond the safe, obvious approach. This can be a"
+        " novel feature, an existing element made significantly richer, an"
+        " elegant solution to a known hard problem, or a distinctive design"
+        " choice. Synthesis that combines the best of multiple approaches AND"
+        " improves on them counts. Mechanical copying does not — but"
+        " thoughtful synthesis with creative improvement does."
+    ),
 ]
 
 
@@ -171,13 +210,21 @@ def _checklist_effective_threshold(T: int, remaining: int, total: int) -> int:
     return max(0, min(10, et))
 
 
-def _checklist_required_true(effective_threshold: int, num_items: int = 5) -> int:
+def _checklist_required_true(effective_threshold: int, num_items: int = 4) -> int:
     """How many TRUE items needed to justify vote/stop.
 
-    Always requires all items to pass. The only lever is the confidence
-    cutoff, which gets easier as threshold increases.
+    Relaxes with higher thresholds so agents can pass via quality
+    instead of only stopping when hitting max_new_answers_per_agent.
+
+    - Floor: max(1, (num_items + 1) // 2) — e.g. 2 for 4 items
+    - Formula: max(floor, num_items - effective_threshold // 30)
+    - At threshold 0:  max(2, 4-0) = 4 (strict)
+    - At threshold 50: max(2, 4-1) = 3
+    - At threshold 70+: max(2, 4-2) = 2 (lenient)
     """
-    return num_items
+    floor = max(1, (num_items + 1) // 2)
+    relaxation = effective_threshold // 30
+    return max(floor, num_items - relaxation)
 
 
 def _checklist_confidence_cutoff(effective_threshold: int) -> int:
@@ -198,14 +245,21 @@ def _build_checklist_analysis() -> str:
 Complete your full analysis before reading the Decision section below. Do not let
 the decision criteria influence your assessment.
 
-### Per-Answer Assessment
+### Per-Answer Critique
 
-For each answer, assess:
-- **Output quality**: Look at the actual result the user receives — the artifact,
-  deliverable, or answer itself. Is it something you would be proud to deliver? Does
-  it feel crafted and impressive, or merely functional? Be honest and specific.
-- Completeness relative to what the question actually demands
-- Approach taken and its strengths/weaknesses
+Your role is adversarial reviewer. For each answer, your job is to find every flaw,
+weakness, and missed opportunity. Do not describe what works — describe what doesn't.
+
+For each answer, list:
+- **Output flaws**: What would a demanding user be disappointed by? What feels
+  generic, shallow, or rushed? What would make them say "I expected better"?
+- **Missing elements**: What does the question demand that this answer doesn't
+  deliver, or delivers superficially?
+- **Approach weaknesses**: Where did the approach lead to a weaker result than
+  an alternative would have?
+
+If an answer has no meaningful flaws, say so explicitly — but this should be
+rare. First attempts almost always have significant gaps.
 
 ### Best Answer Identification
 
@@ -240,24 +294,25 @@ bullet points what the **best possible result** would deliver. Be ambitious:
 Do not anchor to what already exists. Describe the ideal as if designing a spec from
 scratch for a result that would make someone say "this is exceptional."
 
+How far is the current best from this ideal? Hold this distance in mind when you score
+— if the gap is large, your scores must be low, regardless of whether the answer is
+"correct."
+
 ### Gap Analysis
 
-Now compare the current best answer against your ideal:
-- **Output quality first**: Look at the actual result the user receives. Does it feel
-  crafted, rich, and impressive — or merely functional and adequate? Be honest.
+Compare the current best answer against your ideal. List only problems — do not describe what works.
+
 - What specific elements from your ideal are missing or under-delivered?
-- How large is the gap between current and ideal — minor polish, or meaningful substance?
-- If you were to produce a `new_answer`, what specifically would it add or improve?
+- Where is the quality gap between current and ideal — minor polish, or
+  meaningful substance?
+- What would a `new_answer` specifically need to add or change?
 
-Do not confuse *correctness fixes* with *quality improvements*. Fixing a bug is
-necessary but does not make an adequate answer excellent. An answer can be technically
-correct and still mediocre in quality, depth, or craft.
+Then check your critique against this analysis: do the flaws you found in
+Per-Answer Critique match the gaps you see here? If your critique was harsh
+but your gap analysis is mild, revisit both.
 
-*If there is only one answer, the gap analysis is especially important — the first
-attempt is rarely the best possible version.*
-
-If the current best genuinely matches your ideal with only cosmetic gaps remaining,
-say so — but be rigorous. "Good enough" is not the same as "excellent."
+If the current best genuinely matches your ideal with only cosmetic gaps,
+say so — but this should be rare and requires justification.
 
 ### Fresh Approach Consideration
 
@@ -294,19 +349,31 @@ For each decision (DEC-*) in the changedoc:
   strawmen set up to lose? Would a thoughtful colleague have considered these same
   alternatives?
 - **Implementation accuracy**: Do the Implementation fields reference actual code
-  locations that exist and match what was decided?
+  locations that exist and match what was decided? **Verify this literally** — open
+  the referenced files and confirm the described content is there. Documenting
+  features, quoted text, or line numbers that do not actually exist in the output
+  is fabrication, not aspiration. Flag any fabricated Implementation fields as
+  critical failures.
 
 Then ask: **What decisions are MISSING?** What important choices were made implicitly
 in code but never recorded? What trade-offs were navigated without being articulated?
 
-### Per-Answer Assessment
+### Per-Answer Critique
 
-For each answer, assess:
-- **Output quality**: Look at the actual result the user receives — the artifact,
-  deliverable, or answer itself. Is it something you would be proud to deliver? Does
-  it feel crafted and impressive, or merely functional? Be honest and specific.
-- **Changedoc-output alignment**: Does the output actually implement what the changedoc
-  decided? Or did the code drift from the documented decisions?
+Your role is adversarial reviewer. For each answer, find every flaw — in the
+output, the changedoc, and the alignment between them.
+
+- **Output flaws**: What would a demanding user be disappointed by? What feels
+  generic, shallow, or rushed? What is merely functional where it should be
+  impressive?
+- **Changedoc weaknesses**: Which decisions have thin rationale? Which
+  alternatives are strawmen? Which Implementation fields are vague or incorrect?
+- **Alignment gaps**: Where did the code drift from documented decisions? What
+  was built but never decided? What was decided but poorly implemented?
+- **Missing decisions**: What important choices were made implicitly but never
+  recorded?
+
+If you cannot find meaningful flaws, your review is probably too generous.
 
 ### Best Answer Identification
 
@@ -323,6 +390,8 @@ For each non-best answer:
 - Are there NEW-marked decisions that represent genuinely original thinking?
 - "Worse overall" does not mean "has nothing to offer." Look carefully at the
   decision journal, not just the output.
+- What valuable elements from other answers should be incorporated into the best
+  answer? Be specific about what to adopt and how it would improve the result.
 
 If no answer has meaningful unique content beyond the best, say so explicitly.
 
@@ -344,17 +413,35 @@ Given the original question, describe in concrete bullet points:
 Do not anchor to what already exists. Describe the ideal decision set as if designing
 a spec from scratch.
 
+How many of these ideal decisions already exist across all answers? If there is high
+overlap — most answers already cover the same decisions — focus on execution depth and
+refinement quality rather than adding new decisions.
+
+How many of these ideal decisions already exist across all answers? How far
+is the strongest changedoc from this ideal set? Hold this distance in mind
+when you score — a large gap means low scores, even if existing decisions
+are individually solid.
+
 ### Gap Analysis
 
-Now compare the current best answer against your ideal:
+Now compare the current best answer against your ideal. Do not describe what works well.
+Focus exclusively on what is missing, weak, or falls short.
+
 - **Missing decisions**: What decisions from your ideal set are absent from the changedoc?
 - **Weak decisions**: Where is rationale thin, alternatives shallow, or implementation
   fields inaccurate?
-- **Output gaps**: Does the deliverable achieve genuine quality, depth, and polish —
-  or is it merely functional?
+- **Output gaps**: Where does the deliverable fall short of genuine quality, depth, or
+  polish? Be specific about what is lacking, not about what is adequate.
 - **Traceability gaps**: Are there code choices that lack corresponding changedoc entries?
-- **Novelty deficit**: Is there at least one genuinely novel or ambitious element, or
-  does everything take the safe, obvious path?
+- **Output integrity**: Does the deliverable actually work end-to-end? Are features from
+  earlier rounds still functioning after new features were added? Adding features that
+  break existing functionality is regression, not improvement. A working output with fewer
+  features is better than a broken output with more.
+- **Ambition or craft deficit**: Is there at least one element showing creative ambition
+  or meaningful craft, or does everything take the safe, obvious path? Depth counts —
+  an existing element made significantly richer qualifies, not just novel additions.
+- **Gap prioritization**: Which gaps matter most to the end user? A critical functional
+  or performance problem outweighs adding new features. Rank your gaps by user impact.
 
 Do not confuse *correctness fixes* with *quality improvements*. An answer can be
 technically correct and still have a shallow decision journal.
@@ -363,7 +450,33 @@ technically correct and still have a shallow decision journal.
 attempt rarely captures all important decisions.*
 
 If the current best genuinely matches your ideal with only cosmetic gaps remaining,
-say so — but be rigorous.
+say so explicitly and briefly — do not pad with praise.
+
+Then cross-check: do the flaws from your Per-Answer Critique align with
+the gaps you found here? If your critique was harsh but this analysis is
+mild, one of them is wrong — revisit both.
+
+### Substantiveness Test
+
+Classify each planned change as:
+- **TRANSFORMATIVE**: Fundamentally different approach, architecture, or creative direction
+- **STRUCTURAL**: Meaningful redesign of a component, new capability, or significant quality lift —
+  the bar is: *would a user with no knowledge of the implementation notice this as a meaningfully
+  different experience?*
+- **INCREMENTAL**: Minor polish, formatting, or small additions
+
+The following are INCREMENTAL, not STRUCTURAL — do not upgrade them:
+- CSS tweaks, animation refinements, reduced-motion support, async decoding
+- Adding source notes, attribution, or citation formatting
+- Adding test tooling, QA scripts, or developer-facing infrastructure
+- Adding individual keyboard shortcuts (Home/End, etc.)
+- Accessibility micro-fixes (aria labels, alt text on existing elements)
+- Reformatting, reordering sections, or renaming variables
+- Adding, strengthening, or reorganizing changedoc decisions without corresponding output changes
+
+If no planned changes are TRANSFORMATIVE or STRUCTURAL, seriously consider whether
+further iteration will produce meaningful improvement — or just accumulate incremental
+changes. Voting may be the better choice.
 
 ### Fresh Approach Consideration
 
@@ -374,7 +487,9 @@ somewhere that incremental refinement of existing decisions never would?
 
 - Are all current changedocs converging on the same basic decisions? If so, varying
   has extra value — it explores decision paths that pure refinement misses.
-- Could challenging a core assumption in the changedoc unlock a better outcome?\""""
+- Could challenging a core assumption in the changedoc unlock a better outcome?
+- Could FEWER decisions produce a better result? Quality often comes from restraint —
+  removing weak decisions can strengthen the overall answer more than adding new ones.\""""
 
 
 def _build_checklist_decision(
@@ -498,6 +613,17 @@ case for `{terminate_action}` must be:
 Based on your analysis, rate your confidence (0-100%) in each of the following
 statements. 0% = completely disagree, 100% = fully agree, no reservations.
 
+Calibrate your scores against these anchors:
+- **90-100%**: Essentially perfect. A skilled expert would struggle to improve this.
+- **70-89%**: Strong but with clear gaps. Good work with room for meaningful improvement.
+- **50-69%**: Adequate. Meets basic requirements but falls short of impressive.
+- **30-49%**: Significant weaknesses. Important elements are missing or poorly executed.
+- **Below 30%**: Fundamental problems. Does not adequately address the requirement.
+
+First attempts rarely score above 70%. A score above 80% requires that your
+critique (above) found only minor issues. If your critique identified significant
+flaws but your scores are above 80%, one of them is wrong.
+
 {numbered}
 
 ### Decision Rule
@@ -519,34 +645,24 @@ def _build_checklist_gated_decision(
     terminate_action: str = "vote",
     iterate_action: str = "new_answer",
     require_gap_report: bool = True,
+    gap_report_mode: str = "changedoc",
 ) -> str:
     """Build checklist_gated decision section (tool-gated, hidden threshold).
 
     Unlike checklist/checklist_scored, this mode hides the threshold, cutoff,
     and required count from the agent. The agent rates confidence honestly,
     submits scores via the submit_checklist MCP tool, and follows the verdict.
+
+    Args:
+        gap_report_mode: Controls report instructions.
+            "changedoc": References changedoc Quality Assessment (no separate file).
+            "separate": Recommends writing a gap report file (informational, not gated).
+            "none": No report instructions.
     """
     numbered = "\n".join(f"  T{i+1}. {item}  → **___% confidence**" for i, item in enumerate(checklist_items))
-    report_requirement = (
-        "### Gap Report (Required)\n\n"
-        "Before calling `submit_checklist`, you MUST write a markdown gap report in your workspace\n"
-        "(for example: `tasks/checklist_gap_report.md`).\n\n"
-        "The report must be comprehensive and concrete:\n"
-        "- Start with **Output Quality**: evaluate the actual result from the user's perspective.\n"
-        "  Is this something you would be proud to deliver? What would make it more impressive,\n"
-        "  richer, or more polished? Do not conflate 'works correctly' with 'high quality.'\n"
-        "  **Before writing this section**, use whatever tools you have to experience the output\n"
-        "  the way a user would — render it, screenshot it, open it, listen to it, read the final\n"
-        "  artifact. Do not evaluate output quality from source code alone.\n"
-        "- Then cover additional angles: requirements fit, correctness, depth/richness, UX/polish,\n"
-        "  accessibility, performance, reliability, security, maintainability, and testing/validation.\n"
-        "- For each gap, explain what is missing and what specific change should be made.\n"
-        "- Include a section named `Already Good Enough` listing only aspects that genuinely meet\n"
-        "  a high quality bar — not things that merely exist or function. 'Has responsive layout'\n"
-        "  is not a strength worth listing; 'layout handles all breakpoints with considered\n"
-        "  typography' might be.\n"
-    )
-    if not require_gap_report:
+    if gap_report_mode == "changedoc":
+        report_requirement = "### Quality Assessment\n\n" "Your changedoc's Quality Assessment section serves as your gap analysis.\n" "Reference it when filling in your improvements summary below.\n"
+    elif gap_report_mode == "separate":
         report_requirement = (
             "### Gap Report (Recommended)\n\n"
             "Write a markdown gap report in your workspace (for example:\n"
@@ -555,6 +671,9 @@ def _build_checklist_gated_decision(
             "Include an `Already Good Enough` section listing only aspects that genuinely meet a high\n"
             "bar. If you create one, pass it via `report_path`.\n"
         )
+    else:
+        # "none" — no report instructions
+        report_requirement = ""
 
     return f"""---
 
@@ -565,6 +684,31 @@ Now decide: call `{iterate_action}` or `{terminate_action}`.
 - `{iterate_action}`: produce an improved answer (synthesizing across answers if multiple exist).
 - `{terminate_action}`: select the best existing answer and stop.
 
+### Substantiveness Test
+
+Classify each planned change as:
+- **TRANSFORMATIVE**: Fundamentally different approach, architecture, or creative direction.
+  Examples: switching from client-side to server-side rendering, replacing a REST API with
+  GraphQL, rewriting a synchronous pipeline as event-driven, choosing a completely different
+  data model or storage engine.
+- **STRUCTURAL**: Meaningful redesign of a component, new capability, or significant quality
+  lift — the bar is: *would a user with no knowledge of the implementation notice this as a
+  meaningfully different experience?*
+  Examples: adding real-time collaboration to a single-user editor, introducing a caching
+  layer that changes perceived performance, redesigning navigation to support a new workflow,
+  adding offline support, building a new visualization that reveals patterns previously hidden.
+- **INCREMENTAL**: Minor polish, formatting, or small additions that do not change the user's
+  experience in a meaningful way.
+  Examples: CSS tweaks and animation refinements, adding aria labels or alt text to existing
+  elements, reformatting code or reordering sections, adding source notes or attribution,
+  adding individual keyboard shortcuts, reduced-motion support, async decoding, adding test
+  tooling or developer-facing infrastructure, adding/strengthening/reorganizing changedoc
+  decisions without corresponding changes to the actual deliverable.
+
+If no planned changes are TRANSFORMATIVE or STRUCTURAL, seriously consider whether
+further iteration will produce meaningful improvement — or just accumulate incremental
+changes. Voting may be the better choice.
+
 ### Confidence Assessment
 
 Your goal is **excellence**, not minimum viability. The question is not "does this
@@ -574,7 +718,16 @@ Depth, features, polish, and richness all count — they are never "beyond scope
 
 Rate your confidence (0-100%) in each of the following statements.
 0% = completely disagree, 100% = fully agree, no reservations.
-Be honest — do not inflate or deflate your scores.
+Calibrate your scores against these anchors:
+- **90-100%**: Essentially perfect. A skilled expert would struggle to improve this.
+- **70-89%**: Strong but with clear gaps. Good work with room for meaningful improvement.
+- **50-69%**: Adequate. Meets basic requirements but falls short of impressive.
+- **30-49%**: Significant weaknesses. Important elements are missing or poorly executed.
+- **Below 30%**: Fundamental problems. Does not adequately address the requirement.
+
+First attempts rarely score above 70%. A score above 80% requires that your
+critique (above) found only minor issues. If your critique identified significant
+flaws but your scores are above 80%, one of them is wrong.
 
 {numbered}
 
@@ -582,7 +735,28 @@ Be honest — do not inflate or deflate your scores.
 
 ### Submit Your Scores
 
-Call `submit_checklist` with per-item reasoning, an improvements summary, and a report path.
+Call `submit_checklist` with per-item reasoning, an improvements summary, a report path,
+and a **substantiveness** object.
+
+The **substantiveness** object is required so the system can:
+- Continue iteration only when there is meaningful (transformative/structural) work left
+- Naturally terminate when decision space is exhausted and remaining ideas are incremental-only
+- Verify your commitments by name — list each specific change, not just a count
+
+Use:
+- `"transformative"`: list of fundamentally different approach/architecture changes planned
+- `"structural"`: list of major capability/experience redesign changes planned
+- `"incremental"`: list of polish-level changes planned
+- `"decision_space_exhausted"`: `true` only if no meaningful structural/transformative improvements remain
+- `"notes"`: short justification
+
+Set `decision_space_exhausted` to `true` ONLY if you have genuinely considered
+at least 3 fundamentally different approaches to the core problem and none would
+improve the result. "I can't think of anything" is not exhaustion — it means you
+haven't brainstormed hard enough. Consider: different architectures,
+different creative directions, different interaction models, different content strategies.
+If you haven't explored these alternatives, the space is not exhausted.
+
 Each score entry MUST include `"reasoning"` explaining why you gave that score —
 reference specific evidence from your analysis.
 
@@ -596,11 +770,17 @@ tells you to iterate, you are expected to implement what you identified.
       "T1": {{"score": <0-100>, "reasoning": "<why — cite specific evidence>"}},
       "T2": {{"score": <0-100>, "reasoning": "<why>"}},
       "T3": {{"score": <0-100>, "reasoning": "<why>"}},
-      "T4": {{"score": <0-100>, "reasoning": "<why>"}},
-      "T5": {{"score": <0-100>, "reasoning": "<why>"}}
+      "T4": {{"score": <0-100>, "reasoning": "<why>"}}
     }},
     report_path="<path to your markdown gap report>",
-    improvements="<specific gaps from your Ideal Version / Gap Analysis that would make the answer substantially better>"
+    improvements="<specific gaps from your Ideal Version / Gap Analysis that would make the answer substantially better>",
+    substantiveness={{
+      "transformative": ["<specific change description>", ...],
+      "structural": ["<specific change description>", ...],
+      "incremental": ["<specific change description>", ...],
+      "decision_space_exhausted": <true|false>,
+      "notes": "<why these classifications are accurate>"
+    }}
   )
 
 The tool will evaluate your scores and return a verdict telling you whether
@@ -610,7 +790,17 @@ to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
 substantially better** — not just marginally different. A user should immediately
 notice the improvement. Do NOT simply copy or resubmit the same content with minor
 tweaks. Use your improvements analysis to guide what to build differently, and
-implement the changes you identified — not just acknowledge them."""
+implement the changes you identified — not just acknowledge them.
+
+**Implement ALL identified improvements, not just one.** If your gap analysis found
+multiple structural weaknesses, address them all in this round. Do not pick the
+single easiest improvement, implement it, and stop. Each round is expensive — make
+it count by delivering the full scope of improvements you identified.
+
+**Verify existing features before adding new ones.** After making changes, confirm that
+features from prior rounds still work. Adding a feature that breaks existing functionality
+is regression, not improvement. A working output with fewer features is always better than
+a broken output with more features."""
 
 
 class Priority(IntEnum):
@@ -792,7 +982,19 @@ actions can be done in parallel rather than sequentially. For example, when read
 tool calls in parallel to read all 3 files into context at the same time. Maximize use of parallel
 tool calls where possible to increase speed and efficiency. However, if some tool calls depend on
 previous calls to inform dependent values like the parameters, do NOT call these tools in parallel
-and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls."""
+and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls.
+
+**Task Persistence:**
+Your context window will be automatically compacted as it approaches its limit, allowing you to
+continue working indefinitely from where you left off. Therefore, do not stop tasks early due to
+token budget concerns. As you approach your token budget limit, save your current progress and state
+to memory before the context window refreshes. Always be as persistent and autonomous as possible
+and complete tasks fully, even if the end of your budget is approaching. Never artificially stop any
+task early regardless of the context remaining."""
+
+
+# Task Persistence guidance sourced from Anthropic Claude prompting best practices:
+# https://platform.claude.com/docs/en/build-with-claude/prompt-engineering/claude-prompting-best-practices#context-awareness-and-multi-window-workflows
 
 
 class GPT5GuidanceSection(SystemPromptSection):
@@ -2403,6 +2605,7 @@ class EvaluationSection(SystemPromptSection):
         answers_used: int = 0,
         answer_cap: Optional[int] = None,
         checklist_require_gap_report: bool = True,
+        gap_report_mode: str = "changedoc",
         has_changedoc: bool = False,
     ):
         super().__init__(
@@ -2418,6 +2621,7 @@ class EvaluationSection(SystemPromptSection):
         self.answers_used = answers_used
         self.answer_cap = answer_cap
         self.checklist_require_gap_report = checklist_require_gap_report
+        self.gap_report_mode = gap_report_mode
         self.has_changedoc = has_changedoc
 
     def build_content(self) -> str:
@@ -2539,6 +2743,7 @@ Your goal is to iteratively refine answers until they meet the quality bar.
             decision = _build_checklist_gated_decision(
                 items,
                 require_gap_report=self.checklist_require_gap_report,
+                gap_report_mode=self.gap_report_mode,
             )
             evaluation_section = f"""{analysis}
 
@@ -2657,6 +2862,7 @@ class DecompositionSection(SystemPromptSection):
         answers_used: int = 0,
         answer_cap: Optional[int] = None,
         checklist_require_gap_report: bool = True,
+        gap_report_mode: str = "changedoc",
         has_changedoc: bool = False,
     ):
         super().__init__(
@@ -2670,6 +2876,7 @@ class DecompositionSection(SystemPromptSection):
         self.answers_used = answers_used
         self.answer_cap = answer_cap
         self.checklist_require_gap_report = checklist_require_gap_report
+        self.gap_report_mode = gap_report_mode
         self.has_changedoc = has_changedoc
 
     def _build_decision_block(self) -> str:
@@ -2713,6 +2920,7 @@ Both are terminal actions that end your round.
                     terminate_action="stop",
                     iterate_action="new_answer",
                     require_gap_report=self.checklist_require_gap_report,
+                    gap_report_mode=self.gap_report_mode,
                 )
                 return f"""**CHOOSING THE RIGHT TOOL — `new_answer` vs `stop`:**
 Both are terminal actions that end your round.
@@ -2884,7 +3092,10 @@ working.
 1. **Create `tasks/changedoc.md` immediately** in your workspace when you begin working. Write the Summary with your initial approach.
 2. **Log each significant decision as you make it.** When you choose an approach, architecture, tool, or trade-off — write a DEC entry in the changedoc before or as you implement it.
 3. **After implementing**, fill in the Implementation field on each decision with the actual files and symbols.
-4. **Submit your answer** via `new_answer` once your work is complete. The changedoc should already be up to date.
+4. **Verify accuracy**: Before submitting, confirm that every Implementation field
+   describes what actually exists in the files. Open the referenced locations and check.
+   Do not document features you plan to add — only what is already built.
+5. **Submit your answer** via `new_answer` once your work is complete. The changedoc should already be up to date.
 
 The changedoc captures your reasoning in real-time, not as a summary after the fact. Focus on decisions where a reasonable person might have chosen differently.
 
@@ -2924,7 +3135,7 @@ existing ideas.
 ## Decisions
 
 ### DEC-001: [Decision title]
-**Origin:** [your answer label] — NEW
+**Origin:** [SELF] — NEW
 **Choice:** [What you chose]
 **Why:** [Rationale tied to task requirements]
 **Alternatives considered:**
@@ -2942,35 +3153,95 @@ existing ideas.
 
 Write concisely — explain your thinking to a colleague who will pick up your work."""
 
-_CHANGEDOC_SUBSEQUENT_ROUND_PROMPT = """## Change Document (Decision Journal)
+
+def _build_changedoc_subsequent_round_prompt(gap_report_mode: str = "changedoc") -> str:
+    """Build subsequent-round changedoc instructions.
+
+    Args:
+        gap_report_mode: Controls Open Gaps placement.
+            "changedoc" appends Open Gaps section to the template.
+            "separate" / "none" omit it.
+    """
+    quality_assessment = ""
+    if gap_report_mode == "changedoc":
+        quality_assessment = """
+
+## Open Gaps
+[Gaps you identified but chose not to address. One line each. These are for transparency,
+not directives — the next agent should form their OWN assessment of what matters, not
+treat this as a todo list.]
+- [Gap]: [why not addressed — e.g., "incremental", "out of scope", "insufficient time"]"""
+
+    return f"""## Change Document (Decision Journal)
 
 **Before you start writing your answer**, create `tasks/changedoc.md` in your main agent \
 workspace directory (NOT in the project code directory or worktree). The changedoc is an \
 internal decision journal — it must never be written to the project directory where it could \
-end up in the repository. Start it first by inheriting from the prior agent's changedoc, then \
-update it as you make each decision.
+end up in the repository. Build it by evaluating ALL prior answers' changedocs
+(shown in `<changedoc>` tags), then update it as you make each decision.
 
 ### Workflow
 
-1. **Create `tasks/changedoc.md` immediately** in your workspace when you begin working. Copy the prior agent's
-changedoc as your starting point (their changedoc content is shown in `<changedoc>` tags
-alongside their answer).
-2. **Log each decision as you make it.** When you keep, change, or add a decision — update the changedoc before or as you implement it.
-3. **Update the Implementation fields** to reference YOUR code locations (the prior agent's line numbers refer to their frozen snapshot, not yours).
-4. **Submit your answer** via `new_answer` once your work is complete. The changedoc should already be up to date.
+1. **Create `tasks/changedoc.md` immediately** when you begin working. Review ALL prior
+changedocs to understand what decisions exist across answers, then draft YOUR changedoc
+by selecting, modifying, or replacing decisions — do not just copy one changedoc wholesale.
+2. **Run the checklist evaluation before you start building.** Evaluate the existing answers,
+identify gaps and improvements, then `submit_checklist` with your scores. Do NOT make edits
+to the deliverable before the checklist verdict — work done before a "vote" verdict is wasted
+because changes are only locked in when you call `new_answer`.
+3. **If the verdict says iterate**: implement your planned improvements. Log each decision in
+the changedoc as you make it. Update the Implementation fields to reference YOUR code locations.
+4. **Verify before submitting**: Confirm that every Implementation field describes what
+   actually exists in the files — open the referenced locations and check. Also verify
+   that features from prior rounds still work after your changes. Do not document
+   features you plan to add — only what is already built.
+5. **Submit your answer** via `new_answer` once your work is complete. The changedoc should already be up to date.
 
-### Inheriting from prior answers
+### Synthesizing from prior answers
 
-When you build on another agent's work:
+Draw from ALL available answers — do not pick one as your "base" and refine it.
+Your answer should reflect YOUR best judgment, informed by all prior work but not
+anchored to any single answer. The DEC Origin fields track per-decision lineage.
 
-1. **Keep their existing decisions** that you agree with. Preserve the Origin field — do not change who first introduced a decision.
-2. **Modify decisions** when you disagree. Update the Origin to show modification (e.g., `agent1.1, modified by [your label]`). Explain the change in the Deliberation Trail.
-3. **Add genuinely new decisions** with Origin marked as `[your label] — NEW`. These are ideas not present in any prior answer — novel approaches, new features, or original solutions you introduce.
-4. **Update the Summary** to reflect your version of the answer.
-5. **Update Implementation fields** to point to your code. The prior agent's code references point to their frozen files — your implementation may have different paths, symbols, or line numbers.
-6. **Append to the Deliberation Trail** to record what changed and why, flagging NEW ideas explicitly.
+For each decision the task requires:
+
+1. **Evaluate all versions** across answers. Pick the strongest, or create a better one. Preserve the FULL Origin chain — do not truncate who first introduced a decision.
+2. **Modify decisions** when you can improve them. Append to the Origin chain (e.g., `agent1.1 → agent1.2 (kept) → [SELF] (modified)`). Explain the change in the Deliberation Trail.
+3. **Add genuinely new decisions** with Origin marked as `[SELF] — NEW`. These are ideas not present in any prior answer — novel approaches, new features, or original solutions you introduce.
+4. **Challenge inherited decisions.** If every prior answer made the same choice, ask whether a different choice would produce a better result.
+Convergence on the same approach is not proof it is the best approach.
+5. **Update the Summary** to reflect your version of the answer.
+6. **Update Implementation fields** to point to your code.
+7. **Append to the Deliberation Trail** to record what changed and why, flagging NEW ideas explicitly.
+
+Five deeply-reasoned decisions beat twelve adequate ones. You may REMOVE or MERGE decisions
+from the inherited changedoc if they are redundant, weak, or dilute the overall quality.
+Fewer, stronger decisions produce better outcomes than accumulating every idea.
+This applies to changedoc decision count — it does not limit the scope of output changes
+you should make. If your gap analysis identifies five output improvements, implement all five.
+
+**Changedoc changes must accompany output changes.** Improving the changedoc alone — adding
+decisions, strengthening rationale, deepening alternatives — does not constitute a round of
+work. Every changedoc update should reflect a corresponding change in the actual deliverable.
+If your only planned changes are to the changedoc itself, that is a signal to vote, not iterate.
 
 If you start fresh rather than building on an existing answer, note in the Deliberation Trail why you chose a different approach.
+
+### Rationale Preservation Rule
+
+When inheriting a decision (marking Origin with `(kept)` or `(modified)`):
+
+**REQUIRED:**
+1. Preserve the ORIGINAL "Why:" field as written by the first agent who introduced it. The "Why:" must explain the domain reasoning — why this choice suits the task requirements.
+2. Add a separate **"Synthesis Note:"** field below "Why:" for your meta-reasoning about why you kept or modified the decision.
+3. Update "Implementation:" to reference YOUR code locations.
+
+**FORBIDDEN:**
+- Do NOT replace "Why:" with meta-justification like "this was the best prior answer" or "agent X had strong rationale"
+- Do NOT collapse "Why:" into "use agent X as base"
+
+**Why this matters:** When `"Why:"` becomes `"this was best"`, future agents lose the original reasoning and spend cycles restoring it instead of adding features.
+Keep domain reasoning in `"Why:"` and process reasoning in `"Synthesis Note:"`.
 
 ### Code references
 
@@ -2980,58 +3251,66 @@ Format: `relative/path/file.py:L10-25` → `ClassName.method()` — brief descri
 
 ### Answer labels
 
-Use the answer labels shown in `<CURRENT ANSWERS>` (e.g., `agent1.1`, `agent2.1`) when referencing specific answers. These uniquely identify a particular version of an agent's work.
+The answer labels in `<CURRENT ANSWERS>` headers (e.g., `<agent1.2>`, `<agent2.1>`) uniquely identify each
+version of an agent's work. Use these exact labels when referencing OTHER agents' answers. Use `[SELF]`
+when referencing your own work — the system will replace it with your real label (e.g., `agent1.2`)
+when your answer is submitted.
 
 ### Template
 
 ```markdown
 # Change Document
 
-**Based on:** [answer label, e.g., agent1.1]
+**Sources reviewed:** [list ALL prior answer labels you drew from, e.g., agent1.1, agent2.1]
 
 ## Summary
 [1-2 sentences describing your approach]
 
 ## Decisions
 
-### DEC-001: [Inherited decision title]
-**Origin:** agent1.1
+### DEC-001: [Decision drawn from agent2.1]
+**Origin:** agent2.1 (kept)
 **Choice:** [What was chosen]
-**Why:** [Rationale]
+**Why:** [PRESERVE original domain rationale from agent2.1]
+**Synthesis Note:** [Why agent2.1's version was stronger than agent1's for this decision]
 **Alternatives considered:**
-- [Alternative]: [Why rejected]
+- agent1.1's approach: [Why agent2.1's was better]
 **Implementation:**
 - `path/to/file.py:L10-42` → `ClassName.method()` — [brief mechanism description]
 
-### DEC-002: [Modified decision]
-**Origin:** agent1.1, modified by [your label]
-**Choice:** [Your revised choice]
-**Why:** [Why you changed it — agent1.1 chose X, but Y is better because...]
+### DEC-002: [Decision combining ideas from multiple answers]
+**Origin:** agent1.1 → [SELF] (modified)
+**Choice:** [Your revised choice — combining strengths from both agents]
+**Why:** [Domain rationale for this hybrid approach]
+**Synthesis Note:** [agent1 did X, agent2 did Y — combined because...]
 **Alternatives considered:**
-- agent1.1's original approach: [Why you changed it]
+- agent1.1's original: [trade-off]
+- agent2.1's original: [trade-off]
 **Implementation:**
 - `path/to/file.py:L50-75` → `new_function()` — [mechanism]
 
 ### DEC-003: [Your new idea]
-**Origin:** [your label] — NEW
-**Choice:** [What you introduced]
+**Origin:** [SELF] — NEW
+**Choice:** [What you introduced — not in any prior answer]
 **Why:** [Rationale — this wasn't in any prior answer]
 **Implementation:**
 - `path/to/new_file.py:L1-30` → `NovelClass` — [mechanism]
 
 ## Deliberation Trail
 
-### [your label] (based on agent1.1):
-- DEC-001: Kept — [brief reason]
-- DEC-002: Modified — agent1.1 used X, changed to Y because [reason]
+### [SELF] (synthesized from agent1.1, agent2.1):
+- DEC-001: Adopted from agent2.1 — [why this version was better]
+- DEC-002: Combined agent1.1 + agent2.1 — [what each contributed]
 - DEC-003: NEW — [what this adds that wasn't there before]
 
-## Key Changes from Prior
-- [Substantive change 1]
-- [Substantive change 2]
+## Key Output Changes from Prior
+- [User-visible change 1 — what is different in the deliverable]
+- [User-visible change 2 — what is different in the deliverable]
 ```
+{quality_assessment}
 
 Write concisely — explain your thinking to a colleague who will pick up your work."""
+
 
 _CHANGEDOC_PRESENTER_INSTRUCTIONS = """
 ### Change Document Consolidation
@@ -3048,7 +3327,7 @@ internal decision journal) that:
 names, and line numbers pointing to the delivered files. The agents' code references point
 to their frozen snapshots; yours must point to the final deliverable.
 5. **Preserves the Deliberation Trail** showing how key decisions evolved. Clean up for readability but keep the substance, attribution, and `NEW` markers.
-6. **Removes the Key Changes section** (not needed in the final document).
+6. **Removes the Key Output Changes section** (not needed in the final document).
 
 The final changedoc is a decision record, not a comparison report. Do not editorialize or
 narrate which agent "won" — just state what was decided, why, and where in the code it lives.
@@ -3057,6 +3336,55 @@ A developer who was not present should be able to read the changedoc and:
 - See where each idea originated (Origin field)
 - Identify which ideas were genuinely new contributions (NEW markers)
 - Follow how decisions evolved through the deliberation trail"""
+
+
+class NoveltyPressureSection(SystemPromptSection):
+    """Injects novelty pressure when convergence is detected.
+
+    Escalates from gentle suggestion to mandatory divergence depending on
+    the configured novelty_level and how many consecutive incremental rounds
+    have occurred.
+    """
+
+    def __init__(
+        self,
+        novelty_level: str,
+        consecutive_incremental_rounds: int,
+        restart_count: int,
+    ):
+        super().__init__(
+            title="Novelty Pressure",
+            priority=Priority.MEDIUM,
+            xml_tag="novelty_pressure",
+        )
+        self.novelty_level = novelty_level
+        self.consecutive_incremental_rounds = consecutive_incremental_rounds
+        self.restart_count = restart_count
+
+    def build_content(self) -> str:
+        n = self.consecutive_incremental_rounds
+        if self.novelty_level == "gentle":
+            return (
+                "Previous rounds identified only incremental improvements. Consider whether a "
+                "fundamentally different approach — a different architecture, creative direction, "
+                "or interaction model — would yield a stronger result than continued polish."
+            )
+        elif self.novelty_level == "moderate":
+            return (
+                f"CONVERGENCE DETECTED: {n} consecutive rounds found no transformative or structural "
+                "work remaining. The current line of refinement is stalling. You MUST explore a "
+                "fundamentally different direction for at least one major aspect of the answer. "
+                "Continued incremental polish will not pass the novelty requirement."
+            )
+        elif self.novelty_level == "aggressive":
+            return (
+                "MANDATORY DIVERGENCE: You are REQUIRED to take a fundamentally different approach "
+                "to at least one core aspect of the problem. Do not refine the existing direction — "
+                "challenge it. Try a different architecture, a different creative vision, or a "
+                "different problem decomposition. The existing approach has been explored; now "
+                "explore alternatives."
+            )
+        return ""
 
 
 class ChangedocSection(SystemPromptSection):
@@ -3071,17 +3399,18 @@ class ChangedocSection(SystemPromptSection):
         has_prior_answers: Whether other agents' answers are visible.
     """
 
-    def __init__(self, has_prior_answers: bool = False):
+    def __init__(self, has_prior_answers: bool = False, gap_report_mode: str = "changedoc"):
         super().__init__(
             title="Change Document",
             priority=Priority.MEDIUM,
             xml_tag="changedoc_instructions",
         )
         self.has_prior_answers = has_prior_answers
+        self.gap_report_mode = gap_report_mode
 
     def build_content(self) -> str:
         if self.has_prior_answers:
-            return _CHANGEDOC_SUBSEQUENT_ROUND_PROMPT
+            return _build_changedoc_subsequent_round_prompt(gap_report_mode=self.gap_report_mode)
         return _CHANGEDOC_FIRST_ROUND_PROMPT
 
 
@@ -3141,6 +3470,29 @@ Subagents are useful helpers but have limitations:
 - Their outputs are **raw materials** - expect to review, refine, and fix their work
 - Don't blindly trust subagent results - verify and integrate thoughtfully
 - If a subagent produces something broken or incomplete, **you fix it** rather than reporting failure
+
+**EVALUATION DELEGATION (async pattern):**
+When your output needs testing or evaluation that involves procedural tool use, delegate it
+to an async subagent so you can keep working on implementation. Spawn with
+`async_=True, refine=False` — the subagent evaluates while you continue building.
+
+Subagent handles (procedural observations):
+- Serving a website and taking screenshots, running Playwright tests, using read_media
+- Executing test suites, linters, or validation scripts against generated code
+- Running benchmarks, profiling, or performance measurements
+- Checking file integrity, link resolution, or cross-references in documents
+- Comparing output against specs or acceptance criteria with automated tools
+
+You handle (analytical judgment):
+- Analyzing previous answers and peer approaches in depth
+- Making quality judgments and deciding what to improve next
+- Synthesizing insights from multiple sources into a coherent strategy
+- Prioritizing which gaps matter most and what to build next
+
+The subagent returns a descriptive report of findings and observations — what it measured,
+what passed, what failed, what it saw. Trust its observations and measurements. Make your
+own judgments about quality and priorities, since you have the full context and the subagent
+may run on a simpler model.
 
 **AVOID SUBAGENTS FOR:**
 - Simple, quick operations you can do directly (overhead not worth it)
@@ -3247,8 +3599,11 @@ spawn_subagents(
 ```
 
 **async_ parameter:**
-- `async_=True`: Spawn in background, continue working, results injected later via broadcast. Use when you can do useful work while waiting or user requests background execution.
-- `async_=False` (default): Wait for results before proceeding. Use when you need outputs to complete any other work.
+- `async_=True`: Spawn in background and continue working. Results are automatically
+  injected when ready (on your next tool call). If auto-injection is not available, poll
+  manually with `check_subagent_status` and `get_subagent_result`. Use for evaluation
+  delegation and any work you can do in parallel.
+- `async_=False` (default): Wait for results before proceeding. Use when you need outputs to continue.
 
 **refine parameter:**
 - `refine=True` (default): Multi-round refinement with voting. Higher quality, slower, more expensive. Use for complex analysis.

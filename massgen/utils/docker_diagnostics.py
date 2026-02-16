@@ -441,7 +441,7 @@ def diagnose_docker(
         if not has_required_images:
             return DockerDiagnostics(
                 status=DockerStatus.IMAGES_MISSING,
-                is_available=False,
+                is_available=True,
                 binary_installed=True,
                 pip_library_installed=True,
                 daemon_running=True,

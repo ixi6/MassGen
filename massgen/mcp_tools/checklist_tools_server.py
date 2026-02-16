@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any, Dict
 
@@ -69,6 +68,119 @@ def _extract_score(entry: Any) -> int:
     return 0
 
 
+def _as_non_negative_int(value: Any, default: int = 0) -> int:
+    """Best-effort conversion to non-negative int."""
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_substantiveness(
+    substantiveness: Any,
+    state: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Normalize structured substantiveness payload for checklist gating.
+
+    Accepts two payload formats:
+
+    **List format** (preferred — prevents satisficing by naming specific items):
+    {
+      "transformative": ["rewrite nav as SPA router"],
+      "structural": ["add timeline", "add search"],
+      "incremental": ["fix typos", "adjust colors"],
+      "decision_space_exhausted": bool,
+      "notes": str (optional)
+    }
+
+    **Legacy count format** (backward compatible):
+    {
+      "transformative_count": int >= 0,
+      "structural_count": int >= 0,
+      "incremental_count": int >= 0,
+      "decision_space_exhausted": bool,
+      "notes": str (optional)
+    }
+
+    List format is detected by the presence of a "transformative" key with a list value.
+    Counts are derived via len() for list format.
+    """
+    require_substantiveness = bool(state.get("require_substantiveness", False))
+    result: Dict[str, Any] = {
+        "required": require_substantiveness,
+        "provided": substantiveness is not None,
+        "valid": True,
+        "issues": [],
+        "transformative_count": 0,
+        "structural_count": 0,
+        "incremental_count": 0,
+        "transformative_items": [],
+        "structural_items": [],
+        "incremental_items": [],
+        "decision_space_exhausted": False,
+        "notes": "",
+        "has_substantive_plan": False,
+        "incremental_only": False,
+    }
+
+    if substantiveness is None:
+        if require_substantiveness:
+            result["valid"] = False
+            result["issues"].append("Missing `substantiveness` payload.")
+        return result
+
+    if isinstance(substantiveness, str):
+        try:
+            substantiveness = json.loads(substantiveness)
+        except (json.JSONDecodeError, TypeError):
+            result["valid"] = False
+            result["issues"].append("`substantiveness` must be a JSON object.")
+            return result
+
+    if not isinstance(substantiveness, dict):
+        result["valid"] = False
+        result["issues"].append("`substantiveness` must be an object.")
+        return result
+
+    # Detect format: list-based if "transformative" key holds a list
+    uses_list_format = isinstance(substantiveness.get("transformative"), list)
+
+    if uses_list_format:
+        # List format: extract items, derive counts
+        result["transformative_items"] = [str(x) for x in (substantiveness.get("transformative") or [])]
+        result["structural_items"] = [str(x) for x in (substantiveness.get("structural") or [])]
+        result["incremental_items"] = [str(x) for x in (substantiveness.get("incremental") or [])]
+        result["transformative_count"] = len(result["transformative_items"])
+        result["structural_count"] = len(result["structural_items"])
+        result["incremental_count"] = len(result["incremental_items"])
+    else:
+        # Legacy count format: keep counts, empty item lists
+        result["transformative_count"] = _as_non_negative_int(
+            substantiveness.get("transformative_count", 0),
+        )
+        result["structural_count"] = _as_non_negative_int(
+            substantiveness.get("structural_count", 0),
+        )
+        result["incremental_count"] = _as_non_negative_int(
+            substantiveness.get("incremental_count", 0),
+        )
+
+    result["decision_space_exhausted"] = bool(
+        substantiveness.get("decision_space_exhausted", False),
+    )
+    result["notes"] = str(substantiveness.get("notes", "") or "").strip()
+    result["has_substantive_plan"] = (result["transformative_count"] + result["structural_count"]) > 0
+    result["incremental_only"] = not result["has_substantive_plan"] and result["incremental_count"] > 0
+
+    if require_substantiveness and not result["decision_space_exhausted"] and (result["transformative_count"] + result["structural_count"] + result["incremental_count"]) == 0:
+        result["valid"] = False
+        result["issues"].append(
+            "Substantiveness is required: provide change lists or mark decision space as exhausted.",
+        )
+
+    return result
+
+
 def _resolve_report_file(report_path: str, state: Dict[str, Any]) -> tuple[Path | None, str | None]:
     """Resolve report path to a workspace-local absolute path."""
     raw_path = (report_path or "").strip()
@@ -92,30 +204,24 @@ def _resolve_report_file(report_path: str, state: Dict[str, Any]) -> tuple[Path 
 
 
 def _evaluate_gap_report(report_path: str, state: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluate markdown gap report quality independently of checklist scores."""
-    require_report = bool(state.get("require_gap_report", True))
-    report_cutoff = int(state.get("report_cutoff", 70))
+    """Check gap report file existence for diagnostics (no gate logic).
 
+    The gap report is informational only — it never overrides the checklist verdict.
+    Basic file existence and non-empty checks are retained for transparency in the
+    explanation, but no heuristic scoring or keyword matching is performed.
+    """
     result: Dict[str, Any] = {
-        "required": require_report,
         "provided": bool((report_path or "").strip()),
         "path": (report_path or "").strip(),
-        "score": 0,
-        "cutoff": report_cutoff,
-        "passed": not require_report,
+        "passed": True,  # Always passes — no gate
         "issues": [],
-        "categories_hit": [],
-        "actionable_items": 0,
-        "has_good_enough_section": False,
     }
 
-    if not require_report and not result["provided"]:
+    if not result["provided"]:
         return result
 
     resolved, error = _resolve_report_file(report_path, state)
     if error:
-        if not require_report:
-            return result
         result["issues"].append(error)
         return result
     if resolved is None:
@@ -135,76 +241,12 @@ def _evaluate_gap_report(report_path: str, state: Dict[str, Any]) -> Dict[str, A
         result["issues"].append(f"Unable to read report file: {exc}")
         return result
 
-    stripped = report_text.strip()
-    if not stripped:
+    if not report_text.strip():
         result["issues"].append("Report file is empty.")
         return result
 
-    lowered = stripped.lower()
-    categories = {
-        "output_quality": [
-            "output quality",
-            "result quality",
-            "end result",
-            "deliverable",
-            "user perspective",
-            "craft",
-            "impression",
-            "richness",
-            "artifact",
-            "proud to deliver",
-        ],
-        "requirements_scope": ["requirements", "scope", "user intent", "acceptance criteria"],
-        "correctness": ["correctness", "logic", "bug", "edge case", "failure mode"],
-        "quality_polish": ["ux", "ui", "polish", "clarity", "content quality", "accessibility", "a11y"],
-        "performance_reliability": ["performance", "latency", "reliability", "robustness", "error handling"],
-        "security_safety": ["security", "privacy", "safety", "permissions", "compliance"],
-        "testing_validation": ["test", "validation", "verification", "observability", "monitoring", "metrics"],
-        "decision_quality": [
-            "decision",
-            "changedoc",
-            "rationale",
-            "alternative",
-            "traceability",
-            "implementation field",
-            "origin",
-            "missing decision",
-            "weak rationale",
-        ],
-    }
-    categories_hit = [category for category, keywords in categories.items() if any(keyword in lowered for keyword in keywords)]
-    result["categories_hit"] = categories_hit
-
-    actionable_items = len(re.findall(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", stripped))
-    result["actionable_items"] = actionable_items
-    result["has_good_enough_section"] = bool(
-        re.search(r"(?i)\b(already good enough|good enough|already strong|keep as[- ]is)\b", stripped),
-    )
-
-    length_score = min(25, int(len(stripped) / 40))
-    coverage_score = min(35, len(categories_hit) * 5)
-    actionability_score = min(25, actionable_items * 2)
-    good_enough_score = 15 if result["has_good_enough_section"] else 0
-    score = length_score + coverage_score + actionability_score + good_enough_score
-    result["score"] = score
-
-    if len(categories_hit) < 5:
-        result["issues"].append("Report is not broad enough across evaluation angles.")
-    if actionable_items < 6:
-        result["issues"].append("Report needs more concrete, actionable improvement items.")
-    if not result["has_good_enough_section"]:
-        result["issues"].append("Report must include what is already good enough.")
-    if score < report_cutoff:
-        result["issues"].append(
-            f"Report score {score} is below cutoff {report_cutoff}.",
-        )
-
-    result["passed"] = score >= report_cutoff and not result["issues"]
-    if not require_report:
-        # Keep diagnostics, but don't fail the gate when config disables it.
-        result["passed"] = True
-        result["issues"] = []
-
+    # Report exists and is non-empty — note it for transparency
+    result["file_exists"] = True
     return result
 
 
@@ -214,6 +256,7 @@ def evaluate_checklist_submission(
     report_path: str,
     items: list,
     state: Dict[str, Any],
+    substantiveness: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     """Evaluate checklist submission and return verdict payload used by stdio + SDK."""
     if not isinstance(scores, dict):
@@ -237,39 +280,140 @@ def evaluate_checklist_submission(
         items_detail.append({"id": key, "score": score, "passed": passed})
 
     report_eval = _evaluate_gap_report(report_path, state)
-    report_gate_triggered = False
+    substantiveness_eval = _normalize_substantiveness(substantiveness, state)
+    substantiveness_gate_triggered = False
+    convergence_offramp_triggered = False
 
     if not has_existing_answers:
         verdict = iterate_action
         explanation = f"First answer — no existing answers to evaluate. Verdict: {verdict}."
     else:
+        # Verdict determined solely by T-item scores — no report gate
         verdict = terminate_action if true_count >= required else iterate_action
-        if report_eval.get("required", True) and not report_eval.get("passed", False):
-            verdict = iterate_action
-            report_gate_triggered = True
 
-        if verdict == iterate_action:
-            failed_ids = [d["id"] for d in items_detail if not d["passed"]]
+        # Substantiveness gate: require payload when configured
+        if substantiveness_eval.get("required", False) and not substantiveness_eval.get("valid", True):
+            verdict = iterate_action
+            substantiveness_gate_triggered = True
+
+        # Natural convergence off-ramp:
+        # When core quality is strong and only tail "more improvement/novelty"
+        # style items are failing, stop if no substantive plan remains.
+        #
+        # Important: changedoc and generic checklist modes use different
+        # semantics for T3. In changedoc mode, T3 is traceability and should
+        # remain part of core quality; in generic mode, T3 is a tail
+        # "no meaningful improvements left" check.
+        failed_ids = [d["id"] for d in items_detail if not d["passed"]]
+        failed_set = set(failed_ids)
+        passed_map = {d["id"]: d["passed"] for d in items_detail}
+
+        changedoc_mode = bool(state.get("changedoc_mode", False))
+        if changedoc_mode:
+            core_item_candidates = ("T1", "T2", "T3")
+            tail_failure_ids = {"T4"}
+        else:
+            core_item_candidates = ("T1", "T2", "T3")
+            tail_failure_ids = {"T4"}
+
+        core_quality_ids = [item_id for item_id in core_item_candidates if item_id in passed_map]
+        core_quality_strong = all(passed_map[item_id] for item_id in core_quality_ids)
+        only_tail_failures = bool(failed_set) and failed_set.issubset(tail_failure_ids)
+        near_converged = true_count >= max(1, required - 2)
+        no_substantive_path = (
+            substantiveness_eval.get("valid", False)
+            and not substantiveness_eval.get("has_substantive_plan", False)
+            and (substantiveness_eval.get("decision_space_exhausted", False) or substantiveness_eval.get("incremental_only", False))
+        )
+        if verdict == iterate_action and not substantiveness_gate_triggered and only_tail_failures and core_quality_strong and near_converged and no_substantive_path:
+            verdict = terminate_action
+            convergence_offramp_triggered = True
+
+        if verdict == iterate_action and not convergence_offramp_triggered:
             improvements_text = improvements.strip() if improvements else ""
             explanation = f"{true_count} of {len(items)} items passed (required: {required}). " f"Verdict: {verdict}. "
             if failed_ids:
                 explanation += f"Items that need improvement: {', '.join(failed_ids)}. "
-            if report_gate_triggered:
-                explanation += "Gap report quality is not yet sufficient; expand the report across " "more angles with more concrete actions before stopping. "
+            if substantiveness_gate_triggered:
+                explanation += (
+                    "Substantiveness details are required before iterating: provide lists of "
+                    "transformative/structural/incremental changes, or mark "
+                    "`decision_space_exhausted=true` when no meaningful improvements remain. "
+                )
+            if (
+                has_existing_answers
+                and substantiveness_eval.get("valid", False)
+                and not substantiveness_eval.get("has_substantive_plan", False)
+                and not substantiveness_eval.get("decision_space_exhausted", False)
+            ):
+                explanation += (
+                    "You have not identified any structural or transformative work yet. " "Do not spend another round on cosmetic changes — either define a " "substantive plan or terminate. "
+                )
+
+            # Echo specific structural/transformative items when available
+            structural_items = substantiveness_eval.get("structural_items", [])
+            transformative_items = substantiveness_eval.get("transformative_items", [])
+            if structural_items or transformative_items:
+                if transformative_items:
+                    items_str = ", ".join(transformative_items)
+                    explanation += f"Your own analysis identified these transformative changes: {items_str}. " f"Implement ALL of them. "
+                if structural_items:
+                    items_str = ", ".join(structural_items)
+                    explanation += f"Your own analysis identified these structural changes: {items_str}. " f"Implement ALL of them. "
+
+            # T4-specific ambition/craft guidance: when ambition fails, give the agent
+            # concrete direction instead of just listing T4 as a failed item.
+            t4_failed = "T4" in failed_set
+            if t4_failed and substantiveness_eval.get("valid", False):
+                if substantiveness_eval.get("decision_space_exhausted", False) or substantiveness_eval.get("incremental_only", False):
+                    explanation += (
+                        "T4 (ambition/craft) failed and you reported no structural/transformative "
+                        "work remaining. Incremental polish will not fix an ambition deficit. "
+                        "To pass T4 you must go beyond the safe, obvious approach — make an "
+                        "existing element significantly richer, find an elegant solution to a "
+                        "known hard problem, or introduce a distinctive design choice. Depth "
+                        "counts: improving what exists can satisfy this. If no such move exists, "
+                        "mark `decision_space_exhausted=true` and let the system converge. "
+                    )
+                else:
+                    explanation += (
+                        "T4 (ambition/craft) failed. Your next answer needs at least one "
+                        "element showing creative ambition or meaningful craft — not just "
+                        "mechanical execution. This can be a novel feature, an existing "
+                        "element made significantly richer, or thoughtful synthesis that "
+                        "combines the best of multiple approaches and improves on them. "
+                    )
             explanation += "Your new answer MUST make material changes — do NOT simply copy or " "resubmit the same content."
             if improvements_text:
                 explanation += (
                     f" Your own improvements analysis identified: {improvements_text} "
-                    f"— use this as your implementation plan. The result must be "
+                    f"— implement all identified improvements, not just one. Each round "
+                    f"is expensive; deliver the full scope of changes. The result must be "
                     f"obviously better, not just marginally different."
                 )
         else:
-            explanation = f"{true_count} of {len(items)} items passed (required: {required}). " f"Verdict: {verdict}."
+            explanation = f"{true_count} of {len(items)} items passed (required: {required}). Verdict: {verdict}."
+            if convergence_offramp_triggered:
+                explanation += " Convergence off-ramp activated: core quality is strong and no " "substantive novelty plan remains, so additional rounds would likely " "be incremental-only."
 
-    report_summary = f" Gap report score: {report_eval.get('score', 0)}/{report_eval.get('cutoff', 70)} " f"({'pass' if report_eval.get('passed') else 'fail'})."
-    if report_eval.get("issues"):
-        report_summary += f" Report issues: {'; '.join(report_eval['issues'])}."
-    explanation += report_summary
+    # Include report diagnostics for transparency (informational only)
+    if report_eval.get("provided"):
+        report_summary = " Gap report provided."
+        if report_eval.get("issues"):
+            report_summary += f" Report notes: {'; '.join(report_eval['issues'])}."
+        explanation += report_summary
+
+    # Include substantiveness diagnostics
+    substantiveness_summary = (
+        " Substantiveness: "
+        f"T={substantiveness_eval.get('transformative_count', 0)}, "
+        f"S={substantiveness_eval.get('structural_count', 0)}, "
+        f"I={substantiveness_eval.get('incremental_count', 0)}, "
+        f"exhausted={'yes' if substantiveness_eval.get('decision_space_exhausted') else 'no'}."
+    )
+    if substantiveness_eval.get("issues"):
+        substantiveness_summary += f" Substantiveness issues: {'; '.join(substantiveness_eval['issues'])}."
+    explanation += substantiveness_summary
 
     return {
         "verdict": verdict,
@@ -278,7 +422,10 @@ def evaluate_checklist_submission(
         "required": required,
         "items": items_detail,
         "report": report_eval,
-        "report_gate_triggered": report_gate_triggered,
+        "substantiveness": substantiveness_eval,
+        "report_gate_triggered": False,
+        "substantiveness_gate_triggered": substantiveness_gate_triggered,
+        "convergence_offramp_triggered": convergence_offramp_triggered,
     }
 
 
@@ -298,6 +445,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         scores: dict,
         improvements: str = "",
         report_path: str = "",
+        substantiveness: dict | None = None,
     ) -> str:
         # Codex sometimes sends scores as a JSON string; normalise to dict
         if isinstance(scores, str):
@@ -322,6 +470,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
             report_path=report_path,
             items=current_items,
             state=state,
+            substantiveness=substantiveness,
         )
         return json.dumps(result)
 
@@ -330,16 +479,19 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         "object with 'score' (0-100) and 'reasoning' (why you gave that score). "
         "The 'improvements' field should describe features or content that an "
         "ideal answer would have but no existing answer has attempted. "
+        "Use the 'substantiveness' object to report planned change counts "
+        "(transformative/structural/incremental) and whether decision space is exhausted. "
         "Use 'report_path' to provide a markdown gap report when report gating "
         "is enabled."
     )
 
-    # Set proper signature so FastMCP sees both parameters
+    # Set proper signature so FastMCP sees all parameters
     sig = inspect.Signature(
         [
             inspect.Parameter("scores", inspect.Parameter.POSITIONAL_OR_KEYWORD),
             inspect.Parameter("improvements", inspect.Parameter.POSITIONAL_OR_KEYWORD),
             inspect.Parameter("report_path", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("substantiveness", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None),
         ],
     )
     submit_checklist.__signature__ = sig

@@ -124,6 +124,8 @@ class AgentState:
     round_start_time: Optional[float] = None  # For per-round timeouts
     round_timeout_hooks: Optional[tuple] = None  # (post_hook, pre_hook) for resetting on new round
     round_timeout_state: Optional["RoundTimeoutState"] = None  # Shared timeout state
+    # Convergence tracking for novelty injection
+    checklist_history: List[Dict[str, Any]] = field(default_factory=list)
     # Decomposition mode fields
     stop_summary: Optional[str] = None  # Summary from stop tool
     stop_status: Optional[str] = None  # "complete" or "blocked"
@@ -634,14 +636,18 @@ class Orchestrator(ChatAgent):
                 "require_gap_report": bool(
                     getattr(self.config, "checklist_require_gap_report", True),
                 ),
+                # Require explicit change substantiveness metadata so rounds can
+                # naturally terminate when only incremental work remains.
+                "require_substantiveness": True,
+                # Needed by checklist server to interpret T-item semantics.
+                "changedoc_mode": self._is_changedoc_enabled(),
                 "workspace_path": getattr(
                     getattr(backend, "filesystem_manager", None),
                     "cwd",
                     None,
                 ),
-                "report_cutoff": 70,
                 # Pre-computed so stdio server doesn't need massgen imports
-                "required": _checklist_required_true(effective_t),
+                "required": _checklist_required_true(effective_t, num_items=len(items)),
                 "cutoff": _checklist_confidence_cutoff(effective_t),
             }
             backend._checklist_state = checklist_state
@@ -656,12 +662,15 @@ class Orchestrator(ChatAgent):
                     items,
                 )
             else:
-                # Stdio path: backend writes specs file at execution time.
-                # Just storing _checklist_state and _checklist_items is enough;
-                # the backend's config-writing step picks them up.
-                logger.info(
-                    f"[Orchestrator] Checklist tool for agent {agent_id}: " f"stdio mode (specs written at execution time)",
-                )
+                # Stdio path for backends with standard MCP infrastructure.
+                # Write specs and register stdio MCP so the agent gets submit_checklist.
+                if hasattr(backend, "mcp_servers"):
+                    self._init_checklist_tool_stdio(agent_id, backend, checklist_state, items)
+                else:
+                    # Codex-like backends handle their own config writing.
+                    logger.info(
+                        f"[Orchestrator] Checklist tool for agent {agent_id}: " f"stdio mode (specs written at execution time)",
+                    )
 
     def _init_checklist_tool_sdk(
         self,
@@ -700,7 +709,7 @@ class Orchestrator(ChatAgent):
                     "type": "object",
                     "description": (
                         "Your confidence scores with reasoning for each checklist item. "
-                        "Keys are item IDs (T1-T5), values are objects with 'score' (0-100) "
+                        "Keys are item IDs (T1-T4), values are objects with 'score' (0-100) "
                         "and 'reasoning' (justification for that score)."
                     ),
                     "properties": {f"T{i+1}": score_entry_schema for i in range(len(checklist_items))},
@@ -714,13 +723,52 @@ class Orchestrator(ChatAgent):
                     "type": "string",
                     "description": ("Path to the markdown gap report in the workspace. " "Required when checklist report gating is enabled."),
                 },
+                "substantiveness": {
+                    "type": "object",
+                    "description": ("Structured summary of planned changes. List specific items " "for each category so the system can verify what you commit to."),
+                    "properties": {
+                        "transformative": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of transformative changes planned (fundamentally different approach/architecture).",
+                        },
+                        "structural": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of structural changes planned (meaningful redesign, new capability).",
+                        },
+                        "incremental": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "List of incremental-only changes planned (polish, formatting).",
+                        },
+                        "decision_space_exhausted": {
+                            "type": "boolean",
+                            "description": ("True only when no meaningful structural/transformative " "improvements remain."),
+                        },
+                        "notes": {
+                            "type": "string",
+                            "description": "Short justification for the classifications.",
+                        },
+                    },
+                    "required": [
+                        "transformative",
+                        "structural",
+                        "incremental",
+                        "decision_space_exhausted",
+                    ],
+                },
             },
-            "required": ["scores", "improvements"],
+            "required": ["scores", "improvements", "substantiveness"],
         }
 
         # Create tool function with closure over mutable state
         state = checklist_state
         items = checklist_items
+
+        # Capture orchestrator ref and agent_id for convergence tracking
+        _orchestrator = self
+        _agent_id = agent_id
 
         @tool(
             name="submit_checklist",
@@ -729,6 +777,9 @@ class Orchestrator(ChatAgent):
                 "an object with 'score' (0-100) and 'reasoning' (why you gave that "
                 "score). The 'improvements' field should describe features or content "
                 "that an ideal answer would have but no existing answer has attempted. "
+                "The 'substantiveness' field must classify planned changes as "
+                "transformative/structural/incremental and indicate whether decision "
+                "space is exhausted. "
                 "Use 'report_path' to pass a markdown gap report when required."
             ),
             input_schema=input_schema,
@@ -743,7 +794,20 @@ class Orchestrator(ChatAgent):
                 report_path=args.get("report_path", ""),
                 items=items,
                 state=_state,
+                substantiveness=args.get("substantiveness"),
             )
+
+            # Store checklist result for convergence detection
+            agent_state = _orchestrator.agent_states.get(_agent_id)
+            if agent_state is not None:
+                agent_state.checklist_history.append(
+                    {
+                        "verdict": result.get("verdict"),
+                        "true_count": result.get("true_count"),
+                        "substantiveness": result.get("substantiveness", {}),
+                        "convergence_offramp": result.get("convergence_offramp_triggered", False),
+                    },
+                )
 
             return {
                 "content": [
@@ -785,6 +849,53 @@ class Orchestrator(ChatAgent):
             f"[Orchestrator] Registered submit_checklist SDK MCP tool for agent {agent_id}",
         )
 
+    def _init_checklist_tool_stdio(self, agent_id, backend, checklist_state, items):
+        """Write checklist specs and add stdio MCP for standard MCP backends."""
+        import tempfile
+
+        from .mcp_tools.checklist_tools_server import (
+            build_server_config as build_checklist_config,
+        )
+        from .mcp_tools.checklist_tools_server import write_checklist_specs
+
+        # Write specs to a temp directory (persists for session lifetime)
+        specs_dir = Path(tempfile.mkdtemp(prefix=f"massgen_checklist_{agent_id}_"))
+        specs_path = specs_dir / "checklist_specs.json"
+        write_checklist_specs(items=items, state=checklist_state, output_path=specs_path)
+
+        # Store path so we can re-write on state refresh
+        backend._checklist_specs_path = specs_path
+
+        # Add stdio MCP server config (replacing any existing checklist entry)
+        checklist_mcp = build_checklist_config(specs_path)
+        backend.mcp_servers = [s for s in backend.mcp_servers if not (isinstance(s, dict) and s.get("name") == "massgen_checklist")]
+        backend.mcp_servers.append(checklist_mcp)
+
+        logger.info(
+            f"[Orchestrator] Registered submit_checklist stdio MCP for agent {agent_id} " f"(specs: {specs_path})",
+        )
+
+    def _detect_convergence(self, agent_id: str) -> tuple:
+        """Detect whether an agent is converging (incremental-only iterations).
+
+        Returns:
+            Tuple of (is_converging: bool, consecutive_count: int).
+            is_converging is True when 2+ consecutive checklist results show
+            incremental_only or decision_space_exhausted.
+        """
+        state = self.agent_states.get(agent_id)
+        if state is None:
+            return False, 0
+        history = state.checklist_history
+        consecutive = 0
+        for entry in reversed(history):
+            sub = entry.get("substantiveness", {})
+            if sub.get("incremental_only") or sub.get("decision_space_exhausted"):
+                consecutive += 1
+            else:
+                break
+        return consecutive >= 2, consecutive
+
     def _refresh_checklist_state_for_agent(self, agent_id: str) -> None:
         """Refresh the checklist tool's mutable state dict for an agent.
 
@@ -819,19 +930,33 @@ class Orchestrator(ChatAgent):
             {
                 "remaining": _cl_remaining,
                 "has_existing_answers": _has_answers,
-                "required": _checklist_required_true(effective_t),
+                "required": _checklist_required_true(
+                    effective_t,
+                    num_items=len(getattr(agent.backend, "_checklist_items", [])) or 4,
+                ),
                 "cutoff": _checklist_confidence_cutoff(effective_t),
                 "require_gap_report": bool(
                     getattr(self.config, "checklist_require_gap_report", True),
                 ),
+                "require_substantiveness": True,
+                "changedoc_mode": self._is_changedoc_enabled(),
                 "workspace_path": getattr(
                     getattr(agent.backend, "filesystem_manager", None),
                     "cwd",
                     None,
                 ),
-                "report_cutoff": 70,
             },
         )
+        # Re-write specs file for stdio backends so the MCP server sees updated state
+        if hasattr(agent.backend, "_checklist_specs_path"):
+            from .mcp_tools.checklist_tools_server import write_checklist_specs
+
+            write_checklist_specs(
+                items=agent.backend._checklist_items,
+                state=agent.backend._checklist_state,
+                output_path=agent.backend._checklist_specs_path,
+            )
+
         logger.debug(
             "[Orchestrator] Refreshed checklist state for %s: remaining=%d, has_answers=%s",
             agent_id,
@@ -3968,6 +4093,9 @@ Your answer:"""
                                     if changedoc_content:
                                         answers_list = self.coordination_tracker.answers_by_agent.get(agent_id, [])
                                         if answers_list:
+                                            label = answers_list[-1].label
+                                            # Replace [SELF] placeholder with real answer label
+                                            changedoc_content = changedoc_content.replace("[SELF]", label)
                                             answers_list[-1].changedoc = changedoc_content
                                             logger.info(
                                                 "[Orchestrator] Attached changedoc (%d chars) to %s",
@@ -4556,6 +4684,11 @@ Your answer:"""
                         if ws_path:
                             changedoc_content = read_changedoc_from_workspace(Path(ws_path))
                             if changedoc_content:
+                                # Replace [SELF] with the label this answer will get
+                                agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                                answer_num = len(self.coordination_tracker.answers_by_agent.get(agent_id, [])) + 1
+                                label = f"agent{agent_num}.{answer_num}"
+                                changedoc_content = changedoc_content.replace("[SELF]", label)
                                 changedoc_file = timestamped_dir / "changedoc.md"
                                 changedoc_file.write_text(changedoc_content)
                                 logger.info(
@@ -4803,6 +4936,17 @@ Your answer:"""
         """Check if agent should restart and yield restart message if needed. This will always be called when exiting out of _stream_agent_execution()."""
         restart_pending = self.agent_states[agent_id].restart_pending
         return restart_pending
+
+    def _should_defer_restart_for_first_answer(self, agent_id: str) -> bool:
+        """Check if restart/injection should be deferred for first-answer protection.
+
+        Each agent is guaranteed to complete at least one full round and produce
+        an answer before being restarted or injected with other agents' work.
+        """
+        state = self.agent_states.get(agent_id)
+        if state is None:
+            return False
+        return state.answer is None
 
     async def _clear_framework_mcp_state(self, agent_id: str) -> None:
         """
@@ -5208,6 +5352,12 @@ Your answer:"""
             if not self._check_restart_pending(agent_id):
                 return None
 
+            # First-answer protection: don't inject into an agent that hasn't
+            # produced its first answer yet.
+            if self._should_defer_restart_for_first_answer(agent_id):
+                self.agent_states[agent_id].restart_pending = False
+                return None
+
             # In vote-only mode, skip injection and force a full restart instead.
             # Mid-stream injection can't update tool schemas, so agents in vote-only mode
             # wouldn't be able to vote for newly discovered answers (the vote enum is fixed
@@ -5405,6 +5555,12 @@ Your answer:"""
         injection behavior, but delivers update content as an enforcement message so
         `reset_chat=False` preserves in-flight chat/session buffers.
         """
+        # First-answer protection: don't inject into an agent that hasn't
+        # produced its first answer yet.
+        if self._should_defer_restart_for_first_answer(agent_id):
+            self.agent_states[agent_id].restart_pending = False
+            return None
+
         # Gather latest submitted answers and select unseen updates for this agent.
         current_answers = self._get_current_answers_snapshot()
         selected_answers, had_unseen_updates = self._select_midstream_answer_updates(
@@ -5635,6 +5791,12 @@ Your answer:"""
                 return None
 
             if not self._check_restart_pending(agent_id):
+                return None
+
+            # First-answer protection: don't inject into an agent that hasn't
+            # produced its first answer yet.
+            if self._should_defer_restart_for_first_answer(agent_id):
+                self.agent_states[agent_id].restart_pending = False
                 return None
 
             # In vote-only mode, skip injection and force a full restart instead.
@@ -7250,6 +7412,30 @@ Your answer:"""
                 if branch_diff_summaries:
                     logger.info(f"[Orchestrator] Generated diff summaries for {agent_id}: {list(branch_diff_summaries.keys())}")
 
+            # Compute novelty pressure data for system prompt
+            novelty_injection = getattr(self.config.coordination_config, "novelty_injection", "none")
+            novelty_data = None
+            if novelty_injection != "none":
+                is_converging, consecutive = self._detect_convergence(agent_id)
+                restart_count = self.agent_states[agent_id].restart_count
+                logger.info(
+                    f"[Orchestrator] Novelty check for {agent_id}: "
+                    f"mode={novelty_injection}, restart_count={restart_count}, "
+                    f"is_converging={is_converging}, consecutive_incremental={consecutive}",
+                )
+                if novelty_injection == "aggressive" and restart_count > 0:
+                    novelty_data = {"consecutive": consecutive, "restart_count": restart_count}
+                elif is_converging:
+                    novelty_data = {"consecutive": consecutive, "restart_count": restart_count}
+                if novelty_data:
+                    logger.info(f"[Orchestrator] Novelty pressure APPLIED for {agent_id}: {novelty_data}")
+                else:
+                    logger.info(
+                        f"[Orchestrator] Novelty pressure NOT applied for {agent_id}: "
+                        f"aggressive requires restart_count>0 (got {restart_count}), "
+                        f"fallback requires is_converging=True (got {is_converging})",
+                    )
+
             system_message = self._get_system_message_builder().build_coordination_message(
                 agent=agent,
                 agent_id=agent_id,
@@ -7273,6 +7459,11 @@ Your answer:"""
                     "checklist_require_gap_report",
                     True,
                 ),
+                gap_report_mode=getattr(
+                    self.config,
+                    "gap_report_mode",
+                    "changedoc",
+                ),
                 answers_used=self._get_agent_answer_count_for_limit(agent_id),
                 answer_cap=self.config.max_new_answers_per_agent,
                 coordination_mode=getattr(self.config, "coordination_mode", "voting"),
@@ -7281,6 +7472,7 @@ Your answer:"""
                 branch_name=agent_branch,
                 other_branches=other_agent_branches if other_agent_branches else None,
                 branch_diff_summaries=branch_diff_summaries,
+                novelty_pressure_data=novelty_data,
             )
 
             # Update checklist tool state if registered (mutable dict — tool closure reads this)
@@ -7333,6 +7525,7 @@ Your answer:"""
             sorted_answer_ids = sorted(normalized_answers.keys()) if normalized_answers else None
             # Get global agent mapping for consistent anonymous IDs across all components
             agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
+            answer_label_mapping = self.coordination_tracker.get_answer_label_mapping()
             _is_decomp = getattr(self.config, "coordination_mode", "voting") == "decomposition"
             # Gather changedocs from coordination tracker if enabled
             _agent_changedocs = self._gather_agent_changedocs()
@@ -7353,6 +7546,7 @@ Your answer:"""
                     agent_mapping=agent_mapping,
                     decomposition_mode=_is_decomp,
                     agent_changedocs=_agent_changedocs,
+                    answer_label_mapping=answer_label_mapping,
                 )
             else:
                 # Fallback to standard conversation building
@@ -7365,6 +7559,7 @@ Your answer:"""
                     agent_mapping=agent_mapping,
                     decomposition_mode=_is_decomp,
                     agent_changedocs=_agent_changedocs,
+                    answer_label_mapping=answer_label_mapping,
                 )
 
             # Inject restart context if this is a restart attempt (like multi-turn context)
@@ -7524,78 +7719,86 @@ Your answer:"""
                 )
 
                 if self._check_restart_pending(agent_id):
-                    logger.info(
-                        f"[Orchestrator] Agent {agent_id} has restart_pending flag",
-                    )
-
-                    # Clear framework MCP state before restart (e.g., task plans)
-                    await self._clear_framework_mcp_state(agent_id)
-
-                    # In vote-only mode, always restart to get updated tool schemas.
-                    # Mid-stream injection can't update the vote enum, so we need a full restart.
-                    if self._is_vote_only_mode(agent_id):
+                    # First-answer protection: let the agent finish its first round
+                    # before acting on restart signals from other agents.
+                    if self._should_defer_restart_for_first_answer(agent_id):
                         logger.info(
-                            f"[Orchestrator] Agent {agent_id} in vote-only mode - forcing restart for updated vote options",
+                            f"[Orchestrator] Deferring restart for {agent_id} - first answer not yet produced",
                         )
                         self.agent_states[agent_id].restart_pending = False
-                        yield ("done", None)
-                        return
+                    else:
+                        logger.info(
+                            f"[Orchestrator] Agent {agent_id} has restart_pending flag",
+                        )
 
-                    has_hook_delivery = self._backend_supports_midstream_hook_injection(agent)
+                        # Clear framework MCP state before restart (e.g., task plans)
+                        await self._clear_framework_mcp_state(agent_id)
 
-                    if not has_hook_delivery:
-                        # No hook callback path (e.g., Codex): if a stream is already in progress
-                        # for this execution, convert the update into an enforcement message so
-                        # reset_chat=False preserves buffer/session state.
-                        if not is_first_real_attempt:
-                            fallback_injection = await self._prepare_no_hook_midstream_enforcement(
-                                agent_id,
-                                answers,
+                        # In vote-only mode, always restart to get updated tool schemas.
+                        # Mid-stream injection can't update the vote enum, so we need a full restart.
+                        if self._is_vote_only_mode(agent_id):
+                            logger.info(
+                                f"[Orchestrator] Agent {agent_id} in vote-only mode - forcing restart for updated vote options",
                             )
-                            if fallback_injection:
-                                enforcement_msg = fallback_injection
-                                _mid_stream_injection = True
-                            elif self._check_restart_pending(agent_id):
-                                # Could not deliver mid-stream (e.g., fairness cap reached) - force
-                                # a clean restart so the next round can continue making progress.
-                                logger.info(
-                                    "[Orchestrator] Forcing restart for %s (no-hook backend, pending unseen updates)",
+                            self.agent_states[agent_id].restart_pending = False
+                            yield ("done", None)
+                            return
+
+                        has_hook_delivery = self._backend_supports_midstream_hook_injection(agent)
+
+                        if not has_hook_delivery:
+                            # No hook callback path (e.g., Codex): if a stream is already in progress
+                            # for this execution, convert the update into an enforcement message so
+                            # reset_chat=False preserves buffer/session state.
+                            if not is_first_real_attempt:
+                                fallback_injection = await self._prepare_no_hook_midstream_enforcement(
                                     agent_id,
+                                    answers,
+                                )
+                                if fallback_injection:
+                                    enforcement_msg = fallback_injection
+                                    _mid_stream_injection = True
+                                elif self._check_restart_pending(agent_id):
+                                    # Could not deliver mid-stream (e.g., fairness cap reached) - force
+                                    # a clean restart so the next round can continue making progress.
+                                    logger.info(
+                                        "[Orchestrator] Forcing restart for %s (no-hook backend, pending unseen updates)",
+                                        agent_id,
+                                    )
+                                    self.agent_states[agent_id].restart_pending = False
+                                    self.agent_states[agent_id].injection_count += 1
+                                    yield ("done", None)
+                                    return
+                            else:
+                                # No in-flight buffer yet; normal restart is equivalent and simpler.
+                                logger.info(
+                                    f"[Orchestrator] Agent {agent_id} backend has no hooks - restarting to apply new context",
                                 )
                                 self.agent_states[agent_id].restart_pending = False
                                 self.agent_states[agent_id].injection_count += 1
                                 yield ("done", None)
                                 return
                         else:
-                            # No in-flight buffer yet; normal restart is equivalent and simpler.
-                            logger.info(
-                                f"[Orchestrator] Agent {agent_id} backend has no hooks - restarting to apply new context",
-                            )
-                            self.agent_states[agent_id].restart_pending = False
-                            self.agent_states[agent_id].injection_count += 1
-                            yield ("done", None)
-                            return
-                    else:
-                        # Check if this is the first time agent sees a new answer
-                        if self.agent_states[agent_id].injection_count == 0:
-                            # First time seeing a new answer - restart normally
-                            # The mid-stream callback will handle subsequent answers via tool results
-                            logger.info(
-                                f"[Orchestrator] Agent {agent_id} restarting normally (first new answer)",
-                            )
-                            self.agent_states[agent_id].restart_pending = False
-                            self.agent_states[agent_id].injection_count += 1
-                            # Signal completion so coordination loop restarts agent with updated context
-                            # Note: agent_restart notification is yielded at the top of _stream_agent_execution
-                            yield ("done", None)
-                            return
-                        else:
-                            # injection_count >= 1, mid-stream callback will handle via tool results
-                            # Do NOT clear restart_pending here - the callback checks this flag
-                            # and will clear it after injecting content (see get_injection_content)
-                            # Only suppress the round banner once streaming has already started.
-                            if not is_first_real_attempt:
-                                _mid_stream_injection = True
+                            # Check if this is the first time agent sees a new answer
+                            if self.agent_states[agent_id].injection_count == 0:
+                                # First time seeing a new answer - restart normally
+                                # The mid-stream callback will handle subsequent answers via tool results
+                                logger.info(
+                                    f"[Orchestrator] Agent {agent_id} restarting normally (first new answer)",
+                                )
+                                self.agent_states[agent_id].restart_pending = False
+                                self.agent_states[agent_id].injection_count += 1
+                                # Signal completion so coordination loop restarts agent with updated context
+                                # Note: agent_restart notification is yielded at the top of _stream_agent_execution
+                                yield ("done", None)
+                                return
+                            else:
+                                # injection_count >= 1, mid-stream callback will handle via tool results
+                                # Do NOT clear restart_pending here - the callback checks this flag
+                                # and will clear it after injecting content (see get_injection_content)
+                                # Only suppress the round banner once streaming has already started.
+                                if not is_first_real_attempt:
+                                    _mid_stream_injection = True
 
                 # Track restarts for TUI round display - only when agent is about to do real work
                 # (not if it's exiting immediately due to restart_pending)

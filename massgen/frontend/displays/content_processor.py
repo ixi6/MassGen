@@ -29,6 +29,7 @@ from .content_handlers import (
     get_tool_category,
 )
 from .content_normalizer import ContentNormalizer, NormalizedContent
+from .shared.tui_debug import tui_log
 from .task_plan_support import is_planning_tool
 
 # Output types for ContentProcessor
@@ -243,6 +244,8 @@ class ContentProcessor:
         if ContentNormalizer.is_filtered_tool(tool_name) and not is_planning_tool(tool_name):
             return None
 
+        tui_log(f"[TOOL_EVENT] tool_name={tool_name} server_name={server_name} tool_type={'mcp' if server_name else 'tool'}")
+
         # Get category info for proper styling
         category_info = get_tool_category(tool_name)
         display_name = format_tool_display_name(tool_name)
@@ -269,6 +272,7 @@ class ContentProcessor:
             start_time=datetime.fromisoformat(event.timestamp) if event.timestamp else datetime.now(),
             args_summary=args_summary,
             args_full=args_str,
+            server_name=server_name,
         )
 
         # Store tool state for completion matching
@@ -316,18 +320,20 @@ class ContentProcessor:
         if not original_data:
             # No matching start - create minimal tool data
             tool_name = event.data.get("tool_name", "unknown")
+            server_name = event.data.get("server_name")
             category_info = get_tool_category(tool_name)
             display_name = format_tool_display_name(tool_name)
             original_data = ToolDisplayData(
                 tool_id=tool_id,
                 tool_name=tool_name,
                 display_name=display_name,
-                tool_type="tool",
+                tool_type="mcp" if server_name else "tool",
                 category=category_info["category"],
                 icon=category_info["icon"],
                 color=category_info["color"],
                 status="running",
                 start_time=datetime.now(),
+                server_name=server_name,
             )
 
         # Create result summary
@@ -351,6 +357,7 @@ class ContentProcessor:
             result_full=result_text,
             error=result_text if is_error else None,
             elapsed_seconds=elapsed,
+            server_name=original_data.server_name,
         )
 
         # Determine batch action for completion

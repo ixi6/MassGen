@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional
 from .content_normalizer import ContentNormalizer, NormalizedContent
 from .shared import get_tool_category as shared_get_tool_category
 from .shared.tool_registry import format_tool_display_name  # noqa: F401 - re-export
+from .shared.tui_debug import tui_log
 
 
 def get_mcp_server_name(tool_name: str) -> Optional[str]:
@@ -74,6 +75,7 @@ class ToolDisplayData:
     error: Optional[str] = None
     elapsed_seconds: Optional[float] = None
     async_id: Optional[str] = None  # ID for background operations (e.g., shell_id)
+    server_name: Optional[str] = None  # Server name from event (e.g., "codex", "filesystem")
 
 
 # Tool category utilities imported from shared module
@@ -324,15 +326,33 @@ class ToolBatchTracker:
             self._content_since_last_tool = False
 
         server_name = get_mcp_server_name(tool_data.tool_name)
+        # Fallback to event-provided server_name for non-mcp__ prefixed tools
+        if server_name is None and tool_data.server_name:
+            server_name = tool_data.server_name
 
-        # Non-MCP tools get standalone treatment
+        # Tools without any server context get standalone treatment
         if server_name is None:
             self._finalize_pending()
-            return ("standalone", None, None, None)
+            result = ("standalone", None, None, None)
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server=None "
+                f"event_server={tool_data.server_name} "
+                f"pending={self._pending_tool_id} current_server={self._current_server} "
+                f"content_since_last={self._content_since_last_tool} "
+                f"-> action=standalone",
+            )
+            return result
 
         # Check if this is an update (not "running")
         if tool_data.status != "running":
             if tool_data.tool_id in self._batched_tool_ids:
+                action = "update_batch"
+            else:
+                action = "update_standalone"
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"status={tool_data.status} -> action={action}",
+            )
+            if action == "update_batch":
                 return ("update_batch", server_name, self._current_batch_id, None)
             return ("update_standalone", server_name, None, None)
 
@@ -341,6 +361,9 @@ class ToolBatchTracker:
         # Already have an active batch for this server?
         if self._current_batch_id and self._current_server == server_name:
             self._batched_tool_ids.add(tool_data.tool_id)
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"batch_id={self._current_batch_id} -> action=add_to_batch",
+            )
             return ("add_to_batch", server_name, self._current_batch_id, None)
 
         # Have a pending tool from same server? → Convert to batch
@@ -351,12 +374,18 @@ class ToolBatchTracker:
             self._batched_tool_ids.add(pending_id)
             self._batched_tool_ids.add(tool_data.tool_id)
             self._pending_tool_id = None
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"batch_id={self._current_batch_id} pending_id={pending_id} " f"-> action=convert_to_batch",
+            )
             return ("convert_to_batch", server_name, self._current_batch_id, pending_id)
 
         # Different server or first tool → finalize and track as pending
         self._finalize_pending()
         self._current_server = server_name
         self._pending_tool_id = tool_data.tool_id
+        tui_log(
+            f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"-> action=pending (first tool from this server)",
+        )
         return ("pending", server_name, None, None)
 
     def _finalize_pending(self) -> None:

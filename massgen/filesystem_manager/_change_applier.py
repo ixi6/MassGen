@@ -25,12 +25,16 @@ class ReviewResult:
         approved_files: List of specific files to apply (None = all files)
         comments: Optional user comments about the review
         metadata: Optional additional metadata from the review
+        action: The user's chosen action (approve, reject, cancel, rework, quick_fix)
+        feedback: Optional feedback text for rework/quick_fix actions
     """
 
     approved: bool
     approved_files: Optional[List[str]] = None
     comments: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
+    action: str = "approve"
+    feedback: Optional[str] = None
 
 
 class ChangeApplier:

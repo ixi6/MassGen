@@ -1360,10 +1360,8 @@ class SubagentView(Container):
         except Exception as e:
             tui_log(f"[SubagentScreen] {e}")
 
-        # Lock timeline to show only the final answer card.
+        # Mark the card as complete (shows footer with buttons)
         try:
-            timeline.lock_to_final_answer(card_id or "final_presentation_card")
-            card.set_locked_mode(True)
             card.complete()
         except Exception as e:
             tui_log(f"[SubagentScreen] {e}")

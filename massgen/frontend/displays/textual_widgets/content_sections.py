@@ -22,6 +22,7 @@ from typing import Any, Dict, Optional
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import ScrollableContainer, Vertical
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widgets import RichLog, Static
 
@@ -1060,11 +1061,12 @@ class TimelineSection(ScrollableContainer):
         except Exception as e:
             tui_log(f"[ContentSections] {e}")
 
+        self._item_count += 1
         card = ToolCallCard(
             tool_name=tool_data.tool_name,
             tool_type=tool_data.tool_type,
             call_id=tool_data.tool_id,
-            id=f"{self._id_prefix}tl_card_{_sanitize_widget_id(tool_data.tool_id)}",
+            id=f"{self._id_prefix}tl_card_{self._item_count}",
         )
 
         if tool_data.args_summary:
@@ -1073,9 +1075,12 @@ class TimelineSection(ScrollableContainer):
         # Tag with round class for navigation (scroll-to behavior)
         card.add_class(f"round-{round_number}")
 
+        tui_log(
+            f"[TOOL_CARD] tool={tool_data.tool_name} collapsed={card._collapsed} " f"is_terminal={card._is_terminal} is_subagent={card._is_subagent} " f"classes={' '.join(card.classes)}",
+        )
+
         self._tools[tool_data.tool_id] = card
         self._tool_rounds[tool_data.tool_id] = round_number
-        self._item_count += 1
 
         try:
             insert_before = self._find_insert_before_for_round(round_number)
@@ -1085,6 +1090,12 @@ class TimelineSection(ScrollableContainer):
             def trim_and_scroll():
                 self._trim_old_items()
                 self._auto_scroll()
+                # Debug: dump all children and their sizes after mount
+                if tui_debug_enabled():
+                    for i, child in enumerate(self.children):
+                        tui_log(
+                            f"[TIMELINE_DUMP] [{i}] {type(child).__name__} " f"id={child.id} classes={' '.join(child.classes)} " f"size={child.size} display={child.display}",
+                        )
 
             self.call_after_refresh(trim_and_scroll)
         except Exception as e:
@@ -2597,6 +2608,13 @@ class FinalPresentationCard(Vertical):
     ```
     """
 
+    class ViewFinalAnswer(Message):
+        """Posted when user clicks 'View Full Answer' button."""
+
+        def __init__(self, card: "FinalPresentationCard") -> None:
+            super().__init__()
+            self.card = card
+
     # CSS moved to base.tcss for theme support
     DEFAULT_CSS = ""
 
@@ -2605,6 +2623,8 @@ class FinalPresentationCard(Vertical):
     # Cap context-path rows in the inline section to keep final-card mount fast.
     _MAX_CONTEXT_PATH_ROWS = 30
     _DEFAULT_MARKDOWN_RENDER_MAX_CHARS = 1200
+    # Max lines to show in the compact timeline preview (full content in modal)
+    _PREVIEW_MAX_LINES = 10
     _MAX_INFERRED_ANSWER_PATHS = 10
     _ANSWER_PATH_PATTERN = re.compile(r"(?:\./)?(?:[A-Za-z0-9._-]+/)+[A-Za-z0-9._-]+")
 
@@ -2640,6 +2660,7 @@ class FinalPresentationCard(Vertical):
         self._cached_full_text: Optional[str] = None  # Cache to avoid repeated joins
         self._answer_content: Optional[str] = None
         self._pending_finalize = False
+        self._review_status: Optional[str] = None  # "approved" | "rejected" | None
         self._workspace_open_cooldown_s = 0.75
         self._last_workspace_open_at = 0.0
         self._markdown_render_max_chars = self._DEFAULT_MARKDOWN_RENDER_MAX_CHARS
@@ -2671,7 +2692,6 @@ class FinalPresentationCard(Vertical):
             yield Label(self._build_title(), id="final_card_title")
             yield Label(self._build_winner_summary(), id="final_card_winner")
             yield Label(self._build_vote_summary(), id="final_card_votes")
-            yield Label("", id="final_card_header_compact", classes="hidden")
 
         # Body: horizontal container for content + file explorer
         from massgen.frontend.displays.textual_widgets.file_explorer_panel import (
@@ -2719,17 +2739,13 @@ class FinalPresentationCard(Vertical):
         # Footer with link-style actions and continue message (hidden until complete)
         with Vertical(id="final_card_footer", classes="hidden"):
             with Horizontal(id="final_card_buttons"):
-                yield Static("📋 Copy", id="final_card_copy_btn", classes="footer-link")
-                yield Static("📂 Workspace", id="final_card_workspace_btn", classes="footer-link")
+                # View Full Answer button - opens FinalAnswerModal
+                yield Static("▶ View Full Answer", id="final_card_view_btn", classes="footer-link")
+                # Review status indicator - shown after approve/reject decision
+                yield Static("", id="final_card_review_status", classes="review-status-indicator hidden")
                 # Verified indicator - faded, shown when post-eval verified
                 verified = Static("✓ Verified", id="final_card_verified", classes="verified-indicator")
                 yield verified
-                # Spacer to push unlock button to the right
-                yield Static("", id="final_card_button_spacer")
-                # Unlock button - hidden initially, shown when locked
-                link = Static("↩ Previous Work", id="final_card_unlock_btn", classes="footer-link")
-                link.display = False
-                yield link
             yield Label("💬 Type below to continue the conversation", id="continue_message")
 
     def _build_title(self) -> str:
@@ -2769,45 +2785,6 @@ class FinalPresentationCard(Vertical):
 
         counts_str = " • ".join(f"{aid} ({count})" for aid, count in vote_counts.items())
         return f"Votes: {counts_str}"
-
-    def _build_locked_header_summary(self) -> str:
-        """Build a compact single-line header summary for locked mode."""
-        winner = self._build_winner_summary().replace("🏅 ", "", 1)
-        votes = self._build_vote_summary()
-
-        parts = ["✅ FINAL ANSWER"]
-        if winner:
-            parts.append(winner)
-        if votes:
-            parts.append(votes)
-        return " · ".join(parts)
-
-    def _set_locked_header_mode(self, locked: bool) -> None:
-        """Toggle compact single-line header mode for answer lock."""
-        from textual.widgets import Label
-
-        try:
-            title = self.query_one("#final_card_title", Label)
-            winner = self.query_one("#final_card_winner", Label)
-            votes = self.query_one("#final_card_votes", Label)
-            compact = self.query_one("#final_card_header_compact", Label)
-        except Exception:
-            return
-
-        if locked:
-            compact.update(self._build_locked_header_summary())
-            compact.remove_class("hidden")
-            compact.display = True
-            title.display = False
-            winner.display = False
-            votes.display = False
-            return
-
-        compact.add_class("hidden")
-        compact.display = False
-        title.display = True
-        winner.display = True
-        votes.display = True
 
     @classmethod
     def _limit_context_paths(cls, context_paths: Optional[Dict]) -> tuple[list[str], list[str], int]:
@@ -2962,18 +2939,6 @@ class FinalPresentationCard(Vertical):
             tui_log(f"[ContentSections] {e}")
         return False
 
-    def _sync_locked_render_mode(self) -> None:
-        """Apply render mode matching current lock state after completion."""
-        if self._is_streaming:
-            return
-        full_text = self.get_content()
-        if not full_text:
-            return
-        if self.has_class("locked-mode") or len(full_text) > self._markdown_render_max_chars:
-            self._render_static_content(full_text)
-            return
-        self._render_markdown_content(full_text)
-
     def _finalize_markdown(self) -> bool:
         """Render the final Markdown once streaming completes."""
         started = time.perf_counter()
@@ -2984,15 +2949,13 @@ class FinalPresentationCard(Vertical):
         self._answer_content = full_text
 
         # Large Markdown trees create expensive hover/style recomputation in Textual.
-        # Keep locked-mode and large final answers as a single Static widget.
-        # This avoids expensive hover/style recomputation on large Markdown trees.
-        force_static = self.has_class("locked-mode")
-        if force_static or len(full_text) > self._markdown_render_max_chars:
+        # Keep large final answers as a single Static widget to avoid lag.
+        if len(full_text) > self._markdown_render_max_chars:
             updated = self._render_static_content(full_text)
             self._timing(
                 "_finalize_markdown",
                 (time.perf_counter() - started) * 1000.0,
-                f"chars={len(full_text)} mode={'locked-static' if force_static else 'static'}",
+                f"chars={len(full_text)} mode=static",
             )
             return updated
 
@@ -3031,12 +2994,9 @@ class FinalPresentationCard(Vertical):
         if self.has_class("completion-only"):
             self.complete()
 
-        # Show file explorer if set_locked_mode was called before mount
-        if getattr(self, "_pending_file_explorer", False):
-            self._pending_file_explorer = False
-            # Keep lock transition responsive: avoid synchronous workspace scans on mount.
-            self._show_file_explorer(True, allow_workspace_scan=False, allow_auto_preview=False)
-        self._set_locked_header_mode(self.has_class("locked-mode"))
+        # If a review decision was set before mount (for example, from an async
+        # modal callback), apply it now that widgets are available.
+        self._apply_review_status()
 
     def _on_compose(self) -> None:
         """Called after compose() completes - use this to flush content."""
@@ -3046,6 +3006,28 @@ class FinalPresentationCard(Vertical):
         if self._pending_finalize:
             if self._finalize_markdown():
                 self._pending_finalize = False
+
+    def _apply_review_status(self) -> None:
+        """Apply a previously stored review status to the indicator.
+
+        No-op when no status is set yet.
+        """
+        if not self._review_status:
+            return
+        try:
+            from textual.widgets import Static
+
+            indicator = self.query_one("#final_card_review_status", Static)
+            if self._review_status == "approved":
+                indicator.update("✓ Changes applied")
+                indicator.remove_class("hidden", "status-rejected")
+                indicator.add_class("status-approved")
+            elif self._review_status == "rejected":
+                indicator.update("✗ Changes rejected")
+                indicator.remove_class("hidden", "status-approved")
+                indicator.add_class("status-rejected")
+        except Exception as e:
+            logger.warning(f"[FinalCard] _apply_review_status({self._review_status!r}) failed: {e}")
 
     def complete(self) -> None:
         """Mark the presentation as complete and show action buttons."""
@@ -3063,6 +3045,9 @@ class FinalPresentationCard(Vertical):
         if not self._finalize_markdown():
             self._pending_finalize = True
 
+        # Truncate content to compact preview (full content available via modal)
+        self._truncate_to_preview()
+
         # Update styling
         self.remove_class("streaming")
         # Only add completed class if not in completion-only mode
@@ -3076,7 +3061,6 @@ class FinalPresentationCard(Vertical):
             title.update("✅ FINAL ANSWER")
         except Exception as e:
             tui_log(f"[ContentSections] {e}")
-        self._set_locked_header_mode(self.has_class("locked-mode"))
 
         # Show footer with buttons and continue message
         try:
@@ -3085,6 +3069,43 @@ class FinalPresentationCard(Vertical):
         except Exception as e:
             tui_log(f"[ContentSections] {e}")
         self._timing("complete", (time.perf_counter() - started) * 1000.0, f"chunks={len(self._final_content)}")
+
+        # Auto-scroll so the footer (with "View Full Answer" button) is visible.
+        # Use a short timer to let the footer layout settle before measuring.
+        def _scroll_footer_visible():
+            try:
+                footer = self.query_one("#final_card_footer")
+                footer.scroll_visible(animate=True, top=False)
+            except Exception:
+                pass
+
+        self.set_timer(0.2, _scroll_footer_visible)
+
+    def _truncate_to_preview(self) -> None:
+        """Replace displayed content with a compact preview for the timeline card.
+
+        The full text is preserved in ``_answer_content`` and accessible via
+        ``get_content()`` for the FinalAnswerModal.
+        """
+        full_text = self.get_content()
+        if not full_text:
+            return
+
+        lines = full_text.split("\n")
+        if len(lines) <= self._PREVIEW_MAX_LINES:
+            return  # Already short enough
+
+        preview = "\n".join(lines[: self._PREVIEW_MAX_LINES]) + "\n..."
+        self._render_static_content(preview)
+
+    def set_review_status(self, status: str) -> None:
+        """Update the review status indicator on the card footer.
+
+        Args:
+            status: "approved" or "rejected"
+        """
+        self._review_status = status
+        self._apply_review_status()
 
     def get_content(self) -> str:
         """Get the full content for copy operation."""
@@ -3117,16 +3138,12 @@ class FinalPresentationCard(Vertical):
             return
 
         # Handle footer link clicks
-        if widget_id == "final_card_unlock_btn":
-            self._toggle_lock()
+        if widget_id == "final_card_view_btn":
+            self.post_message(self.ViewFinalAnswer(self))
             event.stop()
             return
         elif widget_id == "final_card_copy_btn":
             self._copy_to_clipboard()
-            event.stop()
-            return
-        elif widget_id == "final_card_workspace_btn":
-            self._open_workspace()
             event.stop()
             return
 
@@ -3157,79 +3174,6 @@ class FinalPresentationCard(Vertical):
                 self._post_eval_expanded = True
         except Exception as e:
             tui_log(f"[ContentSections] {e}")
-
-    def _toggle_lock(self) -> None:
-        """Toggle between locked (answer-only) and unlocked (full timeline) view."""
-        # Find parent TimelineSection
-        timeline = None
-        parent = self.parent
-        while parent:
-            if isinstance(parent, TimelineSection):
-                timeline = parent
-                break
-            parent = parent.parent
-
-        if not timeline:
-            return
-
-        try:
-            link = self.query_one("#final_card_unlock_btn", Static)
-            link.display = True  # Always keep visible once shown
-
-            if timeline.is_answer_locked:
-                # Unlock: show full timeline
-                timeline.unlock_final_answer()
-                self.remove_class("locked-mode")
-                link.update("⎯ Answer Only")
-                self._show_file_explorer(False)
-                self._set_locked_header_mode(False)
-            else:
-                # Lock: show only final answer
-                timeline.lock_to_final_answer(self.id or "final_presentation_card")
-                self.add_class("locked-mode")
-                link.update("↩ Previous Work")
-                # Avoid blocking the UI thread on large workspace scans during lock transitions.
-                self._show_file_explorer(True, allow_workspace_scan=False, allow_auto_preview=False)
-                self._set_locked_header_mode(True)
-            self._sync_locked_render_mode()
-        except Exception as e:
-            tui_log(f"[ContentSections] {e}")
-
-    def set_locked_mode(self, locked: bool) -> None:
-        """Set the locked mode state programmatically.
-
-        Called by textual_terminal_display when auto-locking after final answer.
-
-        Args:
-            locked: Whether to enable locked mode
-        """
-        started = time.perf_counter()
-        if locked:
-            self.add_class("locked-mode")
-            try:
-                link = self.query_one("#final_card_unlock_btn", Static)
-                link.display = True
-                link.update("↩ Previous Work")
-            except Exception as e:
-                tui_log(f"[ContentSections] {e}")
-            # Show file explorer directly when paths are already available, but skip
-            # expensive fallback scans to keep lock transition responsive.
-            self._show_file_explorer(True, allow_workspace_scan=False, allow_auto_preview=False)
-            # Also set flag for on_mount fallback in case we're not mounted yet
-            self._pending_file_explorer = True
-            self._set_locked_header_mode(True)
-        else:
-            self.remove_class("locked-mode")
-            try:
-                link = self.query_one("#final_card_unlock_btn", Static)
-                link.display = False
-                link.update("⎯ Answer Only")
-            except Exception as e:
-                tui_log(f"[ContentSections] {e}")
-            self._show_file_explorer(False)
-            self._set_locked_header_mode(False)
-        self._sync_locked_render_mode()
-        self._timing("set_locked_mode", (time.perf_counter() - started) * 1000.0, f"locked={locked}")
 
     def _infer_answer_paths(self, panel) -> int:
         """Populate file explorer entries from file paths mentioned in final answer text."""

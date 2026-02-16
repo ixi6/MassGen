@@ -271,159 +271,72 @@ async def test_thinking_text_batches_into_single_collapsible_card():
 
 
 @pytest.mark.asyncio
-async def test_lock_and_unlock_final_answer_toggles_visibility_classes():
+async def test_final_card_view_button_posts_message():
+    """Clicking 'View Full Answer' button should post ViewFinalAnswer message."""
     app = _TimelineApp()
     async with app.run_test(headless=True) as pilot:
         timeline = app.query_one(TimelineSection)
-
-        timeline.add_widget(Static("intermediate", id="middle_card"), round_number=1)
-        timeline.add_widget(Static("final", id="final_card"), round_number=1)
+        card = FinalPresentationCard(
+            agent_id="agent_a",
+            vote_results={"vote_counts": {"A1": 2}, "winner": "A1", "is_tie": False},
+            context_paths={},
+            id="final_presentation_card",
+        )
+        timeline.add_widget(card, round_number=1)
+        card.append_chunk("final answer content")
+        card.complete()
         await pilot.pause()
 
-        timeline.lock_to_final_answer("final_card")
-        await pilot.pause()
-        assert timeline.is_answer_locked
+        # Verify the view button exists in the footer
+        view_btn = card.query_one("#final_card_view_btn", Static)
+        assert "View Full Answer" in str(view_btn.render())
 
-        final_card = timeline.query_one("#final_card", Static)
-        middle_card = timeline.query_one("#middle_card", Static)
-        assert "answer-lock-hidden" not in final_card.classes
-        assert "answer-lock-hidden" in middle_card.classes
-        assert "final-card-locked" in final_card.classes or "final-card-compact" in final_card.classes
-
-        timeline.unlock_final_answer()
-        await pilot.pause()
-        assert not timeline.is_answer_locked
-        assert "answer-lock-hidden" not in middle_card.classes
-        assert "final-card-locked" not in final_card.classes
-        assert "final-card-compact" not in final_card.classes
+        # Verify that ViewFinalAnswer message class exists and works
+        msg = FinalPresentationCard.ViewFinalAnswer(card)
+        assert msg.card is card
 
 
 @pytest.mark.asyncio
-async def test_unlock_final_answer_uses_instant_scroll(monkeypatch):
+async def test_final_card_content_truncated_after_complete():
+    """Long content should be truncated to preview lines after complete()."""
     app = _TimelineApp()
     async with app.run_test(headless=True) as pilot:
         timeline = app.query_one(TimelineSection)
-
-        timeline.add_widget(Static("intermediate", id="middle_card"), round_number=1)
-        timeline.add_widget(Static("final", id="final_card"), round_number=1)
-        await pilot.pause()
-
-        calls: list[dict] = []
-
-        def fake_scroll_visible(self, *args, **kwargs):  # noqa: ANN001 - monkeypatch target
-            if getattr(self, "id", None) == "final_card":
-                calls.append(dict(kwargs))
-
-        monkeypatch.setattr(Static, "scroll_visible", fake_scroll_visible)
-
-        timeline.lock_to_final_answer("final_card")
-        await pilot.pause()
-        timeline.unlock_final_answer()
-        await pilot.pause()
-
-        assert calls
-        assert calls[-1].get("animate") is False
-        assert calls[-1].get("top") is True
-
-
-@pytest.mark.asyncio
-async def test_lock_and_unlock_toggle_hover_suppression_on_app():
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-
-        timeline.add_widget(Static("middle", id="middle_card"), round_number=1)
-        timeline.add_widget(Static("final", id="final_card"), round_number=1)
-        await pilot.pause()
-
-        timeline.lock_to_final_answer("final_card")
-        await pilot.pause()
-        timeline.unlock_final_answer()
-        await pilot.pause()
-
-        assert app.hover_suppression_events == [
-            (True, "answer_locked"),
-            (False, "answer_unlocked"),
-        ]
-
-
-@pytest.mark.asyncio
-async def test_clear_while_locked_releases_hover_suppression():
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-
-        timeline.add_widget(Static("middle", id="middle_card"), round_number=1)
-        timeline.add_widget(Static("final", id="final_card"), round_number=1)
-        await pilot.pause()
-
-        timeline.lock_to_final_answer("final_card")
-        await pilot.pause()
-        timeline.clear(add_round_1=False)
-        await pilot.pause()
-
-        assert not timeline.is_answer_locked
-        assert app.hover_suppression_events == [
-            (True, "answer_locked"),
-            (False, "answer_unlocked"),
-        ]
-
-
-@pytest.mark.asyncio
-async def test_final_card_lock_mode_skips_workspace_scan_for_responsiveness(monkeypatch, tmp_path):
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-
-        # Card starts without context paths/workspace; fallback scan would be expensive.
         card = FinalPresentationCard(agent_id="agent_a", context_paths={}, id="final_presentation_card")
         timeline.add_widget(card, round_number=1)
         await pilot.pause()
 
-        scan_calls = {"count": 0}
-
-        def counting_scan(self):  # noqa: ANN001 - monkeypatch target signature
-            scan_calls["count"] += 1
-
-        monkeypatch.setattr(FileExplorerPanel, "_scan_workspace", counting_scan)
-
-        def fake_resolve(panel):  # noqa: ANN001 - monkeypatch target signature
-            panel.workspace_path = str(tmp_path)
-
-        monkeypatch.setattr(card, "_resolve_workspace_path", fake_resolve)
-
-        card.set_locked_mode(True)
-        await pilot.pause()
-
-        # Locking should remain responsive: no synchronous fallback workspace scan.
-        assert scan_calls["count"] == 0
-        panel = card.query_one("#file_explorer_panel", FileExplorerPanel)
-        assert "visible" not in panel.classes
-
-
-@pytest.mark.asyncio
-async def test_final_card_locked_mode_hides_file_preview_area_with_theme_css():
-    app = _TimelineStyledApp()
-    async with app.run_test(headless=True, size=(120, 32)) as pilot:
-        timeline = app.query_one(TimelineSection)
-        card = FinalPresentationCard(
-            agent_id="agent_a",
-            context_paths={"new": ["deliverable/final.txt"], "modified": []},
-            id="final_presentation_card",
-        )
-        timeline.add_widget(card, round_number=1)
-        card.append_chunk("Created deliverable/final.txt")
+        long_text = "\n".join(f"Line {i}" for i in range(20))
+        card.append_chunk(long_text)
         card.complete()
         await pilot.pause()
 
-        card.set_locked_mode(True)
-        timeline.lock_to_final_answer("final_presentation_card")
+        # Full content preserved for the modal
+        assert card.get_content() == long_text
+        # Stream widget should show truncated preview ending with "..."
+        stream_widget = card.query_one("#final_card_stream", Static)
+        rendered = str(stream_widget.render())
+        assert "..." in rendered
+        assert "Line 0" in rendered
+        # Lines beyond preview limit should not appear
+        assert f"Line {card._PREVIEW_MAX_LINES + 2}" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_final_card_short_content_not_truncated():
+    """Short content should not be truncated."""
+    app = _TimelineApp()
+    async with app.run_test(headless=True) as pilot:
+        timeline = app.query_one(TimelineSection)
+        card = FinalPresentationCard(agent_id="agent_a", context_paths={}, id="final_presentation_card")
+        timeline.add_widget(card, round_number=1)
         await pilot.pause()
 
-        preview_header = card.query_one("#file_preview_header", Static)
-        preview = card.query_one("#file_preview", Static)
-        assert not preview_header.display
-        assert not preview.display
+        card.append_chunk("Short answer")
+        card.complete()
+        await pilot.pause()
+
+        assert card.get_content() == "Short answer"
 
 
 @pytest.mark.asyncio
@@ -458,80 +371,6 @@ async def test_final_card_explicit_workspace_scan_path_still_wired(monkeypatch, 
 
 
 @pytest.mark.asyncio
-async def test_final_card_lock_mode_infers_answer_file_paths_without_scan(monkeypatch, tmp_path):
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-        card = FinalPresentationCard(agent_id="agent_a", context_paths={}, id="final_presentation_card")
-        timeline.add_widget(card, round_number=1)
-        await pilot.pause()
-
-        output_dir = tmp_path / "deliverable"
-        output_dir.mkdir()
-        output_file = output_dir / "bob_dylan_poem.txt"
-        output_file.write_text("poem", encoding="utf-8")
-
-        scan_calls = {"count": 0}
-
-        def counting_scan(self):  # noqa: ANN001 - monkeypatch target signature
-            scan_calls["count"] += 1
-
-        monkeypatch.setattr(FileExplorerPanel, "_scan_workspace", counting_scan)
-
-        def fake_resolve(panel):  # noqa: ANN001 - monkeypatch target signature
-            panel.workspace_path = str(tmp_path)
-
-        monkeypatch.setattr(card, "_resolve_workspace_path", fake_resolve)
-
-        card.append_chunk("Saved file to deliverable/bob_dylan_poem.txt")
-        card.complete()
-        card.set_locked_mode(True)
-        await pilot.pause()
-
-        panel = card.query_one("#file_explorer_panel", FileExplorerPanel)
-        assert scan_calls["count"] == 0
-        assert panel.has_files()
-        assert "deliverable/bob_dylan_poem.txt" in panel._all_paths
-        assert "visible" in panel.classes
-
-
-@pytest.mark.asyncio
-async def test_final_card_lock_mode_skips_eager_auto_preview(monkeypatch, tmp_path):
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-        card = FinalPresentationCard(agent_id="agent_a", context_paths={}, id="final_presentation_card")
-        timeline.add_widget(card, round_number=1)
-        await pilot.pause()
-
-        output_dir = tmp_path / "deliverable"
-        output_dir.mkdir()
-        output_file = output_dir / "answer.txt"
-        output_file.write_text("result", encoding="utf-8")
-
-        auto_preview_calls = {"count": 0}
-
-        def counting_auto_preview(self, answer_text):  # noqa: ANN001 - monkeypatch target signature
-            auto_preview_calls["count"] += 1
-
-        monkeypatch.setattr(FileExplorerPanel, "auto_preview", counting_auto_preview)
-
-        def fake_resolve(panel):  # noqa: ANN001 - monkeypatch target signature
-            panel.workspace_path = str(tmp_path)
-
-        monkeypatch.setattr(card, "_resolve_workspace_path", fake_resolve)
-
-        card.append_chunk("Saved file to deliverable/answer.txt")
-        card.set_locked_mode(True)
-        card.complete()
-        await pilot.pause()
-
-        panel = card.query_one("#file_explorer_panel", FileExplorerPanel)
-        assert panel.has_files()
-        assert auto_preview_calls["count"] == 0
-
-
-@pytest.mark.asyncio
 async def test_final_card_large_content_uses_static_render_for_responsiveness():
     app = _TimelineApp()
     async with app.run_test(headless=True) as pilot:
@@ -563,81 +402,6 @@ async def test_final_card_small_content_still_uses_markdown():
         card._markdown_render_max_chars = 1000
         card.append_chunk("short answer")
         card.complete()
-        await pilot.pause()
-
-        stream_widget = card.query_one("#final_card_stream", Static)
-        markdown_widget = card.query_one("#final_card_text", Markdown)
-        assert "hidden" in stream_widget.classes
-        assert "hidden" not in markdown_widget.classes
-
-
-@pytest.mark.asyncio
-async def test_final_card_locked_mode_forces_static_even_for_small_content():
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-        card = FinalPresentationCard(agent_id="agent_a", context_paths={}, id="final_presentation_card")
-        timeline.add_widget(card, round_number=1)
-        await pilot.pause()
-
-        card._markdown_render_max_chars = 10000
-        card.append_chunk("small final answer")
-        card.set_locked_mode(True)
-        card.complete()
-        await pilot.pause()
-
-        stream_widget = card.query_one("#final_card_stream", Static)
-        markdown_widget = card.query_one("#final_card_text", Markdown)
-        assert "hidden" not in stream_widget.classes
-        assert "hidden" in markdown_widget.classes
-
-
-@pytest.mark.asyncio
-async def test_final_card_locked_mode_uses_single_line_header_summary():
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-        card = FinalPresentationCard(
-            agent_id="agent_a",
-            vote_results={
-                "vote_counts": {"A1.2": 2, "B1.1": 1},
-                "winner": "A1.2",
-                "is_tie": False,
-            },
-            context_paths={},
-            id="final_presentation_card",
-        )
-        timeline.add_widget(card, round_number=1)
-        card.append_chunk("final")
-        card.complete()
-        await pilot.pause()
-
-        card.set_locked_mode(True)
-        timeline.lock_to_final_answer("final_presentation_card")
-        await pilot.pause()
-
-        compact_header = card.query_one("#final_card_header_compact", Static)
-        assert "FINAL ANSWER" in str(compact_header.render())
-        assert "Winner:" in str(compact_header.render())
-        assert "Votes:" in str(compact_header.render())
-
-
-@pytest.mark.asyncio
-async def test_final_card_unlock_restores_markdown_for_small_content():
-    app = _TimelineApp()
-    async with app.run_test(headless=True) as pilot:
-        timeline = app.query_one(TimelineSection)
-        card = FinalPresentationCard(agent_id="agent_a", context_paths={}, id="final_presentation_card")
-        timeline.add_widget(card, round_number=1)
-        await pilot.pause()
-
-        card._markdown_render_max_chars = 10000
-        card.append_chunk("small final answer")
-        card.set_locked_mode(True)
-        card.complete()
-        await pilot.pause()
-
-        card.set_locked_mode(False)
         await pilot.pause()
 
         stream_widget = card.query_one("#final_card_stream", Static)

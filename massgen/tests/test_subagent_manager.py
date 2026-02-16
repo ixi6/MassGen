@@ -9,12 +9,13 @@ Tests for the async subagent execution feature (MAS-214):
 - Multiple callback support
 """
 
+from pathlib import Path
 from typing import List, Tuple
 from unittest.mock import MagicMock
 
 import pytest
 
-from massgen.subagent.models import SubagentResult
+from massgen.subagent.models import SubagentConfig, SubagentResult
 
 # =============================================================================
 # Callback Registration Tests
@@ -499,3 +500,186 @@ class TestSubagentResultFactories:
         assert result.success is False
         assert result.answer == "Partial work"
         assert result.completion_percentage == 60
+
+
+# =============================================================================
+# Context Paths Tests
+# =============================================================================
+
+
+class TestSubagentContextPaths:
+    """Tests for context_paths parameter on SubagentConfig and resolution in SubagentManager."""
+
+    def _make_manager(self, parent_workspace, parent_context_paths=None):
+        """Helper to create a SubagentManager with minimal config."""
+        from massgen.subagent.manager import SubagentManager
+
+        return SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            parent_context_paths=parent_context_paths,
+        )
+
+    def _resolve_context_paths(self, config, parent_workspace):
+        """Simulate the context_paths resolution logic from _execute_with_orchestrator.
+
+        This mirrors the resolution code that will be added to manager.py.
+        """
+        context_paths = []
+        if config.context_paths:
+            parent_ws = Path(parent_workspace)
+            for rel_path in config.context_paths:
+                if rel_path in ("./", "."):
+                    resolved = parent_ws.resolve()
+                else:
+                    resolved = (parent_ws / rel_path).resolve()
+                path_str = str(resolved)
+                if path_str not in {p["path"] for p in context_paths}:
+                    context_paths.append({"path": path_str, "permission": "read"})
+        return context_paths
+
+    def test_context_paths_dot_slash_mounts_parent_workspace(self, tmp_path):
+        """'./' resolves to parent workspace in generated YAML config as read-only."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Evaluate the website",
+            parent_agent_id="test-agent",
+            subagent_id="evaluator",
+            context_paths=["./"],
+        )
+
+        # Resolve context_paths the same way manager will
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(parent_ws.resolve())
+        assert resolved[0]["permission"] == "read"
+
+        # Verify it shows up in generated YAML config
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+        orch_ctx = yaml_config["orchestrator"].get("context_paths", [])
+        paths = [p["path"] for p in orch_ctx]
+        assert str(parent_ws.resolve()) in paths
+        # All permissions must be read
+        for p in orch_ctx:
+            assert p["permission"] == "read"
+
+    def test_context_paths_directory_resolves_to_absolute(self, tmp_path):
+        """'styles/' resolves to parent_workspace/styles/ as absolute path."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        styles_dir = parent_ws / "styles"
+        styles_dir.mkdir()
+
+        config = SubagentConfig.create(
+            task="Check the CSS",
+            parent_agent_id="test-agent",
+            subagent_id="css-checker",
+            context_paths=["styles/"],
+        )
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(styles_dir.resolve())
+        assert resolved[0]["permission"] == "read"
+
+    def test_context_paths_file_resolves_to_absolute(self, tmp_path):
+        """'index.html' resolves to parent_workspace/index.html as absolute path."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        index_file = parent_ws / "index.html"
+        index_file.write_text("<html></html>")
+
+        config = SubagentConfig.create(
+            task="Check the HTML",
+            parent_agent_id="test-agent",
+            subagent_id="html-checker",
+            context_paths=["index.html"],
+        )
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(index_file.resolve())
+        assert resolved[0]["permission"] == "read"
+
+    def test_context_paths_empty_by_default(self, tmp_path):
+        """No extra context_paths when parameter not provided."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        config = SubagentConfig.create(
+            task="Do something",
+            parent_agent_id="test-agent",
+            subagent_id="default-test",
+        )
+
+        assert config.context_paths == []
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert resolved == []
+
+        # Verify YAML config has no context_paths when none provided and no parent paths
+        manager = self._make_manager(parent_ws)
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+        assert "context_paths" not in yaml_config["orchestrator"]
+
+    def test_context_paths_deduplicates(self, tmp_path):
+        """Same path listed twice appears only once."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        config = SubagentConfig.create(
+            task="Evaluate",
+            parent_agent_id="test-agent",
+            subagent_id="dedup-test",
+            context_paths=["./", "./"],
+        )
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(parent_ws.resolve())
+
+    def test_context_paths_coexists_with_parent_context_paths(self, tmp_path):
+        """Both inherited orchestrator paths and task-specific context_paths present."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        styles_dir = parent_ws / "styles"
+        styles_dir.mkdir()
+
+        # Parent has a context path (e.g., a codebase root)
+        codebase_path = str((tmp_path / "codebase").resolve())
+        (tmp_path / "codebase").mkdir()
+
+        parent_context_paths = [{"path": codebase_path, "permission": "read"}]
+        manager = self._make_manager(parent_ws, parent_context_paths=parent_context_paths)
+
+        config = SubagentConfig.create(
+            task="Check CSS",
+            parent_agent_id="test-agent",
+            subagent_id="coexist-test",
+            context_paths=["styles/"],
+        )
+
+        # Resolve task-specific context_paths
+        resolved = self._resolve_context_paths(config, parent_ws)
+
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+        orch_ctx = yaml_config["orchestrator"]["context_paths"]
+
+        paths = [p["path"] for p in orch_ctx]
+        # Parent path should be present
+        assert codebase_path in paths
+        # Task-specific path should also be present
+        assert str(styles_dir.resolve()) in paths
+        # All read-only
+        for p in orch_ctx:
+            assert p["permission"] == "read"

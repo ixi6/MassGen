@@ -1,5 +1,5 @@
 [1] separator: Round 1
-[1] tool pending | filesystem/read_text_file | id=t1 | status=running | args={"path": "/tmp/a.txt"}
+[1] tool pending | filesystem/read_text_file | id=t1 | status=running | server=filesystem | args={"path": "/tmp/a.txt"}
 [1] tool convert_to_batch | filesystem/write_file | id=t2 | status=running | batch=batch_1 | server=filesystem
-[1] tool update_batch | filesystem/write_file | id=t2 | status=success | batch=batch_1 | result=ok
-[1] tool update_batch | filesystem/read_text_file | id=t1 | status=success | batch=batch_1 | result=done
+[1] tool update_batch | filesystem/write_file | id=t2 | status=success | batch=batch_1 | server=filesystem | result=ok
+[1] tool update_batch | filesystem/read_text_file | id=t1 | status=success | batch=batch_1 | server=filesystem | result=done

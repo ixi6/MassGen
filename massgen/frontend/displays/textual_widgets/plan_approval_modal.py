@@ -16,6 +16,10 @@ from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static, TextArea
 
+from massgen.frontend.displays.textual.widgets.rework_controls import (
+    ReworkControlsMixin,
+)
+
 
 @dataclass
 class PlanApprovalResult:
@@ -95,7 +99,7 @@ class PlanJsonEditorModal(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
+class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
     """Modal screen for planning review and action routing."""
 
     BINDINGS = [
@@ -106,6 +110,11 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
 
     # CSS moved to theme files for consistency.
     DEFAULT_CSS = ""
+
+    # Widget IDs for backward compat with existing CSS selectors
+    REWORK_FEEDBACK_INPUT_ID = "planning_feedback_input"
+    REWORK_CONTINUE_BTN_ID = "continue_btn"
+    REWORK_QUICK_EDIT_BTN_ID = "quick_edit_btn"
 
     STATUS_ICONS = {
         "pending": "○",
@@ -144,9 +153,9 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
         self.plan_path = plan_path
         self.revision = revision
         self._expanded = True
-        self._feedback_value = ""
+        self._rework_feedback_value = ""
         self._json_edit_status = ""
-        self._action_status = ""
+        self._rework_action_status = ""
         self._plan_json_value = json.dumps(self.plan_data, indent=2)
         self._chunk_order, self._tasks_by_chunk = self._group_tasks_by_chunk(self.tasks)
         self._rebuild_chunk_groups()
@@ -221,33 +230,15 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
                 if self._json_edit_status:
                     yield Static(self._json_edit_status, classes="plan-json-edit-status")
 
-            with Container(classes="plan-feedback"):
-                yield Static(
-                    "Prompt for next planning turn (required for Continue/Quick Edit):",
-                    classes="plan-feedback-label",
-                )
-                feedback_input = Input(
-                    placeholder="Example: tighten scope, reorder chunks, add migration tasks",
-                    id="planning_feedback_input",
-                )
-                feedback_input.value = self._feedback_value
-                yield feedback_input
+            yield from self.compose_rework_controls(
+                feedback_label="Prompt for next planning turn (required for Continue/Quick Edit):",
+                feedback_placeholder="Example: tighten scope, reorder chunks, add migration tasks",
+                continue_label="Continue Planning",
+                quick_edit_label="Quick Edit (Single Agent)",
+            )
 
             with Container(classes="modal-footer"):
                 with Horizontal(classes="footer-buttons"):
-                    yield Button(
-                        "Continue Planning",
-                        variant="default",
-                        id="continue_btn",
-                        classes="continue-button",
-                        disabled=not self._has_feedback(),
-                    )
-                    yield Button(
-                        "Quick Edit (Single Agent)",
-                        variant="default",
-                        id="quick_edit_btn",
-                        disabled=not self._has_feedback(),
-                    )
                     yield Button(
                         "Finalize Plan and Execute (Enter)",
                         variant="primary",
@@ -260,8 +251,8 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
                         id="finalize_manual_btn",
                     )
                     yield Button("Cancel (Esc)", variant="error", id="cancel_btn")
-                if self._action_status:
-                    yield Static(self._action_status, classes="plan-action-status")
+                if self._rework_action_status:
+                    yield Static(self._rework_action_status, classes="plan-action-status")
 
     def _format_task_row(self, task: Dict[str, Any]) -> Text:
         text = Text()
@@ -289,31 +280,17 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
         return text
 
     def _feedback_text(self) -> Optional[str]:
-        try:
-            feedback_input = self.query_one("#planning_feedback_input", Input)
-            text = (feedback_input.value or "").strip()
-            return text or None
-        except Exception:
-            text = (self._feedback_value or "").strip()
-            return text or None
+        return self._rework_feedback_text()
 
     def _has_feedback(self) -> bool:
-        return self._feedback_text() is not None
+        return self._has_rework_feedback()
 
     def _sync_feedback_action_controls(self) -> None:
-        has_feedback = self._has_feedback()
-        for button_id in ("continue_btn", "quick_edit_btn"):
-            try:
-                self.query_one(f"#{button_id}", Button).disabled = not has_feedback
-            except Exception:
-                pass
+        self._sync_rework_button_states()
 
     def _snapshot_input_values(self) -> None:
         """Capture current input values before recompose/dismiss."""
-        try:
-            self._feedback_value = self.query_one("#planning_feedback_input", Input).value
-        except Exception:
-            pass
+        self._snapshot_rework_input()
 
     def _open_plan_json_editor(self) -> None:
         """Open full-screen JSON editor and apply edits if confirmed."""
@@ -373,9 +350,9 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
 
     def _validate_action(self, action: str) -> bool:
         """Validate modal action requirements before dismissing."""
-        self._action_status = ""
+        self._rework_action_status = ""
         if action in {"continue", "quick_edit"} and not self._feedback_text():
-            self._action_status = "Enter a planning prompt before Continue or Quick Edit."
+            self._rework_action_status = "Enter a planning prompt before Continue or Quick Edit."
             self.refresh(recompose=True)
             return False
         return True
@@ -420,8 +397,8 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Keep local state in sync so recompose preserves edits."""
-        if event.input.id == "planning_feedback_input":
-            self._feedback_value = event.value
+        if event.input.id == self.REWORK_FEEDBACK_INPUT_ID:
+            self._rework_feedback_value = event.value
             self._sync_feedback_action_controls()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:

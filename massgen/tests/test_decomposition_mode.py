@@ -803,6 +803,7 @@ class TestNoHookMidstreamFallback:
 
         frontend_state = orchestrator.agent_states["frontend"]
         frontend_state.restart_pending = True
+        frontend_state.answer = "frontend existing answer"  # Must have answer for injection to proceed
         frontend_state.seen_answer_counts = {"frontend": 0, "backend": 0}
 
         # Backend has one unseen answer revision.
@@ -849,6 +850,7 @@ class TestNoHookMidstreamFallback:
 
         frontend_state = orchestrator.agent_states["frontend"]
         frontend_state.restart_pending = True
+        frontend_state.answer = "frontend existing answer"  # Must have answer for injection to proceed
         frontend_state.midstream_injections_this_round = 1
         frontend_state.seen_answer_counts = {"frontend": 0, "backend": 0}
 

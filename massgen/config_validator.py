@@ -163,6 +163,10 @@ class ConfigValidator:
     # Valid write modes for isolated write contexts
     VALID_WRITE_MODES = {"auto", "worktree", "isolated", "legacy"}
     VALID_DRIFT_CONFLICT_POLICIES = {"skip", "prefer_presenter", "fail"}
+    VALID_NOVELTY_INJECTION = {"none", "gentle", "moderate", "aggressive"}
+
+    # Valid gap report modes
+    VALID_GAP_REPORT_MODES = {"changedoc", "separate", "none"}
 
     def __init__(self):
         """Initialize the validator."""
@@ -982,6 +986,15 @@ class ConfigValidator:
                             f"{location}.coordination.drift_conflict_policy",
                             f"Use one of: {valid_values}",
                         )
+                if "novelty_injection" in coordination:
+                    novelty = coordination["novelty_injection"]
+                    if novelty not in self.VALID_NOVELTY_INJECTION:
+                        valid_values = ", ".join(sorted(self.VALID_NOVELTY_INJECTION))
+                        result.add_error(
+                            f"Invalid novelty_injection: '{novelty}'",
+                            f"{location}.coordination.novelty_injection",
+                            f"Use one of: {valid_values}",
+                        )
 
         # Validate voting_sensitivity if present
         if "voting_sensitivity" in orchestrator_config:
@@ -1026,6 +1039,16 @@ class ConfigValidator:
                     f"'checklist_require_gap_report' must be a boolean, got {type(checklist_report_gate).__name__}",
                     f"{location}.checklist_require_gap_report",
                     "Use true or false",
+                )
+
+        if "gap_report_mode" in orchestrator_config:
+            gap_mode = orchestrator_config["gap_report_mode"]
+            if gap_mode not in self.VALID_GAP_REPORT_MODES:
+                valid_values = ", ".join(sorted(self.VALID_GAP_REPORT_MODES))
+                result.add_error(
+                    f"Invalid gap_report_mode: '{gap_mode}'",
+                    f"{location}.gap_report_mode",
+                    f"Use one of: {valid_values}",
                 )
 
         # Validate fairness controls if present
@@ -1363,8 +1386,21 @@ class ConfigValidator:
             # Warning: Check for deprecated fields (add as needed)
             # This is a placeholder for future deprecations
 
-        # Cross-validation: decomposition mode
+        # Cross-validation: checklist_gated + changedoc
         orchestrator_cfg = config.get("orchestrator", {})
+        if isinstance(orchestrator_cfg, dict):
+            voting_sens = orchestrator_cfg.get("voting_sensitivity", "")
+            coordination = orchestrator_cfg.get("coordination", {})
+            if isinstance(coordination, dict):
+                changedoc_enabled = coordination.get("enable_changedoc", True)
+                if voting_sens == "checklist_gated" and changedoc_enabled is False:
+                    result.add_warning(
+                        "checklist_gated voting works best with changedoc enabled for integrated quality assessment",
+                        "orchestrator.voting_sensitivity",
+                        "Set coordination.enable_changedoc: true or use gap_report_mode: 'separate'",
+                    )
+
+        # Cross-validation: decomposition mode
         if isinstance(orchestrator_cfg, dict):
             coordination_mode = orchestrator_cfg.get("coordination_mode")
             if coordination_mode == "decomposition":

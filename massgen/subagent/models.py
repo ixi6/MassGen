@@ -31,6 +31,7 @@ class SubagentConfig:
         model: Optional model override (inherits from parent if None)
         timeout_seconds: Maximum execution time (clamped to configured min/max range)
         context_files: List of file paths the subagent can READ (read-only access enforced)
+        context_paths: Paths to mount read-only (files/dirs, "./" = parent workspace)
         use_docker: Whether to use Docker container (inherits from parent settings)
         system_prompt: Optional custom system prompt for the subagent
     """
@@ -41,6 +42,7 @@ class SubagentConfig:
     model: Optional[str] = None
     timeout_seconds: int = 300
     context_files: List[str] = field(default_factory=list)
+    context_paths: List[str] = field(default_factory=list)
     use_docker: bool = True
     system_prompt: Optional[str] = None
     created_at: datetime = field(default_factory=datetime.now)
@@ -55,6 +57,7 @@ class SubagentConfig:
         model: Optional[str] = None,
         timeout_seconds: int = SUBAGENT_DEFAULT_TIMEOUT,
         context_files: Optional[List[str]] = None,
+        context_paths: Optional[List[str]] = None,
         use_docker: bool = True,
         system_prompt: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -69,6 +72,7 @@ class SubagentConfig:
             model: Optional model override
             timeout_seconds: Execution timeout (clamped at manager level to configured range)
             context_files: File paths subagent can read (read-only, no write access)
+            context_paths: Paths to mount read-only (files/dirs, "./" = parent workspace)
             use_docker: Whether to use Docker
             system_prompt: Optional custom system prompt
             metadata: Additional metadata
@@ -84,6 +88,7 @@ class SubagentConfig:
             model=model,
             timeout_seconds=timeout_seconds,
             context_files=context_files or [],
+            context_paths=context_paths or [],
             use_docker=use_docker,
             system_prompt=system_prompt,
             metadata=metadata or {},
@@ -98,6 +103,7 @@ class SubagentConfig:
             "model": self.model,
             "timeout_seconds": self.timeout_seconds,
             "context_files": self.context_files.copy(),
+            "context_paths": self.context_paths.copy(),
             "use_docker": self.use_docker,
             "system_prompt": self.system_prompt,
             "created_at": self.created_at.isoformat(),
@@ -115,6 +121,7 @@ class SubagentConfig:
             model=data.get("model"),
             timeout_seconds=data.get("timeout_seconds", SUBAGENT_DEFAULT_TIMEOUT),
             context_files=data.get("context_files", []),
+            context_paths=data.get("context_paths", []),
             use_docker=data.get("use_docker", True),
             system_prompt=data.get("system_prompt"),
             created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(),

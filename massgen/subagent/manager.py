@@ -636,6 +636,18 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 else:
                     logger.warning(f"[SubagentManager] Context file not found: {ctx_file}")
 
+        # Resolve config.context_paths (files/dirs relative to parent workspace)
+        if config.context_paths:
+            for rel_path in config.context_paths:
+                if rel_path in ("./", "."):
+                    resolved = self.parent_workspace.resolve()
+                else:
+                    resolved = (self.parent_workspace / rel_path).resolve()
+                path_str = str(resolved)
+                if path_str not in {p["path"] for p in context_paths}:
+                    context_paths.append({"path": path_str, "permission": "read"})
+                    logger.info(f"[SubagentManager] Mounting context path: {path_str}")
+
         workspace_abs = workspace.resolve()
 
         # Generate temporary YAML config for the subagent
@@ -889,6 +901,18 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                             "permission": "read",
                         },
                     )
+
+        # Resolve config.context_paths (files/dirs relative to parent workspace)
+        if config.context_paths:
+            for rel_path in config.context_paths:
+                if rel_path in ("./", "."):
+                    resolved = self.parent_workspace.resolve()
+                else:
+                    resolved = (self.parent_workspace / rel_path).resolve()
+                path_str = str(resolved)
+                if path_str not in {p["path"] for p in context_paths}:
+                    context_paths.append({"path": path_str, "permission": "read"})
+                    logger.info(f"[SubagentManager] Mounting context path: {path_str}")
 
         workspace_abs = workspace.resolve()
 
@@ -1437,6 +1461,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         model: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
         context_files: Optional[List[str]] = None,
+        context_paths: Optional[List[str]] = None,
         system_prompt: Optional[str] = None,
         refine: bool = True,
     ) -> SubagentResult:
@@ -1451,6 +1476,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             model: Optional model override
             timeout_seconds: Optional timeout (uses default if not specified)
             context_files: Optional files to copy to subagent workspace
+            context_paths: Optional paths to mount read-only (files/dirs, "./" = parent workspace)
             system_prompt: Optional custom system prompt
             refine: If True (default), allow multi-round coordination and refinement.
                     If False, return first answer without iteration (faster).
@@ -1467,6 +1493,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             model=model,
             timeout_seconds=clamped_timeout,
             context_files=context_files or [],
+            context_paths=context_paths or [],
             system_prompt=system_prompt,
             metadata={"refine": refine},
         )
@@ -1621,6 +1648,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 model=task_config.get("model"),
                 timeout_seconds=timeout_seconds or task_config.get("timeout_seconds"),
                 context_files=task_config.get("context_files"),
+                context_paths=task_config.get("context_paths"),
                 system_prompt=task_config.get("system_prompt"),
                 refine=refine,
             )
@@ -1652,6 +1680,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         model: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
         context_files: Optional[List[str]] = None,
+        context_paths: Optional[List[str]] = None,
         system_prompt: Optional[str] = None,
         refine: bool = True,
     ) -> Dict[str, Any]:
@@ -1668,6 +1697,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             model: Optional model override
             timeout_seconds: Optional timeout (uses default if not specified)
             context_files: Optional files to copy to subagent workspace
+            context_paths: Optional paths to mount read-only (files/dirs, "./" = parent workspace)
             system_prompt: Optional custom system prompt
 
         Returns:
@@ -1682,6 +1712,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             model=model,
             timeout_seconds=clamped_timeout,
             context_files=context_files or [],
+            context_paths=context_paths or [],
             system_prompt=system_prompt,
             metadata={"refine": refine},
         )

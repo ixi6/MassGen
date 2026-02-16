@@ -17,6 +17,7 @@ MCP tools configured.
 
 import os
 import shutil
+import stat
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,6 +29,17 @@ from . import _workspace_tools_server as wc_module
 from ._base import Permission
 from ._constants import FRAMEWORK_MCPS
 from ._path_permission_manager import PathPermissionManager
+
+
+def _remove_readonly_onexc(func, path, exc):
+    """Error handler for shutil.rmtree to handle read-only files on Windows (e.g. .git/objects)."""
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _safe_rmtree(path):
+    """shutil.rmtree that handles read-only files on Windows."""
+    shutil.rmtree(path, onexc=_remove_readonly_onexc)
 
 
 def git_commit_if_changed(workspace: Path, message: str) -> bool:
@@ -1224,7 +1236,7 @@ class FilesystemManager:
                 elif item.is_file():
                     item.unlink()
                 elif item.is_dir():
-                    shutil.rmtree(item)
+                    _safe_rmtree(item)
 
         # Setup two-tier workspace structure if enabled
         if init_two_tier and self.use_two_tier_workspace:
@@ -1815,7 +1827,7 @@ class FilesystemManager:
                 else:
                     # Normal case: overwrite with current workspace
                     if self.snapshot_storage.exists():
-                        shutil.rmtree(self.snapshot_storage)
+                        _safe_rmtree(self.snapshot_storage)
                     self.snapshot_storage.mkdir(parents=True, exist_ok=True)
 
                     items_copied = 0
@@ -1844,7 +1856,7 @@ class FilesystemManager:
                 if is_final:
                     dest_dir = log_session_dir / "final" / self.agent_id / "workspace"
                     if dest_dir.exists():
-                        shutil.rmtree(dest_dir)
+                        _safe_rmtree(dest_dir)
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     logger.info(f"[FilesystemManager.save_snapshot] Final log snapshot dest_dir: {dest_dir}")
                 else:
@@ -1915,7 +1927,7 @@ class FilesystemManager:
                 if item.is_file():
                     item.unlink()
                 elif item.is_dir():
-                    shutil.rmtree(item)
+                    _safe_rmtree(item)
 
             logger.info("[FilesystemManager] Workspace cleared successfully, ready for new agent execution")
 
@@ -1990,7 +2002,7 @@ class FilesystemManager:
                 if item.is_file():
                     item.unlink()
                 elif item.is_dir():
-                    shutil.rmtree(item)
+                    _safe_rmtree(item)
 
             logger.info("[FilesystemManager] Temp workspace parent cleared successfully")
 
@@ -2019,7 +2031,7 @@ class FilesystemManager:
 
         # Clear existing temporary workspace
         if self.agent_temporary_workspace.exists():
-            shutil.rmtree(self.agent_temporary_workspace)
+            _safe_rmtree(self.agent_temporary_workspace)
         self.agent_temporary_workspace.mkdir(parents=True, exist_ok=True)
 
         # Copy all snapshots using anonymous IDs
@@ -2151,7 +2163,7 @@ class FilesystemManager:
         if self.shared_tools_directory and self.shared_tools_directory.exists():
             try:
                 logger.info(f"[FilesystemManager] Cleaning up shared tools directory: {self.shared_tools_directory}")
-                shutil.rmtree(self.shared_tools_directory)
+                _safe_rmtree(self.shared_tools_directory)
             except Exception as e:
                 logger.warning(f"[FilesystemManager] Failed to cleanup shared tools directory: {e}")
 
@@ -2159,7 +2171,7 @@ class FilesystemManager:
         if self.local_skills_directory and self.local_skills_directory.exists():
             try:
                 logger.info(f"[FilesystemManager] Cleaning up local skills directory: {self.local_skills_directory}")
-                shutil.rmtree(self.local_skills_directory)
+                _safe_rmtree(self.local_skills_directory)
             except Exception as e:
                 logger.warning(f"[FilesystemManager] Failed to cleanup local skills directory: {e}")
 
@@ -2186,6 +2198,6 @@ class FilesystemManager:
             if p == Path("/") or len(p.parts) < 3:
                 raise AssertionError(f"Unsafe path for deletion: {p}")
 
-            shutil.rmtree(p)
+            _safe_rmtree(p)
         except Exception as e:
             logger.warning(f"[FilesystemManager] cleanup failed for {p}: {e}")

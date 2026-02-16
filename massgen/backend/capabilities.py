@@ -630,17 +630,16 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         builtin_tools=[],
         filesystem_support="mcp",
         models=[
-            "gpt-4o",
-            "claude-3.5-sonnet",
-            "o1-preview",
-            "o1-mini",
+            "gpt-4.1",
+            "gpt-5-mini",
+            "claude-sonnet-4",
+            "gemini-2.5-pro",
         ],
-        default_model="gpt-4o",
+        default_model="gpt-5-mini",
         env_var=None,
-        notes="GitHub Copilot CLI integration. Requires 'gh copilot' and 'github-copilot-sdk' installed.",
+        notes="GitHub Copilot SDK integration. Requires 'copilot' package installed. Auth via GitHub subscription.",
     ),
 }
-
 
 
 def get_capabilities(backend_type: str) -> Optional[BackendCapabilities]:

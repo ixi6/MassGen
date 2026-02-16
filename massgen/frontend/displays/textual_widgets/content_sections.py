@@ -12,7 +12,9 @@ Composable UI sections for displaying different content types:
 """
 
 import logging
+import os
 import re
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -595,7 +597,7 @@ class TimelineSection(ScrollableContainer):
         if self._debug_scroll:
             from datetime import datetime
 
-            with open("/tmp/scroll_debug.log", "a") as f:
+            with open(os.path.join(tempfile.gettempdir(), "scroll_debug.log"), "a") as f:
                 f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}\n")
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
@@ -1667,7 +1669,7 @@ class TimelineSection(ScrollableContainer):
 
         # Debug logging for reasoning batching
         content_preview = content[:50].replace("\n", "\\n")
-        with open("/tmp/tui_debug.log", "a") as f:
+        with open(os.path.join(tempfile.gettempdir(), "tui_debug.log"), "a") as f:
             f.write(
                 f"DEBUG add_reasoning: label={label}, current_card={self._current_reasoning_card is not None}, " f"current_label={self._current_batch_label}, content_preview={content_preview}\n",
             )

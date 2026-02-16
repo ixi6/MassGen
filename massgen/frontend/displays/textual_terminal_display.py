@@ -7,6 +7,7 @@ Textual Terminal Display for MassGen Coordination
 import functools
 import os
 import re
+import tempfile
 import threading
 import time
 from collections import deque
@@ -2840,10 +2841,11 @@ if TEXTUAL_AVAILABLE:
             except Exception as e:
                 debug_info["input_area"] = {"exists": False, "error": str(e)}
 
-            with open("/tmp/textual_debug.json", "w") as f:
+            _debug_path = os.path.join(tempfile.gettempdir(), "textual_debug.json")
+            with open(_debug_path, "w") as f:
                 json.dump(debug_info, f, indent=2, default=str)
-            self.log("DEBUG: Widget info written to /tmp/textual_debug.json")
-            tui_log("TUI mounted - debug info written to /tmp/textual_debug.json")
+            self.log(f"DEBUG: Widget info written to {_debug_path}")
+            tui_log(f"TUI mounted - debug info written to {_debug_path}")
 
         def _dump_widget_sizes(self) -> None:
             """Dump full widget tree with sizes for debugging layout issues."""
@@ -2873,7 +2875,8 @@ if TEXTUAL_AVAILABLE:
                 return info
 
             tree = get_widget_info(self)
-            with open("/tmp/widget_sizes.json", "w") as f:
+            _widget_path = os.path.join(tempfile.gettempdir(), "widget_sizes.json")
+            with open(_widget_path, "w") as f:
                 json.dump(tree, f, indent=2, default=str)
 
             # Also dump specific timeline info to separate file for easier debugging
@@ -2937,10 +2940,11 @@ if TEXTUAL_AVAILABLE:
             except Exception as e:
                 timeline_debug.append({"error": str(e)})
 
-            with open("/tmp/timeline_debug.json", "w") as f:
+            _timeline_path = os.path.join(tempfile.gettempdir(), "timeline_debug.json")
+            with open(_timeline_path, "w") as f:
                 json.dump(timeline_debug, f, indent=2, default=str)
 
-            tui_log("Widget sizes dumped to /tmp/widget_sizes.json and /tmp/timeline_debug.json")
+            tui_log(f"Widget sizes dumped to {_widget_path} and {_timeline_path}")
 
         def _update_safe_indicator(self):
             """Show/hide safe keyboard status in footer area."""
@@ -5124,7 +5128,7 @@ Type your question and press Enter to ask the agents.
             if panel:
                 # Use start_new_round which handles timeline visibility and ribbon update
                 panel.start_new_round(round_num, is_context_reset=False)
-                with open("/tmp/tui_debug.log", "a") as f:
+                with open(os.path.join(tempfile.gettempdir(), "tui_debug.log"), "a") as f:
                     f.write("DEBUG: MassGenApp.show_agent_restart called panel.start_new_round\n")
                 adapter = self._event_adapters.get(agent_id)
                 if adapter:
@@ -7167,7 +7171,7 @@ Type your question and press Enter to ask the agents.
             # D - Dump widget sizes for debugging
             if key == "D":
                 self._dump_widget_sizes()
-                self.notify("Widget sizes dumped to /tmp/widget_sizes.json", severity="information")
+                self.notify(f"Widget sizes dumped to {os.path.join(tempfile.gettempdir(), 'widget_sizes.json')}", severity="information")
                 event.stop()
                 return True
 

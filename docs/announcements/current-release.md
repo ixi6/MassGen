@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 ## Install
 
@@ -29,12 +29,12 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 **Key Features:**
 
 **Dedicated Final Answer Modal** - Tabbed answer review:
-- Answer tab with markdown content, post-evaluation, and file list; Review Changes tab for diff review
+- Answer tab with markdown content, post-evaluation, and file list; Workspace/Review Changes tab for diff review
 - Trophy header with agent identity and model name
 - Approve/Reject/Cancel action bar with rework controls for iteration
 

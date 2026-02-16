@@ -160,7 +160,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: February 16, 2026**
 
 **What's New in v0.1.52:**
-- **🏆 Dedicated Final Answer Modal** - Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Review Changes tab (diff review). Trophy header with agent identity. Approve/Reject/Cancel action bar with rework controls.
+- **🏆 Dedicated Final Answer Modal** - Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Workspace/Review Changes tab (diff review). Trophy header with agent identity. Approve/Reject/Cancel action bar with rework controls.
 - **🚦 Substantive Gate** - Quality gate preventing coordination from continuing with only incremental changes. Tracks `transformative`/`structural`/`incremental` classification with `decision_space_exhausted` detection.
 - **💡 Novelty Injection** - Creative pressure injection when agents converge. Levels: `none`, `gentle`, `moderate`, `aggressive`. Intensifies after restarts.
 - **🏷️ Agent Identity & Versioning** - Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for provenance tracking.
@@ -174,7 +174,7 @@ pip install --upgrade massgen
 # Launch — new final answer modal is the default
 uv run massgen
 
-# Multi-agent coordination showcasing the new final answer modal with approve/reject/rework
+# Multi-agent coordination showcasing the new final answer modal with workspace
 uv run massgen --config @examples/basic/multi/three_agents_default "Compare three approaches to distributed consensus"
 ```
 
@@ -1242,7 +1242,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 **🎉 Released: February 16, 2026**
 
 #### Dedicated Final Answer Modal
-- **Tabbed Interface**: Answer tab with markdown content, post-evaluation, and file list; Review Changes tab for diff review
+- **Tabbed Interface**: Answer tab with markdown content, post-evaluation, and file list; Workspace/Review Changes tab for diff review
 - **Action Bar**: Approve/Reject/Cancel with rework controls for easy iteration
 - **Trophy Header**: Agent identity and model name displayed prominently
 

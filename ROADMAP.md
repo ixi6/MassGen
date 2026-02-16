@@ -188,7 +188,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 **1. Dedicated Final Answer Modal** (@ncrispino)
 - PR: [#901](https://github.com/massgen/MassGen/pull/901)
-- Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Review Changes tab (diff review)
+- Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Workspace/Review Changes tab (diff review)
 - Trophy header with agent identity and model name
 - Approve/Reject/Cancel action bar with rework controls for iteration
 - **Use Case**: Structured final answer review with clear approve/reject workflow

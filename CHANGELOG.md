@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
-Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 **v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
@@ -23,7 +23,7 @@ Chunked plan execution for safer long-form task completion with progress checkpo
 ## [0.1.52] - 2026-02-16
 
 ### Added
-- **Dedicated Final Answer Modal** ([#901](https://github.com/massgen/MassGen/pull/901)): Tabbed modal with Answer tab (markdown content, post-evaluation, and file list) and Review Changes tab (diff review)
+- **Dedicated Final Answer Modal** ([#901](https://github.com/massgen/MassGen/pull/901)): Tabbed modal with Answer tab (markdown content, post-evaluation, and file list) and Workspace/Review Changes tab (diff review)
   - Trophy header with agent identity and model name
   - Approve/Reject/Cancel action bar with rework controls for iteration
 

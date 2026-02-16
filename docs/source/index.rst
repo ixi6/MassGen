@@ -192,7 +192,7 @@ Recent Releases
 
 **v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
 
-Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 **v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
 

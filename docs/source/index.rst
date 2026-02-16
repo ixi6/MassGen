@@ -190,6 +190,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
+
+Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+
 **v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
 
 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. ``--cwd-context`` CLI flag.
@@ -197,10 +201,6 @@ Review modal with multi-file diff visualization. Decision journal system for mul
 **v0.1.50 (February 11, 2026)** - Chunked Plan Execution & Skill Lifecycle Management
 
 Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
-
-**v0.1.49 (February 9, 2026)** - Coordination Quality: Log Analysis TUI, Fairness Gate & Checklist Voting
-
-Log analysis mode built into TUI mode bar for in-app run analysis. Fairness gate prevents fast agents from dominating coordination. Checklist voting tool for structured quality evaluation. Automated testing infrastructure with CI/CD and SVG snapshot baselines. Persona easing now accessible from TUI mode bar.
 
 :doc:`Full changelog → <changelog>`
 

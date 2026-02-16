@@ -227,7 +227,29 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.51 - Latest
+### v0.1.52 - Latest
+**New Features:** Dedicated Final Answer Modal, Substantive Gate, Novelty Injection, Agent Identity & Versioning
+
+**Key Features:**
+- **Dedicated Final Answer Modal**: Tabbed modal with Answer tab (markdown, post-eval, file list) and Review Changes tab (diff review)
+- **Substantive Gate**: Quality gate preventing coordination from continuing with only incremental changes
+- **Novelty Injection**: Creative pressure injection when agents converge — levels: `none`, `gentle`, `moderate`, `aggressive`
+- **Agent Identity & Versioning**: Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for provenance tracking
+- **First Answer Non-Restart**: First answers no longer trigger automatic restarts on quality check failure
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.52
+pip install --upgrade massgen
+
+# Launch — new final answer modal is the default
+uv run massgen
+
+# Multi-agent coordination showcasing the new final answer modal with approve/reject/rework
+uv run massgen --config @examples/basic/multi/three_agents_default "Compare three approaches to distributed consensus"
+```
+
+### v0.1.51
 **New Features:** Change Documents (Changedoc), Changedoc-Anchored Evaluation, Checklist Gap Report, Drift Conflict Policy
 
 **Key Features:**
@@ -236,18 +258,6 @@ Most configurations use environment variables for API keys:so
 - **Drift Conflict Policy**: `drift_conflict_policy: skip|prefer_presenter|fail` for safer change application
 - **Review Modal Improvements**: Multi-context, multi-file diff visualization with critique
 - **`--cwd-context` CLI Flag**: Inject CWD as context path (`ro`/`rw`)
-
-**Try It:**
-```bash
-# Install or upgrade to v0.1.51
-pip install --upgrade massgen
-
-# Launch — changedoc is enabled by default
-uv run massgen
-
-# Or add your project context quickly
-uv run massgen --cwd-context ro
-```
 
 ### v0.1.50
 **New Features:** Chunked Plan Execution, Skill Lifecycle Management, Iterative Planning Review

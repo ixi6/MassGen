@@ -9,16 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
+Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+
 **v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
 
 **v0.1.50 (February 11, 2026)** - Chunked Plan Execution & Skill Lifecycle Management
 Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
 
-**v0.1.49 (February 9, 2026)** - Coordination Quality: Log Analysis TUI, Fairness Gate & Checklist Voting
-Log analysis mode built into TUI mode bar for in-app run analysis. Fairness gate prevents fast agents from dominating coordination. Checklist voting tool for structured quality evaluation. Automated testing infrastructure with CI/CD and SVG snapshot baselines.
-
 ---
+
+## [0.1.52] - 2026-02-16
+
+### Added
+- **Dedicated Final Answer Modal** ([#901](https://github.com/massgen/MassGen/pull/901)): Tabbed modal with Answer tab (markdown content, post-evaluation, and file list) and Review Changes tab (diff review)
+  - Trophy header with agent identity and model name
+  - Approve/Reject/Cancel action bar with rework controls for iteration
+
+- **Substantive Gate** ([#901](https://github.com/massgen/MassGen/pull/901)): Quality gate preventing coordination from continuing with only incremental changes
+  - Tracks `transformative`/`structural`/`incremental` classification
+  - Detects `decision_space_exhausted` for convergence
+  - Config: `require_substantiveness: true` (mandatory in checklist)
+
+- **Novelty Injection** ([#901](https://github.com/massgen/MassGen/pull/901)): Creative pressure injection when agents converge or stall
+  - Levels: `none` (default), `gentle`, `moderate`, `aggressive`
+  - Intensifies after restarts
+  - Config: `novelty_injection` in coordination section
+
+- **Agent Identity & Versioning** ([#901](https://github.com/massgen/MassGen/pull/901)): Unique agent identity with versioned answer labels (e.g., `agent1.2`)
+  - `answer_label_mapping` for provenance tracking
+
+- **Subagent Evaluation Infrastructure** ([#901](https://github.com/massgen/MassGen/pull/901)): Foundation for delegating evaluation to spawned subagent instances
+
+### Changed
+- **First Answer Non-Restart** ([#901](https://github.com/massgen/MassGen/pull/901)): First answer from each agent no longer triggers automatic restarts even if quality checks fail, enabling more natural coordination flow
+
+### Fixed
+- Approved/rejected state display in final answer card
+- Auto-open workspace behavior
+- Final answer view in main timeline
+- Tool spacing in final card
+
+### Documentation, Configurations and Resources
+- **Substantive Gate Config**: New `require_substantiveness` YAML parameter (mandatory in checklist)
+- **Novelty Injection Config**: New `novelty_injection` parameter in coordination section (`none`/`gentle`/`moderate`/`aggressive`)
+
+### Technical Details
+- **Major Focus**: Final answer modal redesign, substantive gate, novelty injection, agent identity versioning
+- **PRs Merged**: [#901](https://github.com/massgen/MassGen/pull/901) (Final answer improvements)
+- **Contributors**: @ncrispino and the MassGen team
 
 ## [0.1.51] - 2026-02-13
 

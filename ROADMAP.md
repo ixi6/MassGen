@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.51
+**Current Version:** v0.1.52
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** February 13, 2026
+**Last Updated:** February 16, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,11 +42,11 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.52** | 02/16/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
+| **v0.1.53** | 02/18/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
 | | | Refactor ask_others for Targeted Agent Queries | @ncrispino | Support targeted agent queries via subagent for more efficient coordination ([#809](https://github.com/massgen/MassGen/issues/809)) |
-| **v0.1.53** | 02/18/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
+| **v0.1.54** | 02/20/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
 | | | Support Dragging Screenshots into TUI Bar on Mac | @ncrispino | Enable drag-and-drop screenshot functionality in TUI input bar ([#831](https://github.com/massgen/MassGen/issues/831)) |
-| **v0.1.54** | 02/20/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
+| **v0.1.55** | 02/22/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
 | | | Fix Rounds Appearing and Log Dir Content in Multi-Turn | @ncrispino | Fix round display and log directory issues in multi-turn sessions ([#848](https://github.com/massgen/MassGen/issues/848)) |
 
 *All releases ship on MWF @ 9am PT when ready*
@@ -182,7 +182,59 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.52 - Spec Support for Planning & Targeted Agent Queries
+## 📋 v0.1.52 - Final Answer Modal & Coordination Quality Gates
+
+### Features
+
+**1. Dedicated Final Answer Modal** (@ncrispino)
+- PR: [#901](https://github.com/massgen/MassGen/pull/901)
+- Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Review Changes tab (diff review)
+- Trophy header with agent identity and model name
+- Approve/Reject/Cancel action bar with rework controls for iteration
+- **Use Case**: Structured final answer review with clear approve/reject workflow
+
+**2. Substantive Gate** (@ncrispino)
+- PR: [#901](https://github.com/massgen/MassGen/pull/901)
+- Quality gate preventing coordination from continuing with only incremental changes
+- Tracks `transformative`/`structural`/`incremental` classification
+- Detects `decision_space_exhausted` for convergence
+- Config: `require_substantiveness: true` (mandatory in checklist)
+- **Use Case**: Prevent low-value iteration rounds that waste compute
+
+**3. Novelty Injection** (@ncrispino)
+- PR: [#901](https://github.com/massgen/MassGen/pull/901)
+- Creative pressure injection when agents converge or stall
+- Levels: `none` (default), `gentle`, `moderate`, `aggressive`
+- Intensifies after restarts
+- Config: `novelty_injection` in coordination section
+- **Use Case**: Combat premature convergence by introducing creative diversity
+
+**4. Agent Identity & Versioning** (@ncrispino)
+- PR: [#901](https://github.com/massgen/MassGen/pull/901)
+- Unique agent identity with versioned answer labels (e.g., `agent1.2`)
+- `answer_label_mapping` for provenance tracking
+- **Use Case**: Track which agent produced which answer version
+
+**5. Subagent Evaluation Infrastructure** (@ncrispino)
+- PR: [#901](https://github.com/massgen/MassGen/pull/901)
+- Foundation for delegating evaluation to spawned subagent instances
+- **Use Case**: Scalable evaluation through delegation
+
+**6. First Answer Non-Restart** (@ncrispino)
+- PR: [#901](https://github.com/massgen/MassGen/pull/901)
+- First answer from each agent no longer triggers automatic restarts even if quality checks fail
+- **Use Case**: More natural coordination flow without unnecessary early restarts
+
+### Success Criteria
+- ✅ Final answer modal with tabbed Answer/Review Changes interface
+- ✅ Substantive gate prevents low-value iteration rounds
+- ✅ Novelty injection combats premature convergence
+- ✅ Agent identity versioning tracks answer provenance
+- ✅ First answer non-restart enables natural coordination flow
+
+---
+
+## 📋 v0.1.53 - Spec Support for Planning & Targeted Agent Queries
 
 ### Features
 
@@ -206,7 +258,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.53 - Quickstart Model Curation & TUI Screenshots
+## 📋 v0.1.54 - Quickstart Model Curation & TUI Screenshots
 
 ### Features
 
@@ -226,7 +278,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.54 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
+## 📋 v0.1.55 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
 
 ### Features
 
@@ -1001,5 +1053,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** February 13, 2026
+**Last Updated:** February 16, 2026
 **Maintained By:** MassGen Team

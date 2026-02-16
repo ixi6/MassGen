@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.51 Features](#-latest-features-v0151)
+- [v0.1.52 Features](#-latest-features-v0152)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.51)](#recent-achievements-v0151)
-- [Previous Achievements (v0.0.3 - v0.1.50)](#previous-achievements-v003---v0150)
+- [Recent Achievements (v0.1.52)](#recent-achievements-v0152)
+- [Previous Achievements (v0.0.3 - v0.1.51)](#previous-achievements-v003---v0151)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.52 Roadmap](#v0152-roadmap)
+- [v0.1.53 Roadmap](#v0153-roadmap)
 </details>
 
 <details open>
@@ -155,27 +155,27 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.51)
+## 🆕 Latest Features (v0.1.52)
 
-**🎉 Released: February 13, 2026**
+**🎉 Released: February 16, 2026**
 
-**What's New in v0.1.51:**
-- **📝 Change Documents (Changedoc)** - Decision journals agents write in `tasks/changedoc.md` during coordination, capturing decision provenance, rationale, and code traceability
-- **✅ Changedoc-Anchored Evaluation** - 5 changedoc-specific checklist items with mandatory gap report before verdict
-- **🔍 Review Modal Improvements** - Multi-context, multi-file diff visualization with critique capabilities
-- **🛡️ Drift Conflict Policy** - Configurable handling of target-file drift: `skip`, `prefer_presenter`, or `fail`
-- **🎯 `--cwd-context` CLI Flag** - Inject CWD as context path (`ro`/`rw`) — equivalent to `Ctrl+P` in TUI
+**What's New in v0.1.52:**
+- **🏆 Dedicated Final Answer Modal** - Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Review Changes tab (diff review). Trophy header with agent identity. Approve/Reject/Cancel action bar with rework controls.
+- **🚦 Substantive Gate** - Quality gate preventing coordination from continuing with only incremental changes. Tracks `transformative`/`structural`/`incremental` classification with `decision_space_exhausted` detection.
+- **💡 Novelty Injection** - Creative pressure injection when agents converge. Levels: `none`, `gentle`, `moderate`, `aggressive`. Intensifies after restarts.
+- **🏷️ Agent Identity & Versioning** - Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for provenance tracking.
+- **🎯 First Answer Non-Restart** - First answers no longer trigger automatic restarts on quality check failure for more natural coordination flow.
 
-**Try v0.1.51 Features:**
+**Try v0.1.52 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Launch — changedoc is enabled by default
+# Launch — new final answer modal is the default
 uv run massgen
 
-# Or add your project context quickly
-uv run massgen --cwd-context ro
+# Multi-agent coordination showcasing the new final answer modal with approve/reject/rework
+uv run massgen --config @examples/basic/multi/three_agents_default "Compare three approaches to distributed consensus"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1237,34 +1237,40 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.51)
+### Recent Achievements (v0.1.52)
 
-**🎉 Released: February 13, 2026**
+**🎉 Released: February 16, 2026**
 
-#### Change Documents (Changedoc)
-- **Decision Journals**: Agents write `tasks/changedoc.md` during coordination capturing decision provenance, rationale, and code traceability
-- **Observation Context**: Changedocs passed to other agents in `<changedoc>` tags for shared decision awareness
-- **Config**: `enable_changedoc: true` (default on)
+#### Dedicated Final Answer Modal
+- **Tabbed Interface**: Answer tab with markdown content, post-evaluation, and file list; Review Changes tab for diff review
+- **Action Bar**: Approve/Reject/Cancel with rework controls for easy iteration
+- **Trophy Header**: Agent identity and model name displayed prominently
 
-#### Changedoc-Anchored Evaluation
-- **Specialized Checklist**: 5 changedoc-specific items — Decision Completeness, Rationale Quality, Traceability, Output Quality, Novel Elements
-- **Gap Report**: Mandatory structured gap analysis before verdict (`checklist_require_gap_report: true`)
+#### Substantive Gate
+- **Quality Gate**: Prevents coordination from continuing when only incremental changes are planned
+- **Convergence Detection**: Tracks `transformative`/`structural`/`incremental` classifications with `decision_space_exhausted` detection
+- **Config**: `require_substantiveness: true` (mandatory in checklist)
 
-#### Review Modal Improvements
-- **Multi-File Diffs**: Enhanced GitDiffReviewModal with multi-context, multi-file diff visualization and critique capabilities
+#### Novelty Injection
+- **Creative Pressure**: Configurable injection when agents converge — levels: `none`, `gentle`, `moderate`, `aggressive`
+- **Restart Intensification**: Pressure increases after failed iteration restarts
+- **Config**: `novelty_injection` in coordination section
 
-#### Drift Conflict Policy
-- **Change Safety**: Configurable handling of target-file drift: `skip` (default), `prefer_presenter`, or `fail`
+#### Agent Identity & Versioning
+- **Answer Provenance**: Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for tracking
 
 #### Changed
-- **Mode Bar Responsive Labels**: Compact labels adapting to terminal width
-- **`--cwd-context` CLI Flag**: Inject CWD as context path (`ro`/`rw`) — equivalent to `Ctrl+P` in TUI
+- **First Answer Non-Restart**: First answers no longer trigger automatic restarts on quality check failure
 
 #### Bug Fixes
-- Final presentation fallback for empty presentations
-- Task execution timing fixes
+- Approved/rejected state display in final answer card
+- Auto-open workspace behavior
+- Final answer view in main timeline
+- Tool spacing in final card
 
-### Previous Achievements (v0.0.3 - v0.1.50)
+### Previous Achievements (v0.0.3 - v0.1.51)
+
+✅ **Reviewing Coordination & Change Documents (v0.1.51)**: Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
 
 ✅ **Chunked Plan Execution & Skill Lifecycle Management (v0.1.50)**: Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
 
@@ -1511,9 +1517,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.52 Roadmap
+### v0.1.53 Roadmap
 
-Version 0.1.52 focuses on spec support for planning and targeted agent queries:
+Version 0.1.53 focuses on spec support for planning and targeted agent queries:
 
 #### Planned Features
 - **Spec Support for Planning** ([#881](https://github.com/massgen/MassGen/issues/881)): Add spec/proposal support to planning workflows

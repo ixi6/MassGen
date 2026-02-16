@@ -1,8 +1,8 @@
-# MassGen v0.1.52 Roadmap
+# MassGen v0.1.53 Roadmap
 
 ## Overview
 
-Version 0.1.52 focuses on adding spec support to planning workflows and targeted agent queries for more efficient coordination.
+Version 0.1.53 focuses on adding spec support to planning workflows and targeted agent queries for more efficient coordination.
 
 - **Spec Support for Planning Mode** (Required): Add spec/proposal support to planning workflows
 - **Refactor ask_others for Targeted Agent Queries** (Required): Support targeted queries to specific agents
@@ -68,13 +68,13 @@ Version 0.1.52 focuses on adding spec support to planning workflows and targeted
 
 ## Timeline
 
-**Target Release**: February 16, 2026
+**Target Release**: February 18, 2026
 
-### Phase 1 (Feb 13-15)
+### Phase 1 (Feb 16-17)
 - Spec Support for Planning (Milestone 1)
 - Targeted Query Implementation (Milestone 2.1)
 
-### Phase 2 (Feb 15-16)
+### Phase 2 (Feb 17-18)
 - Testing & Validation (Milestones 1.2, 2.2)
 
 ---
@@ -99,11 +99,11 @@ Version 0.1.52 focuses on adding spec support to planning workflows and targeted
 ## Related Tracks
 
 This release builds on previous work:
-- **v0.1.48**: Worktree Isolation (#857), Decomposition Mode (#858)
 - **v0.1.49**: Fairness Gate, Checklist Voting, Log Analysis TUI (#869)
 - **v0.1.50**: Chunked Plan Execution (#877), Skill Lifecycle Management (#878)
 - **v0.1.51**: Change Documents (#896), Changedoc Evaluation, Drift Conflict Policy
+- **v0.1.52**: Final Answer Modal (#901), Substantive Gate, Novelty Injection, Agent Identity
 
 And sets the foundation for:
-- **v0.1.53**: Quickstart model curation (#840), TUI screenshot support (#831)
-- **v0.1.54**: Per-agent isolated write contexts (#854), multi-turn round/log fixes (#848)
+- **v0.1.54**: Quickstart model curation (#840), TUI screenshot support (#831)
+- **v0.1.55**: Per-agent isolated write contexts (#854), multi-turn round/log fixes (#848)

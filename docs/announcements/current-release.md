@@ -1,4 +1,4 @@
-# MassGen v0.1.51 Release Announcement
+# MassGen v0.1.52 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,17 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.51, focused on Reviewing Coordination & Change Documents! 🚀 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
+We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.51
+pip install massgen==0.1.52
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.51
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.52
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -29,35 +29,39 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.51, focused on Reviewing Coordination & Change Documents! 🚀 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
+We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 **Key Features:**
 
-**Change Documents (Changedoc)** - Decision journals for coordination:
-- Agents write `tasks/changedoc.md` during coordination capturing decision provenance, rationale, and code traceability
-- Changedocs passed to other agents in `<changedoc>` tags for shared decision awareness
-- Config: `enable_changedoc: true` (default on)
+**Dedicated Final Answer Modal** - Tabbed answer review:
+- Answer tab with markdown content, post-evaluation, and file list; Review Changes tab for diff review
+- Trophy header with agent identity and model name
+- Approve/Reject/Cancel action bar with rework controls for iteration
 
-**Changedoc-Anchored Evaluation** - Structured quality checklist:
-- 5 changedoc-specific checklist items: Decision Completeness, Rationale Quality, Traceability, Output Quality, Novel Elements
-- Mandatory gap report before verdict (`checklist_require_gap_report: true`)
+**Substantive Gate** - Quality gate for coordination:
+- Prevents coordination from continuing when only incremental changes are planned
+- Tracks `transformative`/`structural`/`incremental` classification with `decision_space_exhausted` detection
+- Config: `require_substantiveness: true` (mandatory in checklist)
 
-**Review Modal Improvements** - Enhanced diff visualization:
-- Multi-context, multi-file diff visualization with critique capabilities
+**Novelty Injection** - Creative pressure against convergence:
+- Configurable injection when agents converge — levels: `none`, `gentle`, `moderate`, `aggressive`
+- Pressure increases after failed iteration restarts
+- Config: `novelty_injection` in coordination section
 
-**Drift Conflict Policy** - Safer change application:
-- Configurable handling of target-file drift: `skip` (default), `prefer_presenter`, or `fail`
+**Agent Identity & Versioning** - Answer provenance:
+- Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for tracking
 
 **Also in this release:**
-- `--cwd-context` CLI flag for injecting CWD as context path (`ro`/`rw`)
-- `.massgen_scratch/` scratch directory in worktrees for temporary agent files
-- Mode bar responsive labels adapting to terminal width
+- First answer non-restart: first answers no longer trigger automatic restarts on quality check failure
+- Subagent evaluation infrastructure for delegating evaluation to spawned subagent instances
 
 **Bug Fixes:**
-- Final presentation fallback for empty presentations
-- Task execution timing fixes
+- Approved/rejected state display in final answer card
+- Auto-open workspace behavior
+- Final answer view in main timeline
+- Tool spacing in final card
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.51
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.52
 
 Feature highlights:
 

@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import pytest
 
 from massgen.mcp_tools.hooks import (
+    BackgroundToolCompleteHook,
     GeneralHookManager,
     HighPriorityTaskReminderHook,
     HookEvent,
@@ -1451,3 +1452,51 @@ class TestSubagentCompleteHook:
         assert "42.5" in content or "42" in content
         # Should include workspace path
         assert "/workspace/meta-task" in content
+
+
+class TestBackgroundToolCompleteHook:
+    """Tests for BackgroundToolCompleteHook - injects completed background tool results."""
+
+    @pytest.mark.asyncio
+    async def test_no_getter_returns_allow(self):
+        hook = BackgroundToolCompleteHook()
+        result = await hook.execute("some_tool", "{}")
+        assert result.allowed is True
+        assert result.inject is None
+
+    @pytest.mark.asyncio
+    async def test_empty_getter_returns_allow(self):
+        hook = BackgroundToolCompleteHook()
+        hook.set_completed_jobs_getter(lambda: [])
+        result = await hook.execute("some_tool", "{}")
+        assert result.allowed is True
+        assert result.inject is None
+
+    @pytest.mark.asyncio
+    async def test_completed_jobs_are_injected(self):
+        hook = BackgroundToolCompleteHook()
+        hook.set_completed_jobs_getter(
+            lambda: [
+                {
+                    "job_id": "bgtool_1",
+                    "tool_name": "custom_tool__generate_media",
+                    "status": "completed",
+                    "result": "Generated image at /tmp/image.png",
+                },
+                {
+                    "job_id": "bgtool_2",
+                    "tool_name": "mcp__command_line__execute_command",
+                    "status": "error",
+                    "error": "Command timed out",
+                },
+            ],
+        )
+
+        result = await hook.execute("some_tool", "{}")
+        assert result.inject is not None
+        assert result.inject["strategy"] == "tool_result"
+        assert "BACKGROUND TOOL RESULTS" in result.inject["content"]
+        assert "bgtool_1" in result.inject["content"]
+        assert "bgtool_2" in result.inject["content"]
+        assert "custom_tool__generate_media" in result.inject["content"]
+        assert "mcp__command_line__execute_command" in result.inject["content"]

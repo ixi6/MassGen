@@ -200,22 +200,21 @@ def test_get_pending_subagent_results_polls_mcp_and_deduplicates(mock_orchestrat
                 return {
                     "success": True,
                     "subagents": [
-                        {"subagent_id": "sub-complete", "status": "completed"},
+                        {
+                            "subagent_id": "sub-complete",
+                            "status": "completed",
+                            "result": {
+                                "subagent_id": "sub-complete",
+                                "success": True,
+                                "status": "completed",
+                                "answer": "Subagent finished",
+                                "workspace_path": "/tmp/sub-complete",
+                                "execution_time_seconds": 3.5,
+                                "token_usage": {"input_tokens": 10, "output_tokens": 20},
+                            },
+                        },
                         {"subagent_id": "sub-running", "status": "running"},
                     ],
-                }
-            if name == f"mcp__subagent_{agent_id}__get_subagent_result":
-                return {
-                    "success": True,
-                    "result": {
-                        "subagent_id": "sub-complete",
-                        "success": True,
-                        "status": "completed",
-                        "answer": "Subagent finished",
-                        "workspace_path": "/tmp/sub-complete",
-                        "execution_time_seconds": 3.5,
-                        "token_usage": {"input_tokens": 10, "output_tokens": 20},
-                    },
                 }
             return {"success": False}
 
@@ -228,12 +227,13 @@ def test_get_pending_subagent_results_polls_mcp_and_deduplicates(mock_orchestrat
     assert first[0][0] == "sub-complete"
     assert first[0][1].status == "completed"
     assert second == []
+    assert all(name == f"mcp__subagent_{agent_id}__list_subagents" for name, _ in agent.mcp_client.calls)
 
 
 @pytest.mark.asyncio
 async def test_setup_hook_manager_registers_subagent_injection_hook(mock_orchestrator, monkeypatch):
     orchestrator = mock_orchestrator(num_agents=1)
-    orchestrator._async_subagents_enabled = True
+    orchestrator._background_subagents_enabled = True
     agent_id = "agent_a"
     agent = orchestrator.agents[agent_id]
 
@@ -264,6 +264,6 @@ async def test_setup_hook_manager_registers_subagent_injection_hook(mock_orchest
     )
 
     assert result.inject is not None
-    assert "ASYNC SUBAGENT RESULTS" in result.inject["content"]
+    assert "BACKGROUND SUBAGENT RESULTS" in result.inject["content"]
     assert "sub-done" in result.inject["content"]
-    assert result.inject["strategy"] == orchestrator._async_subagent_injection_strategy
+    assert result.inject["strategy"] == orchestrator._background_subagent_injection_strategy

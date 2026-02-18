@@ -24,6 +24,7 @@ from ..token_manager import (
     TokenUsage,
 )
 from ..utils import CoordinationStage
+from ..utils.tool_argument_normalization import normalize_json_object_argument
 
 logger = logging.getLogger(__name__)
 
@@ -786,7 +787,6 @@ class LLMBackend(ABC):
         Returns:
             Tool arguments dictionary (parsed from JSON string if needed)
         """
-        import json
 
         # Chat Completions format
         if "function" in tool_call:
@@ -800,13 +800,19 @@ class LLMBackend(ABC):
         else:
             args = {}
 
-        # Parse JSON string if needed
-        if isinstance(args, str):
-            try:
-                return json.loads(args) if args.strip() else {}
-            except (json.JSONDecodeError, ValueError):
-                return {}
-        return args if isinstance(args, dict) else {}
+        try:
+            parsed, decode_passes = normalize_json_object_argument(
+                args,
+                field_name="arguments",
+            )
+        except ValueError:
+            return {}
+        if decode_passes > 1:
+            logger.info(
+                "[Backend] Normalized %s decode passes while extracting tool arguments",
+                decode_passes,
+            )
+        return parsed
 
     def extract_tool_call_id(self, tool_call: Dict[str, Any]) -> str:
         """

@@ -857,6 +857,148 @@ class TestCommonBadConfigs:
 
         assert result.is_valid()
 
+    def test_valid_background_subagents_config(self):
+        """background_subagents should validate with supported fields."""
+        config = {
+            "agents": [
+                {"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "background_subagents": {
+                        "enabled": True,
+                        "injection_strategy": "tool_result",
+                    },
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid()
+
+    def test_legacy_async_subagents_is_rejected(self):
+        """async_subagents key should fail fast (hard-break rename)."""
+        config = {
+            "agents": [
+                {"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "async_subagents": {
+                        "enabled": True,
+                        "injection_strategy": "tool_result",
+                    },
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("async_subagents" in error.message for error in result.errors)
+        assert any("background_subagents" in (error.suggestion or "") for error in result.errors)
+
+    def test_valid_subagent_runtime_mode_with_explicit_fallback(self):
+        """Isolated runtime mode should allow explicit inherited fallback."""
+        config = {
+            "agents": [
+                {"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "subagent_runtime_mode": "isolated",
+                    "subagent_runtime_fallback_mode": "inherited",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid()
+
+    def test_invalid_subagent_runtime_mode_is_rejected(self):
+        """Unknown runtime mode values should fail validation."""
+        config = {
+            "agents": [
+                {"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "subagent_runtime_mode": "shared",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("subagent_runtime_mode" in error.location for error in result.errors)
+
+    def test_invalid_subagent_runtime_fallback_mode_is_rejected(self):
+        """Fallback mode must be inherited or null."""
+        config = {
+            "agents": [
+                {"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "subagent_runtime_mode": "isolated",
+                    "subagent_runtime_fallback_mode": "isolated",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("subagent_runtime_fallback_mode" in error.location for error in result.errors)
+
+    def test_subagent_runtime_fallback_requires_isolated_mode(self):
+        """Fallback mode should be rejected when runtime mode is inherited."""
+        config = {
+            "agents": [
+                {"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "subagent_runtime_mode": "inherited",
+                    "subagent_runtime_fallback_mode": "inherited",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("only be set when subagent_runtime_mode is 'isolated'" in error.message for error in result.errors)
+
+    def test_subagent_host_launch_prefix_must_be_list_of_strings(self):
+        """Host launch prefix should reject non-list values."""
+        config = {
+            "agents": [
+                {"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "subagent_runtime_mode": "isolated",
+                    "subagent_host_launch_prefix": "host-launch --exec",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("subagent_host_launch_prefix" in error.location for error in result.errors)
+
     def test_agent_without_id(self):
         """Test agent missing id field (common mistake)."""
         config = {

@@ -9,6 +9,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
+from ..utils.tool_argument_normalization import normalize_json_object_argument
+
 
 class FormatterBase(ABC):
     """Abstract base class for API parameter handlers."""
@@ -83,8 +85,6 @@ class FormatterBase(ABC):
         Returns:
             Tool arguments dictionary (parsed from JSON string if needed)
         """
-        import json
-
         # Chat Completions format
         if "function" in tool_call:
             args = tool_call.get("function", {}).get("arguments", {})
@@ -97,13 +97,14 @@ class FormatterBase(ABC):
         else:
             args = {}
 
-        # Parse JSON string if needed
-        if isinstance(args, str):
-            try:
-                return json.loads(args) if args.strip() else {}
-            except (json.JSONDecodeError, ValueError):
-                return {}
-        return args if isinstance(args, dict) else {}
+        try:
+            parsed, _ = normalize_json_object_argument(
+                args,
+                field_name="arguments",
+            )
+            return parsed
+        except ValueError:
+            return {}
 
     @staticmethod
     def extract_tool_call_id(tool_call: Dict[str, Any]) -> str:

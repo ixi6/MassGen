@@ -106,13 +106,22 @@ class CoordinationConfig:
         subagent_max_timeout: Maximum allowed timeout in seconds (default 600). Prevents runaway subagents.
         subagent_max_concurrent: Maximum number of concurrent subagents an agent can spawn (default 3).
         subagent_round_timeouts: Optional per-round timeout settings for subagents.
+        subagent_runtime_mode: Runtime boundary mode for subagent execution.
+                              - "isolated" (default): require isolated runtime semantics
+                              - "inherited": run in parent runtime boundary
+        subagent_runtime_fallback_mode: Optional fallback when isolated runtime prerequisites are unavailable.
+                                       - None (default): strict isolation (fail if unavailable)
+                                       - "inherited": explicit opt-in fallback to shared runtime
+        subagent_host_launch_prefix: Optional command prefix used to launch isolated subagents
+                                    when running inside a containerized parent runtime.
+                                    Example: ["host-launch", "--exec"]
         subagent_orchestrator: Configuration for subagent orchestrator mode. When enabled, subagents
                               use a full Orchestrator with multiple agents. This enables multi-agent coordination within
                               subagent execution.
-        async_subagents: Configuration for async subagent execution. When enabled, agents can spawn
-                        subagents with async_=True to run in the background while continuing work.
+        background_subagents: Configuration for background subagent execution. When enabled, agents can spawn
+                        subagents with background=True to run in the background while continuing work.
                         Results are automatically injected when subagents complete.
-                        - enabled: bool (default True) - Whether to allow async subagent execution
+                        - enabled: bool (default True) - Whether to allow background subagent execution
                         - injection_strategy: str (default "tool_result") - How to inject results:
                           - "tool_result": Append result to next tool call output
                           - "user_message": Inject as separate user message
@@ -163,9 +172,12 @@ class CoordinationConfig:
     subagent_max_timeout: int = 600  # Maximum 10 minutes
     subagent_max_concurrent: int = 3
     subagent_round_timeouts: Optional[Dict[str, Any]] = None
+    subagent_runtime_mode: str = "isolated"  # "isolated" | "inherited"
+    subagent_runtime_fallback_mode: Optional[str] = None  # None | "inherited"
+    subagent_host_launch_prefix: Optional[List[str]] = None  # Optional command prefix for containerized isolated launch
     subagent_orchestrator: Optional["SubagentOrchestratorConfig"] = None
-    # Async subagent execution configuration
-    async_subagents: Optional[Dict[str, Any]] = None  # {enabled: bool, injection_strategy: str}
+    # Background subagent execution configuration
+    background_subagents: Optional[Dict[str, Any]] = None  # {enabled: bool, injection_strategy: str}
     use_two_tier_workspace: bool = False  # Enable scratch/deliverable structure + git versioning
     task_decomposer: TaskDecomposerConfig = field(default_factory=TaskDecomposerConfig)
     write_mode: Optional[str] = None  # "auto" | "worktree" | "isolated" | "legacy"
@@ -177,6 +189,7 @@ class CoordinationConfig:
         """Validate configuration after initialization."""
         self._validate_broadcast_config()
         self._validate_timeout_config()
+        self._validate_subagent_runtime_config()
         self._validate_drift_conflict_policy()
         self._validate_novelty_injection()
 
@@ -242,6 +255,31 @@ class CoordinationConfig:
             raise ValueError(
                 f"Invalid novelty_injection: '{self.novelty_injection}'. " f"Must be one of: {sorted(valid_values)}",
             )
+
+    def _validate_subagent_runtime_config(self):
+        """Validate subagent runtime mode/fallback configuration."""
+        valid_modes = {"isolated", "inherited"}
+        if self.subagent_runtime_mode not in valid_modes:
+            raise ValueError(
+                f"Invalid subagent_runtime_mode: '{self.subagent_runtime_mode}'. " f"Must be one of: {sorted(valid_modes)}",
+            )
+
+        valid_fallback_modes = {None, "inherited"}
+        if self.subagent_runtime_fallback_mode not in valid_fallback_modes:
+            raise ValueError(
+                "Invalid subagent_runtime_fallback_mode: " f"'{self.subagent_runtime_fallback_mode}'. Must be one of: [None, 'inherited']",
+            )
+
+        if self.subagent_runtime_mode != "isolated" and self.subagent_runtime_fallback_mode is not None:
+            raise ValueError(
+                "subagent_runtime_fallback_mode is only valid when subagent_runtime_mode is 'isolated'",
+            )
+
+        if self.subagent_host_launch_prefix is not None:
+            if not isinstance(self.subagent_host_launch_prefix, list) or any(not isinstance(item, str) or not item.strip() for item in self.subagent_host_launch_prefix):
+                raise ValueError(
+                    "subagent_host_launch_prefix must be a list of non-empty strings when set",
+                )
 
 
 @dataclass

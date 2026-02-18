@@ -7,6 +7,8 @@ This module provides reusable Textual widgets for the production TUI interface.
 
 from .agent_status_ribbon import (
     AgentStatusRibbon,
+    BackgroundTasksClicked,
+    BackgroundTasksLabel,
     ContextPathsClicked,
     DropdownItem,
     RoundSelected,
@@ -120,6 +122,8 @@ __all__ = [
     "SessionInfoClicked",
     # Agent status ribbon
     "AgentStatusRibbon",
+    "BackgroundTasksClicked",
+    "BackgroundTasksLabel",
     "ContextPathsClicked",
     "DropdownItem",
     "RoundSelected",

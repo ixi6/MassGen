@@ -193,8 +193,7 @@ TOOL_CATEGORIES = {
             "spawn_subagent",
             "subagent",
             "list_subagents",
-            "get_subagent_result",
-            "check_subagent_status",
+            "continue_subagent",
         ],
     },
     "weather": {

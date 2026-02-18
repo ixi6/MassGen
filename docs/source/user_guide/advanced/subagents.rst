@@ -27,9 +27,9 @@ Subagents are independent MassGen processes spawned by a parent agent to handle 
 
    Parent Agent
    ├── spawn_subagents([
-   │     {task: "Build frontend", subagent_id: "frontend"},
-   │     {task: "Build backend", subagent_id: "backend"},
-   │     {task: "Write docs", subagent_id: "docs"}
+   │     {task: "Build frontend", subagent_id: "frontend", context_paths: ["./frontend"]},
+   │     {task: "Build backend", subagent_id: "backend", context_paths: ["./backend"]},
+   │     {task: "Write docs", subagent_id: "docs", context_paths: ["./docs"]}
    │   ])
    │
    ├─→ Subagent: frontend (isolated workspace)
@@ -40,8 +40,9 @@ Subagents are independent MassGen processes spawned by a parent agent to handle 
 
 Key characteristics:
 
-* **Process isolation**: Each subagent is a separate MassGen subprocess, meaning it can use as little as one agent but up to multiple agents, all with MassGen's full capabilities.
-* **Independent workspaces**: No interference between subagents
+* **Process separation**: Each subagent is a separate MassGen subprocess, meaning it can use as little as one agent but up to multiple agents, all with MassGen's full capabilities.
+* **Workspace isolation**: Each subagent gets its own workspace directory.
+* **Explicit runtime mode**: Subagent runtime boundary is controlled by ``subagent_runtime_mode`` (default: ``isolated``). See :ref:`subagents-runtime-and-docker-behavior`.
 * **Parallel execution**: All subagents run concurrently
 * **Automatic inheritance**: Subagents use the same model/backend as parent by default
 * **Result aggregation**: Parent receives structured results with workspace paths
@@ -152,34 +153,58 @@ When subagents are enabled, agents have access to the ``spawn_subagents`` tool:
        "tasks": [
          {
            "task": "Research Bob Dylan's biography and write to bio.md",
-           "subagent_id": "biography"
+           "subagent_id": "biography",
+           "context_paths": ["./"]
          },
          {
            "task": "Create discography table in discography.md",
-           "subagent_id": "discography"
+           "subagent_id": "discography",
+           "context_paths": ["./"]
          },
          {
            "task": "List 20 famous songs with years in songs.md",
-           "subagent_id": "songs"
+           "subagent_id": "songs",
+           "context_paths": []
          }
        ],
-      "refine": true
-    }
-  }
+       "refine": true
+     }
+   }
 
 Critical Rules for Calling Subagent Tool
 ~~~~~~~~~~~~~~
 
 1. **Tasks run in PARALLEL**: All tasks start simultaneously. Do NOT create tasks where one depends on another's output.
 
-2. **Context is REQUIRED**: Subagents need project context to understand their work.
+2. **``context_paths`` is REQUIRED in every task**: Set it explicitly, even when empty.
+
+   * Use ``[]`` for clean research with no extra path context.
+   * Use ``["./"]`` to give read access to the parent workspace.
+   * Use specific paths (for example ``["./website/index.html"]``) for least-privilege access.
 
 3. **Maximum tasks per call**: Limited by ``subagent_max_concurrent`` (default 3).
 
 4. **No nesting**: Subagents cannot spawn their own subagents.
 
-5. **Read-only context files**: Use ``context_files`` to share files, but subagents can only read them.
+5. **Read-only supplemental files**: Use optional ``context_files`` to share extra files, but subagents can only read them.
+
 6. **Refine mode**: Use ``refine: false`` to return the first answer without multi-round refinement.
+
+Subagent Tool Surface
+~~~~~~~~~~~~~~~~~~~~~
+
+The subagent MCP server intentionally exposes a small tool surface:
+
+* ``spawn_subagents(tasks, background?, refine?)``: Start one or more subagents
+* ``list_subagents()``: Discovery/index view (status, workspace, session, optional in-memory result payload)
+* ``continue_subagent(subagent_id, message, timeout_seconds?)``: Continue an existing subagent session
+
+Legacy specialized polling/cost endpoints are no longer part of the subagent MCP surface.
+For background lifecycle management, use the standardized background lifecycle tools
+(``custom_tool__get_background_tool_status``, ``custom_tool__get_background_tool_result``,
+``custom_tool__wait_for_background_tool``, ``custom_tool__cancel_background_tool``,
+``custom_tool__list_background_tools``).
+Use ``include_all=true`` with ``custom_tool__list_background_tools`` (not ``list_subagents``).
 
 Result Structure
 ~~~~~~~~~~~~~~~~
@@ -228,7 +253,7 @@ Use ``refine: false`` to disable multi-round refinement for faster, single-pass 
      "tool": "spawn_subagents",
      "arguments": {
        "tasks": [
-         {"task": "Summarize the repo structure in README.md", "subagent_id": "summary"}
+         {"task": "Summarize the repo structure in README.md", "subagent_id": "summary", "context_paths": ["./README.md"]}
        ],
        "refine": false
      }
@@ -266,10 +291,15 @@ Subagents can return several status values, each indicating a different outcome:
 
    The ``completed_but_timeout`` status indicates the subagent completed its task successfully—it just took longer than the configured timeout. The answer is complete and should be used normally. This is a success case with ``success: true``.
 
-Sharing Files with Subagents
+Passing Context to Subagents
 ----------------------------
 
-Pass files to subagents using ``context_files``:
+There are two context channels:
+
+* **Required per task**: ``context_paths`` (list of paths mounted read-only)
+* **Optional supplement**: ``context_files`` (extra files copied as read-only context)
+
+Example:
 
 .. code-block:: json
 
@@ -278,6 +308,7 @@ Pass files to subagents using ``context_files``:
        {
          "task": "Refactor the utils module",
          "subagent_id": "refactor",
+         "context_paths": ["./utils.py", "./config.py"],
          "context_files": [
            "/path/to/project/utils.py",
            "/path/to/project/config.py"
@@ -288,12 +319,22 @@ Pass files to subagents using ``context_files``:
 
 .. warning::
 
-   Context files are **read-only**. Subagents cannot modify files passed via ``context_files``. If you need the parent to use subagent output, copy files from the subagent's workspace after completion.
+   Both ``context_paths`` and ``context_files`` are **read-only** for subagents. If you need the parent to use subagent output, copy files from the subagent's workspace after completion.
+
+.. note::
+
+   ``context_paths`` is required even when no context is needed. Use ``[]`` explicitly in that case.
 
 Handling Timeouts and Failures
 ------------------------------
 
 MassGen automatically attempts to recover work from timed-out subagents. When a subagent times out, the system checks the subagent's internal state to recover any completed work, answers, and cost metrics.
+
+Timeout behavior has multiple layers:
+
+1. **Subagent runtime timeout**: Controlled by ``subagent_default_timeout`` and clamped by ``subagent_min_timeout`` / ``subagent_max_timeout``.
+2. **MCP client timeout**: ``spawn_subagents`` is timeout-exempt at the generic MCP-client layer.
+3. **Codex per-tool timeout**: Subagent MCP config sets ``tool_timeout_sec = subagent_default_timeout + 60`` to avoid provider-side 60-second caps.
 
 Timeout Recovery Behavior
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -488,7 +529,9 @@ The ``full_logs/status.json`` contains rich information:
      ]
    }
 
-When you query status via ``check_subagent_status``, this is transformed into a simplified view:
+When status is surfaced (for example via ``list_subagents`` discovery entries or
+``custom_tool__get_background_tool_status`` for background jobs), it is transformed
+into a simplified view:
 
 .. code-block:: json
 
@@ -525,16 +568,16 @@ Subagent costs are automatically aggregated in the parent's metrics:
      }
    }
 
-Async Subagent Execution
-------------------------
+Background Subagent Execution
+-----------------------------
 
 By default, ``spawn_subagents`` blocks until all subagents complete. For long-running tasks,
-you can use async mode to spawn subagents in the background while the parent agent continues working.
+you can use background mode to spawn subagents while the parent agent continues working.
 
-Enabling Async Mode
-~~~~~~~~~~~~~~~~~~~
+Enabling Background Mode
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-Pass ``async_=True`` to spawn subagents in the background:
+Pass ``background=True`` to spawn subagents in the background:
 
 .. code-block:: json
 
@@ -542,9 +585,9 @@ Pass ``async_=True`` to spawn subagents in the background:
      "tool": "spawn_subagents",
      "arguments": {
        "tasks": [
-         {"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research"}
+         {"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research", "context_paths": []}
        ],
-       "async_": true
+       "background": true
      }
    }
 
@@ -554,7 +597,7 @@ The tool returns immediately with running status:
 
    {
      "success": true,
-     "mode": "async",
+     "mode": "background",
      "subagents": [
        {
          "subagent_id": "oauth-research",
@@ -563,46 +606,58 @@ The tool returns immediately with running status:
          "status_file": "/path/to/logs/oauth-research/full_logs/status.json"
        }
      ],
-    "note": "Poll for subagent completion to retrieve results when ready."
+   "note": "Poll for subagent completion to retrieve results when ready."
    }
+
+Inspecting Logs and Costs
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For deep debugging and cost inspection:
+
+* Subagent-level status/costs: ``<subagent_log_dir>/full_logs/status.json``
+* Run-level aggregated costs: ``<run_log_dir>/metrics_summary.json`` (includes subagent totals)
+* Discovery/index metadata: ``list_subagents()`` (IDs, status, workspace/session pointers)
+
+Use ``status.json`` for detailed per-subagent coordination and cost internals; use
+``metrics_summary.json`` for top-level totals across the run.
 
 
 Configuration
 ~~~~~~~~~~~~~
 
-Configure async subagent behavior in your YAML config:
+Configure background subagent behavior in your YAML config:
 
 .. code-block:: yaml
 
    orchestrator:
      coordination:
        enable_subagents: true
-       async_subagents:
-         enabled: true  # Allow async spawning (default: true)
+       background_subagents:
+         enabled: true  # Allow background spawning (default: true)
 
 
-When to Use Async Mode
-~~~~~~~~~~~~~~~~~~~~~~
+When to Use Background Mode
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use async mode when:
+Use background mode when:
 
 * **Long-running research tasks**: Spawn research while continuing other work
 * **Independent background work**: Tasks that don't block the main workflow
 * **Parallel exploration**: Start multiple research directions simultaneously
 
-Do NOT use async mode when:
+Do NOT use background mode when:
 
 * **Results needed immediately**: If you need the result before proceeding
 * **Sequential dependencies**: If subsequent work depends on the subagent output
 * **Critical path tasks**: If the subagent task is on the critical path
 
-Example: Async Research
-~~~~~~~~~~~~~~~~~~~~~~~
+Example: Background Research
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: text
 
    Parent Agent Workflow:
-   1. Spawn async subagent for OAuth research
+   1. Spawn background subagent for OAuth research
    2. Continue working on database schema
    3. (Subagent completes in background)
    4. On next tool call, OAuth research results injected
@@ -611,12 +666,12 @@ Example: Async Research
 Evaluation Delegation Pattern
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A key use case for async subagents is **delegating procedural evaluation work** so the main
+A key use case for background subagents is **delegating procedural evaluation work** so the main
 agent can focus on implementation. Without this, agents often spend their entire token budget
 on evaluation (serving websites, running tests, taking screenshots, writing reports) and run
 out of budget before implementing improvements.
 
-**The pattern:** Spawn an async subagent with ``async_=True, refine=False`` to handle
+**The pattern:** Spawn a background subagent with ``background=True, refine=False`` to handle
 procedural evaluation, then continue building while it runs.
 
 .. list-table::
@@ -644,7 +699,7 @@ since it has full context and the subagent may run on a simpler or cheaper model
 
    Parent Agent Workflow:
    1. Implement website features
-   2. Spawn async subagent: "Serve index.html, take full-page screenshots,
+   2. Spawn background subagent: "Serve index.html, take full-page screenshots,
       run Playwright accessibility checks, report all findings"
    3. Continue implementing next feature while subagent evaluates
    4. Subagent results arrive → read descriptive report
@@ -652,16 +707,20 @@ since it has full context and the subagent may run on a simpler or cheaper model
 
 .. note::
 
-   For backends without automatic result injection (hook support), agents can manually
-   poll for async subagent completion using ``check_subagent_status`` and
-   ``get_subagent_result``.
+   For backends without automatic result injection (hook support), agents should use
+   the standardized background lifecycle tools:
+   ``custom_tool__get_background_tool_status(job_id)``,
+   ``custom_tool__wait_for_background_tool(...)``,
+   ``custom_tool__get_background_tool_result(job_id)``, and
+   ``custom_tool__cancel_background_tool(job_id)``.
+   Use ``custom_tool__list_background_tools(include_all=true)`` to inspect job history.
 
 Best Practices
 --------------
 
 1. **Design for independence**: Each subagent task should be completable without other subagents' output.
 
-2. **Provide clear context**: The ``context`` parameter helps subagents understand the bigger picture.
+2. **Provide explicit path context**: Use required ``context_paths`` deliberately (``[]``, ``["./"]``, or specific paths).
 
 3. **Use meaningful IDs**: ``subagent_id`` values appear in logs and help with debugging.
 
@@ -708,57 +767,48 @@ Documentation Generator
    2. Creates index and cross-references
    3. Builds final documentation site
 
-Docker Support
---------------
+.. _subagents-runtime-and-docker-behavior:
 
-Subagents fully support Docker execution mode. When the parent agent is configured to run commands in Docker, subagents automatically inherit all Docker settings:
+Runtime and Docker Behavior
+---------------------------
+
+Subagent workspace isolation and subagent runtime isolation are different things:
+
+* **Workspace isolation**: Each subagent has its own workspace directory.
+* **Runtime boundary**: Where subagent processes execute (isolated vs inherited).
+
+Runtime mode is configured under ``orchestrator.coordination``:
 
 .. code-block:: yaml
-
-   agents:
-     - id: "orchestrator_agent"
-       backend:
-         type: "gemini"
-         model: "gemini-2.0-flash"
-         cwd: "workspace"
-         enable_mcp_command_line: true
-         command_line_execution_mode: docker
-         command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
-         command_line_docker_network_mode: bridge
-         command_line_docker_enable_sudo: true
-         enable_code_based_tools: true
-         auto_discover_custom_tools: true
 
    orchestrator:
      coordination:
        enable_subagents: true
+       subagent_runtime_mode: isolated            # default
+       # subagent_runtime_fallback_mode: inherited  # explicit opt-in fallback
+       # subagent_host_launch_prefix: ["host-launch", "--exec"]
 
-With this configuration:
+Mode semantics:
 
-* Subagents inherit Docker settings (image, network mode, sudo, credentials)
-* Subagents inherit code-based tools settings
-* Each subagent's ``execute_command`` calls run in isolated Docker containers
+* ``isolated`` (default): require isolated subagent runtime behavior.
+* ``inherited``: run subagents in the parent runtime boundary.
+* ``subagent_runtime_fallback_mode: inherited``: only explicit way to downgrade when isolated prerequisites are unavailable.
 
-**Architecture:**
+Isolated mode in containerized parent runtimes may require a launch bridge:
+
+* ``subagent_host_launch_prefix`` provides a command prefix used to launch isolated subprocesses across runtime boundaries.
+* If isolated mode is requested and prerequisites are unavailable:
+  * with no fallback configured: subagent launch fails with actionable diagnostics
+  * with explicit fallback configured: launch continues in inherited mode and returns a warning
+
+Execution model:
 
 .. code-block:: text
 
-   Host Machine
-   └── MassGen parent process (runs on host)
-        ├── execute_command → Docker container
-        └── spawn_subagents → subprocess on host
-             └── MassGen subagent process (runs on host)
-                  └── execute_command → Docker container
-
-.. important::
-
-   **Limitation**: MassGen itself must run on the host, not inside Docker. The subagent system spawns new MassGen processes as subprocesses, which requires host access. Docker mode only applies to command execution (``execute_command`` tool), not to the MassGen orchestration layer.
-
-   This means:
-
-   * ✅ Running ``massgen`` on your host with ``command_line_execution_mode: docker`` works
-   * ✅ Subagents will also run their commands in Docker
-   * ❌ Running the entire MassGen process inside Docker with subagents enabled is not supported
+   Parent agent
+   ├── chooses effective runtime mode (isolated/inherited/fallback)
+   ├── spawns subagent process
+   └── preserves existing MCP/TUI contracts across modes
 
 Troubleshooting
 ---------------
@@ -788,9 +838,32 @@ Subagent Can't Access Files
 
 **Solutions**:
 
-1. Use absolute paths in ``context_files``
-2. Verify file exists before spawning
-3. Remember: context files are read-only
+1. Ensure each task includes required ``context_paths`` (even if empty)
+2. Use ``["./"]`` for parent workspace access or explicit path list for least privilege
+3. Verify referenced paths/files exist before spawning
+4. Remember: context passed via ``context_paths`` and ``context_files`` is read-only
+
+Unexpected Runtime Sharing (Docker Context)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Problem**: Subagents appear to run in shared runtime context (for example, local server port conflicts).
+
+**What to check**:
+
+1. Confirm ``subagent_runtime_mode`` is ``isolated`` (or omitted, since isolated is default)
+2. If parent runtime is containerized, configure ``subagent_host_launch_prefix`` for isolated launch bridging
+3. If you intentionally need shared runtime in constrained environments, set explicit fallback:
+
+.. code-block:: yaml
+
+   orchestrator:
+     coordination:
+       subagent_runtime_mode: isolated
+       subagent_runtime_fallback_mode: inherited
+
+**Important**:
+
+Without explicit fallback, isolated mode failures are expected to fail fast with diagnostics (no silent downgrade).
 
 Parent Can't Find Subagent Output
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

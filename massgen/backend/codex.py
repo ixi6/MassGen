@@ -169,8 +169,10 @@ class CodexBackend(NativeToolBackendMixin, LLMBackend):
             custom_tools.extend(get_multimodal_tool_definitions())
             logger.info("Codex backend: multimodal tools enabled (read_media, generate_media)")
 
-        if custom_tools:
-            self._setup_custom_tools_mcp(custom_tools)
+        # Codex exposes MassGen custom tools through an MCP wrapper server.
+        # Always configure this server so framework background lifecycle tools
+        # are available even when no user custom tools are defined.
+        self._setup_custom_tools_mcp(custom_tools)
 
         # Verify Codex CLI is available (skip in docker mode — resolved inside container)
         if self._docker_execution:
@@ -333,6 +335,49 @@ class CodexBackend(NativeToolBackendMixin, LLMBackend):
         env_vars["FASTMCP_SHOW_CLI_BANNER"] = "false"
         return env_vars
 
+    def _collect_background_mcp_servers(self) -> List[Dict[str, Any]]:
+        """Collect MCP server configs available for background target execution."""
+        merged: List[Dict[str, Any]] = []
+
+        config_mcp = self.config.get("mcp_servers") if self.config else None
+        if isinstance(config_mcp, dict):
+            for name, server_cfg in config_mcp.items():
+                if not isinstance(server_cfg, dict):
+                    continue
+                entry = server_cfg.copy()
+                entry["name"] = name
+                merged.append(entry)
+        elif isinstance(config_mcp, list):
+            for server_cfg in config_mcp:
+                if isinstance(server_cfg, dict):
+                    merged.append(server_cfg.copy())
+
+        existing_names = {s.get("name") for s in merged if isinstance(s, dict)}
+        for server_cfg in self.mcp_servers:
+            if not isinstance(server_cfg, dict):
+                continue
+            name = server_cfg.get("name")
+            if name in existing_names:
+                continue
+            merged.append(server_cfg.copy())
+
+        filtered: List[Dict[str, Any]] = []
+        for server_cfg in merged:
+            if not isinstance(server_cfg, dict):
+                continue
+            name = server_cfg.get("name")
+            if not isinstance(name, str) or not name:
+                continue
+            if name == "massgen_custom_tools":
+                continue
+            if server_cfg.get("type") == "sdk":
+                continue
+            if "__sdk_server__" in server_cfg:
+                continue
+            filtered.append(server_cfg)
+
+        return filtered
+
     def _setup_custom_tools_mcp(self, custom_tools: List[Dict[str, Any]]) -> None:
         """Wrap MassGen custom tools as an MCP server and add to mcp_servers.
 
@@ -353,7 +398,11 @@ class CodexBackend(NativeToolBackendMixin, LLMBackend):
 
         # Write specs to workspace
         specs_path = Path(self.cwd) / ".codex" / "custom_tool_specs.json"
-        write_tool_specs(custom_tools, specs_path)
+        write_tool_specs(
+            custom_tools,
+            specs_path,
+            background_mcp_servers=self._collect_background_mcp_servers(),
+        )
         self._custom_tools_specs_path = specs_path
 
         # Build MCP server config and add to mcp_servers
@@ -363,8 +412,13 @@ class CodexBackend(NativeToolBackendMixin, LLMBackend):
             agent_id="codex",
             env=self._build_custom_tools_mcp_env(),
         )
+        # Replace existing massgen_custom_tools entry if present
+        self.mcp_servers = [s for s in self.mcp_servers if not (isinstance(s, dict) and s.get("name") == "massgen_custom_tools")]
         self.mcp_servers.append(server_config)
-        logger.info(f"Custom tools MCP server configured with {len(custom_tools)} tool configs")
+        logger.info(
+            "Custom tools MCP server configured with %s user tool config(s) + background lifecycle tools",
+            len(custom_tools),
+        )
 
     def _write_workspace_config(self) -> None:
         """Write config.toml to workspace/.codex directory.
@@ -383,15 +437,20 @@ class CodexBackend(NativeToolBackendMixin, LLMBackend):
         if self.model_reasoning_effort:
             config["model_reasoning_effort"] = self.model_reasoning_effort
 
-        # Always write custom tool specs to current workspace (cwd may change between runs)
-        if getattr(self, "_custom_tools_config", None):
+        # Always write custom tool specs to current workspace (cwd may change between runs).
+        # Includes framework background lifecycle tools even when user custom_tools is empty.
+        if hasattr(self, "_custom_tools_config"):
             from ..mcp_tools.custom_tools_server import (
                 build_server_config,
                 write_tool_specs,
             )
 
             specs_path = config_dir / "custom_tool_specs.json"
-            write_tool_specs(self._custom_tools_config, specs_path)
+            write_tool_specs(
+                self._custom_tools_config,
+                specs_path,
+                background_mcp_servers=self._collect_background_mcp_servers(),
+            )
             self._custom_tools_specs_path = specs_path
             # Update the MCP server config to point to current workspace
             for s in self.mcp_servers:
@@ -1080,23 +1139,9 @@ class CodexBackend(NativeToolBackendMixin, LLMBackend):
                         server_name=server or None,
                         agent_id=agent_id,
                     )
-                args_str = json.dumps(arguments) if isinstance(arguments, dict) else str(arguments)
-                return [
-                    StreamChunk(
-                        type="mcp_status",
-                        status="mcp_tool_called",
-                        content=f"Calling {full_tool_name}...",
-                        source="codex",
-                        tool_call_id=item_id,
-                    ),
-                    StreamChunk(
-                        type="mcp_status",
-                        status="function_call",
-                        content=f"Arguments for Calling {full_tool_name}: {args_str}",
-                        source="codex",
-                        tool_call_id=item_id,
-                    ),
-                ]
+                # Event emitter handles TUI rendering — no mcp_status StreamChunks
+                # needed (they caused duplicate tool entries in the Textual TUI).
+                return []
             else:
                 # item.completed — emit tool_complete or workflow tool_calls
                 result = item.get("result", "")
@@ -1133,15 +1178,8 @@ class CodexBackend(NativeToolBackendMixin, LLMBackend):
                         is_error=is_error,
                         agent_id=agent_id,
                     )
-                return [
-                    StreamChunk(
-                        type="mcp_status",
-                        status="function_call_output",
-                        content=result_str,
-                        source="codex",
-                        tool_call_id=item_id,
-                    ),
-                ]
+                # Event emitter handles TUI rendering — no mcp_status StreamChunks.
+                return []
 
         # Web search — typically only item.completed
         if item_type in ("web_search", "webSearch"):

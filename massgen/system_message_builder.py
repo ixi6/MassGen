@@ -121,6 +121,18 @@ class SystemMessageBuilder:
                 filtered.append(skill)
         return filtered
 
+    def _discover_specialized_subagents(self):
+        """Discover specialized subagent types from disk (cached per builder instance)."""
+        if not hasattr(self, "_specialized_subagents_cache"):
+            from massgen.subagent.type_scanner import scan_subagent_types
+
+            self._specialized_subagents_cache = scan_subagent_types()
+            if self._specialized_subagents_cache:
+                logger.info(
+                    f"[SystemMessageBuilder] Discovered {len(self._specialized_subagents_cache)} " f"specialized subagent types: {[t.name for t in self._specialized_subagents_cache]}",
+                )
+        return self._specialized_subagents_cache
+
     def build_coordination_message(
         self,
         agent,  # ChatAgent
@@ -230,6 +242,13 @@ class SystemMessageBuilder:
             voting_sensitivity = voting_sensitivity_override or self.message_templates._voting_sensitivity
             answer_novelty_requirement = self.message_templates._answer_novelty_requirement
             round_number = len(previous_turns) + 1 if previous_turns else 1
+            # Check if evaluator subagent type is available (for mandatory check directive)
+            has_evaluator_subagent = False
+            _enable_subagents = getattr(self.config.coordination_config, "enable_subagents", False) if hasattr(self.config, "coordination_config") else False
+            if _enable_subagents:
+                specialized_types = self._discover_specialized_subagents()
+                has_evaluator_subagent = any(t.name == "evaluator" for t in specialized_types)
+
             builder.add_section(
                 EvaluationSection(
                     voting_sensitivity=voting_sensitivity,
@@ -242,6 +261,7 @@ class SystemMessageBuilder:
                     answers_used=answers_used,
                     answer_cap=answer_cap,
                     has_changedoc=changedoc_enabled,
+                    has_evaluator_subagent=has_evaluator_subagent,
                 ),
             )
 
@@ -442,8 +462,10 @@ class SystemMessageBuilder:
                     workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
                 # Get max concurrent from config, default to 3
                 max_concurrent = getattr(self.config.coordination_config, "subagent_max_concurrent", 3)
-                builder.add_section(SubagentSection(workspace_path, max_concurrent))
-                logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent})")
+                # Discover specialized subagent types from disk
+                specialized_subagents = self._discover_specialized_subagents()
+                builder.add_section(SubagentSection(workspace_path, max_concurrent, specialized_subagents=specialized_subagents))
+                logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent}, specialized_types: {len(specialized_subagents)})")
 
         # PRIORITY 10 (MEDIUM): Task Context (when multimodal tools OR subagents are enabled)
         # This instructs agents to create CONTEXT.md before using tools that make external API calls

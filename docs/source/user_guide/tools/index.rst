@@ -9,6 +9,7 @@ MassGen provides a comprehensive tools ecosystem that enables AI agents to perfo
 
    * :doc:`mcp_integration` - External tools via Model Context Protocol
    * :doc:`custom_tools` - Custom Python functions as tools
+   * :doc:`background_tools` - Background lifecycle for long-running tool calls
    * :doc:`../advanced/computer_use` - Browser and desktop automation tools
 
 What Are Tools?
@@ -486,6 +487,7 @@ Related Documentation
 * :doc:`../integration/general_interoperability` - Framework interoperability (including AG2)
 * :doc:`../../examples/basic_examples` - See tools in action
 * :doc:`../../reference/yaml_schema` - Complete YAML configuration reference
+* :doc:`background_tools` - Background execution lifecycle for tool calls
 
 External Resources
 ------------------
@@ -501,6 +503,7 @@ External Resources
 
    mcp_integration
    custom_tools
+   background_tools
    code_execution
    code_based_tools
    skills

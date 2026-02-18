@@ -3,7 +3,7 @@
 Subagent Result Formatter for MassGen
 
 Formats subagent results for injection into parent agent context.
-Used by SubagentCompleteHook to format async subagent completion results.
+Used by SubagentCompleteHook to format background subagent completion results.
 """
 
 from typing import List, Tuple
@@ -81,7 +81,7 @@ def format_batch_results(results: List[Tuple[str, SubagentResult]]) -> str:
     # Build the batch output with header
     header = f"""
 {separator}
-ASYNC SUBAGENT RESULTS ({count} completed)
+BACKGROUND SUBAGENT RESULTS ({count} completed)
 {separator}
 """
 

@@ -4,6 +4,7 @@ Textual Terminal Display for MassGen Coordination
 
 """
 
+import ast
 import functools
 import json
 import os
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
     )
 
 from massgen.logger_config import get_event_emitter, get_log_session_dir, logger
+from massgen.subagent.models import SubagentDisplayData
 from massgen.user_settings import get_user_settings
 
 from .terminal_display import TerminalDisplay
@@ -78,6 +80,8 @@ try:
         AnalysisSkillLifecycleChanged,
         AnalysisTargetChanged,
         AnalysisTargetTypeChanged,
+        BackgroundTasksClicked,
+        BackgroundTasksModal,
         BroadcastModeChanged,
         CompletionFooter,
         ContextPathsClicked,
@@ -181,6 +185,158 @@ CRITICAL_PATTERNS = {
 }
 
 CRITICAL_CONTENT_TYPES = {"status", "presentation", "tool", "vote", "error"}
+
+
+def _parse_spawn_subagents_result(result_text: Any) -> Optional[Dict[str, Any]]:
+    """Parse spawn_subagents result payloads across JSON and repr encodings.
+
+    Spawn tool results frequently arrive as:
+    - raw JSON dict
+    - Python repr dict
+    - list-wrapped Claude/Codex content blocks containing JSON/repr text
+    - wrappers with a top-level ``structured_content`` dict
+    """
+    if not isinstance(result_text, str) or not result_text.strip():
+        return None
+
+    try:
+        from .content_processor import ContentProcessor
+
+        parsed = ContentProcessor._parse_result_dict(result_text)
+    except Exception:
+        parsed = None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    structured = parsed.get("structured_content")
+    if isinstance(structured, dict):
+        parsed = structured
+
+    return parsed
+
+
+def _parse_spawn_subagents_args(args_payload: Any) -> Optional[Dict[str, Any]]:
+    """Parse spawn_subagents args payloads across JSON/repr encodings."""
+    if isinstance(args_payload, dict):
+        return args_payload
+    if not isinstance(args_payload, str):
+        return None
+
+    raw = args_payload.strip()
+    if not raw:
+        return None
+
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    try:
+        parsed = ast.literal_eval(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+
+    return None
+
+
+def _extract_spawned_subagents(result_text: Any) -> tuple[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Return normalized spawn_subagents payload plus extracted subagent entries."""
+    result_data = _parse_spawn_subagents_result(result_text)
+    if not isinstance(result_data, dict):
+        return None, []
+
+    spawned_raw = result_data.get(
+        "results",
+        result_data.get("spawned_subagents", result_data.get("subagents", [])),
+    )
+    if not isinstance(spawned_raw, list):
+        return result_data, []
+
+    spawned = [entry for entry in spawned_raw if isinstance(entry, dict)]
+    return result_data, spawned
+
+
+def _subagent_card_dom_id(call_id: Any) -> str:
+    """Build a safe, deterministic DOM id for subagent cards."""
+    safe_call_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(call_id or "subagent"))
+    return f"subagent_{safe_call_id}"
+
+
+def _map_subagent_status(raw_status: Any, completion_percentage: Optional[int] = None) -> tuple[str, int]:
+    """Map raw subagent status values to display status/progress."""
+    status = str(raw_status or "").lower().strip()
+    if status == "completed":
+        return "completed", 100
+    if status in {"completed_but_timeout", "partial", "timeout"}:
+        progress = completion_percentage if completion_percentage is not None else 100
+        return "timeout", max(0, min(int(progress), 100))
+    if status in {"failed", "error"}:
+        return "failed", 0
+    if status in {"pending"}:
+        return "pending", 0
+    return "running", 0
+
+
+def _count_workspace_files(workspace_path: str) -> int:
+    if not workspace_path:
+        return 0
+    workspace = Path(workspace_path)
+    if not workspace.exists():
+        return 0
+    try:
+        return sum(1 for path in workspace.rglob("*") if path.is_file())
+    except Exception:
+        return 0
+
+
+def _build_subagent_display_data(
+    sa_data: Dict[str, Any],
+    existing: Optional[SubagentDisplayData] = None,
+) -> SubagentDisplayData:
+    """Build SubagentDisplayData from spawn result/status records."""
+    subagent_id = str(
+        sa_data.get("subagent_id") or sa_data.get("id") or (existing.id if existing else "unknown"),
+    )
+    completion_percentage = sa_data.get("completion_percentage")
+    if completion_percentage is not None:
+        try:
+            completion_percentage = int(completion_percentage)
+        except Exception:
+            completion_percentage = None
+    display_status, progress = _map_subagent_status(sa_data.get("status"), completion_percentage)
+
+    task = str(sa_data.get("task") or (existing.task if existing else ""))
+    workspace_path = str(sa_data.get("workspace") or (existing.workspace_path if existing else ""))
+    timeout_seconds = float(sa_data.get("timeout_seconds") or (existing.timeout_seconds if existing else 300))
+    elapsed_seconds = float(sa_data.get("execution_time_seconds") or (existing.elapsed_seconds if existing else 0.0))
+    error = sa_data.get("error") or (existing.error if existing else None)
+    answer = sa_data.get("answer")
+    answer_preview = ((answer or "")[:200] if answer else None) or (existing.answer_preview if existing else None)
+    log_path = sa_data.get("log_path") or (existing.log_path if existing else None)
+
+    workspace_file_count = _count_workspace_files(workspace_path)
+    if workspace_file_count == 0 and existing and existing.workspace_file_count > 0:
+        workspace_file_count = existing.workspace_file_count
+
+    return SubagentDisplayData(
+        id=subagent_id,
+        task=task,
+        status=display_status,
+        progress_percent=progress,
+        elapsed_seconds=elapsed_seconds,
+        timeout_seconds=timeout_seconds,
+        workspace_path=workspace_path,
+        workspace_file_count=workspace_file_count,
+        last_log_line=str(error or ""),
+        error=error,
+        answer_preview=answer_preview,
+        log_path=str(log_path) if log_path else None,
+    )
 
 
 class ProgressIndicator(Static):
@@ -2440,6 +2596,9 @@ if TEXTUAL_AVAILABLE:
     class StatusBarContextClicked(Message):
         """Message emitted when the context paths indicator in StatusBar is clicked."""
 
+    class StatusBarToolsClicked(Message):
+        """Message emitted when the running/background tools indicator is clicked."""
+
     class StatusBar(Widget):
         """Persistent status bar showing orchestration state at the bottom of the TUI."""
 
@@ -2491,7 +2650,7 @@ if TEXTUAL_AVAILABLE:
             yield Static("⏳ Idle", id="status_phase")
             yield Static("", id="status_activity", classes="activity-indicator hidden")  # Pulsing activity indicator
             yield Static("", id="status_progress")  # Progress summary: "3 agents | 2 answers | 4/6 votes"
-            yield Static("", id="status_tools", classes="hidden")  # Running tools counter: "🔧 3 running"
+            yield Static("", id="status_tools", classes="hidden clickable")
             yield Static("", id="status_votes")
             # Spacer to push right-side elements to the edge
             yield Static("", id="status_spacer")
@@ -2519,6 +2678,8 @@ if TEXTUAL_AVAILABLE:
                     self.post_message(StatusBarEventsClicked())
                 elif widget.id == "status_cancel":
                     self.post_message(StatusBarCancelClicked())
+                elif widget.id == "status_tools":
+                    self.post_message(StatusBarToolsClicked())
                 elif widget.id == "status_cwd":
                     self.toggle_cwd_auto_include()
                 elif widget.id == "status_theme":
@@ -2604,12 +2765,15 @@ if TEXTUAL_AVAILABLE:
             except Exception as e:
                 tui_log(f"[TextualDisplay] {e}")  # Widget not mounted yet
 
-        def update_running_tools(self, count: int) -> None:
-            """Update running tools counter in status bar."""
+        def update_running_tools(self, count: int, background_count: int = 0) -> None:
+            """Update running/background tools counter in status bar."""
             try:
                 tools_widget = self.query_one("#status_tools", Static)
                 if count > 0:
-                    tools_widget.update(f"🔧 {count} running")
+                    parts = [f"🔧 {count} running"]
+                    if background_count > 0:
+                        parts.append(f"⚙️ {background_count} bg")
+                    tools_widget.update(" | ".join(parts))
                     tools_widget.remove_class("hidden")
                 else:
                     tools_widget.update("")
@@ -3121,6 +3285,7 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+p", "toggle_cwd", "Toggle CWD", priority=True, show=False),
             # Subagent quick access
             Binding("ctrl+u", "show_subagents", "Subagents", priority=True, show=False),
+            Binding("b", "open_background_tools", "Background Jobs", show=False),
             # Help - Ctrl+G for guide/help
             Binding("ctrl+g", "show_help", "Help", priority=True, show=False),
             # Mode toggles
@@ -3356,6 +3521,9 @@ if TEXTUAL_AVAILABLE:
                     self._tab_bar.set_agent_personas({})
                 else:
                     self._tab_bar.set_agent_subtasks({})
+
+            # Ensure status-bar tool indicators reset between turns.
+            self._update_running_tools_count()
 
         _BACKEND_PROVIDER_SLUGS: Dict[str, str] = {
             "openai": "openai",
@@ -3702,6 +3870,7 @@ if TEXTUAL_AVAILABLE:
                 self._mode_bar.set_parallel_personas_enabled(self._mode_state.parallel_personas_enabled, self._mode_state.persona_diversity_mode)
             self._refresh_skills_button_state()
             self._refresh_input_modes_row_layout()
+            self._update_running_tools_count()
             # Re-run once after the first layout pass so width-dependent hint
             # truncation can use settled regions.
             self.call_after_refresh(lambda: (self._refresh_welcome_context_hint(), self._refresh_input_modes_row_layout()))
@@ -5866,7 +6035,7 @@ Type your question and press Enter to ask the agents.
                     )
                 return
 
-            card_id = f"subagent_{call_id}"
+            card_id = _subagent_card_dom_id(call_id)
             card: Optional[SubagentCard] = None
             try:
                 card = timeline.query_one(f"#{card_id}", SubagentCard)
@@ -5884,7 +6053,11 @@ Type your question and press Enter to ask the agents.
                     status_callback=status_callback,
                     id=card_id,
                 )
-                timeline.add_widget(card)
+                round_number = max(
+                    1,
+                    int(getattr(panel, "_current_round", getattr(timeline, "_viewed_round", 1)) or 1),
+                )
+                timeline.add_widget(card, round_number=round_number)
 
         def update_runtime_subagent_card(
             self,
@@ -5993,7 +6166,7 @@ Type your question and press Enter to ask the agents.
             except Exception:
                 return
 
-            card_id = f"subagent_{call_id}"
+            card_id = _subagent_card_dom_id(call_id)
             try:
                 card = timeline.query_one(f"#{card_id}", SubagentCard)
             except Exception:
@@ -6116,20 +6289,35 @@ Type your question and press Enter to ask the agents.
                         panel._batch_tracker.mark_content_arrived()
                         panel._batch_tracker.finalize_current_batch()
 
-                    # Remove stale SubagentCards from failed spawn attempts
+                    # Remove stale duplicate card for the same tool call only.
+                    card_dom_id = _subagent_card_dom_id(call_id)
                     try:
                         for old_card in list(timeline.query(SubagentCard)):
-                            old_card.remove()
+                            old_id = getattr(old_card, "id", "")
+                            old_tool_call_id = getattr(old_card, "tool_call_id", None) or getattr(old_card, "_tool_call_id", None)
+                            if old_id == card_dom_id or str(old_tool_call_id) == str(call_id):
+                                old_card.remove()
                     except Exception as e:
                         tui_log(f"[TextualDisplay] {e}")
+
+                    status_callback = self._build_spawn_status_callback(
+                        agent_id=agent_id,
+                        seed_subagents=subagents,
+                    )
+
+                    round_number = max(
+                        1,
+                        int(getattr(panel, "_current_round", getattr(timeline, "_viewed_round", 1)) or 1),
+                    )
 
                     # Create and add SubagentCard to timeline
                     card = SubagentCard(
                         subagents=subagents,
                         tool_call_id=call_id,
-                        id=f"subagent_{call_id}",
+                        status_callback=status_callback,
+                        id=card_dom_id,
                     )
-                    timeline.add_widget(card)
+                    timeline.add_widget(card, round_number=round_number)
                     tui_log(
                         f"show_subagent_card_from_spawn: added SubagentCard with {len(subagents)} pending subagents",
                     )
@@ -7254,6 +7442,7 @@ Type your question and press Enter to ask the agents.
                                 screen = SubagentScreen(
                                     subagent=running[0],
                                     all_subagents=card.subagents,
+                                    status_callback=self._build_subagent_status_callback(card),
                                 )
                                 self.push_screen(screen)
                                 return
@@ -7261,6 +7450,7 @@ Type your question and press Enter to ask the agents.
                             screen = SubagentScreen(
                                 subagent=card.subagents[0],
                                 all_subagents=card.subagents,
+                                status_callback=self._build_subagent_status_callback(card),
                             )
                             self.push_screen(screen)
                             return
@@ -8884,6 +9074,125 @@ Type your question and press Enter to ask the agents.
             self.push_screen(modal)
             event.stop()
 
+        def _build_subagent_status_callback(
+            self,
+            card: Optional[Any] = None,
+            fallback_subagents: Optional[List[Any]] = None,
+        ) -> Callable[[str], Optional[Any]]:
+            """Return a callback that always pulls the latest subagent data."""
+
+            def _status_callback(subagent_id: str) -> Optional[Any]:
+                # Fast path: known source card from the click target.
+                try:
+                    if card is not None:
+                        for subagent in card.subagents:
+                            if getattr(subagent, "id", None) == subagent_id:
+                                return subagent
+                except Exception:
+                    pass
+
+                # Fallback: scan all currently rendered subagent cards.
+                try:
+                    for panel in self.agent_widgets.values():
+                        try:
+                            subagent_cards = panel.query(SubagentCard)
+                        except Exception:
+                            continue
+                        for candidate_card in subagent_cards:
+                            for subagent in getattr(candidate_card, "subagents", []):
+                                if getattr(subagent, "id", None) == subagent_id:
+                                    return subagent
+                except Exception:
+                    pass
+
+                # Final fallback: use snapshot payload carried by event.
+                if fallback_subagents:
+                    for subagent in fallback_subagents:
+                        if getattr(subagent, "id", None) == subagent_id:
+                            return subagent
+                return None
+
+            return _status_callback
+
+        def _build_spawn_status_callback(
+            self,
+            agent_id: str,
+            seed_subagents: Optional[List[SubagentDisplayData]] = None,
+            card: Optional[Any] = None,
+        ) -> Callable[[str], Optional[SubagentDisplayData]]:
+            """Build a resilient status callback for spawn_subagents cards.
+
+            Primary source: live card snapshots from `_build_subagent_status_callback`.
+            Fallback source: `<workspace>/subagents/_spawn_status.json`.
+            """
+            fallback_subagents = list(seed_subagents or [])
+            by_id: Dict[str, SubagentDisplayData] = {sa.id: sa for sa in fallback_subagents if getattr(sa, "id", None)}
+            live_callback = self._build_subagent_status_callback(
+                card=card,
+                fallback_subagents=fallback_subagents,
+            )
+
+            status_file: Optional[Path] = None
+            try:
+                orchestrator = getattr(self.coordination_display, "orchestrator", None)
+                agent = getattr(orchestrator, "agents", {}).get(agent_id) if orchestrator else None
+                filesystem_manager = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
+                workspace = getattr(filesystem_manager, "get_current_workspace", lambda: None)() if filesystem_manager else None
+                if workspace:
+                    status_file = Path(workspace) / "subagents" / "_spawn_status.json"
+            except Exception:
+                status_file = None
+
+            cache: Dict[str, Any] = {
+                "mtime": None,
+                "entries": {},
+            }
+
+            def _load_entries() -> Dict[str, Dict[str, Any]]:
+                if status_file is None or not status_file.exists():
+                    return {}
+                try:
+                    mtime = status_file.stat().st_mtime
+                except OSError:
+                    return {}
+                if cache["mtime"] == mtime:
+                    return cache["entries"]
+                try:
+                    payload = json.loads(status_file.read_text())
+                except (OSError, json.JSONDecodeError):
+                    return {}
+                entries: Dict[str, Dict[str, Any]] = {}
+                for entry in payload.get("subagents", []):
+                    if not isinstance(entry, dict):
+                        continue
+                    subagent_id = entry.get("subagent_id") or entry.get("id")
+                    if subagent_id:
+                        entries[str(subagent_id)] = entry
+                cache["mtime"] = mtime
+                cache["entries"] = entries
+                return entries
+
+            def _status_callback(subagent_id: str) -> Optional[SubagentDisplayData]:
+                latest = live_callback(subagent_id)
+                if latest and latest.status not in {"running", "pending"}:
+                    return latest
+
+                entry = _load_entries().get(subagent_id)
+                if not entry:
+                    return latest
+
+                # Ignore non-terminal file entries when we already have a live snapshot.
+                entry_status = str(entry.get("status", "")).lower()
+                if latest and entry_status in {"running", "pending", "spawning"}:
+                    return latest
+
+                baseline = latest or by_id.get(subagent_id)
+                merged = _build_subagent_display_data(entry, baseline)
+                by_id[subagent_id] = merged
+                return merged
+
+            return _status_callback
+
         def on_subagent_card_open_modal(self, event: SubagentCard.OpenModal) -> None:
             """Handle subagent card click - open separate screen."""
             # Track timeline child count before entering subagent view
@@ -8918,9 +9227,15 @@ Type your question and press Enter to ask the agents.
                 except Exception as e:
                     tui_log(f"[TextualDisplay] {e}")
 
+            card = getattr(event, "card", None)
+            status_callback = self._build_subagent_status_callback(
+                card=card,
+                fallback_subagents=event.all_subagents,
+            )
             screen = SubagentScreen(
                 subagent=event.subagent,
                 all_subagents=event.all_subagents,
+                status_callback=status_callback,
             )
             self.push_screen(screen, _on_screen_dismiss)
             event.stop()
@@ -8938,6 +9253,21 @@ Type your question and press Enter to ask the agents.
                 if tasks:
                     modal = TaskPlanModal(tasks=tasks)
                     self.push_screen(modal)
+            event.stop()
+
+        def on_background_tasks_clicked(self, event: BackgroundTasksClicked) -> None:
+            """Handle background tasks label click in ribbon."""
+            background_tasks, recent_tasks = self._collect_background_tools_for_agent(event.agent_id)
+            if background_tasks or recent_tasks:
+                self._show_modal_async(
+                    BackgroundTasksModal(
+                        background_tasks,
+                        recent_tasks=recent_tasks,
+                        agent_id=event.agent_id,
+                    ),
+                )
+            else:
+                self.notify("No background jobs running", severity="warning", timeout=3)
             event.stop()
 
         def on_context_paths_clicked(self, event: ContextPathsClicked) -> None:
@@ -9189,6 +9519,122 @@ Type your question and press Enter to ask the agents.
                 self._show_agent_output_modal(agent_id)
             else:
                 self.notify("No agent selected", severity="warning")
+
+        def _collect_background_tools(self) -> List[Dict[str, Any]]:
+            """Collect active background jobs across all agent panels."""
+            active, _recent = self._collect_background_activity()
+            return active
+
+        @staticmethod
+        def _sort_background_tasks(tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            """Sort background task records chronologically by start time."""
+            return sorted(tasks, key=lambda item: item.get("start_time") or datetime.min)
+
+        def _collect_background_activity(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+            """Collect active + recent background jobs across all agent panels."""
+            active_tasks: List[Dict[str, Any]] = []
+            recent_tasks: List[Dict[str, Any]] = []
+            for agent_id, panel in self.agent_widgets.items():
+                panel_active, panel_recent = self._collect_background_tools_for_agent(agent_id)
+                active_tasks.extend(panel_active)
+                recent_tasks.extend(panel_recent)
+            return self._sort_background_tasks(active_tasks), self._sort_background_tasks(recent_tasks)
+
+        def _collect_background_tools_for_agent(self, agent_id: str) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+            """Collect active + recent background jobs from a single agent panel."""
+            panel = self.agent_widgets.get(agent_id)
+            if panel is None:
+                return [], []
+
+            get_history = getattr(panel, "_get_background_tool_history", None)
+            if callable(get_history):
+                try:
+                    history_items = get_history() or []
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
+                    history_items = []
+                active: List[Dict[str, Any]] = []
+                recent: List[Dict[str, Any]] = []
+                for task in history_items:
+                    if not isinstance(task, dict):
+                        continue
+                    merged_task = dict(task)
+                    merged_task.setdefault("agent_id", agent_id)
+                    is_active = bool(merged_task.get("is_active", True))
+                    if is_active:
+                        active.append(merged_task)
+                    else:
+                        recent.append(merged_task)
+                if active or recent:
+                    return self._sort_background_tasks(active), self._sort_background_tasks(recent)
+
+            get_tools = getattr(panel, "_get_background_tools", None)
+            if not callable(get_tools):
+                return [], []
+
+            try:
+                panel_tasks = get_tools() or []
+            except Exception as e:
+                tui_log(f"[TextualDisplay] {e}")
+                return [], []
+
+            tasks: List[Dict[str, Any]] = []
+            for task in panel_tasks:
+                if not isinstance(task, dict):
+                    continue
+                merged_task = dict(task)
+                merged_task.setdefault("agent_id", agent_id)
+                tasks.append(merged_task)
+            return self._sort_background_tasks(tasks), []
+
+        def _update_running_tools_count(self) -> None:
+            """Refresh status-bar tool counters across all agent panels."""
+            if not self._status_bar and not self._status_ribbon:
+                return
+
+            running_count = 0
+            background_count = 0
+            per_agent_background: Dict[str, int] = {}
+
+            for agent_id, panel in self.agent_widgets.items():
+                get_running = getattr(panel, "_get_running_tools_count", None)
+                if callable(get_running):
+                    try:
+                        running_count += int(get_running())
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
+
+                agent_background_count = 0
+                get_background = getattr(panel, "_get_background_tools", None)
+                if callable(get_background):
+                    try:
+                        agent_background_count = len(get_background() or [])
+                        background_count += agent_background_count
+                    except Exception as e:
+                        tui_log(f"[TextualDisplay] {e}")
+                per_agent_background[agent_id] = agent_background_count
+
+            if self._status_bar:
+                self._status_bar.update_running_tools(
+                    running_count,
+                    background_count=background_count,
+                )
+            if self._status_ribbon:
+                for agent_id, count in per_agent_background.items():
+                    self._status_ribbon.set_background_jobs(agent_id, count)
+
+        def action_open_background_tools(self) -> None:
+            """Open modal showing active background tool jobs."""
+            background_tasks, recent_tasks = self._collect_background_activity()
+            if not background_tasks and not recent_tasks:
+                self.notify("No background jobs running", severity="warning", timeout=3)
+                return
+            self._show_modal_async(
+                BackgroundTasksModal(
+                    background_tasks,
+                    recent_tasks=recent_tasks,
+                ),
+            )
 
         def action_open_cost_breakdown(self):
             """Open cost breakdown modal."""
@@ -9529,6 +9975,10 @@ Type your question and press Enter to ask the agents.
         def on_status_bar_events_clicked(self, event: StatusBarEventsClicked) -> None:
             """Handle click on status bar events counter - opens orchestrator events modal."""
             self._show_orchestrator_modal()
+
+        def on_status_bar_tools_clicked(self, event: StatusBarToolsClicked) -> None:
+            """Handle click on status bar running/background tools indicator."""
+            self.action_open_background_tools()
 
         def on_status_bar_cwd_clicked(self, event: StatusBarCwdClicked) -> None:
             """Handle CWD mode change from status bar click."""
@@ -11446,7 +11896,12 @@ Type your question and press Enter to ask the agents.
             tool_lower = tool_name.lower()
             return any(st in tool_lower for st in subagent_tools)
 
-        def _show_subagent_card_from_args(self, tool_data, timeline) -> None:
+        def _show_subagent_card_from_args(
+            self,
+            tool_data,
+            timeline,
+            round_number: Optional[int] = None,
+        ) -> None:
             """Show SubagentCard when spawn_subagents tool starts, parsing tasks from args.
 
             This allows users to see subagents as they're being spawned, not just after completion.
@@ -11454,12 +11909,10 @@ Type your question and press Enter to ask the agents.
             should create the card immediately. This path only runs when the "running" chunk
             arrives (which may be delayed due to stream buffering).
             """
-            import json
-
             from massgen.subagent.models import SubagentDisplayData
 
             # Check if card already exists (created by callback)
-            card_id = f"subagent_{tool_data.tool_id}"
+            card_id = _subagent_card_dom_id(tool_data.tool_id)
             try:
                 timeline.query_one(f"#{card_id}", SubagentCard)
                 tui_log(f"_show_subagent_card_from_args: card {card_id} already exists, skipping")
@@ -11471,7 +11924,8 @@ Type your question and press Enter to ask the agents.
             # (callback path might use a different ID scheme)
             try:
                 for existing_card in timeline.query(SubagentCard):
-                    if getattr(existing_card, "tool_call_id", None) == tool_data.tool_id:
+                    existing_tool_call_id = getattr(existing_card, "tool_call_id", None) or getattr(existing_card, "_tool_call_id", None)
+                    if str(existing_tool_call_id) == str(tool_data.tool_id):
                         tui_log(f"_show_subagent_card_from_args: card for tool {tool_data.tool_id} already exists ({existing_card.id}), skipping")
                         return
             except Exception as e:
@@ -11483,13 +11937,9 @@ Type your question and press Enter to ask the agents.
                 tui_log("_show_subagent_card_from_args: no args_full")
                 return
 
-            try:
-                args_data = json.loads(args)
-            except (json.JSONDecodeError, TypeError):
-                tui_log(f"_show_subagent_card_from_args: failed to parse args: {args[:100]}")
-                return
-
-            if not isinstance(args_data, dict):
+            args_data = _parse_spawn_subagents_args(args)
+            if args_data is None:
+                tui_log(f"_show_subagent_card_from_args: failed to parse args: {str(args)[:100]}")
                 return
 
             # Extract tasks from args
@@ -11539,15 +11989,30 @@ Type your question and press Enter to ask the agents.
                 return
 
             # Create and add SubagentCard to timeline
-            import re as _re
-
-            _safe_id = _re.sub(r"[^a-zA-Z0-9_-]", "_", tool_data.tool_id)
+            resolved_round = round_number
+            if resolved_round is None:
+                resolved_round = getattr(self, "_current_round", getattr(timeline, "_viewed_round", 1))
+            try:
+                resolved_round = max(1, int(resolved_round or 1))
+            except Exception:
+                resolved_round = 1
+            status_callback = None
+            app = getattr(self, "app", None)
+            if app and hasattr(app, "_build_spawn_status_callback"):
+                try:
+                    status_callback = app._build_spawn_status_callback(
+                        agent_id=self.agent_id,
+                        seed_subagents=subagents,
+                    )
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
             card = SubagentCard(
                 subagents=subagents,
                 tool_call_id=tool_data.tool_id,
-                id=f"subagent_{_safe_id}",
+                status_callback=status_callback,
+                id=card_id,
             )
-            timeline.add_widget(card)
+            timeline.add_widget(card, round_number=resolved_round)
             tui_log(f"_show_subagent_card_from_args: added SubagentCard with {len(subagents)} pending subagents")
 
         def _update_subagent_card_with_results(self, tool_data, timeline) -> None:
@@ -11555,12 +12020,8 @@ Type your question and press Enter to ask the agents.
 
             Called when spawn_subagents tool completes to update status, progress, answers, etc.
             """
-            import json
-
-            from massgen.subagent.models import SubagentDisplayData
-
             # Find existing card - check both possible IDs since callback might use different ID
-            card_id = f"subagent_{tool_data.tool_id}"
+            card_id = _subagent_card_dom_id(tool_data.tool_id)
             card = None
             try:
                 card = timeline.query_one(f"#{card_id}", SubagentCard)
@@ -11568,20 +12029,28 @@ Type your question and press Enter to ask the agents.
             except Exception:
                 # Also try querying by tool_call_id if different
                 if hasattr(tool_data, "tool_call_id") and tool_data.tool_call_id != tool_data.tool_id:
-                    alt_id = f"subagent_{tool_data.tool_call_id}"
+                    alt_id = _subagent_card_dom_id(tool_data.tool_call_id)
                     try:
                         card = timeline.query_one(f"#{alt_id}", SubagentCard)
                         tui_log(f"_update_subagent_card_with_results: found card by tool_call_id: {alt_id}")
                     except Exception as e:
                         tui_log(f"[TextualDisplay] {e}")
 
-                # Try finding ANY SubagentCard in the timeline
+                # Try finding card by explicit tool_call_id metadata.
                 if card is None:
                     try:
                         cards = list(timeline.query(SubagentCard))
-                        if cards:
-                            card = cards[0]  # Use first matching card
-                            tui_log(f"_update_subagent_card_with_results: found card by query: {card.id}")
+                        target_ids = {str(tool_data.tool_id)}
+                        if hasattr(tool_data, "tool_call_id") and tool_data.tool_call_id:
+                            target_ids.add(str(tool_data.tool_call_id))
+                        for candidate in cards:
+                            candidate_tool_call_id = getattr(candidate, "tool_call_id", None) or getattr(candidate, "_tool_call_id", None)
+                            if candidate_tool_call_id is not None and str(candidate_tool_call_id) in target_ids:
+                                card = candidate
+                                tui_log(
+                                    "_update_subagent_card_with_results: " f"found card by metadata: {candidate.id}",
+                                )
+                                break
                     except Exception as e:
                         tui_log(f"[TextualDisplay] {e}")
 
@@ -11591,21 +12060,9 @@ Type your question and press Enter to ask the agents.
                 # Just log and return to avoid duplicates
                 return
 
-            # Parse results
-            result = tool_data.result_full
-            if not result:
+            result_data, spawned = _extract_spawned_subagents(tool_data.result_full)
+            if result_data is None:
                 return
-
-            try:
-                result_data = json.loads(result)
-            except (json.JSONDecodeError, TypeError):
-                return
-
-            if not isinstance(result_data, dict):
-                return
-
-            # Extract spawned subagents list
-            spawned = result_data.get("results", result_data.get("spawned_subagents", result_data.get("subagents", [])))
 
             # Remove card only on true spawn failure (no results at all)
             if not result_data.get("success", True) and not spawned:
@@ -11620,62 +12077,14 @@ Type your question and press Enter to ask the agents.
             # Build updated subagent list
             updated_subagents = []
             for sa_data in spawned:
-                # Map status from result to our display status
-                raw_status = sa_data.get("status", "running")
-                if raw_status == "completed":
-                    display_status = "completed"
-                    progress = 100
-                elif raw_status == "completed_but_timeout":
-                    display_status = "timeout"
-                    progress = sa_data.get("completion_percentage", 100)
-                elif raw_status == "failed":
-                    display_status = "failed"
-                    progress = 0
-                else:
-                    display_status = "running"
-                    progress = 0
-
-                elapsed = sa_data.get("execution_time_seconds", 0.0)
-
-                # Count files in workspace if it exists
-                workspace_path = sa_data.get("workspace", "")
-                file_count = 0
-                if workspace_path:
-                    from pathlib import Path
-
-                    workspace = Path(workspace_path)
-                    if workspace.exists():
-                        try:
-                            file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
-                        except Exception as e:
-                            tui_log(f"[TextualDisplay] {e}")
-
-                # Try to get task from original card data
-                task = sa_data.get("task", "")
-                if not task:
-                    # Try to find in existing card
-                    subagent_id = sa_data.get("subagent_id", sa_data.get("id", "unknown"))
-                    for existing in card.subagents:
-                        if existing.id == subagent_id:
-                            task = existing.task
+                subagent_id = str(sa_data.get("subagent_id") or sa_data.get("id") or "")
+                existing = None
+                if subagent_id:
+                    for candidate in card.subagents:
+                        if candidate.id == subagent_id:
+                            existing = candidate
                             break
-
-                updated_subagents.append(
-                    SubagentDisplayData(
-                        id=sa_data.get("subagent_id", sa_data.get("id", "unknown")),
-                        task=task,
-                        status=display_status,
-                        progress_percent=progress,
-                        elapsed_seconds=elapsed,
-                        timeout_seconds=sa_data.get("timeout_seconds", 300),
-                        workspace_path=workspace_path,
-                        workspace_file_count=file_count,
-                        last_log_line=sa_data.get("error", "") if sa_data.get("error") else "",
-                        error=sa_data.get("error"),
-                        answer_preview=sa_data.get("answer", "")[:200] if sa_data.get("answer") else None,
-                        log_path=sa_data.get("log_path"),
-                    ),
-                )
+                updated_subagents.append(_build_subagent_display_data(sa_data, existing))
 
             if updated_subagents:
                 card.update_subagents(updated_subagents)
@@ -11688,32 +12097,13 @@ Type your question and press Enter to ask the agents.
             - spawn_subagents
             - spawn_subagent
             """
-            import json
-
-            from massgen.subagent.models import SubagentDisplayData
-
             # Check if tool name matches a subagent tool
             tool_name = tool_data.tool_name.lower()
             tui_log(f"_check_and_display_subagent_card: tool_name={tool_name}, is_subagent={self._is_subagent_tool(tool_name)}")
             if not self._is_subagent_tool(tool_name):
                 return
 
-            # Try to parse the result as JSON to extract spawned subagents
-            result = tool_data.result_full
-            if not result:
-                return
-
-            try:
-                result_data = json.loads(result)
-            except (json.JSONDecodeError, TypeError):
-                return
-
-            if not isinstance(result_data, dict):
-                return
-
-            # Extract spawned subagents list
-            # The spawn_subagents tool returns results in "results" key
-            spawned = result_data.get("results", result_data.get("spawned_subagents", result_data.get("subagents", [])))
+            _, spawned = _extract_spawned_subagents(tool_data.result_full)
             tui_log(f"_check_and_display_subagent_card: found {len(spawned) if spawned else 0} spawned subagents")
             if not spawned:
                 return
@@ -11721,52 +12111,7 @@ Type your question and press Enter to ask the agents.
             # Create SubagentDisplayData for each spawned subagent
             subagents = []
             for sa_data in spawned:
-                # Map status from result to our display status
-                raw_status = sa_data.get("status", "running")
-                if raw_status == "completed":
-                    display_status = "completed"
-                    progress = 100
-                elif raw_status == "completed_but_timeout":
-                    display_status = "timeout"
-                    progress = sa_data.get("completion_percentage", 100)
-                elif raw_status == "failed":
-                    display_status = "failed"
-                    progress = 0
-                else:
-                    display_status = "running"
-                    progress = 0
-
-                elapsed = sa_data.get("execution_time_seconds", 0.0)
-
-                # Count files in workspace if it exists
-                workspace_path = sa_data.get("workspace", "")
-                file_count = 0
-                if workspace_path:
-                    from pathlib import Path
-
-                    workspace = Path(workspace_path)
-                    if workspace.exists():
-                        try:
-                            file_count = sum(1 for _ in workspace.rglob("*") if _.is_file())
-                        except Exception as e:
-                            tui_log(f"[TextualDisplay] {e}")
-
-                subagents.append(
-                    SubagentDisplayData(
-                        id=sa_data.get("subagent_id", sa_data.get("id", "unknown")),
-                        task=sa_data.get("task", ""),  # May be empty if not in result
-                        status=display_status,
-                        progress_percent=progress,
-                        elapsed_seconds=elapsed,
-                        timeout_seconds=sa_data.get("timeout_seconds", 300),
-                        workspace_path=workspace_path,
-                        workspace_file_count=file_count,
-                        last_log_line=sa_data.get("error", "") if sa_data.get("error") else "",
-                        error=sa_data.get("error"),
-                        answer_preview=sa_data.get("answer", "")[:200] if sa_data.get("answer") else None,
-                        log_path=sa_data.get("log_path"),
-                    ),
-                )
+                subagents.append(_build_subagent_display_data(sa_data))
 
             if not subagents:
                 return
@@ -12370,6 +12715,14 @@ Type your question and press Enter to ask the agents.
             except Exception:
                 return 0
 
+        def _get_running_tools_count(self) -> int:
+            """Get count of running/background tools for this agent."""
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                return timeline.get_running_tools_count()
+            except Exception:
+                return 0
+
         def _get_background_tools(self) -> list:
             """Get list of background/async operations for this agent."""
             try:
@@ -12377,6 +12730,21 @@ Type your question and press Enter to ask the agents.
                 return timeline.get_background_tools()
             except Exception:
                 return []
+
+        def _get_background_tool_history(self) -> list:
+            """Get background job history (active + recent terminal statuses)."""
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                return timeline.get_background_tool_history()
+            except Exception:
+                return []
+
+        def _update_running_tools_count(self) -> None:
+            """Delegate running/background tool counter refresh to the app."""
+            app = self.app
+            updater = getattr(app, "_update_running_tools_count", None)
+            if callable(updater):
+                updater()
 
         def _header_text(self) -> str:
             """Compose full header text (for compatibility)."""

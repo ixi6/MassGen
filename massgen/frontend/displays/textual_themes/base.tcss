@@ -3505,6 +3505,17 @@ StatusBar > Static {
     margin-right: 2;
 }
 
+#status_tools {
+    width: auto;
+    color: $warning;
+    margin-right: 2;
+}
+
+#status_tools.clickable:hover {
+    color: $text;
+    text-style: underline;
+}
+
 /* Spacer to push right-side elements to the edge */
 #status_spacer {
     width: 1fr;
@@ -6202,11 +6213,13 @@ BackgroundTaskDetailModal .modal-close:hover {
 
 BackgroundTaskDetailModal .info-section {
     height: auto;
+    max-height: 16;
     width: 100%;
     padding: 1;
     margin-bottom: 1;
     background: $background;
     border-left: solid $warning;
+    overflow-y: auto;
 }
 
 BackgroundTaskDetailModal .output-header {
@@ -7153,9 +7166,9 @@ ExecutionStatusLine.hidden {
 
 SubagentColumn {
     width: 1fr;
-    min-width: 32;
+    min-width: 33;
     height: auto;
-    padding: 0 1 0 1;
+    padding: 0 1;
     border-right: solid $surface-darken-1;
 }
 
@@ -7165,13 +7178,13 @@ SubagentColumn:last-of-type {
 }
 
 SubagentColumn:hover {
-    background: $panel;
+    background: $surface-lighten-1;
 }
 
 SubagentColumn:focus {
     background: $panel;
-    border-left: thick $secondary;
-    padding-left: 0;
+    border-left: none;
+    padding-left: 1;
 }
 
 SubagentColumn .agent-header {
@@ -7192,7 +7205,7 @@ SubagentColumn .summary-line {
 }
 
 SubagentColumn .tool-current {
-    color: $secondary;
+    color: $primary;
     text-style: bold;
 }
 
@@ -7207,20 +7220,22 @@ SubagentColumn .tool-recent {
 SubagentCard {
     width: 100%;
     height: auto;
-    min-height: 5;
-    padding: 0 1 0 2;
+    min-height: 6;
+    padding: 1 1 1 2;
     margin: 0 0 1 1;
     background: $surface;
     border-left: tall $secondary;
     border-top: solid $surface-darken-1;
-    border-bottom: solid $background;
+    border-right: solid $surface-darken-2;
+    border-bottom: solid $surface-darken-2;
 }
 
 SubagentCard.all-completed {
     border-left: tall $success;
-    background: $success 30%;
-    border-top: solid $success 50%;
-    border-bottom: solid $background;
+    background: $success 20%;
+    border-top: solid $success 30%;
+    border-right: solid $success 20%;
+    border-bottom: solid $success 20%;
 }
 
 SubagentCard:hover {
@@ -7228,11 +7243,12 @@ SubagentCard:hover {
 }
 
 SubagentCard.all-completed:hover {
-    background: $success 50%;
+    background: $success 30%;
 }
 
 SubagentCard:focus-within {
     background: $panel;
+    border-left: tall $primary;
 }
 
 SubagentCard.appearing {
@@ -7245,7 +7261,7 @@ SubagentCard.appeared {
 
 SubagentCard #subagent-card-title {
     height: 1;
-    margin-bottom: 1;
+    margin-bottom: 0;
     padding: 0 1;
 }
 
@@ -7262,6 +7278,33 @@ SubagentCard #subagent-columns {
     layout: horizontal;
     height: auto;
     width: 100%;
+}
+
+/* Option A: Refined Compact */
+SubagentCard.variant-a {
+    border-left: solid $secondary;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+SubagentCard.variant-a:focus-within {
+    border-left: solid $primary;
+}
+
+SubagentCard.variant-a.all-completed {
+    border-left: solid $success;
+}
+
+SubagentCard.variant-a #subagent-card-title {
+    margin-bottom: 0;
+}
+
+SubagentCard.variant-a SubagentColumn {
+    min-width: 32;
+}
+
+SubagentCard.variant-a SubagentColumn .is-empty {
+    display: none;
 }
 
 /* =============================================================================

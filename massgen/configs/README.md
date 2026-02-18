@@ -415,10 +415,10 @@ uv run massgen --display textual \
 ```
 
 ### v0.1.41
-**New Features:** Async Subagent Execution, Subagent Round Timeouts, Extended Subagent Configuration
+**New Features:** Background Subagent Execution, Subagent Round Timeouts, Extended Subagent Configuration
 
 **Key Features:**
-- **Async Subagent Execution**: Spawn subagents with `async_=True` for non-blocking parallel work while parent continues
+- **Background Subagent Execution**: Spawn subagents with `background=True` for non-blocking parallel work while parent continues
 - **Poll for Completion**: Check subagent status and retrieve results when ready
 - **Subagent Round Timeouts**: Per-round timeout control with `subagent_round_timeouts` config section
 - **Extended Subagent Config**: `subagent_default_timeout`, `subagent_min_timeout`, `subagent_max_timeout`, `subagent_max_concurrent`
@@ -428,8 +428,8 @@ uv run massgen --display textual \
 # Install or upgrade
 pip install --upgrade massgen
 
-# Async subagent execution - parent continues while subagent works in background
-uv run massgen --display textual --config massgen/configs/features/async_subagent_example.yaml \
+# Background subagent execution - parent continues while subagent works in background
+uv run massgen --display textual --config massgen/configs/features/background_subagent_example.yaml \
   "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
 ```
 

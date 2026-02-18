@@ -179,45 +179,9 @@ class DockerManager:
                     )
                 raise RuntimeError(f"Failed to pull Docker image '{self.image}': {e}")
 
-    def _load_env_file(self, env_file_path: str) -> Dict[str, str]:
-        """
-        Load environment variables from a .env file.
-
-        Automatically checks common locations in order:
-        1. ~/.massgen/.env (recommended global location)
-        2. The provided env_file_path (expanded)
-        3. ./.env (current directory fallback)
-
-        Args:
-            env_file_path: Path to .env file
-
-        Returns:
-            Dictionary of environment variables
-
-        Raises:
-            RuntimeError: If file cannot be read or parsed
-        """
+    def _parse_single_env_file(self, env_path: Path) -> Dict[str, str]:
+        """Parse a single .env file and return its key-value pairs."""
         env_vars = {}
-
-        # Check common locations in priority order
-        home_env = Path.home() / ".massgen" / ".env"
-        provided_path = Path(env_file_path).expanduser().resolve()
-        local_env = Path(".env").resolve()
-
-        # Determine which path to use
-        if home_env.exists():
-            env_path = home_env
-        elif provided_path.exists():
-            env_path = provided_path
-        elif local_env.exists():
-            env_path = local_env
-        else:
-            # No .env file found - this is OK (e.g., using Claude Code with CLI login)
-            logger.info("📄 [Docker] No .env file found - continuing without environment file")
-            return env_vars
-
-        logger.info(f"📄 [Docker] Loading environment variables from: {env_path}")
-
         try:
             with open(env_path, "r") as f:
                 for line_num, line in enumerate(f, 1):
@@ -240,13 +204,62 @@ class DockerManager:
 
                         env_vars[key] = value
                     else:
-                        logger.warning(f"⚠️ [Docker] Skipping invalid line {line_num} in {env_file_path}: {line}")
-
-            logger.info(f"    Loaded {len(env_vars)} environment variable(s)")
-            return env_vars
-
+                        logger.warning(f"⚠️ [Docker] Skipping invalid line {line_num} in {env_path}: {line}")
         except Exception as e:
-            raise RuntimeError(f"Failed to read environment file {env_file_path}: {e}")
+            raise RuntimeError(f"Failed to read environment file {env_path}: {e}")
+        return env_vars
+
+    def _load_env_file(self, env_file_path: str) -> Dict[str, str]:
+        """
+        Load environment variables from .env files.
+
+        Loads cumulatively from all locations that exist, with later files
+        overriding earlier ones:
+        1. ~/.massgen/.env (global defaults)
+        2. The provided env_file_path (expanded)
+        3. ./.env (current directory, highest priority)
+
+        Args:
+            env_file_path: Path to .env file
+
+        Returns:
+            Dictionary of environment variables
+
+        Raises:
+            RuntimeError: If a found file cannot be read or parsed
+        """
+        env_vars = {}
+
+        # Build deduplicated list of candidate paths (preserving order)
+        home_env = Path.home() / ".massgen" / ".env"
+        provided_path = Path(env_file_path).expanduser().resolve()
+        local_env = Path(".env").resolve()
+
+        seen = set()
+        candidates = []
+        for p in [home_env, provided_path, local_env]:
+            resolved = p.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                candidates.append(resolved)
+
+        loaded_any = False
+        for env_path in candidates:
+            if env_path.exists():
+                logger.info(f"📄 [Docker] Loading environment variables from: {env_path}")
+                file_vars = self._parse_single_env_file(env_path)
+                logger.info(f"    Loaded {len(file_vars)} variable(s) from {env_path.name}")
+                env_vars.update(file_vars)
+                loaded_any = True
+
+        if not loaded_any:
+            # No .env file found - this is OK (e.g., using Claude Code with CLI login)
+            logger.info("📄 [Docker] No .env file found - continuing without environment file")
+
+        if loaded_any:
+            logger.info(f"    Total environment variables from .env files: {len(env_vars)}")
+
+        return env_vars
 
     def _build_environment(self) -> Dict[str, str]:
         """
@@ -264,7 +277,13 @@ class DockerManager:
                 # Filter to only specific vars if env_vars_from_file is specified
                 if self.env_vars_from_file:
                     filtered_env = {k: v for k, v in file_env.items() if k in self.env_vars_from_file}
+                    matched = [k for k in self.env_vars_from_file if k in file_env]
+                    missing = [k for k in self.env_vars_from_file if k not in file_env]
                     logger.info(f"    Filtered to {len(filtered_env)} of {len(file_env)} variables from .env file")
+                    logger.info(f"    Matched keys: {matched}")
+                    if missing:
+                        logger.warning(f"    Requested env vars not found in .env files: {missing}")
+                        logger.info(f"    Available keys in .env files: {sorted(file_env.keys())}")
                     env_vars.update(filtered_env)
                 else:
                     # Load all variables from file
@@ -584,6 +603,9 @@ class DockerManager:
         # XDG Base Directories - catches most XDG-compliant tools
         env_vars["XDG_CACHE_HOME"] = workspace_cache
         env_vars["XDG_DATA_HOME"] = workspace_data
+
+        # Suppress FastMCP CLI banner for MCP servers running inside the container
+        env_vars["FASTMCP_SHOW_CLI_BANNER"] = "false"
 
         # Python tools
         env_vars["PIP_CACHE_DIR"] = f"{workspace_cache}/pip"

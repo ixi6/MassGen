@@ -1004,14 +1004,26 @@ Coordination Configuration
      - object
      - No
      - Optional per-round timeout settings for subagents. Uses the same keys as ``timeout_settings`` and inherits from parent if omitted.
+   * - ``subagent_runtime_mode``
+     - string
+     - No
+     - Subagent runtime boundary mode. ``isolated`` (default) or ``inherited``.
+   * - ``subagent_runtime_fallback_mode``
+     - string or null
+     - No
+     - Optional fallback mode when isolated prerequisites are unavailable. ``inherited`` or ``null`` (strict isolation).
+   * - ``subagent_host_launch_prefix``
+     - list or null
+     - No
+     - Optional command prefix used to bridge isolated launches from containerized parent runtimes.
    * - ``subagent_orchestrator``
      - object
      - No
      - Subagent orchestrator configuration (multi-agent subagents with custom models)
-   * - ``async_subagents``
+   * - ``background_subagents``
      - object
      - No
-     - Async subagent configuration (``enabled``, ``injection_strategy``)
+     - Background subagent configuration (``enabled``, ``injection_strategy``)
 
 .. note::
 

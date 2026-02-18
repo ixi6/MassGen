@@ -305,6 +305,8 @@ class ContentProcessor:
         result_text = event.data.get("result", "")
         elapsed = event.data.get("elapsed_seconds", 0)
         is_error = event.data.get("is_error", False)
+        completion_status = str(event.data.get("status", "success")).lower()
+        async_id = event.data.get("async_id")
 
         # Filter out internal coordination tools (task_plan, etc.),
         # but keep planning tools so task plans can update.
@@ -339,7 +341,23 @@ class ContentProcessor:
         # Create result summary
         result_summary = result_text[:100] + "..." if len(result_text) > 100 else result_text
 
+        # Infer background metadata for generalized start_background_tool payloads
+        # where backends may emit status=success and encode job_id in JSON result.
+        completion_status, async_id = self._infer_background_tool_metadata(
+            tool_name=original_data.tool_name,
+            completion_status=completion_status,
+            async_id=async_id,
+            result_text=result_text,
+        )
+
         # Create updated ToolDisplayData
+        if completion_status == "background":
+            display_status = "background"
+        elif is_error or completion_status in {"error", "failed", "cancelled"}:
+            display_status = "error"
+        else:
+            display_status = "success"
+
         tool_data = ToolDisplayData(
             tool_id=tool_id,
             tool_name=original_data.tool_name,
@@ -348,15 +366,16 @@ class ContentProcessor:
             category=original_data.category,
             icon=original_data.icon,
             color=original_data.color,
-            status="error" if is_error else "success",
+            status=display_status,
             start_time=original_data.start_time,
             end_time=datetime.fromisoformat(event.timestamp) if event.timestamp else datetime.now(),
             args_summary=original_data.args_summary,
             args_full=original_data.args_full,
             result_summary=result_summary,
             result_full=result_text,
-            error=result_text if is_error else None,
+            error=result_text if display_status == "error" else None,
             elapsed_seconds=elapsed,
+            async_id=async_id,
             server_name=original_data.server_name,
         )
 
@@ -374,6 +393,85 @@ class ContentProcessor:
             batch_id=batch_id,
             server_name=batch_server,
         )
+
+    @staticmethod
+    def _is_start_background_tool(tool_name: str) -> bool:
+        """Return True when tool_name represents the background start lifecycle tool."""
+        return str(tool_name or "").lower().endswith("start_background_tool")
+
+    @staticmethod
+    def _parse_text_payload(text: str) -> Optional[Union[Dict[str, Any], List[Any]]]:
+        """Parse a text payload that may be JSON or a Python repr."""
+        if not isinstance(text, str):
+            return None
+        trimmed = text.strip()
+        if not trimmed:
+            return None
+
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(trimmed)
+            except (json.JSONDecodeError, TypeError, ValueError, SyntaxError):
+                continue
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        return None
+
+    @classmethod
+    def _parse_result_dict(cls, result_text: str) -> Optional[Dict[str, Any]]:
+        """Parse tool result text as a dict, unwrapping Claude SDK content blocks when needed."""
+        parsed = cls._parse_text_payload(result_text)
+        if isinstance(parsed, dict):
+            return parsed
+
+        if isinstance(parsed, list):
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("text", "data", "content"):
+                    nested_raw = item.get(key)
+                    if nested_raw is None:
+                        continue
+                    if isinstance(nested_raw, dict):
+                        return nested_raw
+                    nested = cls._parse_text_payload(str(nested_raw))
+                    if isinstance(nested, dict):
+                        return nested
+        return None
+
+    def _infer_background_tool_metadata(
+        self,
+        tool_name: str,
+        completion_status: str,
+        async_id: Optional[str],
+        result_text: str,
+    ) -> tuple[str, Optional[str]]:
+        """Infer background display metadata from lifecycle tool payloads."""
+        inferred_status = completion_status
+        inferred_async_id = async_id
+
+        if inferred_async_id and inferred_status == "success":
+            inferred_status = "background"
+            return inferred_status, inferred_async_id
+
+        payload = self._parse_result_dict(result_text)
+        if not payload:
+            return inferred_status, inferred_async_id
+
+        job_id = str(payload.get("job_id") or "").strip()
+        payload_status = str(payload.get("status") or "").lower().strip()
+        payload_success = payload.get("success")
+
+        if job_id:
+            inferred_async_id = job_id
+
+        should_mark_background = bool(job_id) and (
+            payload_status in {"running", "background", "pending", "queued"} or (self._is_start_background_tool(tool_name) and payload_success is True and not payload_status)
+        )
+        if should_mark_background and inferred_status == "success":
+            inferred_status = "background"
+
+        return inferred_status, inferred_async_id
 
     def _handle_event_thinking(
         self,

@@ -2085,6 +2085,47 @@ class CommandExecutionSection(SystemPromptSection):
         parts = ["## Command Execution"]
         parts.append("You can run command line commands using your command execution tool.")
         parts.append("**Efficiency**: Batch multiple commands in one call using `&&` (e.g., `ls servers/ && ls custom_tools/`)\n")
+        parts.append("### Background Tool Execution")
+        parts.append("Always run `read_media` and `generate_media` in background.")
+        parts.append(
+            "Order matters: create `CONTEXT.md` first, then start any `read_media`/`generate_media` background job.",
+        )
+        parts.append(
+            "Only run them in foreground when the user explicitly needs an immediate blocking result " "(set `background: false` on that call).",
+        )
+        parts.append(
+            "For `execute_command`, choose background mode only for long-running work " "(for example: test suites, installs, crawls, benchmarks, or long server runs).",
+        )
+        parts.append(
+            "Use foreground when output is needed immediately " "(for example: quick `ls`, `pwd`, `cat`, `git status`, or short grep checks).",
+        )
+        parts.append(
+            "For other tools, use your judgment: run in background when the call is slow and " "you can continue meaningful work without waiting for its result.",
+        )
+        parts.append(
+            "Simplest for custom tools: set `background: true` directly on the tool call " "(keep normal tool arguments unchanged).",
+        )
+        parts.append(
+            "Pass tool arguments as JSON objects (normal key/value fields), " "not escaped or stringified JSON blobs.",
+        )
+        parts.append(
+            "Use `custom_tool__start_background_tool` when you need wrapper-style lifecycle control " "or for tools where direct background control is not practical.",
+        )
+        parts.append("Use this lifecycle:")
+        parts.append("- Start: `custom_tool__start_background_tool`")
+        parts.append("- Check progress: `custom_tool__get_background_tool_status`")
+        parts.append("- Fetch final output when complete: `custom_tool__get_background_tool_result`")
+        parts.append("- Cancel if no longer needed: `custom_tool__cancel_background_tool`")
+        parts.append(
+            "- List running tasks (default): `custom_tool__list_background_tools`; " "use `include_all: true` to include completed history",
+        )
+        parts.append("- Block until next completion (when idle): `custom_tool__wait_for_background_tool`")
+        parts.append(
+            "If no meaningful work remains while waiting on background jobs, " "call `custom_tool__wait_for_background_tool` instead of tight polling loops.",
+        )
+        parts.append(
+            "Background results may be auto-injected on a later turn. If not injected, poll status and then fetch the result manually.\n",
+        )
 
         if self.docker_mode:
             parts.append("**IMPORTANT: Docker Execution Environment**")
@@ -2524,11 +2565,11 @@ When working on multi-step tasks:
 - Quick one-off operations
 
 **Tools available:**
-- **create_task_plan** - Create a plan with tasks and dependencies
+- **create_task_plan** - Create a plan with tasks, dependencies, and verification criteria
 - **get_ready_tasks** - Get tasks ready to start (dependencies satisfied)
 - **get_blocked_tasks** - See what's waiting on dependencies
-- **update_task_status** - Mark progress (pending/in_progress/completed)
-- **add_task** - Add new tasks (priority: low/medium/high)
+- **update_task_status** - Mark progress (pending/in_progress/completed/verified)
+- **add_task** - Add new tasks (priority: low/medium/high, verification criteria required by default)
 - **get_task_plan** - View your complete task plan
 - **edit_task** - Update task descriptions
 - **delete_task** - Remove tasks no longer needed
@@ -2538,24 +2579,29 @@ Tool responses may include important reminders and guidance (e.g., when completi
 you'll receive reminders to save learnings to memory). Always read tool response messages carefully.
 
 **Recommended workflow:**
-1. **Create your task plan** with tasks like:
-   - `{"id": "research", "description": "Research OAuth providers"}`
-   - `{"id": "design", "description": "Design auth flow", "depends_on": ["research"]}`
-   - `{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"]}`
-2. **Update task status** as you work: set task_id="research", status="in_progress", then "completed"
-3. **Add tasks** as you discover new requirements: description="Write integration tests", depends_on=["implement"]
+1. **Create your task plan** with tasks including verification criteria:
+   - `{"id": "research", "description": "Research OAuth providers", "verification": "Comparison table with 3+ providers", "verification_method": "Review output table"}`
+   - `{"id": "design", "description": "Design auth flow", "depends_on": ["research"], "verification": "Flow diagram renders correctly", "verification_method": "Screenshot and visual check"}`
+   - `{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], "verification": "Endpoints return 200", "verification_method": "curl test each endpoint"}`
+2. **Update task status** as you work: set status="in_progress", then "completed", then "verified" after confirming
+3. **Add tasks** as you discover new requirements:
+   - `description="Write integration tests", depends_on=["implement"], verification="Integration tests pass for auth flow", verification_method="Run integration test suite"`
 4. **Check ready tasks** to see what's unblocked next
 
 **Dependency formats:**
 Tasks support two dependency styles:
-- **By index** (0-based): `{"description": "Task 2", "depends_on": [0]}` — depends on the first task
-- **By ID** (recommended): `{"id": "api", "description": "Build API", "depends_on": ["auth"]}` — depends on task with id "auth"
+- **By index** (0-based): `{"description": "Task 2", "depends_on": [0], "verification": "Task 2 output is complete"}` — depends on the first task
+- **By ID** (recommended): `{"id": "api", "description": "Build API", "depends_on": ["auth"], "verification": "API returns expected responses"}` — depends on task with id "auth"
 
 **IMPORTANT - Including Task Plan in Your Answer:**
 If you created a task plan, include a summary at the end of your `new_answer` showing:
 1. Each task name
-2. Completion status (✓ or ✗)
+2. Status: ✓ (verified), ◐ (completed but unverified), ✗ (not done)
 3. Brief description of what you did
+
+**Verification is required.** When you mark a task `completed`, you must then verify it
+actually works (screenshots, tests, visual inspection) and mark it `verified`. Tasks left
+at `completed` without verification are unverified — they will show as ◐ in your summary.
 
 Example format:
 ```
@@ -2564,11 +2610,11 @@ Example format:
 ---
 **Task Execution Summary:**
 ✓ Research OAuth providers - Analyzed OAuth 2.0 spec and compared providers
-✓ Design auth flow - Created flow diagram with PKCE and token refresh
-✓ Implement endpoints - Built /auth/login, /auth/callback, /auth/refresh
-✓ Write tests - Added integration tests for auth flow
+✓ Design auth flow - Created flow diagram with PKCE and token refresh (verified: diagram renders correctly)
+◐ Implement endpoints - Built /auth/login, /auth/callback, /auth/refresh (unverified: no test run yet)
+✗ Write tests - Not started
 
-Status: 4/4 tasks completed
+Status: 2/4 verified, 1/4 completed (unverified), 1/4 not done
 ```
 
 This helps other agents understand your approach and evaluate your work."""
@@ -2613,6 +2659,7 @@ class EvaluationSection(SystemPromptSection):
         checklist_require_gap_report: bool = True,
         gap_report_mode: str = "changedoc",
         has_changedoc: bool = False,
+        has_evaluator_subagent: bool = False,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -2629,6 +2676,7 @@ class EvaluationSection(SystemPromptSection):
         self.checklist_require_gap_report = checklist_require_gap_report
         self.gap_report_mode = gap_report_mode
         self.has_changedoc = has_changedoc
+        self.has_evaluator_subagent = has_evaluator_subagent
 
     def build_content(self) -> str:
         # Vote-only mode: agent has exhausted their answer limit
@@ -2751,9 +2799,19 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                 require_gap_report=self.checklist_require_gap_report,
                 gap_report_mode=self.gap_report_mode,
             )
+            evaluator_directive = ""
+            if self.has_evaluator_subagent:
+                evaluator_directive = (
+                    "\n\n"
+                    "**Mandatory Evaluator Check:** BEFORE calling `submit_checklist`, spawn your evaluator "
+                    "subagent to verify your output. Do NOT serve websites, run test suites, or write "
+                    "verification scripts yourself — delegate that procedural work to the evaluator. Read "
+                    "its report, then factor the findings into your T1-T5 scores. If it includes "
+                    "suggestions, treat them as optional input and use your judgment for the final call."
+                )
             evaluation_section = f"""{analysis}
 
-{decision}"""
+{decision}{evaluator_directive}"""
         elif effective_sensitivity == "adversarial":
             evaluation_section = """**ADVERSARIAL EVALUATION (INTERNAL RED-TEAMING)**
 
@@ -2928,12 +2986,22 @@ Both are terminal actions that end your round.
                     require_gap_report=self.checklist_require_gap_report,
                     gap_report_mode=self.gap_report_mode,
                 )
+                evaluator_directive = ""
+                if self.has_evaluator_subagent:
+                    evaluator_directive = (
+                        "\n\n"
+                        "**Mandatory Evaluator Check:** BEFORE calling `submit_checklist`, spawn your evaluator "
+                        "subagent to verify your output. Do NOT serve websites, run test suites, or write "
+                        "verification scripts yourself — delegate that procedural work to the evaluator. Read "
+                        "its report, then factor the findings into your T1-T5 scores. If it includes "
+                        "suggestions, treat them as optional input and use your judgment for the final call."
+                    )
                 return f"""**CHOOSING THE RIGHT TOOL — `new_answer` vs `stop`:**
 Both are terminal actions that end your round.
 
 {analysis}
 
-{decision}"""
+{decision}{evaluator_directive}"""
             else:
                 # roi (default) and roi_* variants
                 roi_block = build_roi_decision_block(
@@ -3430,9 +3498,10 @@ class SubagentSection(SystemPromptSection):
     Args:
         workspace_path: Path to the agent's workspace (for subagent workspace location)
         max_concurrent: Maximum concurrent subagents allowed
+        specialized_subagents: List of discovered specialized subagent types
     """
 
-    def __init__(self, workspace_path: str, max_concurrent: int = 3):
+    def __init__(self, workspace_path: str, max_concurrent: int = 3, specialized_subagents=None):
         super().__init__(
             title="Subagent Delegation",
             priority=Priority.MEDIUM,
@@ -3440,9 +3509,36 @@ class SubagentSection(SystemPromptSection):
         )
         self.workspace_path = workspace_path
         self.max_concurrent = max_concurrent
+        self.specialized_subagents = specialized_subagents or []
+
+    def _build_attached_subagents_section(self) -> str:
+        """Build the ATTACHED SUBAGENTS section listing discovered types."""
+        if not self.specialized_subagents:
+            return ""
+
+        lines = [
+            "",
+            "## ATTACHED SUBAGENTS — USE THESE INSTEAD OF DOING THE WORK YOURSELF",
+            "",
+            "Prefer spawning these specialized subagents over doing the equivalent work inline — they save your token budget and come pre-equipped with the right tools.",
+            "",
+        ]
+
+        for t in self.specialized_subagents:
+            background_str = "True" if t.default_background else "False"
+            lines.append(f"**{t.name}** — {t.description}")
+            lines.append(f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}", "context_paths": []}}], background={background_str})`')
+            if t.name.lower() == "evaluator":
+                lines.append(
+                    "Use this when the task is mostly programmatic execution/reporting (batch tests, Playwright flows, screenshot sweeps, scripted validation).",
+                )
+            lines.append("")
+
+        return "\n".join(lines)
 
     def build_content(self) -> str:
-        return f"""
+        attached = self._build_attached_subagents_section()
+        return f"""{attached}
 # Subagent Delegation
 
 You can spawn **subagents** to execute tasks with fresh context and isolated workspaces.
@@ -3467,6 +3563,7 @@ Task D: Build website (deps: A, B, C)       ← Sequential, do yourself after A/
 **IDEAL USE CASES:**
 - **Research and exploration** - gathering information, searching, analyzing sources
 - **Parallel data collection** - multiple independent lookups that can run simultaneously
+- **Programmatic evaluation at scale** - batch test runs, Playwright verification, screenshot sweeps, repetitive scripted checks
 - Complex subtasks that benefit from fresh context (avoid context pollution)
 - Experimental operations you want isolated from your main workspace
 
@@ -3477,12 +3574,13 @@ Subagents are useful helpers but have limitations:
 - Don't blindly trust subagent results - verify and integrate thoughtfully
 - If a subagent produces something broken or incomplete, **you fix it** rather than reporting failure
 
-**EVALUATION DELEGATION (async pattern):**
+**EVALUATION DELEGATION (background pattern):**
 When your output needs testing or evaluation that involves procedural tool use, delegate it
-to an async subagent so you can keep working on implementation. Spawn with
-`async_=True, refine=False` — the subagent evaluates while you continue building.
+to a background subagent so you can keep working on implementation. Spawn with
+`background=True, refine=False` — the subagent evaluates while you continue building.
 
 Subagent handles (procedural observations):
+- High-volume batch workflows where execution is mostly mechanical and repeatable
 - Serving a website and taking screenshots, running Playwright tests, using read_media
 - Executing test suites, linters, or validation scripts against generated code
 - Running benchmarks, profiling, or performance measurements
@@ -3496,9 +3594,9 @@ You handle (analytical judgment):
 - Prioritizing which gaps matter most and what to build next
 
 The subagent returns a descriptive report of findings and observations — what it measured,
-what passed, what failed, what it saw. Trust its observations and measurements. Make your
-own judgments about quality and priorities, since you have the full context and the subagent
-may run on a simpler model.
+what passed, what failed, what it saw. It may include suggestions, but treat those as optional
+input. Trust its observations and measurements. Keep your judgment as the source of truth for
+quality and priorities, since you have the full context and the subagent may run on a simpler model.
 
 **AVOID SUBAGENTS FOR:**
 - Simple, quick operations you can do directly (overhead not worth it)
@@ -3513,7 +3611,11 @@ may run on a simpler model.
    - You can READ files from subagent workspaces
    - You CANNOT write directly to subagent workspaces
 2. **Fresh Context**: Subagents start with a clean slate (just the task you provide)
-3. **Context Files**: Pass `context_files` to give the subagent READ-ONLY access to files
+3. **Explicit Context Paths (REQUIRED)**: Every task must include `context_paths`
+   - Use `[]` for clean-slate research (no extra context beyond task text)
+   - Use `["./"]` for read-only access to the full parent workspace
+   - Use specific paths for least-privilege access (recommended when possible)
+   - `context_files` remains optional for copying files into subagent workspace
 4. **No Nesting**: Subagents cannot spawn their own subagents
 5. **No Human Broadcast**: Subagents cannot ask the human or request human input
 
@@ -3583,33 +3685,44 @@ All subagents start at the same time and cannot see each other's output. Design 
 **REQUIREMENTS:**
 1. **Maximum {self.max_concurrent} tasks per call** - requests for more will error
 2. **`CONTEXT.md` in workspace is REQUIRED** - subagents need to know the project/goal
-3. **Each task dict must have `"task"` field** (not "description" or "id")
+3. **Each task dict must have both `"task"` and `"context_paths"` fields**
+4. **`context_paths` must be explicit**:
+   - Use `[]` if you intentionally want no extra context
+   - Use `["./"]` for full parent workspace read-only access
+   - Use specific paths for least-privilege access
 
 ```python
 # CORRECT: Independent parallel tasks (each can complete without the others)
 spawn_subagents(
     tasks=[
-        {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio"}},
-        {{"task": "Create discography table in discography.md", "subagent_id": "discog"}},
-        {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs"}}
+        {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio", "context_paths": []}},
+        {{"task": "Create discography table in discography.md", "subagent_id": "discog", "context_paths": []}},
+        {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs", "context_paths": []}}
     ],
-    async_=False,  # True if run asynchronously (you check later), False to block until done
+    background=False,  # True to continue while subagent runs; False to wait for completion
     refine=False,  # True to allow subagents to refine their answers (more expensive and slower but better quality)
 )
 
 # WRONG - DO NOT DO THIS (task 2 depends on task 1's output):
 # spawn_subagents(tasks=[
-#     {{"task": "Research all content"}},
-#     {{"task": "Build website using the researched content"}}  # CAN'T ACCESS TASK 1!
+#     {{"task": "Research all content", "context_paths": []}},
+#     {{"task": "Build website using the researched content", "context_paths": []}}  # CAN'T ACCESS TASK 1!
 # ])
 ```
 
-**async_ parameter:**
-- `async_=True`: Spawn in background and continue working. Results are automatically
-  injected when ready (on your next tool call). If auto-injection is not available, poll
-  manually with `check_subagent_status` and `get_subagent_result`. Use for evaluation
-  delegation and any work you can do in parallel.
-- `async_=False` (default): Wait for results before proceeding. Use when you need outputs to continue.
+**background parameter (async mode):**
+- `background=True`: Spawn in background and continue working asynchronously. Results are
+  often auto-injected on a later tool call.
+- If auto-injection is unavailable (or you need explicit control), use the standardized
+  background lifecycle tools:
+  - `custom_tool__get_background_tool_status(job_id)`
+  - `custom_tool__wait_for_background_tool(timeout_seconds?)`
+  - `custom_tool__get_background_tool_result(job_id)`
+  - `custom_tool__cancel_background_tool(job_id)`
+  - `custom_tool__list_background_tools(include_all=true)` to inspect all jobs
+- `list_subagents()` is a subagent discovery/index view (IDs, status, workspace, session_id);
+  do not treat it as the generic background job lifecycle manager, and do not pass `include_all` there.
+- `background=False` (default): Wait for results before proceeding. Use when you need outputs to continue.
 
 **refine parameter:**
 - `refine=True` (default): Multi-round refinement with voting. Higher quality, slower, more expensive. Use for complex analysis.
@@ -3617,10 +3730,10 @@ spawn_subagents(
 
 ## Available Tools
 
-- `spawn_subagents(tasks, async_?, refine?)` -- Max {self.max_concurrent} parallel tasks.
-- `list_subagents()` - List all spawned subagents with status
-- `get_subagent_result(subagent_id)` - Get result from a completed subagent
-- `check_subagent_status(subagent_id)` - Check status of a subagent
+- `spawn_subagents(tasks, background?, refine?)` -- Max {self.max_concurrent} parallel tasks.
+  Each task must include `task` and explicit `context_paths` (can be `[]`).
+- `list_subagents()` - Discovery/index of spawned subagents (status, workspace, session_id)
+- `continue_subagent(subagent_id, message, timeout_seconds?)` - Continue an existing subagent conversation
 
 ## Result Format
 
@@ -4199,6 +4312,7 @@ class TaskContextSection(SystemPromptSection):
 
 **REQUIRED**: Before spawning subagents or using multimodal tools (read_media, generate_media),
 you MUST create a `CONTEXT.md` file in your workspace with task context.
+This ordering is strict even for background jobs: write `CONTEXT.md` first, then start media tools.
 
 ### Why This Matters
 External APIs (like GPT-4.1 for image analysis) have no idea what you're working on.

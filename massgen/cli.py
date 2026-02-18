@@ -2530,7 +2530,11 @@ def _parse_coordination_config(coord_cfg: Dict[str, Any]) -> "CoordinationConfig
         subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
         subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
         subagent_round_timeouts=coord_cfg.get("subagent_round_timeouts"),
+        subagent_runtime_mode=coord_cfg.get("subagent_runtime_mode", "isolated"),
+        subagent_runtime_fallback_mode=coord_cfg.get("subagent_runtime_fallback_mode"),
+        subagent_host_launch_prefix=coord_cfg.get("subagent_host_launch_prefix"),
         subagent_orchestrator=subagent_orchestrator_config,
+        background_subagents=coord_cfg.get("background_subagents"),
         use_two_tier_workspace=coord_cfg.get("use_two_tier_workspace", False),
         task_decomposer=task_decomposer_config,
         write_mode=coord_cfg.get("write_mode"),
@@ -3040,6 +3044,16 @@ async def run_question_with_history(
                 subagent_round_timeouts=coordination_settings.get(
                     "subagent_round_timeouts",
                 ),
+                subagent_runtime_mode=coordination_settings.get(
+                    "subagent_runtime_mode",
+                    "isolated",
+                ),
+                subagent_runtime_fallback_mode=coordination_settings.get(
+                    "subagent_runtime_fallback_mode",
+                ),
+                subagent_host_launch_prefix=coordination_settings.get(
+                    "subagent_host_launch_prefix",
+                ),
                 subagent_orchestrator=subagent_orchestrator_config,
                 use_two_tier_workspace=coordination_settings.get(
                     "use_two_tier_workspace",
@@ -3497,6 +3511,16 @@ async def run_single_question(
                 ),
                 subagent_round_timeouts=coordination_settings.get(
                     "subagent_round_timeouts",
+                ),
+                subagent_runtime_mode=coordination_settings.get(
+                    "subagent_runtime_mode",
+                    "isolated",
+                ),
+                subagent_runtime_fallback_mode=coordination_settings.get(
+                    "subagent_runtime_fallback_mode",
+                ),
+                subagent_host_launch_prefix=coordination_settings.get(
+                    "subagent_host_launch_prefix",
                 ),
                 subagent_orchestrator=subagent_orchestrator_config,
                 use_two_tier_workspace=coordination_settings.get(

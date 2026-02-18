@@ -39,7 +39,7 @@ class TestPlanningMCPRecovery:
             tasks_dir.mkdir()
 
             # Create a plan with some tasks
-            existing_plan = TaskPlan(agent_id="test:agent_a")
+            existing_plan = TaskPlan(agent_id="test:agent_a", require_verification=False)
             _add_task_with_status(existing_plan, "Task 1", "task_1", "completed")
             _add_task_with_status(existing_plan, "Task 2", "task_2", "in_progress")
             _add_task_with_status(existing_plan, "Task 3", "task_3", "pending")
@@ -84,7 +84,7 @@ class TestPlanningMCPRecovery:
 
             # Create initial plan with tasks (simulates first creation)
             key = "test:agent_a"
-            initial_plan = TaskPlan(agent_id=key)
+            initial_plan = TaskPlan(agent_id=key, require_verification=False)
             _add_task_with_status(initial_plan, "Research phase", "task_1", "completed")
             _add_task_with_status(initial_plan, "Implementation", "task_2", "in_progress")
             _add_task_with_status(initial_plan, "Testing", "task_3", "pending")
@@ -151,7 +151,7 @@ class TestPlanningMCPRecovery:
             server._task_plans.clear()
 
             # Get or create plan - should create new empty one
-            plan = server._get_or_create_plan("agent_a", "test")
+            plan = server._get_or_create_plan("agent_a", "test", require_verification=False)
 
             # Plan should be empty
             assert len(plan.tasks) == 0
@@ -182,7 +182,7 @@ class TestPlanningMCPRecovery:
 
             # Create plan with specific status distribution
             key = "test:agent_a"
-            plan = TaskPlan(agent_id=key)
+            plan = TaskPlan(agent_id=key, require_verification=False)
             _add_task_with_status(plan, "Done 1", "t1", "completed")
             _add_task_with_status(plan, "Done 2", "t2", "completed")
             _add_task_with_status(plan, "Working", "t3", "in_progress")
@@ -228,7 +228,7 @@ class TestPlanFilesystemPersistence:
             server._workspace_path = tmp_path
 
             # Create and save plan
-            plan = TaskPlan(agent_id="test:agent")
+            plan = TaskPlan(agent_id="test:agent", require_verification=False)
             _add_task_with_status(plan, "Task A", "a", "completed")
             _add_task_with_status(plan, "Task B", "b", "pending", depends_on=["a"])
 

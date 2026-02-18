@@ -2,93 +2,94 @@
 
 ## Overview
 
-Subagents are child MassGen processes spawned by parent agents to handle delegated tasks. They run in isolated workspaces with their own logging sessions.
+Subagents are child MassGen processes spawned by parent agents for parallel, isolated task execution.
 
-## Log Directory Structure
+Subagent isolation has two dimensions:
 
-```
-.massgen/massgen_logs/log_YYYYMMDD_HHMMSS/
-└── turn_1/attempt_1/subagents/
-    └── {subagent_id}/                    # e.g., "bio", "discog"
-        ├── conversation.json             # User/assistant messages
-        ├── subprocess_logs.json          # Reference to subprocess log location
-        ├── live_logs/                    # SYMLINK during execution
-        │   └── log_YYYYMMDD.../          # Subprocess's own log session
-        │       └── turn_1/attempt_1/
-        │           ├── events.jsonl
-        │           ├── execution_metadata.yaml
-        │           └── ...
-        ├── full_logs/                    # COPIED after completion
-        │   ├── events.jsonl
-        │   ├── execution_metadata.yaml
-        │   ├── massgen.log
-        │   ├── status.json
-        │   └── {agent_id}_N/             # Inner agent logs
-        └── workspace/                    # Subagent's working directory
-```
+- Workspace isolation: each subagent has its own workspace directory
+- Runtime boundary isolation: where the subagent process itself executes
 
-## Live vs Full Logs
+## Runtime Modes
 
-| Type | When | Structure | Use Case |
-|------|------|-----------|----------|
-| `live_logs/` | During execution | Symlink → nested `log_XXX/turn_1/attempt_1/` | Real-time streaming |
-| `full_logs/` | After completion | Flat directory with all files | Post-mortem, TUI display |
+Subagent runtime mode is configured under `orchestrator.coordination`.
 
-### Live Logs Nesting
+- `subagent_runtime_mode: isolated` (default)
+- `subagent_runtime_mode: inherited`
+- `subagent_runtime_fallback_mode: inherited` (optional explicit fallback)
+- `subagent_host_launch_prefix: [...]` (optional host-launch bridge for containerized parent runtimes)
 
-`live_logs` symlinks to the subprocess's `.massgen/massgen_logs/` which contains another timestamped session:
-```
-live_logs -> workspace/.massgen/massgen_logs/
-live_logs/log_20260126_HHMMSS/turn_1/attempt_1/events.jsonl  # Actual file
-```
+Behavior:
 
-## Key Data Structures
+- `isolated` tries to run subagents in an isolated runtime boundary
+- If isolated prerequisites are unavailable:
+  - with no fallback: launch fails with actionable diagnostics
+  - with `subagent_runtime_fallback_mode: inherited`: launch proceeds in inherited mode and emits an explicit warning
+- `inherited` runs subagents in the same runtime boundary as the parent
 
-### SubagentResult.log_path
+## Context Contract
 
-Set to the **subagent base directory** (not events.jsonl):
-```python
-log_path = ".../subagents/{subagent_id}/"
-```
+`spawn_subagents` requires every task to include `context_paths`.
 
-To get events: `Path(log_path) / "full_logs" / "events.jsonl"`
+- `context_paths` must be present in each task object
+- `context_paths` must be a list
+- Use `[]` for no additional context
+- Use `["./"]` for parent workspace read access
 
-### SubagentDisplayData.log_path
+This is validated at the subagent MCP gateway (`_subagent_mcp_server.py`), not only by prompt guidance.
 
-Same as SubagentResult - the base subagent directory.
+## Timeout Layering
 
-### execution_metadata.yaml
+Subagent timeout behavior has three layers:
 
-Contains the subagent's config including inner agents:
-```yaml
-config:
-  agents:                          # LIST, not dict
-    - id: bio_agent_1              # Agent ID at root
-      backend:
-        type: grok
-        model: grok-4-1-fast-reasoning
-    - id: bio_agent_2
-      backend:
-        type: grok
-        model: grok-4-1-fast-reasoning
-```
+1. Subagent runtime timeout (`subagent_default_timeout`, clamped by min/max)
+2. MCP client timeout (spawn_subagents is timeout-exempt)
+3. Codex tool timeout buffer (`tool_timeout_sec = subagent_default_timeout + 60`)
 
-## Code Locations
+The runtime timeout is the authoritative limit for subagent execution.
 
-| Component | File | Key Functions |
-|-----------|------|---------------|
-| Manager | `massgen/subagent/manager.py` | `_get_subagent_log_dir()`, `_setup_subagent_live_logs()`, `_copy_subagent_logs()` |
-| Models | `massgen/subagent/models.py` | `SubagentResult`, `SubagentDisplayData`, `SubagentConfig` |
-| TUI Screen | `massgen/frontend/displays/textual_widgets/subagent_screen.py` | `_init_event_reader()`, `_detect_inner_agents()` |
-| TUI Card | `massgen/frontend/displays/textual_widgets/subagent_card.py` | `SubagentCard`, status polling |
+## MCP Tool Surface
 
-## TUI Integration
+Subagent MCP server intentionally keeps a small interface:
 
-### Opening Subagent Screen
+- `spawn_subagents(tasks, background?, refine?)`
+- `list_subagents()`
+- `continue_subagent(subagent_id, message, timeout_seconds?)`
 
-1. User clicks SubagentCard
-2. `SubagentCard.OpenModal` message posted with `SubagentDisplayData`
-3. `SubagentScreen` pushed with the subagent data
-4. Screen calls `_init_event_reader()` to load events
+Removed specialized subagent polling/cost tools:
 
-The TUI screen should be **exactly** the same as the parent agent screen, as subagents are just subcalls to MassGen. The exception is the presence of an additional header, which shows the subagent name.
+- `check_subagent_status`
+- `get_subagent_result`
+- `get_subagent_costs`
+
+Reasoning:
+
+- Use standardized background lifecycle tools for background job control (`custom_tool__get_background_tool_status`, `custom_tool__get_background_tool_result`, `custom_tool__wait_for_background_tool`, `custom_tool__cancel_background_tool`, `custom_tool__list_background_tools`)
+- Keep `list_subagents()` as discovery/index metadata for subagent IDs, workspace/session pointers, and status
+- Read detailed cost/status internals from `full_logs/status.json` and run-level totals from `metrics_summary.json`
+
+## Launch Flow
+
+1. Parent orchestrator creates subagent MCP config and passes runtime settings
+2. Subagent MCP server initializes `SubagentManager` with those settings
+3. `SubagentManager` resolves effective runtime mode:
+   - isolated
+   - inherited
+   - inherited via explicit fallback with warning
+4. Subagent process is launched and log/TUI contracts are preserved
+
+## Logging and TUI Contracts
+
+Across runtime modes, contracts remain stable:
+
+- blocking/background `spawn_subagents` response structure
+- standardized background-tool lifecycle semantics for async jobs
+- `live_logs`/`full_logs` layout and references
+- subagent result `warning` field for fallback diagnostics
+
+## Key Files
+
+- `massgen/subagent/manager.py`: runtime routing, launch, lifecycle, results
+- `massgen/mcp_tools/subagent/_subagent_mcp_server.py`: tool schema and task validation
+- `massgen/orchestrator.py`: subagent MCP config wiring
+- `massgen/agent_config.py`: runtime config surface on coordination settings
+- `massgen/config_validator.py`: validation of runtime mode/fallback combinations

@@ -15,7 +15,7 @@ class TestPlanningWorkflows:
 
     def test_simple_linear_workflow(self):
         """Test simple linear workflow: create plan → execute → complete."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         # Create plan
         plan.add_task("Research authentication options", task_id="research")
@@ -65,7 +65,7 @@ class TestPlanningWorkflows:
 
     def test_parallel_workflow(self):
         """Test workflow with parallel tasks."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         # Create plan with parallel research tasks
         plan.add_task("Research OAuth providers", task_id="research_oauth")
@@ -132,7 +132,7 @@ class TestPlanningWorkflows:
 
     def test_dynamic_task_addition(self):
         """Test adding tasks dynamically during workflow execution."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         # Initial plan
         plan.add_task("Initial task", task_id="task_1")
@@ -176,7 +176,7 @@ class TestPlanningWorkflows:
 
     def test_complex_dependency_graph(self):
         """Test complex dependency graph with multiple paths."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         # Create complex graph:
         #     A
@@ -243,7 +243,7 @@ class TestPlanningWorkflows:
 
     def test_task_editing_during_workflow(self):
         """Test editing task descriptions during workflow execution."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         plan.add_task("Research OAuth", task_id="research")
         plan.add_task("Implement OAuth", task_id="impl", depends_on=["research"])
@@ -269,7 +269,7 @@ class TestPlanningWorkflows:
 
     def test_task_deletion_during_workflow(self):
         """Test deleting tasks during workflow execution."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         plan.add_task("Task 1", task_id="task_1")
         plan.add_task("Task 2", task_id="task_2")  # Independent
@@ -323,7 +323,7 @@ class TestPlanningWorkflows:
         resolved = _resolve_dependency_references(task_specs)
 
         # Create plan with resolved tasks
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
         for task_spec in resolved:
             plan.add_task(
                 task_spec["description"],
@@ -349,7 +349,7 @@ class TestPlanningWorkflows:
 
     def test_workflow_with_blocked_status(self):
         """Test workflow using 'blocked' status for tasks waiting on external factors."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         plan.add_task("Setup environment", task_id="setup")
         plan.add_task("Deploy to staging", task_id="deploy", depends_on=["setup"])
@@ -378,7 +378,7 @@ class TestPlanningWorkflows:
 
     def test_serialization_during_workflow(self):
         """Test that plans can be serialized and restored during workflow execution."""
-        plan = TaskPlan(agent_id="agent_1")
+        plan = TaskPlan(agent_id="agent_1", require_verification=False)
 
         plan.add_task("Task 1", task_id="task_1")
         plan.add_task("Task 2", task_id="task_2", depends_on=["task_1"])

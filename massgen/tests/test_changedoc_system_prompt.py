@@ -750,14 +750,31 @@ class TestEvaluationDelegation:
         # Main agent handles analytical: judgment, decisions
         assert "judgment" in lower or "analyz" in lower or "decision" in lower
 
+    def test_evaluation_delegation_mentions_batch_programmatic_runs(self):
+        """Should explicitly call out batch/high-volume execution scenarios for evaluator delegation."""
+        content = _subagent_content()
+        lower = content.lower()
+        assert "batch" in lower or "high-volume" in lower
+        assert "playwright" in lower
+        assert "screenshot" in lower
+        assert "test suite" in lower or "test matrix" in lower
+
     def test_subagent_returns_descriptive_not_judgments(self):
         """Must clarify subagents return descriptions/observations, not high-level judgments."""
         content = _subagent_content()
         lower = content.lower()
         assert "descri" in lower and ("observ" in lower or "finding" in lower or "report" in lower)
 
-    def test_manual_polling_for_no_hook_backends(self):
-        """Async section must mention manual polling as fallback for no-hook backends."""
+    def test_background_lifecycle_guidance_for_no_hook_backends(self):
+        """Async section must mention standard background lifecycle polling as fallback."""
         content = _subagent_content()
         lower = content.lower()
-        assert "check_subagent_status" in lower or "poll" in lower
+        assert "custom_tool__get_background_tool_status" in lower or "custom_tool__wait_for_background_tool" in lower
+
+    def test_subagent_section_requires_explicit_context_paths(self):
+        """Subagent guidance must require explicit context_paths (including [])."""
+        content = _subagent_content()
+        lower = content.lower()
+        assert "context_paths" in lower
+        assert "required" in lower
+        assert "[]" in content

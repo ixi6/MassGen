@@ -11,11 +11,13 @@ Composable UI sections for displaying different content types:
 - CompletionFooter: Subtle completion indicator
 """
 
+import json
 import logging
 import os
 import re
 import time
 from contextlib import nullcontext
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -1012,11 +1014,17 @@ class TimelineSection(ScrollableContainer):
             # Remove oldest items from DOM (but keep in cache for scroll-back)
             hidden_count = 0
             for child in prunable_children[:items_to_hide]:
-                # Don't hide tool cards that are still running
-                if hasattr(child, "tool_id") and child.tool_id in self._tools:
+                # Preserve high-signal cards in the live timeline.
+                if child.__class__.__name__ == "SubagentCard":
+                    self._log("[TRIM] Skipping subagent card")
+                    continue
+
+                # Don't hide tool cards that are still running or backgrounded.
+                if isinstance(child, ToolCallCard) and child.tool_id in self._tools:
                     tool_card = self._tools.get(child.tool_id)
-                    if tool_card and hasattr(tool_card, "_status") and tool_card._status == "running":
-                        self._log(f"[TRIM] Skipping running tool: {child.tool_id}")
+                    tool_status = getattr(tool_card, "_status", "")
+                    if tool_card and tool_status in {"running", "background"}:
+                        self._log(f"[TRIM] Skipping active/background tool: {child.tool_id}")
                         continue
 
                 # Actually remove from DOM to free up space
@@ -1146,7 +1154,45 @@ class TimelineSection(ScrollableContainer):
 
     def get_running_tools_count(self) -> int:
         """Count tools that are currently running or running in background."""
-        return sum(1 for card in self._tools.values() if card.status in ("running", "background"))
+        running_foreground = sum(1 for card in self._tools.values() if card.status == "running")
+        return running_foreground + self.get_background_tools_count()
+
+    @staticmethod
+    def _extract_background_statuses_from_payload(payload: Any) -> Dict[str, str]:
+        """Extract job_id -> status mappings from status/result/list payloads."""
+        parsed: Any = payload
+        if isinstance(payload, str):
+            raw = payload.strip()
+            if not raw:
+                return {}
+            try:
+                parsed = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        if not isinstance(parsed, dict):
+            return {}
+
+        extracted: Dict[str, str] = {}
+        entries = []
+        if isinstance(parsed.get("jobs"), list):
+            entries.extend(item for item in parsed.get("jobs", []) if isinstance(item, dict))
+        if "job_id" in parsed:
+            entries.append(parsed)
+
+        for entry in entries:
+            job_id = str(entry.get("job_id") or "").strip()
+            status = str(entry.get("status") or "").strip().lower()
+            if job_id and status:
+                extracted[job_id] = status
+        return extracted
+
+    def _collect_known_background_statuses(self) -> Dict[str, str]:
+        """Collect latest known background status per job_id across tool cards."""
+        known: Dict[str, str] = {}
+        for card in self._tools.values():
+            for payload in (card._result_full, card._result):
+                known.update(self._extract_background_statuses_from_payload(payload))
+        return known
 
     def get_background_tools_count(self) -> int:
         """Count tools that are running in background (async operations).
@@ -1155,7 +1201,7 @@ class TimelineSection(ScrollableContainer):
         run in separate MCP subprocess(es), not in the main TUI process.
         The shell manager singleton is per-process, so we can't check cross-process.
         """
-        return sum(1 for card in self._tools.values() if card.status == "background")
+        return len(self.get_background_tools())
 
     def get_background_tools(self) -> list:
         """Get list of background tool data for modal display.
@@ -1163,19 +1209,67 @@ class TimelineSection(ScrollableContainer):
         Note: We don't filter by shell alive status because shells run in MCP
         subprocesses with their own BackgroundShellManager singleton.
         """
+        terminal_statuses = {"completed", "error", "failed", "cancelled", "canceled", "stopped"}
+        known_statuses = self._collect_known_background_statuses()
         bg_tools = []
-        for card in self._tools.values():
+        for tool_id, card in self._tools.items():
             if card.status == "background":
+                async_id = card._async_id
+                latest_status = known_statuses.get(str(async_id or "").strip(), "running")
+                if async_id and latest_status in terminal_statuses:
+                    continue
                 bg_tools.append(
                     {
+                        "tool_id": tool_id,
                         "tool_name": card.tool_name,
                         "display_name": card._display_name,
-                        "async_id": card._async_id,
+                        "tool_type": card.tool_type,
+                        "status": card.status,
+                        "async_id": async_id,
                         "start_time": card._start_time,
-                        "result": card._result,
+                        "params": card._params_full if card._params_full else card._params,
+                        "result": card._result_full if card._result_full else card._result,
+                        "error": card._error,
                     },
                 )
         return bg_tools
+
+    def get_background_tool_history(self) -> list:
+        """Return background tool records with latest known status (active + recent)."""
+        terminal_statuses = {"completed", "error", "failed", "cancelled", "canceled", "stopped"}
+        running_statuses = {"running", "background", "pending", "queued"}
+        known_statuses = self._collect_known_background_statuses()
+        history = []
+
+        for tool_id, card in self._tools.items():
+            if card.status != "background":
+                continue
+
+            async_id = str(card._async_id or "").strip()
+            latest_status = known_statuses.get(async_id, "background") if async_id else "background"
+            normalized_status = latest_status.lower().strip()
+            is_active = normalized_status not in terminal_statuses
+            display_status = "running" if normalized_status in running_statuses else normalized_status
+
+            history.append(
+                {
+                    "tool_id": tool_id,
+                    "tool_name": card.tool_name,
+                    "display_name": card._display_name,
+                    "tool_type": card.tool_type,
+                    "status": display_status,
+                    "latest_status": normalized_status,
+                    "is_active": is_active,
+                    "async_id": card._async_id,
+                    "start_time": card._start_time,
+                    "params": card._params_full if card._params_full else card._params,
+                    "result": card._result_full if card._result_full else card._result,
+                    "error": card._error,
+                },
+            )
+
+        history.sort(key=lambda item: item.get("start_time") or datetime.min)
+        return history
 
     # === Batch Card Methods ===
 

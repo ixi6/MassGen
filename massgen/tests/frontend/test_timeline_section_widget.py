@@ -21,9 +21,11 @@ from massgen.frontend.displays.textual_widgets.content_sections import (
 from massgen.frontend.displays.textual_widgets.file_explorer_panel import (
     FileExplorerPanel,
 )
+from massgen.frontend.displays.textual_widgets.subagent_card import SubagentCard
 from massgen.frontend.displays.textual_widgets.tool_batch_card import ToolBatchCard
 from massgen.frontend.displays.textual_widgets.tool_card import ToolCallCard
 from massgen.frontend.displays.tui_event_pipeline import TimelineEventAdapter
+from massgen.subagent.models import SubagentDisplayData
 
 
 class _TimelineApp(App):
@@ -237,6 +239,65 @@ async def test_event_adapter_does_not_batch_when_text_arrives_between_tools():
         assert timeline.get_tool("t2") is not None
         assert timeline.get_tool_batch("t1") is None
         assert timeline.get_tool_batch("t2") is None
+
+
+@pytest.mark.asyncio
+async def test_timeline_trim_preserves_subagent_and_background_cards():
+    """Viewport culling should keep subagent cards and active background jobs visible."""
+    app = _TimelineApp()
+    async with app.run_test(headless=True) as pilot:
+        timeline = app.query_one(TimelineSection)
+        timeline.MAX_TIMELINE_ITEMS = 2
+
+        start = _make_tool("bg_1", "custom_tool__generate_media")
+        timeline.add_tool(start, round_number=1)
+        await pilot.pause()
+
+        timeline.update_tool(
+            "bg_1",
+            ToolDisplayData(
+                tool_id="bg_1",
+                tool_name="custom_tool__generate_media",
+                display_name="custom_tool__generate_media",
+                tool_type="tool",
+                category="tool",
+                icon="T",
+                color="blue",
+                status="background",
+                start_time=start.start_time,
+                result_summary="started",
+                result_full='{"job_id":"bgtool_1","status":"background"}',
+                async_id="bgtool_1",
+            ),
+        )
+
+        subagent = SubagentDisplayData(
+            id="evaluator",
+            task="Evaluate website quality",
+            status="running",
+            progress_percent=0,
+            elapsed_seconds=0.0,
+            timeout_seconds=300.0,
+            workspace_path="",
+            workspace_file_count=0,
+            last_log_line="Starting...",
+            error=None,
+            answer_preview=None,
+            log_path=None,
+        )
+        subagent_card = SubagentCard(subagents=[subagent], tool_call_id="call_subagent", id="subagent_call_subagent")
+        timeline.add_widget(subagent_card, round_number=1)
+
+        for idx in range(6):
+            timeline.add_text(f"line {idx}", round_number=1)
+
+        await pilot.pause()
+        await pilot.pause()
+
+        bg_card = timeline.get_tool("bg_1")
+        assert bg_card is not None
+        assert bg_card in list(timeline.children)
+        assert subagent_card in list(timeline.children)
 
 
 @pytest.mark.asyncio

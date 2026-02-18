@@ -10,8 +10,7 @@ with fresh context and isolated workspaces.
 Tools provided:
 - spawn_subagents: Spawn one or more subagents (runs in parallel if multiple)
 - list_subagents: List all spawned subagents with their status
-- get_subagent_result: Get the result from a completed subagent
-- check_subagent_status: Check status of a running subagent
+- continue_subagent: Continue a subagent conversation by session ID
 """
 
 import argparse
@@ -46,8 +45,12 @@ _max_concurrent: int = 3
 _default_timeout: int = SUBAGENT_DEFAULT_TIMEOUT
 _min_timeout: int = 60
 _max_timeout: int = 600
+_subagent_runtime_mode: str = "isolated"
+_subagent_runtime_fallback_mode: Optional[str] = None
+_subagent_host_launch_prefix: List[str] = []
 _parent_context_paths: List[Dict[str, str]] = []
 _parent_coordination_config: Dict[str, Any] = {}
+_specialized_subagents: Dict[str, Dict[str, Any]] = {}  # name -> type config dict
 
 
 def _get_manager() -> SubagentManager:
@@ -69,6 +72,9 @@ def _get_manager() -> SubagentManager:
             max_timeout=_max_timeout,
             parent_context_paths=_parent_context_paths,
             parent_coordination_config=_parent_coordination_config,
+            subagent_runtime_mode=_subagent_runtime_mode,
+            subagent_runtime_fallback_mode=_subagent_runtime_fallback_mode,
+            subagent_host_launch_prefix=_subagent_host_launch_prefix,
         )
     return _manager
 
@@ -85,11 +91,18 @@ def _save_subagents_to_filesystem() -> None:
     manager = _get_manager()
     subagents_dir = _workspace_path / "subagents"
     subagents_dir.mkdir(exist_ok=True)
+    # Keep registry metadata lightweight and stable across turns.
+    # Full result payloads are surfaced via list_subagents() at runtime only.
+    subagents = []
+    for entry in manager.list_subagents():
+        entry_copy = dict(entry)
+        entry_copy.pop("result", None)
+        subagents.append(entry_copy)
 
     registry = {
         "parent_agent_id": _parent_agent_id,
         "orchestrator_id": _orchestrator_id,
-        "subagents": manager.list_subagents(),
+        "subagents": subagents,
     }
 
     registry_file = subagents_dir / "_registry.json"
@@ -101,7 +114,8 @@ async def create_server() -> fastmcp.FastMCP:
     global _workspace_path, _parent_agent_id, _orchestrator_id, _parent_agent_configs
     global _subagent_orchestrator_config, _log_directory, _parent_context_paths
     global _max_concurrent, _default_timeout, _min_timeout, _max_timeout
-    global _parent_coordination_config
+    global _subagent_runtime_mode, _subagent_runtime_fallback_mode, _subagent_host_launch_prefix
+    global _parent_coordination_config, _specialized_subagents
 
     parser = argparse.ArgumentParser(description="Subagent MCP Server")
     parser.add_argument(
@@ -181,6 +195,34 @@ async def create_server() -> fastmcp.FastMCP:
         default="",
         help="Path to JSON file containing parent coordination config",
     )
+    parser.add_argument(
+        "--specialized-subagents-file",
+        type=str,
+        required=False,
+        default="",
+        help="Path to JSON file containing specialized subagent type configs",
+    )
+    parser.add_argument(
+        "--runtime-mode",
+        type=str,
+        required=False,
+        default="isolated",
+        help="Subagent runtime mode: isolated or inherited",
+    )
+    parser.add_argument(
+        "--runtime-fallback-mode",
+        type=str,
+        required=False,
+        default="",
+        help="Optional fallback mode when isolated runtime is unavailable",
+    )
+    parser.add_argument(
+        "--host-launch-prefix",
+        type=str,
+        required=False,
+        default="[]",
+        help="JSON-encoded command prefix for host-isolated launch in containerized runtimes",
+    )
     args = parser.parse_args()
 
     # Set global configuration
@@ -252,11 +294,44 @@ async def create_server() -> fastmcp.FastMCP:
             logger.warning(f"Failed to load coordination config from {args.coordination_config_file}: {e}")
             _parent_coordination_config = {}
 
+    # Parse specialized subagent types from file
+    _specialized_subagents = {}
+    if args.specialized_subagents_file:
+        try:
+            with open(args.specialized_subagents_file) as f:
+                types_data = json.load(f)
+            if isinstance(types_data, list):
+                for td in types_data:
+                    name = td.get("name", "")
+                    if name:
+                        _specialized_subagents[name.lower()] = td
+            # Clean up the temp file after reading
+            try:
+                os.unlink(args.specialized_subagents_file)
+            except OSError:
+                pass
+            logger.info(f"[SubagentMCP] Loaded {len(_specialized_subagents)} specialized subagent types")
+        except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+            logger.warning(f"Failed to load specialized subagent types from {args.specialized_subagents_file}: {e}")
+            _specialized_subagents = {}
+
     # Set concurrency and timeout limits
     _max_concurrent = args.max_concurrent
     _default_timeout = args.default_timeout
     _min_timeout = args.min_timeout
     _max_timeout = args.max_timeout
+    _subagent_runtime_mode = args.runtime_mode or "isolated"
+    _subagent_runtime_fallback_mode = args.runtime_fallback_mode or None
+    try:
+        parsed_prefix = json.loads(args.host_launch_prefix)
+        if isinstance(parsed_prefix, list) and all(isinstance(token, str) for token in parsed_prefix):
+            _subagent_host_launch_prefix = parsed_prefix
+        else:
+            _subagent_host_launch_prefix = []
+            logger.warning("[SubagentMCP] Invalid --host-launch-prefix payload; expected JSON list of strings")
+    except json.JSONDecodeError:
+        _subagent_host_launch_prefix = []
+        logger.warning("[SubagentMCP] Failed to parse --host-launch-prefix JSON; defaulting to empty list")
 
     # Set up signal handlers for graceful shutdown
     try:
@@ -274,7 +349,7 @@ async def create_server() -> fastmcp.FastMCP:
     @mcp.tool()
     def spawn_subagents(
         tasks: List[Dict[str, Any]],
-        async_: bool = False,
+        background: bool = False,
         refine: bool = True,
         # NOTE: timeout_seconds parameter intentionally removed from MCP interface.
         # Allowing models to set custom timeouts could cause issues:
@@ -290,7 +365,9 @@ async def create_server() -> fastmcp.FastMCP:
         1. Maximum {_max_concurrent} tasks per call (will error if exceeded)
         2. CONTEXT.md file MUST exist in workspace before calling this tool
         3. Tasks run SIMULTANEOUSLY - do NOT design tasks that depend on each other
-        4. Each task dict MUST have a "task" field (not "description" or "id")
+        4. Each task dict MUST have BOTH "task" and "context_paths" fields
+        5. "context_paths" must be explicit: use [] for no extra context, ["./"] for parent workspace,
+           or specific files/directories for least-privilege access
 
         CONTEXT.MD REQUIREMENT:
         Before spawning subagents, you MUST create a CONTEXT.md file in the workspace describing
@@ -305,25 +382,29 @@ async def create_server() -> fastmcp.FastMCP:
         Args:
             tasks: List of task dicts (max {_max_concurrent}). Each MUST have:
                    - "task": (REQUIRED) string describing what to do
+                   - "context_paths": (REQUIRED) explicit list of paths to mount read-only.
+                     Use [] for no extra context (clean research),
+                     ["./"] for entire parent workspace,
+                     or specific paths for least-privilege access.
                    - "subagent_id": (optional) custom identifier
                    - "context_files": (optional) files to copy into subagent workspace
-                   - "context_paths": (optional) files/dirs to mount read-only. Use "./" for entire parent workspace
-            async_: (optional) If True, spawn subagents in the background and return immediately.
-                    Results will be automatically injected into your context when subagents complete.
-                    Default is False (blocking - waits for all subagents to complete).
+            background: (optional) If True, spawn subagents in the background and return immediately.
+                        Results will be automatically injected into your context when subagents complete.
+                        Default is False (blocking - waits for all subagents to complete).
             refine: (optional) If True (default), allow multi-round coordination and refinement.
                     If False, return the first answer without iterative refinement (faster).
 
-        TIMEOUT HANDLING (for blocking mode, async_=False):
+        TIMEOUT HANDLING (for blocking mode, background=False):
         Subagents that timeout will attempt to recover any completed work:
         - "completed_but_timeout": Full answer recovered (success=True, use the answer)
         - "partial": Some work done but incomplete (check workspace for partial files)
         - "timeout": No recoverable work (check workspace anyway for any files)
         The "workspace" path is ALWAYS provided, even on timeout/error.
 
-        Returns (async_=False, blocking mode):
+        Returns (background=False, blocking mode):
             {{
                 "success": bool,
+                "mode": "blocking",
                 "results": [
                     {{
                         "subagent_id": "...",
@@ -338,10 +419,10 @@ async def create_server() -> fastmcp.FastMCP:
                 "summary": {{"total": N, "completed": N, "timeout": N}}
             }}
 
-        Returns (async_=True, background mode):
+        Returns (background=True, background mode):
             {{
                 "success": bool,
-                "mode": "async",
+                "mode": "background",
                 "subagents": [
                     {{
                         "subagent_id": "...",
@@ -360,17 +441,17 @@ async def create_server() -> fastmcp.FastMCP:
             # BLOCKING: Independent parallel tasks (waits for completion)
             spawn_subagents(
                 tasks=[
-                    {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio"}},
-                    {{"task": "Create discography table in discography.md", "subagent_id": "discog"}},
-                    {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs"}}
+                    {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio", "context_paths": []}},
+                    {{"task": "Create discography table in discography.md", "subagent_id": "discog", "context_paths": []}},
+                    {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs", "context_paths": []}}
                 ]
             )
 
-            # ASYNC: Spawn background subagent and continue working
+            # BACKGROUND: Spawn subagent and continue working
             # FIRST: write_file("CONTEXT.md", "Building secure authentication system")
             spawn_subagents(
-                tasks=[{{"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research"}}],
-                async_=True  # Returns immediately, result injected later
+                tasks=[{{"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research", "context_paths": []}}],
+                background=True  # Returns immediately, result injected later
             )
 
             # WRONG: Sequential dependency (task 2 needs task 1's output)
@@ -405,6 +486,23 @@ async def create_server() -> fastmcp.FastMCP:
                         "operation": "spawn_subagents",
                         "error": f"Task at index {i} missing required 'task' field",
                     }
+                if "context_paths" not in task_config:
+                    return {
+                        "success": False,
+                        "operation": "spawn_subagents",
+                        "error": (
+                            f"Task at index {i} missing required 'context_paths' field. "
+                            "Set it explicitly (e.g., [] for no extra context, ['./'] for parent workspace, "
+                            "or specific paths for least-privilege access)."
+                        ),
+                    }
+                if not isinstance(task_config.get("context_paths"), list):
+                    actual_type = type(task_config.get("context_paths")).__name__
+                    return {
+                        "success": False,
+                        "operation": "spawn_subagents",
+                        "error": (f"Task at index {i} has invalid 'context_paths' type: expected list, got {actual_type}. " "Use [] for no extra context or a list of path strings."),
+                    }
 
             # Normalize task IDs
             normalized_tasks = []
@@ -417,12 +515,28 @@ async def create_server() -> fastmcp.FastMCP:
                     },
                 )
 
+            # Resolve specialized subagent types
+            for t in normalized_tasks:
+                subagent_type = t.get("subagent_type", "")
+                if subagent_type and _specialized_subagents:
+                    type_config = _specialized_subagents.get(subagent_type.lower())
+                    if type_config:
+                        # Inject system_prompt from type definition
+                        if "system_prompt" not in t and type_config.get("system_prompt"):
+                            t["system_prompt"] = type_config["system_prompt"]
+                        # Inject skills list for the manager to configure
+                        if "skills" not in t and type_config.get("skills"):
+                            t["skills"] = type_config["skills"]
+                        logger.info(f"[SubagentMCP] Resolved subagent_type '{subagent_type}' for task {t['subagent_id']}")
+                    else:
+                        logger.warning(f"[SubagentMCP] Unknown subagent_type '{subagent_type}', proceeding with defaults")
+
             task_ids = [t["subagent_id"] for t in normalized_tasks]
             logger.info(f"[SubagentMCP] Spawning {len(normalized_tasks)} subagents: {task_ids}")
 
-            # Branch based on async mode
-            if async_:
-                # ASYNC MODE: Spawn subagents in background and return immediately
+            # Branch based on background mode
+            if background:
+                # BACKGROUND MODE: Spawn subagents in background and return immediately
                 # Results will be injected via SubagentCompleteHook when they complete
                 spawned = []
                 for task_config in normalized_tasks:
@@ -432,8 +546,10 @@ async def create_server() -> fastmcp.FastMCP:
                         subagent_id=task_config.get("subagent_id"),
                         context_files=task_config.get("context_files"),
                         context_paths=task_config.get("context_paths"),
+                        system_prompt=task_config.get("system_prompt"),
                         timeout_seconds=_default_timeout,
                         refine=refine,
+                        skills=task_config.get("skills"),
                     )
                     spawned.append(info)
 
@@ -443,7 +559,7 @@ async def create_server() -> fastmcp.FastMCP:
                 return {
                     "success": True,
                     "operation": "spawn_subagents",
-                    "mode": "async",
+                    "mode": "background",
                     "subagents": spawned,
                     "note": "Results will be automatically injected when subagents complete.",
                 }
@@ -506,6 +622,7 @@ async def create_server() -> fastmcp.FastMCP:
                 return {
                     "success": all_success,
                     "operation": "spawn_subagents",
+                    "mode": "blocking",
                     "results": [r.to_dict() for r in results],
                     "summary": {
                         "total": len(results),
@@ -535,7 +652,8 @@ async def create_server() -> fastmcp.FastMCP:
             Dictionary with:
             - success: bool
             - operation: str - "list_subagents"
-            - subagents: list - List of subagent info with id, status, workspace, task, session_id, continuable
+            - subagents: list - Discovery/index view with id, status, workspace, task, session_id, continuable
+              and optional `result` payload for completed in-memory subagents
             - count: int - Total number of subagents
 
         Example:
@@ -561,140 +679,6 @@ async def create_server() -> fastmcp.FastMCP:
             return {
                 "success": False,
                 "operation": "list_subagents",
-                "error": str(e),
-            }
-
-    @mcp.tool()
-    def get_subagent_costs() -> Dict[str, Any]:
-        """
-        Get aggregated cost summary for all subagents spawned by this agent.
-
-        Returns:
-            Dictionary with:
-            - success: bool
-            - operation: str - "get_subagent_costs"
-            - total_subagents: int - Number of subagents spawned
-            - total_input_tokens: int - Sum of input tokens across all subagents
-            - total_output_tokens: int - Sum of output tokens across all subagents
-            - total_estimated_cost: float - Sum of estimated costs
-            - subagents: list - Per-subagent cost breakdown
-
-        Example:
-            costs = get_subagent_costs()
-            print(f"Total subagent cost: ${costs['total_estimated_cost']:.4f}")
-        """
-        try:
-            manager = _get_manager()
-            summary = manager.get_subagent_costs_summary()
-
-            return {
-                "success": True,
-                "operation": "get_subagent_costs",
-                **summary,
-            }
-
-        except Exception as e:
-            logger.error(f"[SubagentMCP] Error getting subagent costs: {e}")
-            return {
-                "success": False,
-                "operation": "get_subagent_costs",
-                "error": str(e),
-            }
-
-    @mcp.tool()
-    def check_subagent_status(subagent_id: str) -> Dict[str, Any]:
-        """
-        Check the current status of a subagent (especially useful for background subagents).
-
-        Use this to monitor progress of subagents spawned in non-blocking mode.
-
-        Args:
-            subagent_id: ID of the subagent to check
-
-        Returns:
-            Dictionary with status information:
-            - success: bool
-            - operation: str - "check_subagent_status"
-            - subagent_id: str - The subagent ID
-            - status: str - "pending", "running", "completed", "failed", or "timeout"
-            - task: str - The task description
-            - progress: str - Progress message (if available)
-            - started_at: str - ISO timestamp
-            - updated_at: str - ISO timestamp
-            - completed_at: str - ISO timestamp (if finished)
-            - error: str - Error message (if failed)
-
-        Example:
-            status = check_subagent_status("research_oauth")
-            if status['status'] == 'completed':
-                result = get_subagent_result("research_oauth")
-        """
-        try:
-            manager = _get_manager()
-            status = manager.get_subagent_status(subagent_id)
-
-            if status is None:
-                return {
-                    "success": False,
-                    "operation": "check_subagent_status",
-                    "error": f"Subagent not found: {subagent_id}",
-                }
-
-            return {
-                "success": True,
-                "operation": "check_subagent_status",
-                **status,
-            }
-
-        except Exception as e:
-            logger.error(f"[SubagentMCP] Error checking subagent status: {e}")
-            return {
-                "success": False,
-                "operation": "check_subagent_status",
-                "error": str(e),
-            }
-
-    @mcp.tool()
-    def get_subagent_result(subagent_id: str) -> Dict[str, Any]:
-        """
-        Get the result from a previously spawned subagent.
-
-        Use this to retrieve results if you need to check on a subagent later.
-        For background subagents, first check status with check_subagent_status().
-
-        Args:
-            subagent_id: ID of the subagent to get results for
-
-        Returns:
-            Dictionary with subagent result (same format as spawn_subagents results)
-
-        Example:
-            result = get_subagent_result("research_oauth")
-            if result['success']:
-                print(result['answer'])
-        """
-        try:
-            manager = _get_manager()
-            result = manager.get_subagent_result(subagent_id)
-
-            if result is None:
-                return {
-                    "success": False,
-                    "operation": "get_subagent_result",
-                    "error": f"Subagent not found: {subagent_id}",
-                }
-
-            return {
-                "success": True,
-                "operation": "get_subagent_result",
-                **result.to_dict(),
-            }
-
-        except Exception as e:
-            logger.error(f"[SubagentMCP] Error getting subagent result: {e}")
-            return {
-                "success": False,
-                "operation": "get_subagent_result",
                 "error": str(e),
             }
 

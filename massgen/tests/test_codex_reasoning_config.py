@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for Codex reasoning effort config mapping."""
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -91,3 +92,33 @@ def test_codex_mirrors_local_skills_into_codex_home(tmp_path: Path):
     mirrored_skill = tmp_path / ".codex" / "skills" / "demo-skill" / "SKILL.md"
     assert mirrored_skill.exists()
     assert mirrored_skill.read_text() == "# Demo Skill\n"
+
+
+def test_codex_always_registers_massgen_custom_tools_server(tmp_path: Path):
+    """Codex should expose the MassGen custom tools server even without user tools."""
+    backend = CodexBackend(cwd=str(tmp_path))
+    server_names = [s.get("name") for s in backend.mcp_servers if isinstance(s, dict)]
+    assert "massgen_custom_tools" in server_names
+
+
+def test_codex_writes_background_mcp_targets_into_custom_tool_specs(tmp_path: Path):
+    """Specs should include MCP targets that background manager may execute."""
+    backend = CodexBackend(
+        cwd=str(tmp_path),
+        mcp_servers=[
+            {
+                "name": "command_line",
+                "type": "stdio",
+                "command": "fastmcp",
+                "args": ["run", "massgen/filesystem_manager/_code_execution_server.py:create_server"],
+            },
+        ],
+    )
+    backend._write_workspace_config()
+
+    specs_path = tmp_path / ".codex" / "custom_tool_specs.json"
+    specs = json.loads(specs_path.read_text())
+
+    background_names = {server["name"] for server in specs.get("background_mcp_servers", []) if isinstance(server, dict) and "name" in server}
+    assert "command_line" in background_names
+    assert "massgen_custom_tools" not in background_names

@@ -4,6 +4,14 @@
 import pytest
 
 from massgen.backend import ChatCompletionsBackend
+from massgen.backend.base_with_custom_tool_and_mcp import (
+    BACKGROUND_TOOL_CANCEL_NAME,
+    BACKGROUND_TOOL_LIST_NAME,
+    BACKGROUND_TOOL_RESULT_NAME,
+    BACKGROUND_TOOL_START_NAME,
+    BACKGROUND_TOOL_STATUS_NAME,
+    BACKGROUND_TOOL_WAIT_NAME,
+)
 
 
 def test_openai_backend_defaults():
@@ -63,8 +71,11 @@ async def test_tool_conversion_via_api_params_handler():
     )
 
     assert "tools" in api_params
-    assert len(api_params["tools"]) == 1
-    converted_tool = api_params["tools"][0]
-    assert converted_tool["type"] == "function"
-    assert converted_tool["function"]["name"] == "calculate_area"
-    assert converted_tool["function"]["description"] == "Calculate area of rectangle"
+    tool_names = {tool["function"]["name"] for tool in api_params["tools"] if tool.get("type") == "function" and "function" in tool}
+    assert "calculate_area" in tool_names
+    assert BACKGROUND_TOOL_START_NAME in tool_names
+    assert BACKGROUND_TOOL_STATUS_NAME in tool_names
+    assert BACKGROUND_TOOL_RESULT_NAME in tool_names
+    assert BACKGROUND_TOOL_CANCEL_NAME in tool_names
+    assert BACKGROUND_TOOL_LIST_NAME in tool_names
+    assert BACKGROUND_TOOL_WAIT_NAME in tool_names

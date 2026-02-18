@@ -76,6 +76,10 @@ class SubagentColumn(Vertical, can_focus=True):
     def on_mount(self) -> None:
         self._update_display()
 
+    def on_resize(self) -> None:
+        # Reflow progress bars to use the current column width.
+        self._update_display()
+
     def on_click(self) -> None:
         self._open_callback(self._subagent, self._all_subagents)
 
@@ -94,14 +98,23 @@ class SubagentColumn(Vertical, can_focus=True):
 
         try:
             self.query_one("#agent_header", Static).update(header)
-            self.query_one("#task_desc", Static).update(task_desc)
+            self._set_line("#task_desc", task_desc)
             self.query_one("#progress_bar", Static).update(progress)
-            self.query_one("#summary_line", Static).update(summary)
-            self.query_one("#tool_current", Static).update(current_tool)
-            self.query_one("#tool_recent_1", Static).update(recent_tools[0] if recent_tools else "")
-            self.query_one("#tool_recent_2", Static).update(recent_tools[1] if len(recent_tools) > 1 else "")
+            self._set_line("#summary_line", summary)
+            self._set_line("#tool_current", current_tool)
+            self._set_line("#tool_recent_1", recent_tools[0] if recent_tools else "")
+            self._set_line("#tool_recent_2", recent_tools[1] if len(recent_tools) > 1 else "")
         except Exception:
             pass
+
+    def _set_line(self, selector: str, content: str | Text) -> None:
+        widget = self.query_one(selector, Static)
+        widget.update(content)
+        plain = content.plain if isinstance(content, Text) else str(content)
+        if plain.strip():
+            widget.remove_class("is-empty")
+        else:
+            widget.add_class("is-empty")
 
     def advance_pulse(self) -> None:
         """Advance pulse animation frame (called by parent card)."""
@@ -167,28 +180,30 @@ class SubagentColumn(Vertical, can_focus=True):
         elapsed = self._subagent.elapsed_seconds
         timeout = self._subagent.timeout_seconds
         status = self._subagent.status
-        bar_width = 20
 
         if status == "completed":
             text = Text()
+            bar_width = self._measure_progress_bar_width()
             text.append("━" * bar_width, style="bold #7ee787")
-            text.append(" ✓ Done", style="bold #7ee787")
             return text
         elif status in ("error", "failed"):
             text = Text()
+            bar_width = self._measure_progress_bar_width()
             text.append("━" * bar_width, style="bold #f85149")
-            text.append(" ✗ Error", style="bold #f85149")
             return text
         elif status == "timeout":
             text = Text()
+            bar_width = self._measure_progress_bar_width()
             text.append("━" * bar_width, style="bold #d29922")
-            text.append(" ⏱ Timeout", style="bold #d29922")
             return text
 
         if timeout <= 0:
             return Text("")
 
-        ratio = min(elapsed / timeout, 1.0)
+        # Keep running state below 100% until terminal status is confirmed.
+        ratio = min(max(elapsed / timeout, 0.0), 0.99)
+        percent_text = f" {int(ratio * 100)}%"
+        bar_width = self._measure_progress_bar_width(len(percent_text))
         filled = int(ratio * bar_width)
         empty = bar_width - filled
 
@@ -203,8 +218,29 @@ class SubagentColumn(Vertical, can_focus=True):
         text = Text()
         text.append("━" * filled, style=fill_style)
         text.append("─" * empty, style="dim #30363d")
-        text.append(f" {int(ratio * 100)}%", style="dim #8b949e")
+        text.append(percent_text, style="dim #8b949e")
         return text
+
+    def _measure_progress_bar_width(self, suffix_width: int = 0) -> int:
+        """Measure available characters for the bar body, excluding optional suffix text."""
+        candidate_widths: List[int] = []
+
+        try:
+            progress_widget = self.query_one("#progress_bar", Static)
+            if progress_widget.size.width > 0:
+                candidate_widths.append(progress_widget.size.width)
+        except Exception:
+            pass
+
+        if self.size.width > 0:
+            candidate_widths.append(max(0, self.size.width - 2))
+
+        if candidate_widths:
+            available = max(candidate_widths)
+        else:
+            available = 20 + suffix_width
+
+        return max(8, available - max(0, suffix_width))
 
     def _split_tools(self, tools: List[str]) -> Tuple[str, List[str]]:
         if not tools:
@@ -311,6 +347,7 @@ class SubagentCard(Vertical, can_focus=True):
                     yield column
 
     def on_mount(self) -> None:
+        self.add_class("variant-a")
         self._start_polling_if_needed()
         # Entrance animation
         self.add_class("appearing")
@@ -321,16 +358,24 @@ class SubagentCard(Vertical, can_focus=True):
         self.add_class("appeared")
 
     def _build_card_header(self) -> Text:
-        """Build clean header: icon + title, checkmark only when all complete."""
+        """Build compact status summary header with aggregate counts."""
+        running = sum(1 for sa in self._subagents if sa.status in {"running", "pending"})
+        completed = sum(1 for sa in self._subagents if sa.status == "completed")
+        failed = sum(1 for sa in self._subagents if sa.status in {"failed", "error", "timeout"})
         text = Text()
-        all_done = self._subagents and all(sa.status == "completed" for sa in self._subagents)
-        if all_done:
-            text.append("⬡ ", style="bold #7ee787")
-            text.append("Subagents", style="dim #e6edf3")
+        text.append("⬡ ", style="bold #7c3aed")
+        text.append("Subagents", style="bold #e6edf3")
+
+        if running:
+            text.append(f"  {running} active", style="bold #a371f7")
+        if completed:
+            text.append(f"  {completed} done", style="bold #7ee787")
+        if failed:
+            text.append(f"  {failed} issues", style="bold #f85149")
+
+        all_done = self._subagents and running == 0
+        if all_done and failed == 0:
             text.append("  ✓", style="bold #7ee787")
-        else:
-            text.append("⬡ ", style="bold #7c3aed")
-            text.append("Subagents", style="dim #e6edf3")
         return text
 
     def on_unmount(self) -> None:
@@ -559,6 +604,11 @@ class SubagentCard(Vertical, can_focus=True):
     @property
     def subagents(self) -> List[SubagentDisplayData]:
         return self._subagents
+
+    @property
+    def tool_call_id(self) -> Optional[str]:
+        """Tool call identifier used to correlate start/complete lifecycle updates."""
+        return self._tool_call_id
 
     def update_subagents(self, subagents: List[SubagentDisplayData]) -> None:
         self._subagents = subagents

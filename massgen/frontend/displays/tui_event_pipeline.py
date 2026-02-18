@@ -307,7 +307,11 @@ class TimelineEventAdapter:
                     tui_log(f"[TimelineEventAdapter] {e}")
             elif is_subagent_tool and hasattr(self._panel, "_show_subagent_card_from_args"):
                 try:
-                    self._panel._show_subagent_card_from_args(tool_data, timeline)
+                    self._panel._show_subagent_card_from_args(
+                        tool_data,
+                        timeline,
+                        round_number=round_number,
+                    )
                 except Exception as e:
                     tui_log(f"[TimelineEventAdapter] {e}")
             elif is_planning_tool:

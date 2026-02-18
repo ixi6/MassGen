@@ -96,6 +96,32 @@ class TasksLabel(Label):
         self.post_message(TasksClicked(self._agent_id))
 
 
+class BackgroundTasksClicked(Message):
+    """Message emitted when background tasks section is clicked."""
+
+    def __init__(self, agent_id: str) -> None:
+        self.agent_id = agent_id
+        super().__init__()
+
+
+class BackgroundTasksLabel(Label):
+    """Clickable background tasks label that emits BackgroundTasksClicked."""
+
+    can_focus = True
+
+    def __init__(self, agent_id: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._agent_id = agent_id
+
+    def set_agent_id(self, agent_id: str) -> None:
+        """Update the agent ID."""
+        self._agent_id = agent_id
+
+    async def on_click(self) -> None:
+        """Handle click on background tasks label."""
+        self.post_message(BackgroundTasksClicked(self._agent_id))
+
+
 class DropdownItem(Label):
     """Clickable dropdown item that emits its ID when clicked."""
 
@@ -407,6 +433,28 @@ class AgentStatusRibbon(Widget):
     AgentStatusRibbon #tasks_divider.hidden {
         display: none;
     }
+
+    AgentStatusRibbon #background_tasks_display {
+        color: $text-muted;
+        width: auto;
+    }
+
+    AgentStatusRibbon #background_tasks_display:hover {
+        color: $primary;
+        text-style: underline;
+    }
+
+    AgentStatusRibbon #background_tasks_display.has-background {
+        color: $warning;
+    }
+
+    AgentStatusRibbon #background_tasks_display.hidden {
+        display: none;
+    }
+
+    AgentStatusRibbon #background_tasks_divider.hidden {
+        display: none;
+    }
     """
 
     # Reactive attributes
@@ -445,6 +493,7 @@ class AgentStatusRibbon(Widget):
         self._viewed_round: Dict[str, int] = {}  # agent_id -> round being viewed
         self._tasks_complete: Dict[str, int] = {}
         self._tasks_total: Dict[str, int] = {}
+        self._background_jobs: Dict[str, int] = {}
         self._tokens: Dict[str, int] = {}
         self._cost: Dict[str, float] = {}
         self._timeout_remaining: Dict[str, Optional[int]] = {}
@@ -472,6 +521,8 @@ class AgentStatusRibbon(Widget):
             yield Static("│", classes="ribbon-divider", id="context_divider")
             yield TasksLabel(agent_id=self.current_agent, id="tasks_display", classes="ribbon-section")
             yield Static("│", classes="ribbon-divider", id="tasks_divider")
+            yield BackgroundTasksLabel(agent_id=self.current_agent, id="background_tasks_display", classes="ribbon-section hidden")
+            yield Static("│", classes="ribbon-divider hidden", id="background_tasks_divider")
             yield Label("⏱ --:--", id="timeout_display", classes="ribbon-section")
             yield Static("│", classes="ribbon-divider")
             yield Label("-", id="token_count", classes="ribbon-section")
@@ -778,6 +829,34 @@ class AgentStatusRibbon(Widget):
         except Exception:
             pass
 
+    def set_background_jobs(self, agent_id: str, count: int) -> None:
+        """Set the active background job count for an agent."""
+        self._background_jobs[agent_id] = max(0, int(count))
+        if agent_id == self.current_agent:
+            self._update_background_display()
+
+    def _update_background_display(self) -> None:
+        """Update background job display in ribbon."""
+        try:
+            bg_label = self.query_one("#background_tasks_display", BackgroundTasksLabel)
+            bg_divider = self.query_one("#background_tasks_divider", Static)
+
+            bg_label.set_agent_id(self.current_agent)
+            count = self._background_jobs.get(self.current_agent, 0)
+
+            if count > 0:
+                bg_label.update(f"BG {count}")
+                bg_label.remove_class("hidden")
+                bg_divider.remove_class("hidden")
+                bg_label.add_class("has-background")
+            else:
+                bg_label.update("")
+                bg_label.add_class("hidden")
+                bg_divider.add_class("hidden")
+                bg_label.remove_class("has-background")
+        except Exception:
+            pass
+
     def set_timeout(self, agent_id: str, remaining_seconds: Optional[int]) -> None:
         """Set the timeout remaining for an agent (legacy, called from update_agent_timeout).
 
@@ -950,6 +1029,7 @@ class AgentStatusRibbon(Widget):
         self._update_activity_display()
         self._update_timeout_display()
         self._update_tasks_display()
+        self._update_background_display()
         self._update_token_display()
         self._update_cost_display()
 

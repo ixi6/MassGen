@@ -146,7 +146,7 @@ def load_task_context(
                 )
             return _return(None)
 
-        logger.info(f"[TaskContext] Loaded {len(content)} chars from {context_path}")
+        logger.debug(f"[TaskContext] Loaded {len(content)} chars from {context_path}")
         return _return(content, was_truncated, original_len, len(content))
 
     except TaskContextError:

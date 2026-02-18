@@ -26,7 +26,7 @@ Run MassGen in the background (exact mechanism depends on your tooling):
 uv run massgen --automation --config massgen/configs/basic/multi/two_agents_gemini.yaml "What is 2+2?"
 ```
 
-**For MassGen agents**: Use `start_background_shell` MCP tool.
+**For MassGen agents**: Use `custom_tool__start_background_tool` targeting `mcp__command_line__execute_command`, then poll with `custom_tool__get_background_tool_status` / `custom_tool__get_background_tool_result`.
 **For Claude Code**: Use Bash tool's `run_in_background` parameter.
 
 ### Why Automation Mode

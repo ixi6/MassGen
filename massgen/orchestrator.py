@@ -55,6 +55,7 @@ from .logger_config import (
     set_log_attempt,
 )
 from .mcp_tools.hooks import (
+    BackgroundToolCompleteHook,
     GeneralHookManager,
     HighPriorityTaskReminderHook,
     HookType,
@@ -332,7 +333,7 @@ class Orchestrator(ChatAgent):
         # Human input hook for injecting user input during execution
         # Shared across all agents (one per orchestration session)
         self._human_input_hook: Optional[HumanInputHook] = None
-        # Async subagent completion tracking
+        # Background subagent completion tracking
         # Stores pending results for each parent agent until they can be injected
         # Format: {parent_agent_id: [(subagent_id, SubagentResult), ...]}
         self._pending_subagent_results: Dict[str, List[Tuple[str, "SubagentResult"]]] = {}
@@ -341,12 +342,12 @@ class Orchestrator(ChatAgent):
         # Format: {agent_id: set(subagent_id, ...)}
         self._injected_subagents: Dict[str, Set[str]] = {}
 
-        # Async subagent configuration (parsed from coordination_config)
-        async_subagent_config = {}
+        # Background subagent configuration (parsed from coordination_config)
+        background_subagent_config = {}
         if hasattr(self.config, "coordination_config"):
-            async_subagent_config = getattr(self.config.coordination_config, "async_subagents", {}) or {}
-        self._async_subagents_enabled = async_subagent_config.get("enabled", True)
-        self._async_subagent_injection_strategy = async_subagent_config.get("injection_strategy", "tool_result")
+            background_subagent_config = getattr(self.config.coordination_config, "background_subagents", {}) or {}
+        self._background_subagents_enabled = background_subagent_config.get("enabled", True)
+        self._background_subagent_injection_strategy = background_subagent_config.get("injection_strategy", "tool_result")
 
         # Agent startup rate limiting (per model)
         # Load from centralized configuration file instead of hardcoding
@@ -411,10 +412,56 @@ class Orchestrator(ChatAgent):
                     False,
                 )
 
+        # Create dedicated subagent logs directory if subagents are enabled.
+        # This directory is mounted into Docker containers so the subagent MCP
+        # server (which runs inside Docker) can write logs. Using a dedicated
+        # directory avoids mounting the entire .massgen/massgen_logs tree.
+        self._subagent_logs_dir: Optional[Path] = None
+        if hasattr(self.config, "coordination_config") and getattr(self.config.coordination_config, "enable_subagents", False):
+            try:
+                log_session_dir = get_log_session_dir()
+                if log_session_dir:
+                    cwd = Path.cwd()
+                    subagent_logs_base = cwd / ".massgen" / "subagent_logs"
+                    subagent_logs_base.mkdir(parents=True, exist_ok=True)
+                    run_id = secrets.token_hex(4)
+                    self._subagent_logs_dir = subagent_logs_base / f"sa_{run_id}"
+                    self._subagent_logs_dir.mkdir(parents=True, exist_ok=True)
+                    subagent_entries_dir = self._subagent_logs_dir / "subagents"
+                    subagent_entries_dir.mkdir(parents=True, exist_ok=True)
+                    logger.info(
+                        f"[Orchestrator] Created subagent logs directory: {self._subagent_logs_dir}",
+                    )
+                    # Symlink from session log dir for discoverability
+                    symlink_path = log_session_dir / "subagents"
+                    try:
+                        if symlink_path.is_symlink():
+                            symlink_path.unlink()
+                        symlink_path.symlink_to(subagent_entries_dir)
+                    except OSError as e:
+                        logger.warning(
+                            f"[Orchestrator] Could not create subagent logs symlink: {e}",
+                        )
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Could not create subagent logs directory: {e}")
+
         def _setup_agent_orchestration(agent_id: str, agent) -> None:
             """Setup orchestration paths for a single agent (can run in parallel)."""
             if not agent.backend.filesystem_manager:
                 return
+
+            # Add Docker mount for subagent logs directory if needed
+            if self._subagent_logs_dir is not None:
+                fm = agent.backend.filesystem_manager
+                if hasattr(fm, "docker_manager") and fm.docker_manager is not None:
+                    resolved = str(self._subagent_logs_dir.resolve())
+                    fm.docker_manager.additional_mounts[resolved] = {
+                        "bind": resolved,
+                        "mode": "rw",
+                    }
+                    logger.info(
+                        f"[Orchestrator] Added Docker mount for subagent logs: {resolved}",
+                    )
 
             agent.backend.filesystem_manager.setup_orchestration_paths(
                 agent_id=agent_id,
@@ -1626,6 +1673,12 @@ class Orchestrator(ChatAgent):
         script_path = PathlibPath(subagent_module.__file__).resolve()
 
         workspace_path = str(agent.backend.filesystem_manager.cwd)
+        workspace_root = PathlibPath(workspace_path).resolve()
+        # Keep subagent MCP temp config files inside the mounted workspace so
+        # Docker-based Codex can read them. Host /tmp paths are not guaranteed
+        # to be mounted in the container.
+        mcp_temp_dir = workspace_root / ".massgen" / "subagent_mcp"
+        mcp_temp_dir.mkdir(parents=True, exist_ok=True)
 
         # Build list of all parent agent configs to pass to subagent manager
         # This allows subagents to inherit the exact same agent setup by default
@@ -1646,6 +1699,7 @@ class Orchestrator(ChatAgent):
             suffix=".json",
             prefix="massgen_subagent_configs_",
             delete=False,  # Keep file until subagent reads it
+            dir=str(mcp_temp_dir),
         )
         json.dump(agent_configs, agent_configs_file)
         agent_configs_file.close()
@@ -1666,6 +1720,7 @@ class Orchestrator(ChatAgent):
                 suffix=".json",
                 prefix="massgen_subagent_context_paths_",
                 delete=False,
+                dir=str(mcp_temp_dir),
             )
             json.dump(parent_context_paths, context_paths_file)
             context_paths_file.close()
@@ -1684,6 +1739,23 @@ class Orchestrator(ChatAgent):
                 parent_coordination_config["enable_agent_task_planning"] = coord_cfg.enable_agent_task_planning
             if hasattr(coord_cfg, "task_planning_filesystem_mode"):
                 parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
+            use_skills = getattr(coord_cfg, "use_skills", False)
+            enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
+            if use_skills or enabled_skill_names is not None:
+                parent_coordination_config["use_skills"] = True
+                parent_coordination_config["massgen_skills"] = getattr(coord_cfg, "massgen_skills", []) or []
+                parent_coordination_config["skills_directory"] = getattr(
+                    coord_cfg,
+                    "skills_directory",
+                    ".agent/skills",
+                )
+                parent_coordination_config["load_previous_session_skills"] = getattr(
+                    coord_cfg,
+                    "load_previous_session_skills",
+                    False,
+                )
+                if enabled_skill_names is not None:
+                    parent_coordination_config["enabled_skill_names"] = enabled_skill_names
             if hasattr(coord_cfg, "subagent_round_timeouts") and coord_cfg.subagent_round_timeouts:
                 parent_coordination_config["subagent_round_timeouts"] = coord_cfg.subagent_round_timeouts
 
@@ -1701,6 +1773,7 @@ class Orchestrator(ChatAgent):
                     suffix=".json",
                     prefix="massgen_subagent_coordination_config_",
                     delete=False,
+                    dir=str(mcp_temp_dir),
                 )
                 json.dump(parent_coordination_config, coordination_config_file)
                 coordination_config_file.close()
@@ -1714,6 +1787,9 @@ class Orchestrator(ChatAgent):
         default_timeout = 300
         min_timeout = 60
         max_timeout = 600
+        subagent_runtime_mode = "isolated"
+        subagent_runtime_fallback_mode = ""
+        subagent_host_launch_prefix: List[str] = []
         subagent_orchestrator_config_json = "{}"
         if hasattr(self.config, "coordination_config"):
             if hasattr(self.config.coordination_config, "subagent_max_concurrent"):
@@ -1729,15 +1805,53 @@ class Orchestrator(ChatAgent):
                 so_config = self.config.coordination_config.subagent_orchestrator
                 if so_config:
                     subagent_orchestrator_config_json = json.dumps(so_config.to_dict())
+            if hasattr(self.config.coordination_config, "subagent_runtime_mode"):
+                subagent_runtime_mode = self.config.coordination_config.subagent_runtime_mode or "isolated"
+            if hasattr(self.config.coordination_config, "subagent_runtime_fallback_mode"):
+                fallback_mode = self.config.coordination_config.subagent_runtime_fallback_mode
+                subagent_runtime_fallback_mode = fallback_mode if fallback_mode else ""
+            if hasattr(self.config.coordination_config, "subagent_host_launch_prefix"):
+                host_launch_prefix = self.config.coordination_config.subagent_host_launch_prefix
+                if isinstance(host_launch_prefix, list):
+                    subagent_host_launch_prefix = host_launch_prefix
 
-        # Get log directory for subagent logs
-        log_directory = ""
+        # Discover and serialize specialized subagent types for the MCP server
+        specialized_subagents_path = ""
         try:
-            log_dir = get_log_session_dir()
-            if log_dir:
-                log_directory = str(log_dir.resolve())
-        except Exception:
-            pass  # Log directory not configured
+            from massgen.subagent.type_scanner import scan_subagent_types
+
+            specialized_types = scan_subagent_types()
+            if specialized_types:
+                specialized_data = [t.to_dict() for t in specialized_types]
+                specialized_file = tempfile.NamedTemporaryFile(
+                    mode="w",
+                    suffix=".json",
+                    prefix="massgen_subagent_specialized_types_",
+                    delete=False,
+                    dir=str(mcp_temp_dir),
+                )
+                json.dump(specialized_data, specialized_file)
+                specialized_file.close()
+                specialized_subagents_path = specialized_file.name
+                logger.info(
+                    f"[Orchestrator] Passing {len(specialized_types)} specialized subagent types to MCP",
+                )
+        except Exception as e:
+            logger.warning(f"[Orchestrator] Failed to discover specialized subagent types: {e}")
+
+        # Get log directory for subagent logs.
+        # Use the dedicated subagent logs dir (Docker-mountable) if available,
+        # otherwise fall back to the session log dir.
+        log_directory = ""
+        if self._subagent_logs_dir is not None:
+            log_directory = str(self._subagent_logs_dir.resolve())
+        else:
+            try:
+                log_dir = get_log_session_dir()
+                if log_dir:
+                    log_directory = str(log_dir.resolve())
+            except Exception:
+                pass  # Log directory not configured
 
         args = [
             "run",
@@ -1767,16 +1881,34 @@ class Orchestrator(ChatAgent):
             context_paths_path,
             "--coordination-config-file",
             coordination_config_path,
+            "--specialized-subagents-file",
+            specialized_subagents_path,
+            "--runtime-mode",
+            subagent_runtime_mode,
+            "--runtime-fallback-mode",
+            subagent_runtime_fallback_mode,
+            "--host-launch-prefix",
+            json.dumps(subagent_host_launch_prefix),
         ]
 
-        config = {
+        # Build env for the MCP server process. Codex replaces (not merges)
+        # the process env with config.toml's "env" field, so we must explicitly
+        # include API keys the subagent subprocess needs. Reuse the backend's
+        # credential env builder if available (Codex backend), otherwise just
+        # suppress the FastMCP banner.
+        mcp_env: Dict[str, str] = {"FASTMCP_SHOW_CLI_BANNER": "false"}
+        if hasattr(agent.backend, "_build_custom_tools_mcp_env"):
+            mcp_env = agent.backend._build_custom_tools_mcp_env()
+
+        config: Dict[str, Any] = {
             "name": f"subagent_{agent_id}",
             "type": "stdio",
             "command": "fastmcp",
             "args": args,
-            "env": {
-                "FASTMCP_SHOW_CLI_BANNER": "false",
-            },
+            "env": mcp_env,
+            # Blocking spawn_subagents can run near subagent_default_timeout.
+            # Raise per-tool timeout so Codex MCP does not fail at 60s.
+            "tool_timeout_sec": int(default_timeout) + 60,
         }
 
         logger.info(
@@ -5254,6 +5386,9 @@ Your answer:"""
             if not list_result.get("success") or not list_result.get("subagents"):
                 return []
 
+            # Import here to avoid circular import at module load.
+            from massgen.subagent.models import SubagentResult as RuntimeSubagentResult
+
             # Find completed subagents that haven't been injected yet
             pending_results = []
             for subagent_info in list_result["subagents"]:
@@ -5264,34 +5399,32 @@ Your answer:"""
                 if status != "completed" or subagent_id in self._injected_subagents[agent_id]:
                     continue
 
-                # Fetch the subagent's result
-                result_response = agent.mcp_client.call_tool(
-                    f"mcp__subagent_{agent_id}__get_subagent_result",
-                    {"subagent_id": subagent_id},
-                )
+                # list_subagents includes a full result payload for completed in-memory
+                # subagents. Registry-only historical entries may not include it.
+                result_data = subagent_info.get("result")
+                if not isinstance(result_data, dict):
+                    continue
 
-                if result_response.get("success") and result_response.get("result"):
-                    # Import SubagentResult here to avoid circular import
-                    from massgen.subagent.models import SubagentResult
-
-                    result_data = result_response["result"]
-                    result = SubagentResult(
+                try:
+                    result = RuntimeSubagentResult.from_dict(result_data)
+                except Exception:
+                    result = RuntimeSubagentResult(
                         subagent_id=result_data.get("subagent_id", subagent_id),
                         success=result_data.get("success", False),
-                        status=result_data.get("status", "unknown"),
+                        status=result_data.get("status", "error"),
                         answer=result_data.get("answer", ""),
                         error=result_data.get("error"),
-                        workspace_path=result_data.get("workspace_path", ""),
+                        workspace_path=result_data.get("workspace_path", result_data.get("workspace", "")),
                         execution_time_seconds=result_data.get("execution_time_seconds", 0.0),
                         token_usage=result_data.get("token_usage", {}),
                     )
 
-                    pending_results.append((subagent_id, result))
-                    # Mark as injected
-                    self._injected_subagents[agent_id].add(subagent_id)
-                    logger.debug(
-                        f"[Orchestrator] Fetched completed subagent {subagent_id} for {agent_id} " f"(status={result.status})",
-                    )
+                pending_results.append((subagent_id, result))
+                # Mark as injected
+                self._injected_subagents[agent_id].add(subagent_id)
+                logger.debug(
+                    f"[Orchestrator] Fetched completed subagent {subagent_id} for {agent_id} " f"(status={result.status})",
+                )
 
             if pending_results:
                 logger.debug(
@@ -5502,10 +5635,10 @@ Your answer:"""
             self._share_human_input_hook_with_display()
         manager.register_global_hook(HookType.POST_TOOL_USE, self._human_input_hook)
 
-        # Register subagent completion hook for async result injection
-        if self._async_subagents_enabled:
+        # Register subagent completion hook for background result injection
+        if self._background_subagents_enabled:
             subagent_hook = SubagentCompleteHook(
-                injection_strategy=self._async_subagent_injection_strategy,
+                injection_strategy=self._background_subagent_injection_strategy,
             )
 
             # Create a closure that captures agent_id for pending results retrieval
@@ -5515,6 +5648,17 @@ Your answer:"""
             subagent_hook.set_pending_results_getter(make_pending_getter(agent_id))
             manager.register_global_hook(HookType.POST_TOOL_USE, subagent_hook)
             logger.debug(f"[Orchestrator] Registered SubagentCompleteHook for {agent_id}")
+
+        # Register background tool completion hook for async tool result injection
+        if hasattr(agent.backend, "get_pending_background_tool_results"):
+            background_tool_hook = BackgroundToolCompleteHook()
+            background_tool_hook.set_completed_jobs_getter(
+                agent.backend.get_pending_background_tool_results,
+            )
+            manager.register_global_hook(HookType.POST_TOOL_USE, background_tool_hook)
+            logger.debug(
+                f"[Orchestrator] Registered BackgroundToolCompleteHook for {agent_id}",
+            )
         # Register per-round timeout hooks if configured
         self._register_round_timeout_hooks(agent_id, manager)
 
@@ -5906,10 +6050,10 @@ Your answer:"""
             self._share_human_input_hook_with_display()
         manager.register_global_hook(HookType.POST_TOOL_USE, self._human_input_hook)
 
-        # Register subagent completion hook for async result injection
-        if self._async_subagents_enabled:
+        # Register subagent completion hook for background result injection
+        if self._background_subagents_enabled:
             subagent_hook = SubagentCompleteHook(
-                injection_strategy=self._async_subagent_injection_strategy,
+                injection_strategy=self._background_subagent_injection_strategy,
             )
 
             # Create a closure that captures agent_id for pending results retrieval
@@ -5919,6 +6063,17 @@ Your answer:"""
             subagent_hook.set_pending_results_getter(make_pending_getter(agent_id))
             manager.register_global_hook(HookType.POST_TOOL_USE, subagent_hook)
             logger.debug(f"[Orchestrator] Registered SubagentCompleteHook (native) for {agent_id}")
+
+        # Register background tool completion hook for async tool result injection
+        if hasattr(agent.backend, "get_pending_background_tool_results"):
+            background_tool_hook = BackgroundToolCompleteHook()
+            background_tool_hook.set_completed_jobs_getter(
+                agent.backend.get_pending_background_tool_results,
+            )
+            manager.register_global_hook(HookType.POST_TOOL_USE, background_tool_hook)
+            logger.debug(
+                f"[Orchestrator] Registered BackgroundToolCompleteHook (native) for {agent_id}",
+            )
         # Register per-round timeout hooks if configured
         self._register_round_timeout_hooks(agent_id, manager)
 
@@ -6064,7 +6219,7 @@ Your answer:"""
         for agent_id, pending in self._pending_subagent_results.items():
             if pending:
                 logger.warning(
-                    f"[Orchestrator] {len(pending)} async subagent result(s) for {agent_id} " f"were not delivered (parent finished before injection). " f"IDs: {[p[0] for p in pending]}",
+                    f"[Orchestrator] {len(pending)} background subagent result(s) for {agent_id} " f"were not delivered (parent finished before injection). " f"IDs: {[p[0] for p in pending]}",
                 )
                 # Clear the pending results since they won't be delivered
                 self._pending_subagent_results[agent_id] = []
@@ -6105,54 +6260,8 @@ Your answer:"""
                 await self._close_agent_stream(agent_id, self._active_streams)
 
     async def _cleanup_background_shells_for_agent(self, agent_id: str) -> None:
-        """Clean up background shells started by this agent at round end.
-
-        Uses MCP tools to list and kill shells, since background shells run in
-        the MCP subprocess (not the main orchestrator process).
-
-        Args:
-            agent_id: The agent identifier
-        """
-        agent = self.agents.get(agent_id)
-        if not agent or not hasattr(agent.backend, "_mcp_client") or not agent.backend._mcp_client:
-            return
-
-        mcp_client = agent.backend._mcp_client
-
-        try:
-            # List all background shells via MCP tool
-            list_result = await mcp_client.call_tool(
-                "mcp__command_line__list_background_shells",
-                {},
-            )
-
-            if not list_result or not isinstance(list_result, dict):
-                return
-
-            shells = list_result.get("shells", [])
-            if not shells:
-                return
-
-            # Kill each running shell
-            for shell_info in shells:
-                shell_id = shell_info.get("shell_id")
-                status = shell_info.get("status")
-
-                if shell_id and status == "running":
-                    try:
-                        await mcp_client.call_tool(
-                            "mcp__command_line__kill_background_shell",
-                            {"shell_id": shell_id},
-                        )
-                        logger.info(
-                            f"[Orchestrator] Killed background shell {shell_id} at round end for {agent_id}",
-                        )
-                    except Exception as e:
-                        logger.warning(f"[Orchestrator] Failed to kill shell {shell_id}: {e}")
-
-        except Exception as e:
-            # MCP tool not available or other error - not critical
-            logger.debug(f"[Orchestrator] Could not clean up background shells for {agent_id}: {e}")
+        """Compatibility shim after removing command-line background shell MCP tools."""
+        return
 
     # TODO (v0.0.14 Context Sharing Enhancement - See docs/dev_notes/v0.0.14-context.md):
     # Add the following permission validation methods:

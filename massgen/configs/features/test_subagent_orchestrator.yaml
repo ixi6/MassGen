@@ -45,4 +45,4 @@ orchestrator:
             type: "chatcompletion"
             base_url: "https://openrouter.ai/api/v1"
             model: "x-ai/grok-4.1-fast"
-      # blocking: true  # Set to false for background execution (use check_subagent_status to monitor)
+      # blocking: true  # Set to false for background execution (monitor via custom_tool__get_background_tool_status/job_id)

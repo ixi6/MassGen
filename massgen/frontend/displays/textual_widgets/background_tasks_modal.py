@@ -2,10 +2,11 @@
 """
 Background Tasks Modal Widget for MassGen TUI.
 
-Modal overlay for viewing background/async operations like background shells.
+Modal overlay for viewing background/async operations.
 Supports drilling down into individual tasks to see live output.
 """
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -39,13 +40,30 @@ class BackgroundTaskRow(Static, can_focus=True):
         text = Text()
         task = self._task_data
 
+        latest_status = str(task.get("latest_status") or task.get("status") or "running").lower().strip()
+        status_icon = "●"
+        status_style = "bold #d29922"
+        if latest_status in {"completed", "success"}:
+            status_icon = "✓"
+            status_style = "bold #3fb950"
+        elif latest_status in {"error", "failed", "cancelled", "canceled", "stopped"}:
+            status_icon = "✗"
+            status_style = "bold #f85149"
+        elif latest_status == "timeout":
+            status_icon = "⏱"
+            status_style = "bold #d29922"
+
         # Tool name (no emoji)
         tool_name = task.get("tool_name", "Unknown")
         display_name = task.get("display_name", tool_name)
-        text.append("● ", style="bold #d29922")
+        text.append(f"{status_icon} ", style=status_style)
         text.append(display_name, style="bold")
 
-        # Async ID (e.g., shell_id)
+        agent_id = task.get("agent_id")
+        if agent_id:
+            text.append(f"  ({agent_id})", style="dim")
+
+        # Async ID (e.g., background job ID)
         async_id = task.get("async_id")
         if async_id:
             text.append(f"  [{async_id}]", style="dim #d29922")
@@ -54,13 +72,15 @@ class BackgroundTaskRow(Static, can_focus=True):
 
         # Elapsed time
         start_time = task.get("start_time")
-        if start_time:
+        if start_time and latest_status in {"running", "background", "pending", "queued"}:
             if isinstance(start_time, datetime):
                 elapsed = (datetime.now() - start_time).total_seconds()
             else:
                 elapsed = 0
             minutes, seconds = divmod(int(elapsed), 60)
             text.append(f"  ⏱ {minutes}m{seconds:02d}s running", style="dim")
+        elif latest_status:
+            text.append(f"  {latest_status}", style="dim")
 
         # Click hint
         text.append("  [click for details]", style="dim italic #d29922")
@@ -107,7 +127,8 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
                     yield Button("✕", variant="default", classes="modal-close", id="close_btn")
 
             # Info section
-            yield Static(self._build_info(), classes="info-section", id="info_section")
+            with ScrollableContainer(classes="info-section", id="info_section"):
+                yield Static(self._build_info(), id="info_content")
 
             # Output header with status
             with Container(classes="output-header"):
@@ -132,11 +153,25 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
         text = Text()
         task = self._task_data
 
-        # Shell ID
+        # Background job ID
         async_id = task.get("async_id")
         if async_id:
-            text.append("Shell ID: ", style="bold")
+            text.append("Job ID: ", style="bold")
             text.append(f"{async_id}\n", style="#d29922")
+
+        # Agent / tool metadata
+        agent_id = task.get("agent_id")
+        if agent_id:
+            text.append("Agent: ", style="bold")
+            text.append(f"{agent_id}\n")
+        tool_type = task.get("tool_type")
+        if tool_type:
+            text.append("Tool Type: ", style="bold")
+            text.append(f"{tool_type}\n")
+        status = task.get("status")
+        if status:
+            text.append("Status: ", style="bold")
+            text.append(f"{status}\n")
 
         # Start time
         start_time = task.get("start_time")
@@ -155,16 +190,46 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
                 text.append("Elapsed: ", style="bold")
                 text.append(f"{elapsed_str}\n")
 
-        # Original result/command info
+        # Original request args (contains full prompt payload for background jobs)
+        params = task.get("params", "")
+        if params:
+            text.append("Request:\n", style="bold")
+            text.append(self._format_display_payload(params), style="dim")
+            text.append("\n")
+
+        # Latest captured tool result (typically start/status response)
         result = task.get("result", "")
         if result:
-            # Try to extract command from result
-            text.append("Command: ", style="bold")
-            # Result often contains JSON with command info
-            preview = result[:200] if len(result) > 200 else result
-            text.append(f"{preview}", style="dim")
+            text.append("Latest Result:\n", style="bold")
+            text.append(self._format_display_payload(result), style="dim")
+
+        error = task.get("error")
+        if error:
+            text.append("\nError: ", style="bold")
+            text.append(str(error), style="#f85149")
 
         return text
+
+    @staticmethod
+    def _format_display_payload(payload: Any) -> str:
+        """Format JSON-ish payloads for readable, wrapped modal display."""
+        if payload is None:
+            return ""
+        if isinstance(payload, (dict, list)):
+            return json.dumps(payload, ensure_ascii=False, indent=2)
+        if not isinstance(payload, str):
+            return str(payload)
+
+        raw = payload.strip()
+        if not raw:
+            return ""
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return payload
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(parsed, ensure_ascii=False, indent=2)
+        return str(parsed)
 
     def _build_output_header(self) -> Text:
         """Build the output section header with status."""
@@ -178,6 +243,14 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
             text.append("  [", style="dim")
             if status == "running":
                 text.append("● running", style="#d29922")  # amber/orange
+            elif status == "background":
+                text.append("● background", style="#d29922")
+            elif status == "completed":
+                text.append("✓ completed", style="#3fb950")
+            elif status == "cancelled":
+                text.append("✗ cancelled", style="#f85149")
+            elif status == "error":
+                text.append("✗ failed", style="#f85149")
             elif status == "stopped":
                 exit_code = status_info.get("exit_code", 0)
                 if exit_code == 0:
@@ -193,14 +266,14 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
         return text
 
     def _build_output(self) -> Text:
-        """Build the output content from shell."""
+        """Build the output content from a background task."""
         async_id = self._task_data.get("async_id")
         if not async_id:
-            return Text("No shell ID available - cannot fetch output.", style="no-output")
+            return Text("No background job ID available.", style="no-output")
 
         output_info = self._get_shell_output()
         if not output_info:
-            return Text("Unable to fetch output. Shell may have been cleaned up.", style="no-output")
+            return Text("Unable to fetch output for this background task.", style="no-output")
 
         text = Text()
 
@@ -234,12 +307,9 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
         return text
 
     def _get_shell_output(self) -> Optional[Dict[str, Any]]:
-        """Get shell output - returns stored result since live fetch isn't available.
+        """Get background output from stored tool result.
 
-        Background shells run in MCP subprocesses. The TUI runs in a separate
-        thread from the async orchestrator, making cross-thread MCP calls
-        complex. Instead, we show the tool result that was returned when
-        the shell was started.
+        The TUI currently shows the result payload captured by the tool card.
         """
         # Return a synthetic output dict using stored result
         result = self._task_data.get("result", "")
@@ -248,17 +318,18 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
                 "stdout": result,
                 "stderr": "",
                 "status": "running",
-                "note": "Showing initial tool result. Use get_background_shell_output tool for live output.",
+                "note": "Showing captured result. Use get_background_tool_result for latest state.",
             }
         return None
 
     def _get_shell_status(self) -> Optional[Dict[str, Any]]:
-        """Get shell status - returns basic info since live fetch isn't available."""
+        """Get background status metadata for display."""
         async_id = self._task_data.get("async_id")
+        status = str(self._task_data.get("status") or "background")
         return {
-            "shell_id": async_id,
-            "status": "running",
-            "note": "Live status unavailable from TUI. Use get_background_shell_status tool.",
+            "job_id": async_id,
+            "status": status,
+            "note": "Use get_background_tool_status for live status updates.",
         }
 
     def action_refresh(self) -> None:
@@ -273,7 +344,7 @@ class BackgroundTaskDetailModal(ModalScreen[None]):
             header_widget.update(self._build_output_header())
 
             # Update info section (for elapsed time)
-            info_widget = self.query_one("#info_section", Static)
+            info_widget = self.query_one("#info_content", Static)
             info_widget.update(self._build_info())
 
             # Scroll to bottom
@@ -307,14 +378,17 @@ class BackgroundTasksModal(ModalScreen[None]):
     def __init__(
         self,
         background_tasks: List[Dict[str, Any]],
+        recent_tasks: Optional[List[Dict[str, Any]]] = None,
         agent_id: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.background_tasks = background_tasks or []
+        self.recent_tasks = recent_tasks or []
         self.agent_id = agent_id
 
     def compose(self) -> ComposeResult:
-        count = len(self.background_tasks)
+        active_count = len(self.background_tasks)
+        recent_count = len(self.recent_tasks)
 
         with Container():
             # Header section
@@ -324,19 +398,31 @@ class BackgroundTasksModal(ModalScreen[None]):
                     if self.agent_id:
                         title += f" . {self.agent_id}"
                     yield Static(title, classes="modal-title")
-                    yield Static(f"{count} running", classes="modal-stats")
+                    stats = f"{active_count} active"
+                    if recent_count:
+                        stats += f" • {recent_count} recent"
+                    yield Static(stats, classes="modal-stats")
                     yield Button("✕", variant="default", classes="modal-close", id="close_btn")
 
             # Task list
             with ScrollableContainer(classes="modal-body"):
-                if not self.background_tasks:
+                if not self.background_tasks and not self.recent_tasks:
                     yield Static(
                         "No background operations running.",
                         classes="empty-message",
                     )
                 else:
-                    for i, task in enumerate(self.background_tasks):
-                        yield BackgroundTaskRow(task, i, self.agent_id, id=f"task_row_{i}")
+                    row_index = 0
+                    if self.background_tasks:
+                        yield Static("Active", classes="section-heading")
+                        for task in self.background_tasks:
+                            yield BackgroundTaskRow(task, row_index, self.agent_id, id=f"task_row_{row_index}")
+                            row_index += 1
+                    if self.recent_tasks:
+                        yield Static("Recent", classes="section-heading")
+                        for task in self.recent_tasks:
+                            yield BackgroundTaskRow(task, row_index, self.agent_id, id=f"task_row_{row_index}")
+                            row_index += 1
 
             # Footer
             with Container(classes="modal-footer"):

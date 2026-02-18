@@ -78,7 +78,14 @@ def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None
     raise ValueError(f"Path not in allowed directories: {path}")
 
 
-@context_params("backend_type", "model", "task_context")
+@context_params(
+    "backend_type",
+    "model",
+    "agent_cwd",
+    "allowed_paths",
+    "multimodal_config",
+    "task_context",
+)
 async def read_media(
     file_path: Optional[str] = None,
     prompt: Optional[str] = None,

@@ -166,3 +166,42 @@ class APIParamsHandlerBase(ABC):
             if hasattr(self.backend, "get_mcp_tools_formatted"):
                 return self.backend.get_mcp_tools_formatted()
         return []
+
+    def get_custom_tools(self) -> List[Dict[str, Any]]:
+        """Get custom tools, preferring backend-provided full schemas when available.
+
+        Backends that inherit CustomToolAndMCPBackend expose
+        `_get_custom_tools_schemas()`, which includes internal background lifecycle
+        management tools in addition to user custom tools. Falling back to
+        `custom_tool_manager.registered_tools` keeps compatibility for handlers
+        instantiated with mocked backends in tests.
+        """
+        if hasattr(self.backend, "_get_custom_tools_schemas"):
+            try:
+                custom_schemas = self.backend._get_custom_tools_schemas()
+            except Exception:  # noqa: BLE001
+                custom_schemas = []
+            if not isinstance(custom_schemas, list):
+                custom_schemas = []
+
+            if custom_schemas:
+                normalized_schemas: List[Dict[str, Any]] = []
+                for schema in custom_schemas:
+                    if schema.get("type") == "function" and "function" in schema:
+                        function_block = dict(schema.get("function", {}))
+                        function_block.setdefault("description", "")
+                        normalized_schema = dict(schema)
+                        normalized_schema["function"] = function_block
+                        normalized_schemas.append(normalized_schema)
+                    else:
+                        normalized_schemas.append(schema)
+
+                if hasattr(self.formatter, "format_tools"):
+                    return self.formatter.format_tools(normalized_schemas)
+                return normalized_schemas
+
+        custom_tools = getattr(self.custom_tool_manager, "registered_tools", None)
+        if custom_tools:
+            return self.formatter.format_custom_tools(custom_tools)
+
+        return []

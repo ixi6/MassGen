@@ -164,6 +164,8 @@ class ConfigValidator:
     VALID_WRITE_MODES = {"auto", "worktree", "isolated", "legacy"}
     VALID_DRIFT_CONFLICT_POLICIES = {"skip", "prefer_presenter", "fail"}
     VALID_NOVELTY_INJECTION = {"none", "gentle", "moderate", "aggressive"}
+    VALID_SUBAGENT_RUNTIME_MODES = {"isolated", "inherited"}
+    VALID_SUBAGENT_RUNTIME_FALLBACK_MODES = {"inherited"}
 
     # Valid gap report modes
     VALID_GAP_REPORT_MODES = {"changedoc", "separate", "none"}
@@ -874,34 +876,42 @@ class ConfigValidator:
                             "Use a value like 0, 1, 2, etc.",
                         )
 
-                # Validate async_subagents if present
+                # Hard-break rename: async_subagents -> background_subagents
                 if "async_subagents" in coordination:
-                    async_config = coordination["async_subagents"]
-                    if not isinstance(async_config, dict):
+                    result.add_error(
+                        "'async_subagents' has been removed. Use 'background_subagents' instead.",
+                        f"{location}.coordination.async_subagents",
+                        "Replace with background_subagents: {enabled: true, injection_strategy: 'tool_result'}",
+                    )
+
+                # Validate background_subagents if present
+                if "background_subagents" in coordination:
+                    background_config = coordination["background_subagents"]
+                    if not isinstance(background_config, dict):
                         result.add_error(
-                            f"'async_subagents' must be a dictionary, got {type(async_config).__name__}",
-                            f"{location}.coordination.async_subagents",
-                            "Use async_subagents: {enabled: true, injection_strategy: 'tool_result'}",
+                            f"'background_subagents' must be a dictionary, got {type(background_config).__name__}",
+                            f"{location}.coordination.background_subagents",
+                            "Use background_subagents: {enabled: true, injection_strategy: 'tool_result'}",
                         )
                     else:
                         # Validate enabled field
-                        if "enabled" in async_config:
-                            enabled = async_config["enabled"]
+                        if "enabled" in background_config:
+                            enabled = background_config["enabled"]
                             if not isinstance(enabled, bool):
                                 result.add_error(
-                                    f"'async_subagents.enabled' must be a boolean, got {type(enabled).__name__}",
-                                    f"{location}.coordination.async_subagents.enabled",
+                                    f"'background_subagents.enabled' must be a boolean, got {type(enabled).__name__}",
+                                    f"{location}.coordination.background_subagents.enabled",
                                     "Use 'true' or 'false'",
                                 )
 
                         # Validate injection_strategy field
-                        if "injection_strategy" in async_config:
-                            strategy = async_config["injection_strategy"]
+                        if "injection_strategy" in background_config:
+                            strategy = background_config["injection_strategy"]
                             valid_strategies = ["tool_result", "user_message"]
                             if strategy not in valid_strategies:
                                 result.add_error(
-                                    f"Invalid async_subagents.injection_strategy: '{strategy}'",
-                                    f"{location}.coordination.async_subagents.injection_strategy",
+                                    f"Invalid background_subagents.injection_strategy: '{strategy}'",
+                                    f"{location}.coordination.background_subagents.injection_strategy",
                                     f"Use one of: {', '.join(valid_strategies)}",
                                 )
                 # Validate plan_depth if present
@@ -966,6 +976,50 @@ class ConfigValidator:
                                             f"{location}.coordination.subagent_round_timeouts.{field_name}",
                                             "Use a value like 300 (seconds)",
                                         )
+
+                # Validate subagent runtime isolation settings
+                runtime_mode = coordination.get("subagent_runtime_mode", "isolated")
+                if "subagent_runtime_mode" in coordination and runtime_mode not in self.VALID_SUBAGENT_RUNTIME_MODES:
+                    valid_values = ", ".join(sorted(self.VALID_SUBAGENT_RUNTIME_MODES))
+                    result.add_error(
+                        f"Invalid subagent_runtime_mode: '{runtime_mode}'",
+                        f"{location}.coordination.subagent_runtime_mode",
+                        f"Use one of: {valid_values}",
+                    )
+
+                if "subagent_runtime_fallback_mode" in coordination:
+                    fallback_mode = coordination["subagent_runtime_fallback_mode"]
+                    if fallback_mode is not None and fallback_mode not in self.VALID_SUBAGENT_RUNTIME_FALLBACK_MODES:
+                        valid_values = ", ".join(sorted(self.VALID_SUBAGENT_RUNTIME_FALLBACK_MODES))
+                        result.add_error(
+                            f"Invalid subagent_runtime_fallback_mode: '{fallback_mode}'",
+                            f"{location}.coordination.subagent_runtime_fallback_mode",
+                            f"Use one of: null, {valid_values}",
+                        )
+                    elif fallback_mode is not None and runtime_mode != "isolated":
+                        result.add_error(
+                            "subagent_runtime_fallback_mode can only be set when subagent_runtime_mode is 'isolated'",
+                            f"{location}.coordination.subagent_runtime_fallback_mode",
+                            "Set subagent_runtime_mode: isolated or remove subagent_runtime_fallback_mode",
+                        )
+
+                if "subagent_host_launch_prefix" in coordination:
+                    host_launch_prefix = coordination["subagent_host_launch_prefix"]
+                    if host_launch_prefix is not None:
+                        if not isinstance(host_launch_prefix, list):
+                            result.add_error(
+                                f"'subagent_host_launch_prefix' must be a list or null, got {type(host_launch_prefix).__name__}",
+                                f"{location}.coordination.subagent_host_launch_prefix",
+                                "Use a list of command tokens, for example ['host-launch', '--exec']",
+                            )
+                        else:
+                            for i, token in enumerate(host_launch_prefix):
+                                if not isinstance(token, str) or not token.strip():
+                                    result.add_error(
+                                        "'subagent_host_launch_prefix' entries must be non-empty strings",
+                                        f"{location}.coordination.subagent_host_launch_prefix[{i}]",
+                                        "Use command token strings only",
+                                    )
 
                 # Validate write_mode if present
                 if "write_mode" in coordination:

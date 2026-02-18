@@ -318,6 +318,7 @@ class EventEmitter:
         elapsed_seconds: float,
         status: str = "success",
         is_error: bool = False,
+        async_id: Optional[str] = None,
         agent_id: Optional[str] = None,
     ) -> None:
         """Emit a tool completion event.
@@ -329,6 +330,7 @@ class EventEmitter:
             elapsed_seconds: How long the tool took
             status: Status string (success, error, etc.)
             is_error: Whether this is an error result
+            async_id: Optional async/background job ID for long-running operations
             agent_id: Override agent ID
         """
         result_str = str(result)
@@ -341,6 +343,7 @@ class EventEmitter:
             elapsed_seconds=elapsed_seconds,
             status=status,
             is_error=is_error,
+            async_id=async_id,
             agent_id=agent_id,
         )
 
@@ -920,6 +923,7 @@ class EventReader:
                         "elapsed_seconds": event.data.get("elapsed_seconds"),
                         "status": event.data.get("status"),
                         "is_error": event.data.get("is_error", False),
+                        "async_id": event.data.get("async_id"),
                         "agent_id": event.agent_id,
                     },
                 )

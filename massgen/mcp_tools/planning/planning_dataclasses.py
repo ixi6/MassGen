@@ -89,6 +89,7 @@ class TaskPlan:
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     subagents: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    require_verification: bool = True
 
     def __post_init__(self):
         """Initialize task index for fast lookups."""
@@ -229,6 +230,9 @@ class TaskPlan:
         after_task_id: Optional[str] = None,
         depends_on: Optional[List[str]] = None,
         priority: Literal["low", "medium", "high"] = "medium",
+        verification: Optional[str] = None,
+        verification_method: Optional[str] = None,
+        skip_verification: bool = False,
     ) -> Task:
         """
         Add a new task to the plan.
@@ -239,6 +243,9 @@ class TaskPlan:
             after_task_id: Optional ID to insert after (otherwise appends)
             depends_on: Optional list of task IDs this task depends on
             priority: Task priority level (low/medium/high, defaults to medium)
+            verification: What success looks like (acceptance criteria)
+            verification_method: How to verify it (specific steps)
+            skip_verification: If True, bypass require_verification enforcement (for framework tasks)
 
         Returns:
             The newly created task
@@ -260,12 +267,26 @@ class TaskPlan:
                 if dep_id not in self._task_index:
                     raise ValueError(f"Dependency task does not exist: {dep_id}")
 
+        # Enforce verification fields if required (skip for framework-injected tasks)
+        if self.require_verification and not skip_verification and not verification:
+            raise ValueError(
+                f"Task '{description[:60]}' is missing required 'verification' field. " "Provide acceptance criteria describing what success looks like.",
+            )
+
+        # Build metadata with verification fields if provided
+        metadata: Dict[str, Any] = {}
+        if verification:
+            metadata["verification"] = verification
+        if verification_method:
+            metadata["verification_method"] = verification_method
+
         # Create task
         task = Task(
             id=task_id,
             description=description,
             dependencies=depends_on or [],
             priority=priority,
+            metadata=metadata,
         )
 
         # Check for circular dependencies before adding
@@ -336,12 +357,25 @@ class TaskPlan:
                 if other_task.status == "pending" and task_id in other_task.dependencies and self.can_start_task(other_task.id):
                     newly_ready.append(other_task)
 
-            # Return task completion result
-            # Note: High-priority task reminders are injected via HighPriorityTaskReminderHook
-            return {
+            # Build completion result
+            result: Dict[str, Any] = {
                 "task": task.to_dict(),
                 "newly_ready_tasks": [t.to_dict() for t in newly_ready],
             }
+
+            # Surface verification reminder if task has verification criteria
+            has_verification = "verification" in task.metadata and task.metadata["verification"]
+            if has_verification:
+                result["verification_pending"] = True
+                result["verification"] = task.metadata["verification"]
+                if "verification_method" in task.metadata:
+                    result["verification_method"] = task.metadata["verification_method"]
+
+                # Count all completed-but-unverified tasks with verification criteria
+                unverified = sum(1 for t in self.tasks if t.status == "completed" and "verification" in t.metadata and t.metadata["verification"])
+                result["unverified_count"] = unverified
+
+            return result
 
         if status == "verified":
             task.verified_at = datetime.now()

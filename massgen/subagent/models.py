@@ -20,6 +20,62 @@ SUBAGENT_DEFAULT_TIMEOUT = 300  # 5 minutes
 
 
 @dataclass
+class SpecializedSubagentConfig:
+    """
+    Configuration for a specialized subagent type discovered from disk.
+
+    Types are defined as directories containing SUBAGENT.md with YAML frontmatter.
+    Discovered at startup and listed in the system prompt so agents know to use them.
+
+    Attributes:
+        name: Type identifier (e.g., "evaluator", "explorer")
+        description: Short description of what this type does
+        system_prompt: Full system prompt for the subagent (body of SUBAGENT.md)
+        default_background: Whether to spawn in background mode by default
+        default_refine: Whether to enable refinement by default
+        skills: Skill names to pre-load for the subagent
+        mcp_servers: MCP server names to ensure are available
+        source_path: Path to the SUBAGENT.md file for provenance
+    """
+
+    name: str
+    description: str
+    system_prompt: str = ""
+    default_background: bool = False
+    default_refine: bool = False
+    skills: List[str] = field(default_factory=list)
+    mcp_servers: List[str] = field(default_factory=list)
+    source_path: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for serialization."""
+        return {
+            "name": self.name,
+            "description": self.description,
+            "system_prompt": self.system_prompt,
+            "default_background": self.default_background,
+            "default_refine": self.default_refine,
+            "skills": self.skills.copy(),
+            "mcp_servers": self.mcp_servers.copy(),
+            "source_path": self.source_path,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SpecializedSubagentConfig":
+        """Create from dictionary."""
+        return cls(
+            name=data["name"],
+            description=data.get("description", ""),
+            system_prompt=data.get("system_prompt", ""),
+            default_background=data.get("default_background", False),
+            default_refine=data.get("default_refine", False),
+            skills=data.get("skills", []),
+            mcp_servers=data.get("mcp_servers", []),
+            source_path=data.get("source_path", ""),
+        )
+
+
+@dataclass
 class SubagentConfig:
     """
     Configuration for spawning a subagent.

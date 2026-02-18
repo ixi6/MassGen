@@ -190,6 +190,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.53 (February 18, 2026)** - Background Tool Execution
+
+Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
+
 **v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
 
 Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
@@ -197,10 +201,6 @@ Dedicated final answer modal with tabbed answer and workspace/review interface. 
 **v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
 
 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. ``--cwd-context`` CLI flag.
-
-**v0.1.50 (February 11, 2026)** - Chunked Plan Execution & Skill Lifecycle Management
-
-Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
 
 :doc:`Full changelog → <changelog>`
 

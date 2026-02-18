@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.52 Features](#-latest-features-v0152)
+- [v0.1.53 Features](#-latest-features-v0153)
 </details>
 
 <details open>
@@ -121,15 +121,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.52)](#recent-achievements-v0152)
-- [Previous Achievements (v0.0.3 - v0.1.51)](#previous-achievements-v003---v0151)
+- [Recent Achievements (v0.1.53)](#recent-achievements-v0153)
+- [Previous Achievements (v0.0.3 - v0.1.52)](#previous-achievements-v003---v0152)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.53 Roadmap](#v0153-roadmap)
+- [v0.1.54 Roadmap](#v0154-roadmap)
 </details>
 
 <details open>
@@ -154,27 +154,26 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.52)
+## 🆕 Latest Features (v0.1.53)
 
-**🎉 Released: February 16, 2026**
+**🎉 Released: February 18, 2026**
 
-**What's New in v0.1.52:**
-- **🏆 Dedicated Final Answer Modal** - Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Workspace/Review Changes tab (diff review). Trophy header with agent identity. Approve/Reject/Cancel action bar with rework controls.
-- **🚦 Substantive Gate** - Quality gate preventing coordination from continuing with only incremental changes. Tracks `transformative`/`structural`/`incremental` classification with `decision_space_exhausted` detection.
-- **💡 Novelty Injection** - Creative pressure injection when agents converge. Levels: `none`, `gentle`, `moderate`, `aggressive`. Intensifies after restarts.
-- **🏷️ Agent Identity & Versioning** - Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for provenance tracking.
-- **🎯 First Answer Non-Restart** - First answers no longer trigger automatic restarts on quality check failure for more natural coordination flow.
+**What's New in v0.1.53:**
+- **⏳ Background Tool Execution** - Non-blocking lifecycle tools for long-running work: start, monitor, wait, cancel, and list background jobs. Compatible with custom tools and MCP server tools.
+- **✅ Planning Task Verification** - Tasks now require `verification` and `verification_method` fields by default. `--no-require-verification` flag to opt out.
+- **🎯 TUI Background Job Indicators** - Agent status ribbon with background job indicators and background tasks modal with lifecycle controls.
+- **🔧 Subagent Infrastructure** - Groundwork for specialized subagent types (Evaluator, Explorer) via `SUBAGENT.md` frontmatter. Tool argument normalization across backends.
 
-**Try v0.1.52 Features:**
+**Try v0.1.53 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Launch — new final answer modal is the default
+# Launch — background tools available with any multi-agent config
 uv run massgen
 
-# Multi-agent coordination showcasing the new final answer modal with workspace
-uv run massgen --config @examples/basic/multi/three_agents_default "Compare three approaches to distributed consensus"
+# Multi-agent coordination with background tool execution
+uv run massgen --config @examples/tools/custom_tools/docker_with_background.yaml "Create a multi-page website. Include an AI-generated image you generate in the background while building the website"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1236,38 +1235,35 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.52)
+### Recent Achievements (v0.1.53)
 
-**🎉 Released: February 16, 2026**
+**🎉 Released: February 18, 2026**
 
-#### Dedicated Final Answer Modal
-- **Tabbed Interface**: Answer tab with markdown content, post-evaluation, and file list; Workspace/Review Changes tab for diff review
-- **Action Bar**: Approve/Reject/Cancel with rework controls for easy iteration
-- **Trophy Header**: Agent identity and model name displayed prominently
+#### Background Tool Execution
+- **Non-Blocking Lifecycle**: Start, monitor, wait, cancel, and list background jobs — agents continue foreground work while long-running tools execute
+- **Compatible Targets**: Works with custom tools and MCP server tools
+- **Lifecycle Tools**: `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
 
-#### Substantive Gate
-- **Quality Gate**: Prevents coordination from continuing when only incremental changes are planned
-- **Convergence Detection**: Tracks `transformative`/`structural`/`incremental` classifications with `decision_space_exhausted` detection
-- **Config**: `require_substantiveness: true` (mandatory in checklist)
+#### Planning Task Verification
+- **Verification Fields**: Tasks now require `verification` and `verification_method` by default
+- **Opt-Out**: `--no-require-verification` flag for backwards compatibility
+- **Framework Exempt**: Framework-injected tasks exempt from verification requirements
 
-#### Novelty Injection
-- **Creative Pressure**: Configurable injection when agents converge — levels: `none`, `gentle`, `moderate`, `aggressive`
-- **Restart Intensification**: Pressure increases after failed iteration restarts
-- **Config**: `novelty_injection` in coordination section
+#### TUI Background Job Indicators
+- **Agent Status Ribbon**: Background job indicators in agent status display
+- **Background Tasks Modal**: Lifecycle controls for managing background tools
 
-#### Agent Identity & Versioning
-- **Answer Provenance**: Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for tracking
-
-#### Changed
-- **First Answer Non-Restart**: First answers no longer trigger automatic restarts on quality check failure
+#### Also in this release
+- **Subagent Infrastructure**: Groundwork for specialized subagent types (Evaluator, Explorer) via `SUBAGENT.md` frontmatter
+- **Tool Argument Normalization**: Consistent argument handling across backends
 
 #### Bug Fixes
-- Approved/rejected state display in final answer card
-- Auto-open workspace behavior
-- Final answer view in main timeline
-- Tool spacing in final card
+- Task plan verification improvements
+- Codex reasoning config alignment
 
-### Previous Achievements (v0.0.3 - v0.1.51)
+### Previous Achievements (v0.0.3 - v0.1.52)
+
+✅ **Final Answer Modal & Coordination Quality Gates (v0.1.52)**: Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 ✅ **Reviewing Coordination & Change Documents (v0.1.51)**: Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
 
@@ -1516,9 +1512,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.53 Roadmap
+### v0.1.54 Roadmap
 
-Version 0.1.53 focuses on spec support for planning and targeted agent queries:
+Version 0.1.54 focuses on spec support for planning and targeted agent queries:
 
 #### Planned Features
 - **Spec Support for Planning** ([#881](https://github.com/massgen/MassGen/issues/881)): Add spec/proposal support to planning workflows

@@ -9,16 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.53 (February 18, 2026)** - Background Tool Execution
+Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
+
 **v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
 Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 **v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
 
-**v0.1.50 (February 11, 2026)** - Chunked Plan Execution & Skill Lifecycle Management
-Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
-
 ---
+
+## [0.1.53] - 2026-02-18
+
+### Added
+- **Background Tool Execution** ([#917](https://github.com/massgen/MassGen/pull/917)): Non-blocking lifecycle tools for long-running work
+  - `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
+  - Compatible with custom tools and MCP server tools
+
+- **Planning Task Verification** ([#917](https://github.com/massgen/MassGen/pull/917)): Tasks now require `verification` and `verification_method` fields by default
+  - `--no-require-verification` flag to opt out
+  - Framework-injected tasks exempt from verification requirements
+
+- **TUI Background Job Indicators** ([#917](https://github.com/massgen/MassGen/pull/917)): Agent status ribbon with background job indicators
+  - Background tasks modal with lifecycle controls
+
+- **Subagent Infrastructure** ([#917](https://github.com/massgen/MassGen/pull/917)): Groundwork for specialized subagent types
+  - Evaluator and Explorer type definitions via `SUBAGENT.md` frontmatter
+
+### Changed
+- **Tool Argument Normalization** ([#917](https://github.com/massgen/MassGen/pull/917)): Consistent argument handling across backends
+
+### Fixed
+- Task plan verification improvements
+- Codex reasoning config alignment
+
+### Technical Details
+- **Major Focus**: Background tool execution, planning verification, TUI background indicators
+- **PRs Merged**: [#917](https://github.com/massgen/MassGen/pull/917) (Background tools & subagent infrastructure)
+- **Contributors**: @ncrispino and the MassGen team
 
 ## [0.1.52] - 2026-02-16
 

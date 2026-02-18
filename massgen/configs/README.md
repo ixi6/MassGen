@@ -227,7 +227,29 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.52 - Latest
+### v0.1.53 - Latest
+**New Features:** Background Tool Execution, Planning Task Verification, TUI Background Job Indicators
+
+**Key Features:**
+- **Background Tool Execution**: Non-blocking lifecycle tools (`start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`)
+- **Planning Task Verification**: Tasks require `verification` and `verification_method` by default; `--no-require-verification` to opt out
+- **TUI Background Job Indicators**: Agent status ribbon and background tasks modal with lifecycle controls
+- **Subagent Infrastructure**: Groundwork for Evaluator and Explorer subagent types via `SUBAGENT.md` frontmatter
+- **Tool Argument Normalization**: Consistent argument handling across backends
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.53
+pip install --upgrade massgen
+
+# Launch — background tools available with any multi-agent config
+uv run massgen
+
+# Multi-agent coordination with background tool execution
+uv run massgen --config @examples/tools/custom_tools/docker_with_background.yaml "Create a multi-page website. Include an AI-generated image you generate in the background while building the website"
+```
+
+### v0.1.52
 **New Features:** Dedicated Final Answer Modal, Substantive Gate, Novelty Injection, Agent Identity & Versioning
 
 **Key Features:**
@@ -236,18 +258,6 @@ Most configurations use environment variables for API keys:so
 - **Novelty Injection**: Creative pressure injection when agents converge — levels: `none`, `gentle`, `moderate`, `aggressive`
 - **Agent Identity & Versioning**: Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for provenance tracking
 - **First Answer Non-Restart**: First answers no longer trigger automatic restarts on quality check failure
-
-**Try It:**
-```bash
-# Install or upgrade to v0.1.52
-pip install --upgrade massgen
-
-# Launch — new final answer modal is the default
-uv run massgen
-
-# Multi-agent coordination showcasing the new final answer modal with workspace
-uv run massgen --config @examples/basic/multi/three_agents_default "Compare three approaches to distributed consensus"
-```
 
 ### v0.1.51
 **New Features:** Change Documents (Changedoc), Changedoc-Anchored Evaluation, Checklist Gap Report, Drift Conflict Policy

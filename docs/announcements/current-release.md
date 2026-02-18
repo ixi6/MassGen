@@ -1,4 +1,4 @@
-# MassGen v0.1.52 Release Announcement
+# MassGen v0.1.53 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,17 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+We're excited to release MassGen v0.1.53, focused on Background Tool Execution! 🚀 Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.52
+pip install massgen==0.1.53
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.52
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.53
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -29,39 +29,30 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.52, focused on Final Answer Modal & Coordination Quality Gates! 🚀 Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+We're excited to release MassGen v0.1.53, focused on Background Tool Execution! 🚀 Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
 
 **Key Features:**
 
-**Dedicated Final Answer Modal** - Tabbed answer review:
-- Answer tab with markdown content, post-evaluation, and file list; Workspace/Review Changes tab for diff review
-- Trophy header with agent identity and model name
-- Approve/Reject/Cancel action bar with rework controls for iteration
+**Background Tool Execution** - Non-blocking lifecycle tools:
+- Start, monitor, wait, cancel, and list background jobs -- agents continue foreground work while long-running tools execute
+- `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
+- Compatible with custom tools and MCP server tools
 
-**Substantive Gate** - Quality gate for coordination:
-- Prevents coordination from continuing when only incremental changes are planned
-- Tracks `transformative`/`structural`/`incremental` classification with `decision_space_exhausted` detection
-- Config: `require_substantiveness: true` (mandatory in checklist)
-
-**Novelty Injection** - Creative pressure against convergence:
-- Configurable injection when agents converge — levels: `none`, `gentle`, `moderate`, `aggressive`
-- Pressure increases after failed iteration restarts
-- Config: `novelty_injection` in coordination section
-
-**Agent Identity & Versioning** - Answer provenance:
-- Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for tracking
+**Planning Task Verification** - Quality assurance for planning:
+- Tasks now require `verification` and `verification_method` fields by default
+- `--no-require-verification` flag to opt out
+- Framework-injected tasks exempt
 
 **Also in this release:**
-- First answer non-restart: first answers no longer trigger automatic restarts on quality check failure
-- Subagent evaluation infrastructure for delegating evaluation to spawned subagent instances
+- TUI background job indicators: Agent status ribbon and background tasks modal with lifecycle controls
+- Subagent infrastructure: Groundwork for specialized subagent types (Evaluator, Explorer) via `SUBAGENT.md` frontmatter
+- Tool argument normalization: Consistent argument handling across backends
 
 **Bug Fixes:**
-- Approved/rejected state display in final answer card
-- Auto-open workspace behavior
-- Final answer view in main timeline
-- Tool spacing in final card
+- Task plan verification improvements
+- Codex reasoning config alignment
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.52
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.53
 
 Feature highlights:
 

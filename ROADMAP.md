@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.52
+**Current Version:** v0.1.53
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** February 16, 2026
+**Last Updated:** February 18, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,11 +42,11 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.53** | 02/18/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
+| **v0.1.54** | 02/20/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
 | | | Refactor ask_others for Targeted Agent Queries | @ncrispino | Support targeted agent queries via subagent for more efficient coordination ([#809](https://github.com/massgen/MassGen/issues/809)) |
-| **v0.1.54** | 02/20/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
+| **v0.1.55** | 02/22/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
 | | | Support Dragging Screenshots into TUI Bar on Mac | @ncrispino | Enable drag-and-drop screenshot functionality in TUI input bar ([#831](https://github.com/massgen/MassGen/issues/831)) |
-| **v0.1.55** | 02/22/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
+| **v0.1.56** | 02/24/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
 | | | Fix Rounds Appearing and Log Dir Content in Multi-Turn | @ncrispino | Fix round display and log directory issues in multi-turn sessions ([#848](https://github.com/massgen/MassGen/issues/848)) |
 
 *All releases ship on MWF @ 9am PT when ready*
@@ -234,7 +234,43 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.53 - Spec Support for Planning & Targeted Agent Queries
+## 📋 v0.1.53 - Background Tool Execution
+
+### Features
+
+**1. Background Tool Execution** (@ncrispino)
+- PR: [#917](https://github.com/massgen/MassGen/pull/917)
+- Non-blocking lifecycle tools: `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
+- Compatible with custom tools and MCP server tools
+- **Use Case**: Agents continue foreground work while long-running tools execute in the background
+
+**2. Planning Task Verification** (@ncrispino)
+- PR: [#917](https://github.com/massgen/MassGen/pull/917)
+- Tasks now require `verification` and `verification_method` fields by default
+- `--no-require-verification` flag to opt out; framework-injected tasks exempt
+- **Use Case**: Ensure every planned task has clear verification criteria
+
+**3. TUI Background Job Indicators** (@ncrispino)
+- PR: [#917](https://github.com/massgen/MassGen/pull/917)
+- Agent status ribbon with background job indicators
+- Background tasks modal with lifecycle controls
+- **Use Case**: Visual feedback for background tool execution in the terminal UI
+
+**4. Subagent Infrastructure** (@ncrispino)
+- PR: [#917](https://github.com/massgen/MassGen/pull/917)
+- Groundwork for specialized subagent types: Evaluator and Explorer definitions via `SUBAGENT.md` frontmatter
+- Tool argument normalization for consistent handling across backends
+- **Use Case**: Foundation for specialized subagent types (maturing in future releases)
+
+### Success Criteria
+- ✅ Background tool lifecycle (start, monitor, wait, cancel, list) working
+- ✅ Planning tasks require verification fields by default
+- ✅ TUI background job indicators and modal controls
+- ✅ Subagent type infrastructure (Evaluator, Explorer)
+
+---
+
+## 📋 v0.1.54 - Spec Support for Planning & Targeted Agent Queries
 
 ### Features
 
@@ -258,7 +294,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.54 - Quickstart Model Curation & TUI Screenshots
+## 📋 v0.1.55 - Quickstart Model Curation & TUI Screenshots
 
 ### Features
 
@@ -278,7 +314,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.55 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
+## 📋 v0.1.56 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
 
 ### Features
 
@@ -1053,5 +1089,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** February 16, 2026
+**Last Updated:** February 18, 2026
 **Maintained By:** MassGen Team

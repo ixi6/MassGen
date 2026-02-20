@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Label, Static
 
@@ -27,6 +28,8 @@ from massgen.frontend.displays.textual_widgets.tool_batch_card import (
 )
 from massgen.frontend.displays.textual_widgets.tool_card import ToolCallCard
 from massgen.subagent.models import SubagentDisplayData
+
+pytestmark = pytest.mark.snapshot
 
 
 def _configure_snapshot_terminal_environment(monkeypatch) -> None:  # noqa: ANN001 - pytest fixture type

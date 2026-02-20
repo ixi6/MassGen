@@ -4,8 +4,12 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import pytest
+
 from massgen.events import MassGenEvent
 from massgen.subagent.models import SubagentDisplayData
+
+pytestmark = pytest.mark.snapshot
 
 
 def _make_subagent(

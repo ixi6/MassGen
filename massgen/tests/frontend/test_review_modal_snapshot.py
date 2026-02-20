@@ -17,6 +17,8 @@ from massgen.frontend.displays.textual.widgets.modals.review_modal import (
     GitDiffReviewModal,
 )
 
+pytestmark = pytest.mark.snapshot
+
 SAMPLE_DIFF = """\
 diff --git a/src/app.py b/src/app.py
 index abc1234..def5678 100644

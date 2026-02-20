@@ -296,3 +296,48 @@ def test_media_tool_background_payload_without_async_id_sets_background_status()
     assert output.tool_data is not None
     assert output.tool_data.status == "background"
     assert output.tool_data.async_id == "bgtool_read_789"
+
+
+def test_hook_execution_human_input_renders_runtime_injection_status():
+    processor = ContentProcessor()
+    event = MassGenEvent.create(
+        EventType.HOOK_EXECUTION,
+        agent_id="agent_a",
+        tool_call_id="tool_1",
+        hook_info={
+            "hook_name": "human_input_hook",
+            "hook_type": "post",
+            "decision": "allow",
+            "injection_content": "\n[Human Input]: Please also research the beatles.\n",
+        },
+    )
+
+    output = processor.process_event(event, round_number=1)
+
+    assert output is not None
+    assert output.output_type == "status"
+    assert output.text_class == "status runtime-injection"
+    assert output.text_content == "Runtime Injection -> Delivered to agent_a: Please also research the beatles."
+
+
+def test_hook_execution_non_human_input_still_attaches_to_tool():
+    processor = ContentProcessor()
+    event = MassGenEvent.create(
+        EventType.HOOK_EXECUTION,
+        agent_id="agent_a",
+        tool_call_id="tool_1",
+        hook_info={
+            "hook_name": "high_priority_task_reminder",
+            "hook_type": "post",
+            "decision": "allow",
+            "injection_content": "Reminder body",
+        },
+    )
+
+    output = processor.process_event(event, round_number=1)
+
+    assert output is not None
+    assert output.output_type == "hook"
+    assert output.hook_tool_call_id == "tool_1"
+    assert output.hook_info is not None
+    assert output.hook_info["hook_name"] == "high_priority_task_reminder"

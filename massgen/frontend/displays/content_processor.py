@@ -727,13 +727,32 @@ class ContentProcessor:
         if not isinstance(raw_hook_info, dict):
             raw_hook_info = {}
 
+        hook_name = str(raw_hook_info.get("hook_name", ""))
+        injection_content = raw_hook_info.get("injection_content")
         hook_info = {
-            "hook_name": raw_hook_info.get("hook_name", ""),
+            "hook_name": hook_name,
             "hook_type": raw_hook_info.get("hook_type", ""),
             "status": raw_hook_info.get("decision", raw_hook_info.get("status", "")),
-            "injection_content": raw_hook_info.get("injection_content"),
+            "injection_content": injection_content,
             "output": raw_hook_info.get("output", ""),
         }
+
+        if hook_name == "human_input_hook" and injection_content and event.agent_id:
+            payload = str(injection_content)
+            marker = "[Human Input]:"
+            marker_index = payload.find(marker)
+            if marker_index >= 0:
+                payload = payload[marker_index + len(marker) :]
+            payload = " ".join(payload.split())
+            if payload:
+                return ContentOutput(
+                    output_type="status",
+                    round_number=round_number,
+                    text_content=f"Runtime Injection -> Delivered to {event.agent_id}: {payload}",
+                    text_style="dim cyan",
+                    text_class="status runtime-injection",
+                )
+
         # Only emit if there's a tool to attach to
         if not tool_call_id:
             return None

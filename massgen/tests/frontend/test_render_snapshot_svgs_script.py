@@ -6,6 +6,10 @@ import importlib.util
 import subprocess
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.snapshot
+
 
 def _load_script_module():
     script_path = Path(__file__).resolve().parents[3] / "scripts" / "render_snapshot_svgs.py"

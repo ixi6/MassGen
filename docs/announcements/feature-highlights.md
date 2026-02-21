@@ -8,7 +8,7 @@ Target: ~2000 chars to leave room for per-release intro (~1000 chars) within Lin
 
 ## Feature Highlights
 
-🧠Supports diverse backends — Access a wide range of open-source and proprietary models (local, Gemini 3, GPT-5.2, GPT-5.1-Codex, Claude, GLM, and other enterprise backends) and agents (AG2, AgentScope, Claude Code, LangGraph, and smolagents). 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/backends.html
+🧠Supports diverse backends — Access a wide range of open-source and proprietary models (local, Gemini 3.1, GPT-5, Codex, Claude 4.5, Grok 4, Copilot, GLM, and other enterprise backends) and agents (AG2, AgentScope, Claude Code, Codex, LangGraph, and smolagents). 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/backends.html
 
 🤖Build collaborative multi-agent teams — Run agents in parallel where they share workspaces, vote on the best solution, and reach consensus, or use decomposition mode to break complex tasks into subtasks owned by individual agents with a presenter synthesizing the final result. Both modes support unique personas, refinement, and subagent spawning. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
 

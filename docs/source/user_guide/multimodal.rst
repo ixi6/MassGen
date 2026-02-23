@@ -190,6 +190,25 @@ Specify backends and models per media type:
      audio_generation_model: gpt-4o-mini-tts
 
 
+Native Backend Routing (v0.1.55+)
+----------------------------------
+
+Image and video understanding now route to the **agent's own backend** when it supports the capability, instead of always using OpenAI. This preserves model diversity and per-agent consistency.
+
+**Supported image backends**: OpenAI, Claude, Gemini, Grok, Claude Code (SDK), Codex (CLI).
+
+If the agent's backend doesn't support image understanding, it falls back to OpenAI ``gpt-5.2``.
+
+.. code-block:: yaml
+
+   # A Claude agent will use Claude's vision API for image analysis
+   agents:
+     - id: claude_vision
+       backend:
+         type: claude
+         model: claude-sonnet-4-5
+         enable_multimodal_tools: true
+
 Legacy Tools
 ------------
 
@@ -198,9 +217,9 @@ Individual Understanding Tools
 
 The unified ``read_media`` tool internally delegates to these specialized tools:
 
-- ``understand_image``: OpenAI gpt-4o vision
+- ``understand_image``: Routes to agent's native backend (OpenAI, Claude, Gemini, Grok, Claude Code, Codex)
 - ``understand_audio``: OpenAI Whisper transcription + gpt-4o analysis
-- ``understand_video``: Frame extraction + gpt-4o vision
+- ``understand_video``: Routes to best available backend (Gemini native, or frame extraction via OpenAI/Claude/Grok)
 
 These tools are **not automatically registered** when ``enable_multimodal_tools: true``. They are only used internally by ``read_media``.
 

@@ -1,4 +1,4 @@
-# MassGen v0.1.53 Release Announcement
+# MassGen v0.1.54 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,17 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.53, focused on Background Tool Execution! 🚀 Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
+We're excited to release MassGen v0.1.54, adding Subagent Messaging & Copilot SDK Backend! 🚀 Send messages to running agents mid-execution to steer their work in real time — target specific agents or broadcast to all, with queued message management. Works for both main agents and subagents. Plus: new `copilot` backend powered by `github-copilot-sdk`, Gemini 3.1 Pro model support, and MCP hooks improvements.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.53
+pip install massgen==0.1.54
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.53
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.54
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -29,30 +29,31 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.53, focused on Background Tool Execution! 🚀 Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
+We're excited to release MassGen v0.1.54, adding Subagent Messaging & Copilot SDK Backend! 🚀 Send messages to running agents mid-execution to steer their work in real time — target specific agents or broadcast to all, with queued message management. Works for both main agents and subagents. Plus: new `copilot` backend powered by `github-copilot-sdk`, Gemini 3.1 Pro model support, and MCP hooks improvements.
 
 **Key Features:**
 
-**Background Tool Execution** - Non-blocking lifecycle tools:
-- Start, monitor, wait, cancel, and list background jobs -- agents continue foreground work while long-running tools execute
-- `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
-- Compatible with custom tools and MCP server tools
+**Copilot SDK Backend** - New backend using `github-copilot-sdk`:
+- Native MCP server integration and custom tool handling
+- Session management with cache invalidation
+- Auth via GitHub subscription
 
-**Planning Task Verification** - Quality assurance for planning:
-- Tasks now require `verification` and `verification_method` fields by default
-- `--no-require-verification` flag to opt out
-- Framework-injected tasks exempt
+**Subagent Runtime Messaging** - Steer running subagents mid-execution:
+- New `send_message_to_subagent` tool for runtime messaging to background subagents
+- Supports per-agent targeting within subagent orchestrators
 
 **Also in this release:**
-- TUI background job indicators: Agent status ribbon and background tasks modal with lifecycle controls
-- Subagent infrastructure: Groundwork for specialized subagent types (Evaluator, Explorer) via `SUBAGENT.md` frontmatter
-- Tool argument normalization: Consistent argument handling across backends
+- Gemini 3.1 Pro support: `gemini-3.1-pro-preview` model added to capabilities registry
+- Per-agent injection targeting: Injections can target specific agents or broadcast to all
+- MCP hooks improvements: Hook middleware for subagent MCP servers, `InjectionDeliveryStatus` enum
+- Type annotation modernization: Codebase-wide migration to modern `dict/list/X | None` syntax
 
 **Bug Fixes:**
-- Task plan verification improvements
-- Codex reasoning config alignment
+- MCP hooks issue fix
+- Subagent message sending fix
+- fstmcp version fix
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.53
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.54
 
 Feature highlights:
 

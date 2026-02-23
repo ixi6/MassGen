@@ -1,19 +1,28 @@
 """
-Understand and analyze images using OpenAI's gpt-5.2 API.
+Understand and analyze images using the agent's native backend.
 
 Supports single image or multiple images in one API call for comparison/analysis.
+Routes to the agent's own backend (Claude, Gemini, Grok, Claude Code, Codex, OpenAI)
+when possible, falling back to OpenAI for backwards compatibility.
 """
 
 import base64
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
 
+from massgen.backend.capabilities import has_capability
 from massgen.logger_config import logger
+from massgen.tool._multimodal_tools.image_backends import (
+    call_claude,
+    call_claude_code,
+    call_codex,
+    call_gemini,
+    call_grok,
+    call_openai,
+)
 from massgen.tool._result import ExecutionResult, TextContent
 
 
@@ -212,6 +221,7 @@ async def understand_image(
     agent_cwd: str | None = None,
     task_context: str | None = None,
     images: dict[str, str] | None = None,
+    backend_type: str | None = None,
 ) -> ExecutionResult:
     """
     Understand and analyze one or more images using OpenAI's gpt-5.2 API.
@@ -283,13 +293,6 @@ async def understand_image(
         else:
             load_dotenv()
 
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not openai_api_key:
-            return _error("OpenAI API key not found. Please set OPENAI_API_KEY in .env file or environment variable.")
-
-        # Initialize async OpenAI client
-        client = AsyncOpenAI(api_key=openai_api_key)
-
         # Use agent_cwd if available, otherwise fall back to Path.cwd()
         base_dir = Path(agent_cwd) if agent_cwd else Path.cwd()
 
@@ -325,19 +328,28 @@ async def understand_image(
                     name_context += f"- {img.name}: {img.path.name}\n"
                 augmented_prompt = f"{name_context}\n{augmented_prompt}"
 
-            # Build content array with text prompt and all images
-            content: list[dict] = [{"type": "input_text", "text": augmented_prompt}]
-            for img in loaded_images:
-                content.append({"type": "input_image", "image_url": f"data:{img.mime_type};base64,{img.base64_data}"})
-
-            # Call OpenAI API for image understanding
-            response = await client.responses.create(
-                model=model,
-                input=[{"role": "user", "content": content}],
-            )
-
-            # Extract response text
-            response_text = response.output_text if hasattr(response, "output_text") else str(response.output)
+            # Route to the agent's native backend if it supports image understanding
+            if backend_type and has_capability(backend_type, "image_understanding"):
+                logger.info(f"[understand_image] Using native backend: {backend_type}")
+                if backend_type == "claude":
+                    response_text = await call_claude(loaded_images, augmented_prompt, model)
+                elif backend_type == "gemini":
+                    response_text = await call_gemini(loaded_images, augmented_prompt, model)
+                elif backend_type == "grok":
+                    response_text = await call_grok(loaded_images, augmented_prompt, model)
+                elif backend_type == "claude_code":
+                    response_text = await call_claude_code(loaded_images, augmented_prompt, model, agent_cwd)
+                elif backend_type == "codex":
+                    response_text = await call_codex(loaded_images, augmented_prompt, agent_cwd)
+                else:
+                    # openai, response, chatcompletion, azure_openai, openrouter, uitars — all OpenAI-compatible
+                    response_text = await call_openai(loaded_images, augmented_prompt, model)
+            else:
+                # Fallback: OpenAI default (backward compat)
+                logger.info(
+                    f"[understand_image] Fallback to OpenAI (backend_type={backend_type})",
+                )
+                response_text = await call_openai(loaded_images, augmented_prompt, "gpt-5.2")
 
             # Build result based on single vs multiple images
             if image_path:
@@ -364,7 +376,7 @@ async def understand_image(
             return ExecutionResult(output_blocks=[TextContent(data=json.dumps(result, indent=2))])
 
         except Exception as api_error:
-            return _error(f"OpenAI API error: {str(api_error)}")
+            return _error(f"API error ({backend_type or 'openai'}): {str(api_error)}")
 
     except Exception as e:
         return _error(f"Failed to understand image: {str(e)}")

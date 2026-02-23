@@ -251,9 +251,9 @@ async def read_media(
                     "agent_cwd": agent_cwd,
                     "allowed_paths": allowed_paths,
                     "task_context": task_context,
+                    "backend_type": backend_type,
+                    "model": image_config.get("model") or model or "gpt-4.1",
                 }
-                if image_config.get("model"):
-                    image_kwargs["model"] = image_config["model"]
 
                 result = await understand_image(**image_kwargs)
                 # Add warning if present
@@ -352,9 +352,9 @@ async def read_media(
                             "agent_cwd": agent_cwd,
                             "allowed_paths": allowed_paths,
                             "task_context": task_context,
+                            "backend_type": backend_type,
+                            "model": image_config.get("model") or model or "gpt-4.1",
                         }
-                        if image_config.get("model"):
-                            image_kwargs["model"] = image_config["model"]
 
                         result = await understand_image(**image_kwargs)
 

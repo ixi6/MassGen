@@ -9,16 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.54 (February 20, 2026)** - Subagent Messaging & Copilot SDK Backend
+Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
+
 **v0.1.53 (February 18, 2026)** - Background Tool Execution
 Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
 
 **v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
 Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
-**v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
-Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
-
 ---
+
+## [0.1.54] - 2026-02-20
+
+### Added
+- **Copilot SDK Backend** ([#862](https://github.com/massgen/MassGen/pull/862)): New `copilot` backend using `github-copilot-sdk`
+  - Native MCP server integration and custom tool handling
+  - Session management with cache invalidation
+  - Auth via GitHub subscription
+
+- **Subagent Runtime Messaging** ([#926](https://github.com/massgen/MassGen/pull/926)): New `send_message_to_subagent` tool to steer running background subagents mid-execution
+  - Supports per-agent targeting within subagent orchestrators
+
+- **Gemini 3.1 Pro Support** ([#926](https://github.com/massgen/MassGen/pull/926), MAS-312): `gemini-3.1-pro-preview` model added to capabilities registry
+
+- **Per-Agent Injection Targeting** ([#926](https://github.com/massgen/MassGen/pull/926)): Injections can target specific agents or broadcast to all
+
+### Changed
+- **MCP Hooks Improvements** ([#926](https://github.com/massgen/MassGen/pull/926)): Hook middleware for subagent MCP servers, `InjectionDeliveryStatus` enum, hook-dir argument for PostToolUse injection
+- **Type Annotation Modernization** ([#926](https://github.com/massgen/MassGen/pull/926)): Codebase-wide migration from `typing.Dict/List/Optional/Union` to modern `dict/list/X | None` syntax
+
+### Fixed
+- MCP hooks issue fix ([#926](https://github.com/massgen/MassGen/pull/926))
+- Subagent message sending fix ([#926](https://github.com/massgen/MassGen/pull/926))
+- fstmcp version fix ([#920](https://github.com/massgen/MassGen/pull/920))
+
+### Technical Details
+- **Major Focus**: Subagent runtime messaging, Copilot SDK backend, Gemini 3.1 Pro support
+- **PRs Merged**: [#862](https://github.com/massgen/MassGen/pull/862) (Copilot SDK backend), [#926](https://github.com/massgen/MassGen/pull/926) (Subagent messaging), [#921](https://github.com/massgen/MassGen/pull/921) (Cloud infra research), [#920](https://github.com/massgen/MassGen/pull/920) (Minor fixes)
+- **Contributors**: @ncrispino and the MassGen team
 
 ## [0.1.53] - 2026-02-18
 

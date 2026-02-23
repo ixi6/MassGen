@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.53
+**Current Version:** v0.1.54
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** February 18, 2026
+**Last Updated:** February 20, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,11 +42,11 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.54** | 02/20/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
+| **v0.1.55** | 02/22/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
 | | | Refactor ask_others for Targeted Agent Queries | @ncrispino | Support targeted agent queries via subagent for more efficient coordination ([#809](https://github.com/massgen/MassGen/issues/809)) |
-| **v0.1.55** | 02/22/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
+| **v0.1.56** | 02/24/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
 | | | Support Dragging Screenshots into TUI Bar on Mac | @ncrispino | Enable drag-and-drop screenshot functionality in TUI input bar ([#831](https://github.com/massgen/MassGen/issues/831)) |
-| **v0.1.56** | 02/24/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
+| **v0.1.57** | 02/26/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
 | | | Fix Rounds Appearing and Log Dir Content in Multi-Turn | @ncrispino | Fix round display and log directory issues in multi-turn sessions ([#848](https://github.com/massgen/MassGen/issues/848)) |
 
 *All releases ship on MWF @ 9am PT when ready*
@@ -270,7 +270,42 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.54 - Spec Support for Planning & Targeted Agent Queries
+## 📋 v0.1.54 - Subagent Messaging & Copilot SDK Backend
+
+### Features
+
+**1. Copilot SDK Backend** (@ncrispino)
+- PR: [#862](https://github.com/massgen/MassGen/pull/862)
+- New `copilot` backend using `github-copilot-sdk` with native MCP server integration
+- Custom tool handling, session management with cache invalidation
+- Auth via GitHub subscription
+- **Use Case**: GitHub Copilot as a MassGen backend with native tool support
+
+**2. Subagent Runtime Messaging** (@ncrispino)
+- PR: [#926](https://github.com/massgen/MassGen/pull/926)
+- New `send_message_to_subagent` tool to steer running background subagents mid-execution
+- Supports per-agent targeting within subagent orchestrators
+- **Use Case**: Runtime control and guidance of background subagent work
+
+**3. Gemini 3.1 Pro Support** (@ncrispino)
+- PR: [#926](https://github.com/massgen/MassGen/pull/926), MAS-312
+- `gemini-3.1-pro-preview` model added to capabilities registry
+- **Use Case**: Access to Google's latest Gemini model
+
+**4. Per-Agent Injection Targeting** (@ncrispino)
+- PR: [#926](https://github.com/massgen/MassGen/pull/926)
+- Injections can target specific agents or broadcast to all
+- **Use Case**: Fine-grained control over which agents receive injected content
+
+### Success Criteria
+- ✅ Copilot SDK backend with native MCP and custom tool support
+- ✅ `send_message_to_subagent` tool for runtime subagent messaging
+- ✅ Gemini 3.1 Pro model available in capabilities registry
+- ✅ Per-agent injection targeting functional
+
+---
+
+## 📋 v0.1.55 - Spec Support for Planning & Targeted Agent Queries
 
 ### Features
 
@@ -294,7 +329,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.55 - Quickstart Model Curation & TUI Screenshots
+## 📋 v0.1.56 - Quickstart Model Curation & TUI Screenshots
 
 ### Features
 
@@ -314,7 +349,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.56 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
+## 📋 v0.1.57 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
 
 ### Features
 
@@ -1089,5 +1124,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** February 18, 2026
+**Last Updated:** February 20, 2026
 **Maintained By:** MassGen Team

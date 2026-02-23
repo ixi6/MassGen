@@ -227,7 +227,30 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.53 - Latest
+### v0.1.54 - Latest
+**New Features:** Copilot SDK Backend, Subagent Runtime Messaging, Gemini 3.1 Pro Support, Per-Agent Injection Targeting
+
+**Key Features:**
+- **Copilot SDK Backend**: New `copilot` backend using `github-copilot-sdk` with native MCP server integration, custom tool handling, session management with cache invalidation
+- **Subagent Runtime Messaging**: New `send_message_to_subagent` tool to steer running background subagents mid-execution with per-agent targeting
+- **Gemini 3.1 Pro Support**: `gemini-3.1-pro-preview` model added to capabilities registry
+- **Per-Agent Injection Targeting**: Injections can target specific agents or broadcast to all
+- **MCP Hooks Improvements**: Hook middleware for subagent MCP servers, `InjectionDeliveryStatus` enum
+- **Type Annotation Modernization**: Codebase-wide migration to modern `dict/list/X | None` syntax
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.54
+pip install --upgrade massgen
+
+# Launch with the new Copilot backend
+uv run massgen --config massgen/configs/basic/single/copilot.yaml "What is GitHub copilot?"
+
+# Multi-agent coordination with subagent messaging
+uv run massgen --config @examples/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research Bob Dylan"
+```
+
+### v0.1.53
 **New Features:** Background Tool Execution, Planning Task Verification, TUI Background Job Indicators
 
 **Key Features:**
@@ -235,19 +258,6 @@ Most configurations use environment variables for API keys:so
 - **Planning Task Verification**: Tasks require `verification` and `verification_method` by default; `--no-require-verification` to opt out
 - **TUI Background Job Indicators**: Agent status ribbon and background tasks modal with lifecycle controls
 - **Subagent Infrastructure**: Groundwork for Evaluator and Explorer subagent types via `SUBAGENT.md` frontmatter
-- **Tool Argument Normalization**: Consistent argument handling across backends
-
-**Try It:**
-```bash
-# Install or upgrade to v0.1.53
-pip install --upgrade massgen
-
-# Launch — background tools available with any multi-agent config
-uv run massgen
-
-# Multi-agent coordination with background tool execution
-uv run massgen --config @examples/tools/custom_tools/docker_with_background.yaml "Create a multi-page website. Include an AI-generated image you generate in the background while building the website"
-```
 
 ### v0.1.52
 **New Features:** Dedicated Final Answer Modal, Substantive Gate, Novelty Injection, Agent Identity & Versioning

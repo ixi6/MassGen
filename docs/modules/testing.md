@@ -284,6 +284,42 @@ BACKEND_CONFIGS = {
 
 Use `--verbose` flag to show detailed output (injection content, message formats, etc.).
 
+## Native Multimodal Routing Tests (MAS-300)
+
+`massgen/tests/test_native_multimodal_routing.py` verifies that `read_media` → `understand_image` routes image analysis to the agent's own backend (Claude, Gemini, Grok, Claude Code, Codex, OpenAI) instead of always hardcoding OpenAI.
+
+### Unit tests (mocked, no API keys needed)
+
+```bash
+# All 24 unit tests — routing, wiring, capability checks, backend payload construction
+uv run pytest massgen/tests/test_native_multimodal_routing.py -m "not live_api and not expensive" -v
+```
+
+Test categories:
+- **Capability registry**: Verify `image_understanding` is declared for claude, openai, gemini, grok, claude_code, codex; absent for lmstudio.
+- **Routing dispatch**: `understand_image(backend_type="claude")` calls `call_claude`, etc. Backends without the capability fall back to OpenAI gpt-5.2.
+- **Wiring**: `read_media` passes `backend_type` and `model` through to `understand_image` in both single-file and batch modes. Config model overrides agent model.
+- **Video routing**: `understand_video` skips `backend_selector` when the agent's backend has `video_understanding`.
+- **Backend payload construction**: Each `call_*` function builds the correct wire format (mocked API clients).
+
+### Live API tests (opt-in, expensive)
+
+```bash
+# Run with verbose output to see actual model responses
+uv run pytest massgen/tests/test_native_multimodal_routing.py -m "live_api and expensive" -v -s --run-live-api --run-expensive
+```
+
+| Test | Backend | Requires |
+|------|---------|----------|
+| `test_call_openai_live` | OpenAI gpt-4.1 | `OPENAI_API_KEY` |
+| `test_call_claude_live` | Claude claude-sonnet-4-5 | `ANTHROPIC_API_KEY` |
+| `test_call_gemini_live` | Gemini gemini-3-flash-preview | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
+| `test_call_grok_live` | Grok grok-4 | `XAI_API_KEY` |
+| `test_call_claude_code_live` | Claude Code SDK | `claude` CLI installed + auth |
+| `test_call_codex_live` | Codex CLI | `codex` CLI installed + auth |
+
+Each test loads `massgen/configs/resources/v0.0.27-example/multimodality.jpg`, sends it to the backend, and asserts a non-empty response. Tests skip gracefully if the required key or CLI is unavailable.
+
 ## Pre-Commit vs Fast Lane
 
 - `.pre-commit-config.yaml` includes a `pre-push` hook (`run-non-api-tests-on-push`) that runs the non-API lane.

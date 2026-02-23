@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.53 Features](#-latest-features-v0153)
+- [v0.1.54 Features](#-latest-features-v0154)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.53)](#recent-achievements-v0153)
-- [Previous Achievements (v0.0.3 - v0.1.52)](#previous-achievements-v003---v0152)
+- [Recent Achievements (v0.1.54)](#recent-achievements-v0154)
+- [Previous Achievements (v0.0.3 - v0.1.53)](#previous-achievements-v003---v0153)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.54 Roadmap](#v0154-roadmap)
+- [v0.1.55 Roadmap](#v0155-roadmap)
 </details>
 
 <details open>
@@ -155,26 +155,26 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.53)
+## 🆕 Latest Features (v0.1.54)
 
-**🎉 Released: February 18, 2026**
+**🎉 Released: February 20, 2026**
 
-**What's New in v0.1.53:**
-- **⏳ Background Tool Execution** - Non-blocking lifecycle tools for long-running work: start, monitor, wait, cancel, and list background jobs. Compatible with custom tools and MCP server tools.
-- **✅ Planning Task Verification** - Tasks now require `verification` and `verification_method` fields by default. `--no-require-verification` flag to opt out.
-- **🎯 TUI Background Job Indicators** - Agent status ribbon with background job indicators and background tasks modal with lifecycle controls.
-- **🔧 Subagent Infrastructure** - Groundwork for specialized subagent types (Evaluator, Explorer) via `SUBAGENT.md` frontmatter. Tool argument normalization across backends.
+**What's New in v0.1.54:**
+- **🤖 Copilot SDK Backend** - New `copilot` backend using `github-copilot-sdk` with native MCP server integration, custom tool handling, session management with cache invalidation. Auth via GitHub subscription.
+- **💬 Subagent Runtime Messaging** - New `send_message_to_subagent` tool to steer running background subagents mid-execution. Supports per-agent targeting within subagent orchestrators.
+- **🌟 Gemini 3.1 Pro Support** - `gemini-3.1-pro-preview` model added to capabilities registry.
+- **🎯 Per-Agent Injection Targeting** - Injections can target specific agents or broadcast to all.
 
-**Try v0.1.53 Features:**
+**Try v0.1.54 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Launch — background tools available with any multi-agent config
-uv run massgen
+# Launch with the new Copilot backend
+uv run massgen --config massgen/configs/basic/single/copilot.yaml "What is GitHub copilot?"
 
-# Multi-agent coordination with background tool execution
-uv run massgen --config @examples/tools/custom_tools/docker_with_background.yaml "Create a multi-page website. Include an AI-generated image you generate in the background while building the website"
+# Multi-agent coordination with subagent messaging
+uv run massgen --config @examples/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research Bob Dylan"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1236,33 +1236,35 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.53)
+### Recent Achievements (v0.1.54)
 
-**🎉 Released: February 18, 2026**
+**🎉 Released: February 20, 2026**
 
-#### Background Tool Execution
-- **Non-Blocking Lifecycle**: Start, monitor, wait, cancel, and list background jobs — agents continue foreground work while long-running tools execute
-- **Compatible Targets**: Works with custom tools and MCP server tools
-- **Lifecycle Tools**: `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
+#### Copilot SDK Backend
+- **New Backend**: `copilot` backend using `github-copilot-sdk` with native MCP server integration
+- **Custom Tool Handling**: Full custom tool support with session management and cache invalidation
+- **Auth**: Authenticated via GitHub subscription
 
-#### Planning Task Verification
-- **Verification Fields**: Tasks now require `verification` and `verification_method` by default
-- **Opt-Out**: `--no-require-verification` flag for backwards compatibility
-- **Framework Exempt**: Framework-injected tasks exempt from verification requirements
+#### Subagent Runtime Messaging
+- **Runtime Steering**: New `send_message_to_subagent` tool to steer running background subagents mid-execution
+- **Per-Agent Targeting**: Supports targeting specific agents within subagent orchestrators
 
-#### TUI Background Job Indicators
-- **Agent Status Ribbon**: Background job indicators in agent status display
-- **Background Tasks Modal**: Lifecycle controls for managing background tools
+#### Gemini 3.1 Pro Support
+- **New Model**: `gemini-3.1-pro-preview` model added to capabilities registry
 
 #### Also in this release
-- **Subagent Infrastructure**: Groundwork for specialized subagent types (Evaluator, Explorer) via `SUBAGENT.md` frontmatter
-- **Tool Argument Normalization**: Consistent argument handling across backends
+- **Per-Agent Injection Targeting**: Injections can target specific agents or broadcast to all
+- **MCP Hooks Improvements**: Hook middleware for subagent MCP servers, `InjectionDeliveryStatus` enum
+- **Type Annotation Modernization**: Codebase-wide migration to modern `dict/list/X | None` syntax
 
 #### Bug Fixes
-- Task plan verification improvements
-- Codex reasoning config alignment
+- MCP hooks issue fix
+- Subagent message sending fix
+- fstmcp version fix
 
-### Previous Achievements (v0.0.3 - v0.1.52)
+### Previous Achievements (v0.0.3 - v0.1.53)
+
+✅ **Background Tool Execution (v0.1.53)**: Non-blocking lifecycle tools for long-running work (start, monitor, wait, cancel, list). Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
 
 ✅ **Final Answer Modal & Coordination Quality Gates (v0.1.52)**: Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
@@ -1513,9 +1515,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.54 Roadmap
+### v0.1.55 Roadmap
 
-Version 0.1.54 focuses on spec support for planning and targeted agent queries:
+Version 0.1.55 focuses on spec support for planning and targeted agent queries:
 
 #### Planned Features
 - **Spec Support for Planning** ([#881](https://github.com/massgen/MassGen/issues/881)): Add spec/proposal support to planning workflows

@@ -9,16 +9,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
+Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
+
 **v0.1.54 (February 20, 2026)** - Subagent Messaging & Copilot SDK Backend
 Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
 
 **v0.1.53 (February 18, 2026)** - Background Tool Execution
 Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
 
-**v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
-Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
-
 ---
+
+## [0.1.55] - 2026-02-23
+
+### Added
+- **Specialized Subagent Types** ([#938](https://github.com/massgen/MassGen/pull/938)): Discovery-based system for specialized subagent roles via `SUBAGENT.md` frontmatter
+  - Built-in types: evaluator (programmatic verification), explorer (investigation), researcher (deep analysis), novelty (breaks refinement plateaus)
+  - TUI visualization for subagent roles
+
+- **Dynamic Evaluation Criteria** ([#938](https://github.com/massgen/MassGen/pull/938)): GEPA-inspired task-specific evaluation criteria generation replacing static E1-E4 items
+  - Domain-specific presets (persona, decomposition, evaluation, prompt, analysis)
+  - Core/stretch categorization for smarter convergence off-ramps
+  - Score scale 0-10
+  - Config: `evaluation_criteria_generator`
+
+- **Native Backend Image Routing** ([#938](https://github.com/massgen/MassGen/pull/938), MAS-300): `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI
+  - Fallback to OpenAI for backends without `image_understanding` capability
+
+- **Configurable Video Frame Extraction** ([#938](https://github.com/massgen/MassGen/pull/938)): Scene-based (PySceneDetect) or uniform extraction modes
+  - `max_frames` cost guardrail (default 30, max 60)
+  - Config: `multimodal_config.video`
+
+- **Remotion Skill in Quickstart** ([#938](https://github.com/massgen/MassGen/pull/938)): Video generation/editing skill auto-installed during quickstart
+
+### Changed
+- **Checklist System Update** ([#938](https://github.com/massgen/MassGen/pull/938)): T-prefix to E-prefix naming, 0-100 to 0-10 score scale, `item_categories` for core/stretch, convergence off-ramp when all core items pass
+- **Unified Pre-Collaboration** ([#938](https://github.com/massgen/MassGen/pull/938)): Persona generation, decomposition, and eval criteria generation unified as composable primitives
+
+### Fixed
+- Background subagent cancel name fix ([#938](https://github.com/massgen/MassGen/pull/938))
+- Initial TUI sizing fix ([#938](https://github.com/massgen/MassGen/pull/938))
+
+### Documentation
+- New `docs/modules/composition.md` - Composable primitives, phase architecture, domain-specific checklist gates
+
+### Technical Details
+- **Major Focus**: Specialized subagent types, dynamic evaluation criteria, native image routing, video frame extraction
+- **PRs Merged**: [#938](https://github.com/massgen/MassGen/pull/938) (Subagent roles / specialized types)
+- **Contributors**: @ncrispino and the MassGen team
 
 ## [0.1.54] - 2026-02-20
 

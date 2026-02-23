@@ -190,6 +190,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
+
+Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
+
 **v0.1.54 (February 20, 2026)** - Subagent Messaging & Copilot SDK Backend
 
 Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
@@ -197,10 +201,6 @@ Runtime messaging to steer running background subagents. New GitHub Copilot back
 **v0.1.53 (February 18, 2026)** - Background Tool Execution
 
 Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
-
-**v0.1.52 (February 16, 2026)** - Final Answer Modal & Coordination Quality Gates
-
-Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
 
 :doc:`Full changelog → <changelog>`
 

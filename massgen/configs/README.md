@@ -227,28 +227,34 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.54 - Latest
-**New Features:** Copilot SDK Backend, Subagent Runtime Messaging, Gemini 3.1 Pro Support, Per-Agent Injection Targeting
+### v0.1.55 - Latest
+**New Features:** Specialized Subagent Types, Dynamic Evaluation Criteria, Native Backend Image Routing, Configurable Video Frame Extraction
 
 **Key Features:**
-- **Copilot SDK Backend**: New `copilot` backend using `github-copilot-sdk` with native MCP server integration, custom tool handling, session management with cache invalidation
-- **Subagent Runtime Messaging**: New `send_message_to_subagent` tool to steer running background subagents mid-execution with per-agent targeting
-- **Gemini 3.1 Pro Support**: `gemini-3.1-pro-preview` model added to capabilities registry
-- **Per-Agent Injection Targeting**: Injections can target specific agents or broadcast to all
-- **MCP Hooks Improvements**: Hook middleware for subagent MCP servers, `InjectionDeliveryStatus` enum
-- **Type Annotation Modernization**: Codebase-wide migration to modern `dict/list/X | None` syntax
+- **Specialized Subagent Types**: Discovery-based system for specialized subagent roles (evaluator, explorer, researcher, novelty) via `SUBAGENT.md` frontmatter with TUI visualization
+- **Dynamic Evaluation Criteria**: GEPA-inspired task-specific evaluation criteria with domain presets and core/stretch categorization
+- **Native Backend Image Routing**: `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) with OpenAI fallback
+- **Configurable Video Frame Extraction**: Scene-based (PySceneDetect) or uniform extraction with `max_frames` cost guardrail
+- **Remotion Skill in Quickstart**: Video generation/editing skill auto-installed during quickstart
+- **Unified Pre-Collaboration**: Persona generation, decomposition, and eval criteria generation unified as composable primitives
 
 **Try It:**
 ```bash
-# Install or upgrade to v0.1.54
+# Install or upgrade to v0.1.55
 pip install --upgrade massgen
 
-# Launch with the new Copilot backend
-uv run massgen --config massgen/configs/basic/single/copilot.yaml "What is GitHub copilot?"
-
-# Multi-agent coordination with subagent messaging
+# Multi-agent coordination with specialized subagents
 uv run massgen --config @examples/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research Bob Dylan"
 ```
+
+### v0.1.54
+**New Features:** Copilot SDK Backend, Subagent Runtime Messaging, Gemini 3.1 Pro Support, Per-Agent Injection Targeting
+
+**Key Features:**
+- **Copilot SDK Backend**: New `copilot` backend using `github-copilot-sdk` with native MCP server integration
+- **Subagent Runtime Messaging**: New `send_message_to_subagent` tool to steer running background subagents mid-execution
+- **Gemini 3.1 Pro Support**: `gemini-3.1-pro-preview` model added to capabilities registry
+- **Per-Agent Injection Targeting**: Injections can target specific agents or broadcast to all
 
 ### v0.1.53
 **New Features:** Background Tool Execution, Planning Task Verification, TUI Background Job Indicators

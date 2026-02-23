@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.54 Features](#-latest-features-v0154)
+- [v0.1.55 Features](#-latest-features-v0155)
 </details>
 
 <details open>
@@ -121,15 +121,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.54)](#recent-achievements-v0154)
-- [Previous Achievements (v0.0.3 - v0.1.53)](#previous-achievements-v003---v0153)
+- [Recent Achievements (v0.1.55)](#recent-achievements-v0155)
+- [Previous Achievements (v0.0.3 - v0.1.54)](#previous-achievements-v003---v0154)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.55 Roadmap](#v0155-roadmap)
+- [v0.1.56 Roadmap](#v0156-roadmap)
 </details>
 
 <details open>
@@ -154,25 +154,22 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.54)
+## 🆕 Latest Features (v0.1.55)
 
-**🎉 Released: February 20, 2026**
+**🎉 Released: February 23, 2026**
 
-**What's New in v0.1.54:**
-- **🤖 Copilot SDK Backend** - New `copilot` backend using `github-copilot-sdk` with native MCP server integration, custom tool handling, session management with cache invalidation. Auth via GitHub subscription.
-- **💬 Subagent Runtime Messaging** - New `send_message_to_subagent` tool to steer running background subagents mid-execution. Supports per-agent targeting within subagent orchestrators.
-- **🌟 Gemini 3.1 Pro Support** - `gemini-3.1-pro-preview` model added to capabilities registry.
-- **🎯 Per-Agent Injection Targeting** - Injections can target specific agents or broadcast to all.
+**What's New in v0.1.55:**
+- **🧩 Specialized Subagent Types** - Discovery-based system for specialized subagent roles (evaluator, explorer, researcher, novelty) via `SUBAGENT.md` frontmatter. TUI visualization for subagent roles.
+- **📊 Dynamic Evaluation Criteria** - GEPA-inspired task-specific evaluation criteria replacing static E1-E4 items. Domain-specific presets with core/stretch categorization for smarter convergence off-ramps.
+- **🖼️ Native Backend Image Routing** - `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI.
+- **🎬 Configurable Video Frame Extraction** - Scene-based (PySceneDetect) or uniform extraction modes with `max_frames` cost guardrail.
 
-**Try v0.1.54 Features:**
+**Try v0.1.55 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Launch with the new Copilot backend
-uv run massgen --config massgen/configs/basic/single/copilot.yaml "What is GitHub copilot?"
-
-# Multi-agent coordination with subagent messaging
+# Multi-agent coordination with specialized subagents
 uv run massgen --config @examples/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research Bob Dylan"
 ```
 
@@ -1235,33 +1232,36 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.54)
+### Recent Achievements (v0.1.55)
 
-**🎉 Released: February 20, 2026**
+**🎉 Released: February 23, 2026**
 
-#### Copilot SDK Backend
-- **New Backend**: `copilot` backend using `github-copilot-sdk` with native MCP server integration
-- **Custom Tool Handling**: Full custom tool support with session management and cache invalidation
-- **Auth**: Authenticated via GitHub subscription
+#### Specialized Subagent Types
+- **Discovery-Based Roles**: Specialized subagent roles via `SUBAGENT.md` frontmatter with built-in types: evaluator (programmatic verification), explorer (investigation), researcher (deep analysis), novelty (breaks refinement plateaus)
+- **TUI Visualization**: Subagent roles displayed in the terminal UI
 
-#### Subagent Runtime Messaging
-- **Runtime Steering**: New `send_message_to_subagent` tool to steer running background subagents mid-execution
-- **Per-Agent Targeting**: Supports targeting specific agents within subagent orchestrators
+#### Dynamic Evaluation Criteria
+- **Task-Specific Quality Gates**: GEPA-inspired evaluation criteria generation replacing static E1-E4 items
+- **Domain Presets**: persona, decomposition, evaluation, prompt, analysis presets
+- **Core/Stretch Categorization**: Smarter convergence off-ramps when all core items pass
 
-#### Gemini 3.1 Pro Support
-- **New Model**: `gemini-3.1-pro-preview` model added to capabilities registry
+#### Native Backend Image Routing
+- **Own-Backend Routing**: `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI
+- **Fallback**: OpenAI fallback for backends without `image_understanding` capability
 
 #### Also in this release
-- **Per-Agent Injection Targeting**: Injections can target specific agents or broadcast to all
-- **MCP Hooks Improvements**: Hook middleware for subagent MCP servers, `InjectionDeliveryStatus` enum
-- **Type Annotation Modernization**: Codebase-wide migration to modern `dict/list/X | None` syntax
+- **Configurable Video Frame Extraction**: Scene-based (PySceneDetect) or uniform extraction with `max_frames` cost guardrail
+- **Remotion Skill in Quickstart**: Video generation/editing skill auto-installed during quickstart
+- **Checklist System Update**: T-prefix to E-prefix naming, 0-100 to 0-10 score scale, core/stretch item categories
+- **Unified Pre-Collaboration**: Persona generation, decomposition, and eval criteria generation unified as composable primitives
 
 #### Bug Fixes
-- MCP hooks issue fix
-- Subagent message sending fix
-- fstmcp version fix
+- Background subagent cancel name fix
+- Initial TUI sizing fix
 
-### Previous Achievements (v0.0.3 - v0.1.53)
+### Previous Achievements (v0.0.3 - v0.1.54)
+
+✅ **Subagent Messaging & Copilot SDK Backend (v0.1.54)**: Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
 
 ✅ **Background Tool Execution (v0.1.53)**: Non-blocking lifecycle tools for long-running work (start, monitor, wait, cancel, list). Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
 
@@ -1514,9 +1514,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.55 Roadmap
+### v0.1.56 Roadmap
 
-Version 0.1.55 focuses on spec support for planning and targeted agent queries:
+Version 0.1.56 focuses on spec support for planning and targeted agent queries:
 
 #### Planned Features
 - **Spec Support for Planning** ([#881](https://github.com/massgen/MassGen/issues/881)): Add spec/proposal support to planning workflows

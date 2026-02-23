@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.54
+**Current Version:** v0.1.55
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** February 20, 2026
+**Last Updated:** February 23, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,11 +42,11 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.55** | 02/22/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
+| **v0.1.56** | 02/25/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
 | | | Refactor ask_others for Targeted Agent Queries | @ncrispino | Support targeted agent queries via subagent for more efficient coordination ([#809](https://github.com/massgen/MassGen/issues/809)) |
-| **v0.1.56** | 02/24/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
+| **v0.1.57** | 02/27/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
 | | | Support Dragging Screenshots into TUI Bar on Mac | @ncrispino | Enable drag-and-drop screenshot functionality in TUI input bar ([#831](https://github.com/massgen/MassGen/issues/831)) |
-| **v0.1.57** | 02/26/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
+| **v0.1.58** | 03/01/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
 | | | Fix Rounds Appearing and Log Dir Content in Multi-Turn | @ncrispino | Fix round display and log directory issues in multi-turn sessions ([#848](https://github.com/massgen/MassGen/issues/848)) |
 
 *All releases ship on MWF @ 9am PT when ready*
@@ -305,7 +305,57 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.55 - Spec Support for Planning & Targeted Agent Queries
+## 📋 v0.1.55 - Specialized Subagent Types & Dynamic Evaluation Criteria
+
+### Features
+
+**1. Specialized Subagent Types** (@ncrispino)
+- PR: [#938](https://github.com/massgen/MassGen/pull/938)
+- Discovery-based system for specialized subagent roles via `SUBAGENT.md` frontmatter
+- Built-in types: evaluator (programmatic verification), explorer (investigation), researcher (deep analysis), novelty (breaks refinement plateaus)
+- TUI visualization for subagent roles
+- **Use Case**: Specialized subagent delegation with role-appropriate behavior and tools
+
+**2. Dynamic Evaluation Criteria** (@ncrispino)
+- PR: [#938](https://github.com/massgen/MassGen/pull/938)
+- GEPA-inspired task-specific evaluation criteria generation replacing static E1-E4 items
+- Domain-specific presets (persona, decomposition, evaluation, prompt, analysis)
+- Core/stretch categorization for smarter convergence off-ramps
+- Score scale 0-10, config: `evaluation_criteria_generator`
+- **Use Case**: Task-appropriate quality gates that adapt to the domain instead of generic checklists
+
+**3. Native Backend Image Routing** (@ncrispino)
+- PR: [#938](https://github.com/massgen/MassGen/pull/938), MAS-300
+- `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI
+- Fallback to OpenAI for backends without `image_understanding` capability
+- **Use Case**: Better image understanding quality by using each agent's native vision capabilities
+
+**4. Configurable Video Frame Extraction** (@ncrispino)
+- PR: [#938](https://github.com/massgen/MassGen/pull/938)
+- Scene-based (PySceneDetect) or uniform extraction modes
+- `max_frames` cost guardrail (default 30, max 60)
+- Config: `multimodal_config.video`
+- **Use Case**: Cost-controlled video analysis with intelligent frame selection
+
+**5. Remotion Skill in Quickstart** (@ncrispino)
+- PR: [#938](https://github.com/massgen/MassGen/pull/938)
+- Video generation/editing skill auto-installed during quickstart
+- **Use Case**: Video creation capabilities available out of the box
+
+**6. Composition Documentation** (@ncrispino)
+- New `docs/modules/composition.md` documenting composable primitives, phase architecture, and domain-specific checklist gates
+- **Use Case**: Developer reference for the quality matrix and how personas, eval criteria, decomposition, and planning compose
+
+### Success Criteria
+- ✅ Specialized subagent types (evaluator, explorer, researcher, novelty) with TUI visualization
+- ✅ Dynamic evaluation criteria with domain presets and core/stretch categorization
+- ✅ Native backend image routing with fallback
+- ✅ Configurable video frame extraction with cost guardrails
+- ✅ Unified pre-collaboration composable primitives
+
+---
+
+## 📋 v0.1.56 - Spec Support for Planning & Targeted Agent Queries
 
 ### Features
 
@@ -329,7 +379,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.56 - Quickstart Model Curation & TUI Screenshots
+## 📋 v0.1.57 - Quickstart Model Curation & TUI Screenshots
 
 ### Features
 
@@ -349,7 +399,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.57 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
+## 📋 v0.1.58 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
 
 ### Features
 

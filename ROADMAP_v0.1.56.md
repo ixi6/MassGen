@@ -1,8 +1,8 @@
-# MassGen v0.1.55 Roadmap
+# MassGen v0.1.56 Roadmap
 
 ## Overview
 
-Version 0.1.55 focuses on adding spec support to planning workflows and targeted agent queries for more efficient coordination. These features were originally planned for v0.1.54 but were deferred to prioritize the Copilot SDK backend and subagent messaging work.
+Version 0.1.56 focuses on adding spec support to planning workflows and targeted agent queries for more efficient coordination. These features were originally planned for v0.1.54 and deferred through v0.1.55 to prioritize other work (Copilot SDK backend, subagent messaging, then specialized subagent types and dynamic evaluation criteria).
 
 - **Spec Support for Planning Mode** (Required): Add spec/proposal support to planning workflows
 - **Refactor ask_others for Targeted Agent Queries** (Required): Support targeted queries to specific agents
@@ -68,13 +68,13 @@ Version 0.1.55 focuses on adding spec support to planning workflows and targeted
 
 ## Timeline
 
-**Target Release**: February 22, 2026
+**Target Release**: February 25, 2026
 
-### Phase 1 (Feb 20-21)
+### Phase 1 (Feb 23-24)
 - Spec Support for Planning (Milestone 1)
 - Targeted Query Implementation (Milestone 2.1)
 
-### Phase 2 (Feb 21-22)
+### Phase 2 (Feb 24-25)
 - Testing & Validation (Milestones 1.2, 2.2)
 
 ---
@@ -105,7 +105,8 @@ This release builds on previous work:
 - **v0.1.52**: Final Answer Modal (#901), Substantive Gate, Novelty Injection, Agent Identity
 - **v0.1.53**: Background Tools & Specialized Subagents (#917)
 - **v0.1.54**: Copilot SDK Backend (#862), Subagent Messaging (#926), Gemini 3.1 Pro
+- **v0.1.55**: Specialized Subagent Types (#938), Dynamic Evaluation Criteria, Native Image Routing
 
 And sets the foundation for:
-- **v0.1.56**: Quickstart model curation (#840), TUI screenshot support (#831)
-- **v0.1.57**: Per-agent isolated write contexts (#854), multi-turn round/log fixes (#848)
+- **v0.1.57**: Quickstart model curation (#840), TUI screenshot support (#831)
+- **v0.1.58**: Per-agent isolated write contexts (#854), multi-turn round/log fixes (#848)

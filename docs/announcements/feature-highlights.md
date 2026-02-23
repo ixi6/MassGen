@@ -10,7 +10,7 @@ Target: ~2000 chars to leave room for per-release intro (~1000 chars) within Lin
 
 🧠Supports diverse backends — Access a wide range of open-source and proprietary models (local, Gemini 3.1 Pro, GPT-5.3-Codex, Claude 4.6 Opus/Sonnet, GLM-5, Grok 4.1, and other enterprise backends) and agents (Claude Code, Codex, GitHub Copilot). 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/backends.html
 
-🤖Build collaborative multi-agent teams — Run agents in parallel where they share workspaces, vote on the best solution, and reach consensus, or use decomposition mode to break complex tasks into subtasks owned by individual agents with a presenter synthesizing the final result. Both modes support unique personas, refinement, and subagent spawning. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
+🤖Build collaborative multi-agent teams — Run agents in parallel where they share workspaces, vote on the best solution, and reach consensus, or use decomposition mode to break complex tasks into subtasks owned by individual agents with a presenter synthesizing the final result. Both modes support unique personas, refinement, specialized subagent roles, and dynamic evaluation criteria. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
 
 📋Task planning & execution— Agents create structured plans separating "what to build" from "how to build it", execute saved plans, and verify work at logical checkpoints with persistent storage and execution tracking. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/task_planning.html
 
@@ -18,7 +18,7 @@ Target: ~2000 chars to leave room for per-release intro (~1000 chars) within Lin
 
 💾Session continuity — Multi-turn conversations with context compression, session resumption, and evolving skills that persist and improve across sessions. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/tools/skills.html#evolving-skills-code-mode
 
-🖼️Multi-modal support — Agents can understand and generate files, videos, images, and audio collaboratively. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/advanced/multimodal.html
+🖼️Multi-modal support — Agents can understand and generate files, videos, images, and audio collaboratively. Native backend image routing and configurable video frame extraction. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/advanced/multimodal.html
 
 🐳Code execution — Each agent can run commands (with Docker support, if installed) and use code mode for efficient filesystem-discoverable tools with large token reduction. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/tools/code_execution.html
 

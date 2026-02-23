@@ -12,15 +12,22 @@ MassGen supports comprehensive multimodal AI workflows, enabling agents to both 
 
    * ✅ **understand_audio**: Transcribe audio files to text (uses OpenAI's ``gpt-4o-transcribe`` by default)
    * ✅ **understand_file**: Analyze documents (PDF, DOCX, XLSX, PPTX) and text files
-   * ✅ **understand_image**: Describe and analyze images (uses OpenAI's ``gpt-4.1`` by default)
-   * ✅ **understand_video**: Extract and analyze key frames from videos (uses OpenAI's ``gpt-4.1`` by default)
+   * ✅ **understand_image**: Describe and analyze images — **routes to the agent's native backend** when supported
+   * ✅ **understand_video**: Extract and analyze key frames from videos — routes to the best available backend
+
+   **Native Backend Routing (v0.1.55+):**
+
+   * Image and video understanding now route API calls to the **agent's own backend** when it supports the capability
+   * Supported image backends: **OpenAI**, **Claude**, **Gemini**, **Grok**, **Claude Code** (SDK), **Codex** (CLI)
+   * If the agent's backend does not support image understanding, falls back to OpenAI ``gpt-5.2``
+   * This preserves model diversity and per-agent consistency — a Claude agent analyzes images via Claude, not GPT
 
    **Backend Requirements:**
 
-   * The understanding tools use OpenAI's API backend for processing multimodal content
-   * Requires ``OPENAI_API_KEY`` environment variable set in ``.env`` file
-   * These tools work with any agent backend type (openai, claude, gemini, etc.)
-   * The agent backend only needs to support custom tools; the actual understanding is done via OpenAI
+   * For native routing, the agent's backend API key must be available (e.g., ``ANTHROPIC_API_KEY`` for Claude)
+   * Fallback to OpenAI requires ``OPENAI_API_KEY`` environment variable set in ``.env`` file
+   * Claude Code requires the ``claude`` CLI installed and authenticated
+   * Codex requires the ``codex`` CLI installed and authenticated
 
    **Generation Tools:**
 
@@ -69,7 +76,9 @@ Image Understanding
 Image understanding enables agents to analyze visual content, extract information, and answer questions about images using the ``understand_image`` custom tool.
 
 .. note::
-   The ``understand_image`` tool uses OpenAI's API backend with the ``gpt-4.1`` model by default for processing images. This requires an OpenAI API key regardless of which backend your agent uses.
+   **Native backend routing (v0.1.55+):** The ``understand_image`` tool now routes to the agent's own backend when it supports ``image_understanding``. For example, a Claude agent will use Claude's vision API, a Gemini agent will use Gemini's multimodal API, etc. If the agent's backend doesn't support image understanding, it falls back to OpenAI ``gpt-5.2``.
+
+   Supported backends: OpenAI, Claude, Gemini, Grok, Claude Code (SDK), Codex (CLI).
 
 Basic Configuration
 ~~~~~~~~~~~~~~~~~~~
@@ -791,12 +800,13 @@ Supported Backends
 
 * **Supported Backends**: OpenAI, Claude, Claude Code, Gemini, Grok, Chat Completions (generic API), LM Studio, Inference (vLLM/SGLang)
 * **Not Supported**: Azure OpenAI, AG2 (these backends don't support custom tools)
-* **How It Works**: The custom tools (``understand_image``, ``understand_video``, ``understand_audio``, ``understand_file``) use OpenAI's API for processing
+* **How It Works**: Understanding tools route to the agent's native backend when supported (v0.1.55+). Image understanding supports OpenAI, Claude, Gemini, Grok, Claude Code, and Codex natively. Unsupported backends fall back to OpenAI.
 * **Requirements**:
 
   * Your agent backend must support custom tools
-  * ``OPENAI_API_KEY`` must be set in your ``.env`` file for the understanding tools to function
-  * The agent's backend type can be anything supported - only the custom tools need OpenAI API access
+  * The agent's own API key should be available for native routing (e.g., ``ANTHROPIC_API_KEY`` for Claude agents)
+  * ``OPENAI_API_KEY`` is needed as a fallback for backends without native image understanding
+  * Claude Code requires the ``claude`` CLI; Codex requires the ``codex`` CLI
 
 See :doc:`../tools/custom_tools` for complete details on custom tool support by backend, and :doc:`../backends` for all backend capabilities including web search, code execution, and MCP support.
 
@@ -901,10 +911,11 @@ Best Practices
 
 1. **API Keys and Backend Configuration**
 
-   * **IMPORTANT**: All multimodal understanding tools (``understand_image``, ``understand_video``, ``understand_audio``) require an OpenAI API key
-   * Set ``OPENAI_API_KEY`` in your ``.env`` file even if using other backends (Claude, Gemini, etc.)
-   * The tools use OpenAI's backend (gpt-4.1 for images/videos, gpt-4o-transcribe for audio) regardless of your agent's configured backend
-   * Your agent backend only needs to support custom tools; the actual multimodal processing happens via OpenAI
+   * **Native routing (v0.1.55+)**: Image and video understanding tools now route to the agent's own backend when it supports the capability
+   * Ensure your agent's API key is set (e.g., ``ANTHROPIC_API_KEY`` for Claude, ``GEMINI_API_KEY`` for Gemini, ``XAI_API_KEY`` for Grok)
+   * Set ``OPENAI_API_KEY`` as a fallback for backends without native image understanding
+   * Claude Code requires the ``claude`` CLI installed and authenticated; Codex requires the ``codex`` CLI
+   * Audio understanding still uses OpenAI's ``gpt-4o-transcribe`` by default
 
 2. **File Access and Configuration**
 

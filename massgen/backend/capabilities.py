@@ -162,6 +162,7 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
             "mcp",
             "tool_search",
             "programmatic_tool_calling",
+            "image_understanding",
             "audio_understanding",
             "video_understanding",
         },
@@ -261,6 +262,7 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
             "mcp",
             "filesystem_native",
             "web_search",
+            "image_understanding",
         },
         builtin_tools=[
             "shell",

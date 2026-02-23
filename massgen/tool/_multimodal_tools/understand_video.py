@@ -20,9 +20,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from massgen.backend.capabilities import has_capability
 from massgen.context.task_context import format_prompt_with_context
 from massgen.logger_config import logger
-from massgen.tool._multimodal_tools.backend_selector import get_backend
+from massgen.tool._multimodal_tools.backend_selector import BackendConfig, get_backend
 from massgen.tool._result import ExecutionResult, TextContent
 
 
@@ -520,25 +521,35 @@ async def understand_video(
         else:
             load_dotenv()
 
-        # Use backend selector to choose the best available backend
-        backend_config = get_backend(
-            media_type="video",
-            preferred_backend=backend_type,
-            preferred_model=model,
-        )
-
-        if not backend_config:
-            result = {
-                "success": False,
-                "operation": "understand_video",
-                "error": "No video backend available. Please set GOOGLE_API_KEY/GEMINI_API_KEY or OPENAI_API_KEY.",
-            }
-            return ExecutionResult(
-                output_blocks=[TextContent(data=json.dumps(result, indent=2))],
+        # If agent's backend supports video and a model is specified, use it directly
+        # This avoids the backend_selector fallback and keeps the agent on its own backend
+        backend_config: BackendConfig | None = None
+        if backend_type and model and has_capability(backend_type, "video_understanding"):
+            logger.info(
+                f"[understand_video] Agent backend {backend_type} has video_understanding, " f"using directly with model {model}",
+            )
+            selected_backend = backend_type
+            selected_model = model
+        else:
+            # Use backend selector to choose the best available backend
+            backend_config = get_backend(
+                media_type="video",
+                preferred_backend=backend_type,
+                preferred_model=model,
             )
 
-        selected_backend = backend_config.name
-        selected_model = backend_config.model
+            if not backend_config:
+                result = {
+                    "success": False,
+                    "operation": "understand_video",
+                    "error": "No video backend available. Please set GOOGLE_API_KEY/GEMINI_API_KEY or OPENAI_API_KEY.",
+                }
+                return ExecutionResult(
+                    output_blocks=[TextContent(data=json.dumps(result, indent=2))],
+                )
+
+            selected_backend = backend_config.name
+            selected_model = backend_config.model
 
         logger.info(
             f"[understand_video] Selected backend: {selected_backend}/{selected_model} " f"(preferred: {backend_type})",

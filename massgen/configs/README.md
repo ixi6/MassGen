@@ -234,7 +234,7 @@ Most configurations use environment variables for API keys:so
 - **Spec Plan Mode**: `plan_mode="spec"` for formal requirements specification before execution with TUI spec mode support
 - **ask_others Targeted Messaging**: `target_agents` parameter for focused agent-to-agent communication
 - **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
-- **read_media Conversation Continuity**: Follow-up conversations on media via `continue_from` conversation_id
+- **read_media Conversation Continuity**: Follow-up conversations on supported media (image) via `continue_from` conversation_id
 - **Codex OAuth Login Fix**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
 
 **Try It:**
@@ -242,8 +242,8 @@ Most configurations use environment variables for API keys:so
 # Install or upgrade to v0.1.56
 pip install --upgrade massgen
 
-# Multi-agent coordination with critic subagent quality assessment
-uv run massgen --automation --config massgen/configs/basic/multi_agent.yaml "Analyze and improve this solution"
+# Launch MassGen, then press Shift+Tab twice to enter 'spec' mode
+uv run massgen
 ```
 
 ### v0.1.55

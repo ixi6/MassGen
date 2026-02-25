@@ -35,13 +35,8 @@ Runtime messaging to steer running background subagents. New GitHub Copilot back
   - TUI spec mode state with dedicated mode bar support
   - Spec storage and changedoc integration
 
-- **Audio Multimodal Support** ([#945](https://github.com/massgen/MassGen/pull/945)): Audio understanding and generation via `read_media` and `generate_media`
-  - Audio understanding: Gemini native + Whisper fallback for audio analysis
-  - Audio generation: OpenAI TTS via unified `generate_media` tool
-  - Backend-specific audio routing with capability detection
-
-- **read_media Conversation Continuity** ([#945](https://github.com/massgen/MassGen/pull/945)): Follow-up conversations on media via `continue_from` conversation_id
-  - Multi-turn analysis with severity parsing
+- **read_media Conversation Continuity** ([#945](https://github.com/massgen/MassGen/pull/945)): Follow-up conversations on supported media (image) via `continue_from` conversation_id
+  - Multi-turn image analysis with severity parsing
 
 - **ask_others Targeted Messaging** ([#937](https://github.com/massgen/MassGen/pull/937)): `target_agents` parameter for focused agent-to-agent communication
   - Validation and per-target response counting
@@ -52,8 +47,6 @@ Runtime messaging to steer running background subagents. New GitHub Copilot back
 
 - **Background Subagent Continuation** ([#945](https://github.com/massgen/MassGen/pull/945)): Non-blocking subagent task execution
   - Enhanced subagent state tracking and graceful cancellation
-
-- **Unified generate_media Tool** ([#945](https://github.com/massgen/MassGen/pull/945)): Consolidated media generation across image, audio, and video modalities
 
 - **Docker Configuration Mounting** ([#945](https://github.com/massgen/MassGen/pull/945)): Claude and Codex configuration mounting options for Docker containers
 

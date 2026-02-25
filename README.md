@@ -170,8 +170,8 @@ This project started with the "threads of thought" and "iterative refinement" id
 # Install or upgrade
 pip install --upgrade massgen
 
-# Multi-agent coordination with critic subagent quality assessment
-uv run massgen --automation --config massgen/configs/basic/multi_agent.yaml "Analyze and improve this solution"
+# Launch MassGen, then press Shift+Tab twice to enter 'spec' mode
+uv run massgen
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1248,7 +1248,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 #### Also in this release
 - **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
-- **read_media Conversation Continuity**: Follow-up conversations on media via `continue_from` conversation_id
+- **read_media Conversation Continuity**: Follow-up conversations on supported media (image) via `continue_from` conversation_id
 - **Codex OAuth Login Fix**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
 
 #### Bug Fixes

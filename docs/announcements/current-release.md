@@ -41,7 +41,7 @@ We're excited to release MassGen v0.1.56, adding Spec Plan Mode! 🚀 A new form
 **Also in this release:**
 - Critic Subagent: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
 - ask_others Targeting: `target_agents` parameter for focused agent-to-agent communication instead of broadcast
-- read_media Continue: Follow-up conversations on media via `continue_from` conversation_id
+- read_media Continue: Follow-up conversations on supported media (image) via `continue_from` conversation_id
 - Codex OAuth Login Fix: OAuth authentication fix for Codex backend in web UI
 
 **Bug Fixes:**

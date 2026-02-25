@@ -51,6 +51,7 @@ def docker_manager(mock_docker_client):
             manager.mount_npm_config = False
             manager.mount_pypi_config = False
             manager.mount_codex_config = False
+            manager.mount_claude_config = False
             manager.additional_mounts = {}
             manager.env_file_path = None
             manager.pass_env_vars = []
@@ -219,3 +220,37 @@ def test_recreate_for_write_access_passes_skills_writable(tmp_path):
     assert call_kwargs.kwargs.get("skills_writable") is True or (
         len(call_kwargs.args) > 0 and "skills_writable" in str(call_kwargs)
     ), f"Expected skills_writable=True in create_container call, got: {call_kwargs}"
+
+
+def test_build_credential_mounts_supports_claude_config(docker_manager, tmp_path, monkeypatch):
+    """claude_config mount should map ~/.claude into /home/massgen/.claude."""
+    fake_home = tmp_path / "home"
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True)
+    docker_manager.mount_claude_config = True
+
+    monkeypatch.setattr("massgen.filesystem_manager._docker_manager.Path.home", lambda: fake_home)
+
+    mounts = docker_manager._build_credential_mounts()
+    host_path = str(claude_dir.resolve())
+
+    assert host_path in mounts
+    assert mounts[host_path]["bind"] == "/home/massgen/.claude"
+    assert mounts[host_path]["mode"] == "ro"
+
+
+def test_build_credential_mounts_supports_codex_config(docker_manager, tmp_path, monkeypatch):
+    """codex_config mount should map ~/.codex into /home/massgen/.codex."""
+    fake_home = tmp_path / "home"
+    codex_dir = fake_home / ".codex"
+    codex_dir.mkdir(parents=True)
+    docker_manager.mount_codex_config = True
+
+    monkeypatch.setattr("massgen.filesystem_manager._docker_manager.Path.home", lambda: fake_home)
+
+    mounts = docker_manager._build_credential_mounts()
+    host_path = str(codex_dir.resolve())
+
+    assert host_path in mounts
+    assert mounts[host_path]["bind"] == "/home/massgen/.codex"
+    assert mounts[host_path]["mode"] == "ro"

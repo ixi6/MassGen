@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from massgen.subagent.models import SubagentConfig, SubagentResult
+from massgen.subagent.models import SubagentConfig, SubagentResult, SubagentState
 
 # =============================================================================
 # Callback Registration Tests
@@ -1304,6 +1304,7 @@ class TestContinueSubagent:
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
         monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_session_has_saved_turns", lambda *args, **kwargs: True)
         monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, "sess-new"))
         monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
 
@@ -1327,3 +1328,579 @@ class TestContinueSubagent:
         listed = {entry["subagent_id"]: entry for entry in manager.list_subagents()}
         assert listed["sub1"]["status"] == "completed"
         assert listed["sub1"]["session_id"] == "sess-new"
+
+
+class TestContinueSubagentBackground:
+    """Tests for SubagentManager.continue_subagent_background()."""
+
+    @pytest.mark.asyncio
+    async def test_continue_background_returns_immediately_and_invokes_callback(self, tmp_path, monkeypatch):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent")
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="completed",
+            workspace_path=str(sub_workspace),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+            result=SubagentResult.create_success(
+                subagent_id="sub1",
+                answer="initial answer",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.0,
+            ),
+        )
+
+        continuation_calls: list[dict[str, object]] = []
+
+        async def _mock_continue(subagent_id: str, new_message: str, timeout_seconds: int | None = None):
+            continuation_calls.append(
+                {
+                    "subagent_id": subagent_id,
+                    "new_message": new_message,
+                    "timeout_seconds": timeout_seconds,
+                },
+            )
+            await asyncio.sleep(0)
+            return SubagentResult.create_success(
+                subagent_id=subagent_id,
+                answer="continued answer",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=2.0,
+            )
+
+        monkeypatch.setattr(manager, "continue_subagent", _mock_continue)
+
+        completed: list[tuple[str, SubagentResult]] = []
+        manager.register_completion_callback(lambda sid, result: completed.append((sid, result)))
+
+        info = manager.continue_subagent_background(
+            subagent_id="sub1",
+            new_message="continue with more depth",
+            timeout_seconds=240,
+        )
+
+        assert info["subagent_id"] == "sub1"
+        assert info["status"] == "running"
+        assert "sub1" in manager._background_tasks
+
+        result = await manager.wait_for_subagent("sub1", timeout=1.0)
+        assert result is not None
+        assert result.success is True
+        assert result.answer == "continued answer"
+
+        assert continuation_calls == [
+            {
+                "subagent_id": "sub1",
+                "new_message": "continue with more depth",
+                "timeout_seconds": 240,
+            },
+        ]
+        assert len(completed) == 1
+        assert completed[0][0] == "sub1"
+        assert completed[0][1].answer == "continued answer"
+        assert "sub1" not in manager._background_tasks
+
+    def test_continue_background_rejects_running_subagent(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent")
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(sub_workspace),
+            started_at=datetime.now(),
+        )
+
+        info = manager.continue_subagent_background(
+            subagent_id="sub1",
+            new_message="continue with more depth",
+        )
+
+        assert info["status"] == "error"
+        assert "send_message_to_subagent" in (info.get("error") or "")
+
+
+class TestParseSubprocessStatusSentinel:
+    """Tests for _parse_subprocess_status reading the .session_id sentinel file."""
+
+    def test_reads_sentinel_over_status_json(self, tmp_path):
+        """Sentinel file takes priority over broken status.json session_id."""
+        from massgen.subagent.manager import SubagentManager
+
+        manager = SubagentManager(
+            parent_workspace=str(tmp_path / "workspace"),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+
+        # Write sentinel with real session_id
+        sentinel_dir = workspace / ".massgen"
+        sentinel_dir.mkdir(parents=True)
+        (sentinel_dir / ".session_id").write_text("session_20260223_120000")
+
+        # Write status.json with broken session_id ("attempt_1")
+        log_dir = sentinel_dir / "massgen_logs" / "log_001" / "turn_1" / "attempt_1"
+        log_dir.mkdir(parents=True)
+        status = {
+            "meta": {"session_id": "attempt_1"},
+            "costs": {"total_input_tokens": 100, "total_output_tokens": 50},
+        }
+        (log_dir / "status.json").write_text(json.dumps(status))
+
+        token_usage, log_path, session_id = manager._parse_subprocess_status(workspace)
+
+        # Should return sentinel session_id, not "attempt_1"
+        assert session_id == "session_20260223_120000"
+        assert token_usage["input_tokens"] == 100
+
+    def test_no_sentinel_returns_none_session_id(self, tmp_path):
+        """Without sentinel, session_id should be None (not status.json's broken value)."""
+        from massgen.subagent.manager import SubagentManager
+
+        manager = SubagentManager(
+            parent_workspace=str(tmp_path / "workspace"),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+
+        # Write status.json with broken session_id but NO sentinel
+        massgen_dir = workspace / ".massgen"
+        massgen_dir.mkdir(parents=True)
+        log_dir = massgen_dir / "massgen_logs" / "log_001" / "turn_1" / "attempt_1"
+        log_dir.mkdir(parents=True)
+        status = {
+            "meta": {"session_id": "attempt_1"},
+            "costs": {"total_input_tokens": 100, "total_output_tokens": 50},
+        }
+        (log_dir / "status.json").write_text(json.dumps(status))
+
+        token_usage, log_path, session_id = manager._parse_subprocess_status(workspace)
+
+        # No sentinel → session_id should be None
+        assert session_id is None
+        # Token usage should still work
+        assert token_usage["input_tokens"] == 100
+
+
+class TestContinueSubagentContextRecovery:
+    """Tests for continue_subagent with cancelled subagents (no session_id)."""
+
+    @pytest.mark.asyncio
+    async def test_continue_cancelled_without_session_uses_context_recovery(self, tmp_path, monkeypatch):
+        """Cancelled subagent with no session_id falls back to context_recovery."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Create registry with no session_id and context_recovery
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": None,
+                    "task": "research topic",
+                    "status": "cancelled",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "context_recovery",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+
+        # Mock spawn_subagent to track the call
+        spawn_called = {}
+
+        async def _mock_spawn(**kwargs):
+            spawn_called.update(kwargs)
+            return SubagentResult.create_success(
+                subagent_id=kwargs.get("subagent_id", "sub1_recovery"),
+                answer="recovered answer",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.0,
+            )
+
+        monkeypatch.setattr(manager, "spawn_subagent", _mock_spawn)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue with more depth",
+        )
+
+        assert result.success is True
+        assert result.answer == "recovered answer"
+        # spawn_subagent should have been called with original task + new message
+        assert "research topic" in spawn_called["task"]
+        assert "continue with more depth" in spawn_called["task"]
+
+    @pytest.mark.asyncio
+    async def test_continue_cancelled_in_memory_fallback(self, tmp_path, monkeypatch):
+        """Cancelled subagent not in registry but in _subagents dict uses in-memory fallback."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Put in _subagents but NOT in registry
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent")
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="cancelled",
+            workspace_path=str(sub_workspace),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+        )
+
+        # Mock spawn_subagent
+        spawn_called = {}
+
+        async def _mock_spawn(**kwargs):
+            spawn_called.update(kwargs)
+            return SubagentResult.create_success(
+                subagent_id=kwargs.get("subagent_id", "sub1_recovery"),
+                answer="recovered",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.0,
+            )
+
+        monkeypatch.setattr(manager, "spawn_subagent", _mock_spawn)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="go deeper",
+        )
+
+        assert result.success is True
+        assert "research topic" in spawn_called["task"]
+
+    @pytest.mark.asyncio
+    async def test_continue_regression_unchanged(self, tmp_path, monkeypatch):
+        """Non-cancelled continue path still works (regression test)."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Registry with valid session_id
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": "sess-valid",
+                    "task": "research topic",
+                    "status": "completed",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+        (sub_workspace / ".massgen" / "sessions" / "sess-valid" / "turn_1").mkdir(parents=True, exist_ok=True)
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeContinueProcess(sub_workspace)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, "sess-new"))
+        monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue please",
+        )
+
+        assert result.success is True
+        assert result.answer == "continued answer"
+
+
+class _FakeFailedContinueProcess:
+    """Subprocess stub that simulates --session-id restore failure."""
+
+    def __init__(self) -> None:
+        self.returncode = 1
+
+    async def communicate(self):
+        return b"", b"ValueError: Cannot continue an empty session"
+
+    def terminate(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        return None
+
+    async def wait(self) -> int:
+        return 1
+
+
+class TestContinueSubagentSessionFallback:
+    """Tests for fallback to context_recovery when --session-id subprocess fails."""
+
+    @pytest.mark.asyncio
+    async def test_session_restore_failure_falls_back_to_context_recovery(self, tmp_path, monkeypatch):
+        """When --session-id subprocess fails (e.g. empty session), fall back to context_recovery."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Registry with valid session_id (SIGINT cancel wrote sentinel)
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": "sess-from-sentinel",
+                    "task": "research jazz history",
+                    "status": "cancelled",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+        (sub_workspace / ".massgen" / "sessions" / "sess-valid" / "turn_1").mkdir(parents=True, exist_ok=True)
+
+        # The --session-id subprocess will fail (empty session)
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeFailedContinueProcess()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, None))
+        monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
+
+        # Mock _continue_via_context_recovery to track the fallback
+        recovery_called = {}
+
+        async def _mock_recovery(sid, entry, msg, timeout, reuse_subagent_id=False):
+            recovery_called["subagent_id"] = sid
+            recovery_called["new_message"] = msg
+            recovery_called["reuse_subagent_id"] = reuse_subagent_id
+            return SubagentResult.create_success(
+                subagent_id=f"{sid}_recovery",
+                answer="recovered via fallback",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=2.0,
+            )
+
+        monkeypatch.setattr(manager, "_continue_via_context_recovery", _mock_recovery)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="now focus on rock and roll",
+        )
+
+        # Should have fallen back to context_recovery instead of returning error
+        assert result.success is True
+        assert result.answer == "recovered via fallback"
+        assert recovery_called["subagent_id"] == "sub1"
+        assert recovery_called["new_message"] == "now focus on rock and roll"
+        assert recovery_called["reuse_subagent_id"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_success_does_not_trigger_fallback(self, tmp_path, monkeypatch):
+        """When --session-id subprocess succeeds, no fallback happens (regression)."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": "sess-valid",
+                    "task": "research topic",
+                    "status": "completed",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+        (sub_workspace / ".massgen" / "sessions" / "sess-valid" / "turn_1").mkdir(parents=True, exist_ok=True)
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeContinueProcess(sub_workspace)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, "sess-new"))
+        monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
+
+        # Mock recovery — should NOT be called
+        recovery_called = False
+
+        async def _mock_recovery(sid, entry, msg, timeout, reuse_subagent_id=False):
+            nonlocal recovery_called
+            recovery_called = True
+            return SubagentResult.create_error(subagent_id=sid, error="should not reach here")
+
+        monkeypatch.setattr(manager, "_continue_via_context_recovery", _mock_recovery)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue please",
+        )
+
+        assert result.success is True
+        assert result.answer == "continued answer"
+        assert recovery_called is False
+
+    @pytest.mark.asyncio
+    async def test_empty_session_precheck_bypasses_session_restore_subprocess(self, tmp_path, monkeypatch):
+        """Empty session dirs should skip --session-id and go straight to context recovery."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Sentinel-recovered session id exists but has NO turn_* dirs (empty session).
+        session_id = "session_empty"
+        (sub_workspace / ".massgen" / "sessions" / session_id).mkdir(parents=True, exist_ok=True)
+
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": session_id,
+                    "task": "research jazz history",
+                    "status": "cancelled",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+
+        # If precheck works, subprocess should never be launched.
+        async def _unexpected_subprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise AssertionError("continue_subagent should not invoke --session-id for empty sessions")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _unexpected_subprocess)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+
+        recovery_called: dict[str, object] = {}
+
+        async def _mock_recovery(sid, entry, msg, timeout, reuse_subagent_id=False):
+            recovery_called["subagent_id"] = sid
+            recovery_called["message"] = msg
+            recovery_called["reuse_subagent_id"] = reuse_subagent_id
+            return SubagentResult.create_success(
+                subagent_id=sid,
+                answer="recovered without session subprocess",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.5,
+            )
+
+        monkeypatch.setattr(manager, "_continue_via_context_recovery", _mock_recovery)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue with rock and roll context",
+        )
+
+        assert result.success is True
+        assert result.answer == "recovered without session subprocess"
+        assert recovery_called["subagent_id"] == "sub1"
+        assert recovery_called["reuse_subagent_id"] is True

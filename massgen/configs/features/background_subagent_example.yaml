@@ -1,27 +1,28 @@
-# uv run massgen --display textual --config massgen/configs/features/background_subagent_example.yaml "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
-# uv run massgen --config massgen/configs/features/background_subagent_example.yaml --cwd-context ro "Use an explorer subagent to analyze this repo"
+# Test background subagent: uv run massgen --display textual --config massgen/configs/features/background_subagent_example.yaml "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
+# Test specialized subagent: uv run massgen --config massgen/configs/features/background_subagent_example.yaml --cwd-context ro "Use an explorer subagent to analyze this repo"
+# Test full subagent workflow: uv run massgen --config massgen/configs/features/background_subagent_example.yaml "Spawn a background subagent to research the history of jazz. While it runs, call list_background_tools to verify it appears, wait 30s, explain what it's currently doing, then call cancel_background_tool to cancel it. After this, please continue the subagent, wait 30s, then send a message to also focus on rock and roll."
 
 agents:
 - id: agent_a
   backend:
-    # type: claude_code
-    # model: claude-sonnet-4-6
+    type: claude_code
+    model: claude-sonnet-4-6
     # type: gemini
     # model: gemini-3-flash-preview
-    type: codex
-    # model: gpt-5.3-codex-spark
-    model: gpt-5.3-codex
-    reasoning:
-      effort: xhigh
-      # effort: medium
-    #   summary: auto
+    # type: codex
+    # # model: gpt-5.3-codex-spark
+    # model: gpt-5.3-codex
+    # reasoning:
+    #   effort: xhigh
+    #   # effort: medium
+    # #   summary: auto
     cwd: workspace
     enable_code_based_tools: true
     exclude_file_operation_mcps: true
     enable_mcp_command_line: true
     command_line_execution_mode: docker
-    # command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
-    command_line_docker_image: massgen/mcp-runtime-sudo:latest  # bc we changed task plan for bcodex, we used `bash massgen/docker/build.sh --sudo`
+    command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
+    # command_line_docker_image: massgen/mcp-runtime-sudo:latest  # bc we changed task plan for bcodex, we used `bash massgen/docker/build.sh --sudo`
     command_line_docker_network_mode: bridge
     command_line_docker_enable_sudo: true
     command_line_docker_credentials:

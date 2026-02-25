@@ -222,6 +222,9 @@ async def understand_image(
     task_context: str | None = None,
     images: dict[str, str] | None = None,
     backend_type: str | None = None,
+    system_prompt: str | None = None,
+    previous_response_id: str | None = None,
+    conversation_messages: list[dict] | None = None,
 ) -> ExecutionResult:
     """
     Understand and analyze one or more images using OpenAI's gpt-5.2 API.
@@ -329,33 +332,81 @@ async def understand_image(
                 augmented_prompt = f"{name_context}\n{augmented_prompt}"
 
             # Route to the agent's native backend if it supports image understanding
+            response_id: str | None = None
             if backend_type and has_capability(backend_type, "image_understanding"):
                 try:
                     logger.info(f"[understand_image] Using native backend: {backend_type}")
                     if backend_type == "claude":
-                        response_text = await call_claude(loaded_images, augmented_prompt, model)
+                        response_text, response_id = await call_claude(
+                            loaded_images,
+                            augmented_prompt,
+                            model,
+                            system_prompt=system_prompt,
+                            conversation_messages=conversation_messages,
+                        )
                     elif backend_type == "gemini":
-                        response_text = await call_gemini(loaded_images, augmented_prompt, model)
+                        response_text, response_id = await call_gemini(
+                            loaded_images,
+                            augmented_prompt,
+                            model,
+                            system_prompt=system_prompt,
+                            conversation_messages=conversation_messages,
+                        )
                     elif backend_type == "grok":
-                        response_text = await call_grok(loaded_images, augmented_prompt, model)
+                        response_text, response_id = await call_grok(
+                            loaded_images,
+                            augmented_prompt,
+                            model,
+                            system_prompt=system_prompt,
+                            conversation_messages=conversation_messages,
+                        )
                     elif backend_type == "claude_code":
-                        response_text = await call_claude_code(loaded_images, augmented_prompt, model, agent_cwd)
+                        response_text, response_id = await call_claude_code(
+                            loaded_images,
+                            augmented_prompt,
+                            model,
+                            agent_cwd,
+                            system_prompt=system_prompt,
+                        )
                     elif backend_type == "codex":
-                        response_text = await call_codex(loaded_images, augmented_prompt, agent_cwd)
+                        response_text, response_id = await call_codex(
+                            loaded_images,
+                            augmented_prompt,
+                            agent_cwd,
+                            system_prompt=system_prompt,
+                        )
                     else:
-                        # openai, response, chatcompletion, azure_openai, openrouter, uitars — all OpenAI-compatible
-                        response_text = await call_openai(loaded_images, augmented_prompt, model)
+                        # openai, response, chatcompletion, azure_openai, openrouter, uitars
+                        response_text, response_id = await call_openai(
+                            loaded_images,
+                            augmented_prompt,
+                            model,
+                            system_prompt=system_prompt,
+                            previous_response_id=previous_response_id,
+                        )
                 except Exception as native_err:
                     logger.warning(
                         f"[understand_image] Native backend {backend_type} failed: {native_err}. " "Falling back to OpenAI gpt-5.2",
                     )
-                    response_text = await call_openai(loaded_images, augmented_prompt, "gpt-5.2")
+                    response_text, response_id = await call_openai(
+                        loaded_images,
+                        augmented_prompt,
+                        "gpt-5.2",
+                        system_prompt=system_prompt,
+                        previous_response_id=previous_response_id,
+                    )
             else:
                 # Fallback: OpenAI default (backward compat)
                 logger.info(
                     f"[understand_image] Fallback to OpenAI (backend_type={backend_type})",
                 )
-                response_text = await call_openai(loaded_images, augmented_prompt, "gpt-5.2")
+                response_text, response_id = await call_openai(
+                    loaded_images,
+                    augmented_prompt,
+                    "gpt-5.2",
+                    system_prompt=system_prompt,
+                    previous_response_id=previous_response_id,
+                )
 
             # Build result based on single vs multiple images
             if image_path:
@@ -378,6 +429,9 @@ async def understand_image(
                     "model": model,
                     "response": response_text,
                 }
+
+            if response_id:
+                result["response_id"] = response_id
 
             return ExecutionResult(output_blocks=[TextContent(data=json.dumps(result, indent=2))])
 

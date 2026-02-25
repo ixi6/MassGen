@@ -11,6 +11,9 @@ multi-image prompts where multiple images are sent to the model together.
 
 import asyncio
 import json
+import re
+import uuid
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +34,79 @@ def _error_result(error: str) -> ExecutionResult:
             ),
         ],
     )
+
+
+def _parse_severity_summary(response_text: str) -> dict[str, Any] | None:
+    """Best-effort parse a JSON severity summary from the vision model response.
+
+    Looks for JSON containing ``foundation_sound`` key, either in a code fence
+    or as a standalone JSON object. Returns None if not found or malformed.
+    """
+    # Try code-fenced JSON first
+    fenced = re.findall(r"```json\s*\n(.*?)\n```", response_text, re.DOTALL)
+    for block in fenced:
+        try:
+            data = json.loads(block)
+            if "foundation_sound" in data:
+                return data
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    # Try standalone JSON objects containing foundation_sound
+    for match in re.finditer(r"\{[^{}]*\"foundation_sound\"[^{}]*\}", response_text):
+        try:
+            data = json.loads(match.group())
+            return data
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+    return None
+
+
+def _maybe_add_severity_fields(
+    result: dict[str, Any],
+    severity: dict[str, Any] | None,
+) -> None:
+    """Add severity_summary and foundation_warning to result dict if applicable."""
+    if severity is None:
+        return
+
+    result["severity_summary"] = severity
+    result["foundation_sound"] = severity.get("foundation_sound", True)
+
+    if not severity.get("foundation_sound", True):
+        result["foundation_warning"] = (
+            "Vision analysis found fundamental issues with the current approach. "
+            "Consider whether the direction needs rethinking rather than "
+            "incremental patching. Include these findings in your diagnostic report."
+        )
+
+
+class _ConversationStore:
+    """Stores conversation state for read_media follow-ups.
+
+    Maps conversation_id -> state dict containing backend_type, response_id
+    (for OpenAI), message history (for other backends), images, model, etc.
+    """
+
+    def __init__(self, max_conversations: int = 50):
+        self._store: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._max = max_conversations
+
+    def save(self, conv_id: str, state: dict[str, Any]) -> None:
+        """Save or update conversation state. Evicts oldest if over max."""
+        if conv_id in self._store:
+            del self._store[conv_id]
+        elif len(self._store) >= self._max:
+            self._store.popitem(last=False)
+        self._store[conv_id] = state
+
+    def get(self, conv_id: str) -> dict[str, Any] | None:
+        """Retrieve conversation state by ID, or None if not found."""
+        return self._store.get(conv_id)
+
+
+_conversation_store = _ConversationStore()
 
 
 # Supported media types and their extensions
@@ -93,6 +169,7 @@ async def read_media(
     prompt: str | None = None,
     inputs: list[dict[str, Any]] | None = None,
     max_concurrent: int = 4,
+    continue_from: str | None = None,
     agent_cwd: str | None = None,
     allowed_paths: list[str] | None = None,
     backend_type: str | None = None,
@@ -116,21 +193,22 @@ async def read_media(
     - Audio: mp3, wav, m4a, ogg, flac, aac
     - Video: mp4, mov, avi, mkv, webm
 
-    CRITICAL - Be Skeptical When Evaluating Work:
-        When using this tool to evaluate your own or others' work, you MUST be
-        critical and skeptical, not charitable. Look for flaws, not just strengths:
+    Analysis Quality:
+        The vision model is instructed to be a critical reviewer by default.
+        It will identify problems, classify their severity (fundamental vs
+        surface-level), and assess whether the overall approach is sound.
 
-        - What's MISSING or incomplete?
-        - What looks broken, misaligned, or poorly implemented?
-        - Does it actually meet the requirements, or just look superficially OK?
-        - What would a demanding user complain about?
+        You can still customize analysis with your prompt. Good prompts for
+        different domains:
+        - Website: "What flaws, layout issues, or broken elements do you see?"
+        - Generated image: "Does this match what was requested? What's off?"
+        - Chart/diagram: "Is the data clearly communicated? What's misleading?"
+        - Code output: "Are there obvious bugs or unclear patterns visible?"
 
-        Include critique-focused language in your prompt, e.g.:
-        - "What flaws, issues, or missing elements do you see?"
-        - "What would a critical reviewer complain about?"
-        - "Does this fully meet requirements or are there gaps?"
-
-        Do NOT just ask "describe this" - that yields overly charitable analysis.
+        The system prompt can be disabled via multimodal_config:
+            multimodal_config:
+              image:
+                system_prompt_enabled: false
 
     Args:
         file_path: Path to a single media file (relative or absolute).
@@ -178,11 +256,19 @@ async def read_media(
                    prompt="Does gameplay look correct? Are controls responsive? Be critical.")
         → Returns critique-focused analysis
     """
-    # Validate file_path / inputs - exactly one must be provided
+    # Validate file_path / inputs / continue_from
     if file_path and inputs:
         return _error_result("Provide either 'file_path' or 'inputs', not both")
-    if not file_path and not inputs:
-        return _error_result("Must provide either 'file_path' or 'inputs'")
+    if not file_path and not inputs and not continue_from:
+        return _error_result("Must provide either 'file_path', 'inputs', or 'continue_from'")
+
+    # Validate continue_from early
+    if continue_from:
+        conv_state = _conversation_store.get(continue_from)
+        if conv_state is None:
+            return _error_result(
+                f"Conversation '{continue_from}' not found. " "The conversation_id may have expired or belongs to a previous session.",
+            )
 
     # Validate inputs structure if provided
     if inputs:
@@ -225,28 +311,62 @@ async def read_media(
         audio_config = (multimodal_config or {}).get("audio", {})
         video_config = (multimodal_config or {}).get("video", {})
 
+        # Vision system prompt — on by default, disable via multimodal_config
+        from massgen.tool._multimodal_tools.analysis_prompts import (
+            DEFAULT_MEDIA_PROMPT_TEMPLATE,
+            VISION_SYSTEM_PROMPT,
+        )
+
+        vision_system_prompt: str | None = VISION_SYSTEM_PROMPT
+        if image_config.get("system_prompt_enabled") is False:
+            vision_system_prompt = None
+
+        # Generate conversation_id for this call (reuse existing for follow-ups)
+        conversation_id = continue_from or f"conv_{uuid.uuid4().hex[:12]}"
+
+        # Resolve follow-up state
+        prev_response_id: str | None = None
+        conv_messages: list[dict] | None = None
+        if continue_from and conv_state:
+            prev_response_id = conv_state.get("response_id")
+            conv_messages = conv_state.get("messages")
+            # Inherit backend/model from prior conversation if not provided
+            if not backend_type:
+                backend_type = conv_state.get("backend_type")
+            if not model:
+                model = conv_state.get("model")
+
         # ------------------------------------------------------------------
-        # SINGLE FILE MODE (backwards compatible)
+        # SINGLE FILE MODE (backwards compatible) + follow-up mode
         # ------------------------------------------------------------------
-        if file_path:
-            if Path(file_path).is_absolute():
-                media_path = Path(file_path).resolve()
+        if file_path or (continue_from and not inputs):
+            # For follow-ups without file_path, we still route to image
+            if file_path:
+                if Path(file_path).is_absolute():
+                    media_path = Path(file_path).resolve()
+                else:
+                    media_path = (base_dir / file_path).resolve()
+
+                _validate_path_access(media_path, allowed_paths_list)
+
+                if not media_path.exists():
+                    return _error_result(f"File does not exist: {media_path}")
+
+                media_type = _detect_media_type(file_path)
+                if not media_type:
+                    return _error_result(
+                        f"Unsupported file type: {media_path.suffix}. " "Supported: images (png, jpg, webp), audio (mp3, wav, m4a, ogg), video (mp4, mov, avi, mkv, webm, gif)",
+                    )
             else:
-                media_path = (base_dir / file_path).resolve()
-
-            _validate_path_access(media_path, allowed_paths_list)
-
-            if not media_path.exists():
-                return _error_result(f"File does not exist: {media_path}")
-
-            media_type = _detect_media_type(file_path)
-            if not media_type:
-                return _error_result(
-                    f"Unsupported file type: {media_path.suffix}. " "Supported: images (png, jpg, webp), audio (mp3, wav, m4a, ogg), video (mp4, mov, avi, mkv, webm, gif)",
-                )
+                # Follow-up without new file — use stored conversation's media type
+                media_type = conv_state.get("media_type", "image") if conv_state else "image"
+                media_path = None
 
             logger.info(f"Using understand_{media_type} for {media_type} analysis")
-            default_prompt = prompt or f"Please analyze this {media_type} and describe its contents."
+
+            default_prompt = prompt or DEFAULT_MEDIA_PROMPT_TEMPLATE.format(
+                media_type=media_type,
+            )
 
             if media_type == "image":
                 from massgen.tool._multimodal_tools.understand_image import (
@@ -254,26 +374,59 @@ async def read_media(
                 )
 
                 image_kwargs: dict[str, Any] = {
-                    "image_path": str(media_path),
                     "prompt": default_prompt,
                     "agent_cwd": agent_cwd,
                     "allowed_paths": allowed_paths,
                     "task_context": task_context,
                     "backend_type": backend_type,
                     "model": image_config.get("model") or model or "gpt-5.2",
+                    "system_prompt": vision_system_prompt,
+                    "previous_response_id": prev_response_id,
+                    "conversation_messages": conv_messages,
                 }
+                if media_path:
+                    image_kwargs["image_path"] = str(media_path)
 
                 result = await asyncio.wait_for(understand_image(**image_kwargs), timeout=MEDIA_ANALYSIS_TIMEOUT)
-                # Add warning if present
-                if context_warning:
-                    for block in result.output_blocks:
-                        if isinstance(block, TextContent):
-                            try:
-                                data = json.loads(block.data)
+
+                # Add conversation_id and warning to result
+                for block in result.output_blocks:
+                    if isinstance(block, TextContent):
+                        try:
+                            data = json.loads(block.data)
+                            data["conversation_id"] = conversation_id
+                            if context_warning:
                                 data["warning"] = context_warning
-                                block.data = json.dumps(data, indent=2)
-                            except (json.JSONDecodeError, AttributeError):
-                                pass
+
+                            # Save conversation state for future follow-ups
+                            new_state: dict[str, Any] = {
+                                "media_type": "image",
+                                "backend_type": backend_type,
+                                "response_id": data.get("response_id"),
+                                "model": image_kwargs["model"],
+                                "system_prompt": vision_system_prompt,
+                                "prompt": default_prompt,
+                                "messages": [],
+                                "images": [],
+                            }
+                            # For non-OpenAI backends, build message history
+                            if not data.get("response_id") and conv_messages:
+                                new_state["messages"] = conv_messages + [
+                                    {"role": "user", "content": default_prompt},
+                                    {"role": "assistant", "content": data.get("response", "")},
+                                ]
+                            elif not data.get("response_id"):
+                                new_state["messages"] = [
+                                    {"role": "user", "content": default_prompt},
+                                    {"role": "assistant", "content": data.get("response", "")},
+                                ]
+                            _conversation_store.save(conversation_id, new_state)
+
+                            block.data = json.dumps(data, indent=2)
+                        except (json.JSONDecodeError, AttributeError) as e:
+                            logger.warning(
+                                f"[read_media] Could not inject conversation_id into image result " f"block (parse failed: {e}). Follow-up calls with continue_from " f"will not work.",
+                            )
                 return result
 
             elif media_type == "audio":
@@ -300,8 +453,10 @@ async def read_media(
                                 data = json.loads(block.data)
                                 data["warning"] = context_warning
                                 block.data = json.dumps(data, indent=2)
-                            except (json.JSONDecodeError, AttributeError):
-                                pass
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                logger.warning(
+                                    f"[read_media] Could not inject context warning into audio " f"result block (parse failed: {e}).",
+                                )
                 return result
 
             elif media_type == "video":
@@ -329,8 +484,10 @@ async def read_media(
                                 data = json.loads(block.data)
                                 data["warning"] = context_warning
                                 block.data = json.dumps(data, indent=2)
-                            except (json.JSONDecodeError, AttributeError):
-                                pass
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                logger.warning(
+                                    f"[read_media] Could not inject context warning into video " f"result block (parse failed: {e}).",
+                                )
                 return result
 
         # ------------------------------------------------------------------
@@ -369,6 +526,7 @@ async def read_media(
                             "task_context": task_context,
                             "backend_type": backend_type,
                             "model": image_config.get("model") or model or "gpt-5.2",
+                            "system_prompt": vision_system_prompt,
                         }
 
                         result = await asyncio.wait_for(understand_image(**image_kwargs), timeout=MEDIA_ANALYSIS_TIMEOUT)

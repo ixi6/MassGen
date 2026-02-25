@@ -578,10 +578,10 @@ class TestAntiGlazingAndSynthesis:
         prompt = _build_changedoc_subsequent_round_prompt()
         assert "\u2192" in prompt  # → character
 
-    def test_synthesizing_not_inheriting(self):
-        """Section heading says 'Synthesizing' not 'Inheriting'."""
+    def test_evaluating_not_inheriting(self):
+        """Section heading says 'Evaluating' not 'Inheriting'."""
         prompt = _build_changedoc_subsequent_round_prompt()
-        assert "Synthesizing from prior answers" in prompt
+        assert "Evaluating prior answers" in prompt
         assert "Inheriting from prior answers" not in prompt
 
     def test_deliberation_trail_multi_source(self):

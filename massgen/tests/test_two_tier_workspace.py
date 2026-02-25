@@ -555,3 +555,43 @@ class TestFinalSnapshotSelection:
         final_artifact = final_workspace / "scratch" / "artifact.txt"
         assert final_artifact.exists(), "Final workspace should include artifacts from snapshot storage"
         assert final_artifact.read_text() == "answer file"
+
+
+class TestClearWorkspacePreservesMassgen:
+    """The .massgen directory must survive clear_workspace calls.
+
+    Regression test: subagent MCP config files live in .massgen/subagent_mcp/
+    and are written once at session start. clear_workspace() runs at the start
+    of every round and was deleting them, so by the time the MCP server
+    launched (potentially many rounds later) the files were gone.
+    """
+
+    def test_clear_workspace_preserves_massgen_subagent_mcp_dir(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        temp_parent = tmp_path / "temp_workspaces"
+        temp_parent.mkdir()
+
+        manager = FilesystemManager(
+            cwd=str(workspace),
+            agent_temporary_workspace_parent=str(temp_parent),
+        )
+
+        # Simulate orchestrator writing subagent MCP config files
+        mcp_dir = workspace / ".massgen" / "subagent_mcp"
+        mcp_dir.mkdir(parents=True)
+        types_file = mcp_dir / "agent_b_specialized_types.json"
+        types_file.write_text('[{"name": "novelty"}]')
+
+        # Also add a regular file that SHOULD be cleared
+        regular_file = workspace / "scratch_notes.txt"
+        regular_file.write_text("temporary")
+
+        manager.clear_workspace()
+
+        # .massgen/subagent_mcp must survive
+        assert types_file.exists(), "clear_workspace deleted .massgen/subagent_mcp config files"
+        assert types_file.read_text() == '[{"name": "novelty"}]'
+
+        # Regular files should be cleared
+        assert not regular_file.exists(), "clear_workspace should still clear regular files"

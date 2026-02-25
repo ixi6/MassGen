@@ -111,6 +111,7 @@ async def test_round_timeout_hooks_integration_soft_then_hard_timeout(mock_orche
     orchestrator.config.timeout_config.subsequent_round_timeout_seconds = 1
     orchestrator.config.timeout_config.round_timeout_grace_seconds = 0
     orchestrator.config.coordination_config.use_two_tier_workspace = True
+    orchestrator.config.coordination_config.write_mode = "legacy"
     orchestrator.agent_states[agent_id].round_start_time = time.time() - 5
 
     captured = _capture_general_hook_manager(agent)
@@ -381,9 +382,55 @@ def test_continue_subagent_uses_backend_mcp_executor(mock_orchestrator):
             {
                 "subagent_id": "sub-1",
                 "message": "Continue and add citations.",
+                "background": True,
             },
         ),
     ]
+
+
+def test_continue_subagent_background_notifies_runtime_card(mock_orchestrator):
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    agent = orchestrator.agents[agent_id]
+    backend = agent.backend
+
+    async def _fake_execute(function_name, arguments_json, max_retries=3):  # noqa: ANN001
+        del function_name, max_retries
+        args = json.loads(arguments_json)
+        assert args["background"] is True
+        return (
+            '{"success": true, "operation": "continue_subagent", "mode": "background", "subagents": [{"subagent_id": "sub-1", "status": "running", "workspace": "/tmp/sub-1"}]}',
+            {
+                "success": True,
+                "operation": "continue_subagent",
+                "mode": "background",
+                "subagents": [{"subagent_id": "sub-1", "status": "running", "workspace": "/tmp/sub-1"}],
+            },
+        )
+
+    backend._execute_mcp_function_with_retry = _fake_execute
+
+    captured_notification: dict[str, object] = {}
+
+    def _notify_runtime_subagent_started(**kwargs):  # noqa: ANN003
+        captured_notification.update(kwargs)
+
+    orchestrator.coordination_ui = SimpleNamespace(
+        display=SimpleNamespace(
+            notify_runtime_subagent_started=_notify_runtime_subagent_started,
+        ),
+    )
+
+    continued = orchestrator.continue_subagent_from_tui(
+        "sub-1",
+        "Continue and add citations.",
+    )
+
+    assert continued is True
+    assert captured_notification["agent_id"] == agent_id
+    assert captured_notification["subagent_id"] == "sub-1"
+    assert "Continue and add citations." in str(captured_notification["task"])
+    assert callable(captured_notification["status_callback"])
 
 
 def test_send_runtime_message_to_subagent_falls_back_to_direct_inbox_write(

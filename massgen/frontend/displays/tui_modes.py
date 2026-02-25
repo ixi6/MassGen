@@ -61,6 +61,20 @@ class PlanConfig:
 
 
 @dataclass
+class SpecConfig:
+    """Configuration for spec creation mode behavior.
+
+    Attributes:
+        broadcast: Broadcast mode for spec creation phase
+            - "human": Agents can ask human questions (default)
+            - "agents": Agents debate among themselves
+            - False: Fully autonomous, no questions
+    """
+
+    broadcast: Any = "human"  # "human" | "agents" | False
+
+
+@dataclass
 class AnalysisConfig:
     """Configuration for log analysis mode behavior."""
 
@@ -120,15 +134,17 @@ class TuiModeState:
     - Override state: human override of final answer selection
     """
 
-    # Plan mode: "normal" | "plan" | "plan_and_execute" | "execute" | "analysis"
+    # Plan mode: "normal" | "plan" | "spec" | "plan_and_execute" | "execute" | "analysis"
     # - "normal": Standard mode, no planning
     # - "plan": Planning mode, will show approval before execute
+    # - "spec": Spec creation mode, agents produce requirements specification
     # - "plan_and_execute": Planning mode, auto-execute without approval
-    # - "execute": Currently executing a plan
+    # - "execute": Currently executing a plan or spec
     plan_mode: str = "normal"
     plan_session: Optional["PlanSession"] = None
     pending_plan_approval: bool = False
     plan_config: PlanConfig = field(default_factory=PlanConfig)
+    spec_config: SpecConfig = field(default_factory=SpecConfig)
     analysis_config: AnalysisConfig = field(default_factory=AnalysisConfig)
     plan_revision: int = 0
     planning_iteration_count: int = 0
@@ -256,8 +272,15 @@ class TuiModeState:
         - plan_depth: From plan_config
         - broadcast: From plan_config
         """
-        if self.plan_mode not in ("plan", "plan_and_execute"):
+        if self.plan_mode not in ("plan", "plan_and_execute", "spec"):
             return {}
+
+        if self.plan_mode == "spec":
+            return {
+                "enable_agent_task_planning": True,
+                "task_planning_filesystem_mode": True,
+                "broadcast": self.spec_config.broadcast,
+            }
 
         return {
             "enable_agent_task_planning": True,
@@ -314,6 +337,7 @@ class TuiModeState:
         self.quick_edit_prev_agent_mode = None
         self.quick_edit_prev_selected_agent = None
         self.quick_edit_restore_pending = False
+        self.spec_config = SpecConfig()
 
     def reset_plan_state_with_error(self, error_msg: str) -> str:
         """Reset plan state due to an error.

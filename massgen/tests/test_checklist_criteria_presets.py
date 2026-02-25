@@ -40,7 +40,7 @@ class TestGetCriteriaForPreset:
     def test_categories_are_valid(self, preset_name: str):
         criteria = get_criteria_for_preset(preset_name)
         for c in criteria:
-            assert c.category in ("core", "stretch"), f"Preset {preset_name}, {c.id}: invalid category '{c.category}'"
+            assert c.category in ("must", "should", "could"), f"Preset {preset_name}, {c.id}: invalid category '{c.category}'"
 
     @pytest.mark.parametrize("preset_name", list(VALID_CRITERIA_PRESETS))
     def test_texts_are_non_empty(self, preset_name: str):
@@ -52,8 +52,8 @@ class TestGetCriteriaForPreset:
     def test_at_least_three_core_criteria(self, preset_name: str):
         """Each preset should have a majority of core criteria."""
         criteria = get_criteria_for_preset(preset_name)
-        core_count = sum(1 for c in criteria if c.category == "core")
-        assert core_count >= 3, f"Preset {preset_name}: only {core_count} core criteria (need >= 3)"
+        must_should_count = sum(1 for c in criteria if c.category in ("must", "should"))
+        assert must_should_count >= 3, f"Preset {preset_name}: only {must_should_count} must/should criteria (need >= 3)"
 
     def test_unknown_preset_raises_value_error(self):
         with pytest.raises(ValueError, match="Unknown criteria preset"):
@@ -178,7 +178,7 @@ class TestOrchestratorPresetWiring:
         """Dynamically generated criteria should override preset."""
         # This tests the priority: generated > preset > changedoc > default
         generated = [
-            GeneratedCriterion(id="E1", text="Generated criterion", category="core"),
+            GeneratedCriterion(id="E1", text="Generated criterion", category="must"),
         ]
         preset = get_criteria_for_preset("persona")
 
@@ -201,31 +201,31 @@ class TestPresetContentSanity:
 
     def test_persona_preset_exists(self):
         criteria = get_criteria_for_preset("persona")
-        # Should have 4 core + 1 stretch per composition.md
+        # Should have 3 must + 1 should + 1 could per composition.md
         categories = [c.category for c in criteria]
-        assert categories.count("core") == 4
-        assert categories.count("stretch") == 1
+        assert categories.count("must") == 3
+        assert categories.count("should") == 1 and categories.count("could") == 1
 
     def test_decomposition_preset_exists(self):
         criteria = get_criteria_for_preset("decomposition")
         categories = [c.category for c in criteria]
-        assert categories.count("core") == 4
-        assert categories.count("stretch") == 1
+        assert categories.count("must") == 3
+        assert categories.count("should") == 1 and categories.count("could") == 1
 
     def test_evaluation_preset_exists(self):
         criteria = get_criteria_for_preset("evaluation")
         categories = [c.category for c in criteria]
-        assert categories.count("core") == 4
-        assert categories.count("stretch") == 1
+        assert categories.count("must") == 3
+        assert categories.count("should") == 1 and categories.count("could") == 1
 
     def test_prompt_preset_exists(self):
         criteria = get_criteria_for_preset("prompt")
         categories = [c.category for c in criteria]
-        assert categories.count("core") == 3
-        assert categories.count("stretch") == 2
+        assert categories.count("must") == 2
+        assert categories.count("should") == 1 and categories.count("could") == 2
 
     def test_analysis_preset_exists(self):
         criteria = get_criteria_for_preset("analysis")
         categories = [c.category for c in criteria]
-        assert categories.count("core") == 4
-        assert categories.count("stretch") == 1
+        assert categories.count("must") == 3
+        assert categories.count("should") == 1 and categories.count("could") == 1

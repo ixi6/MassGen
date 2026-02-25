@@ -289,6 +289,11 @@ class Orchestrator(ChatAgent):
         self._final_presentation_content: str | None = None
         self._presentation_started: bool = False  # Guard against duplicate presentations
 
+        # Per-agent workspace pre-population from cancelled/incomplete turn continuation.
+        # When set, _clear_agent_workspaces() copies matched agent workspaces as writable
+        # instead of using normal previous_turn pre-population.
+        self._pre_populated_workspaces: dict[str, Path] | None = None
+
         # Track winning agents by turn for memory sharing
         # Format: [{"agent_id": "agent_b", "turn": 1}, {"agent_id": "agent_a", "turn": 2}]
         # Restore from session storage if provided (for multi-turn persistence)
@@ -647,29 +652,54 @@ class Orchestrator(ChatAgent):
         self._seed_plan_execution_workspaces(context="orchestrator_init")
 
     def _seed_plan_execution_workspaces(self, context: str) -> None:
-        """Seed execute-mode plan artifacts into agent workspaces."""
+        """Seed execute-mode plan or spec artifacts into agent workspaces."""
         if not self._plan_session_id:
             return
 
         try:
-            from .plan_execution import setup_agent_workspaces_for_execution
             from .plan_storage import PlanSession
 
             plan_session = PlanSession(self._plan_session_id)
-            task_count = setup_agent_workspaces_for_execution(
-                self.agents,
-                plan_session,
-            )
-            if task_count > 0:
+
+            # Check artifact type to route to plan or spec workspace seeding
+            try:
+                _metadata = plan_session.load_metadata()
+                _artifact_type = getattr(_metadata, "artifact_type", "plan")
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"[Orchestrator] Could not load artifact_type from metadata for " f"plan_session={self._plan_session_id}; defaulting to 'plan'. " f"This may cause incorrect workspace seeding.",
+                )
+                _artifact_type = "plan"
+
+            if _artifact_type == "spec":
+                from .plan_execution import setup_agent_workspaces_for_spec_execution
+
+                item_count = setup_agent_workspaces_for_spec_execution(
+                    self.agents,
+                    plan_session,
+                )
+                item_label = "requirements"
+            else:
+                from .plan_execution import setup_agent_workspaces_for_execution
+
+                item_count = setup_agent_workspaces_for_execution(
+                    self.agents,
+                    plan_session,
+                )
+                item_label = "tasks"
+
+            if item_count > 0:
                 logger.info(
-                    "[Orchestrator] Seeded plan execution workspace (%s, plan_session=%s, tasks=%d)",
+                    "[Orchestrator] Seeded plan execution workspace (%s, plan_session=%s, %s=%d)",
                     context,
                     self._plan_session_id,
-                    task_count,
+                    item_label,
+                    item_count,
                 )
             else:
                 logger.warning(
-                    "[Orchestrator] Plan execution workspace seed produced no tasks (%s, plan_session=%s)",
+                    "[Orchestrator] Plan execution workspace seed produced no %s (%s, plan_session=%s)",
+                    item_label,
                     context,
                     self._plan_session_id,
                 )
@@ -771,6 +801,8 @@ class Orchestrator(ChatAgent):
                 "item_categories": item_categories,
                 # Novelty subagent guidance only when novelty type is available
                 "novelty_subagent_enabled": "novelty" in [t.lower() for t in _active_subagent_types],
+                # Critic subagent guidance only when critic type is available
+                "critic_subagent_enabled": "critic" in [t.lower() for t in _active_subagent_types],
             }
             backend._checklist_state = checklist_state
             backend._checklist_items = list(items)
@@ -1074,6 +1106,8 @@ class Orchestrator(ChatAgent):
                 ),
                 # Preserve novelty gating from initial state (config-driven, doesn't change)
                 "novelty_subagent_enabled": state.get("novelty_subagent_enabled", False),
+                # Preserve critic gating from initial state
+                "critic_subagent_enabled": state.get("critic_subagent_enabled", False),
             },
         )
         # Re-write specs file for stdio backends so the MCP server sees updated state
@@ -1755,7 +1789,6 @@ class Orchestrator(ChatAgent):
         Returns:
             MCP server configuration dictionary
         """
-        import tempfile
         from pathlib import Path as PathlibPath
 
         import massgen.mcp_tools.subagent._subagent_mcp_server as subagent_module
@@ -1783,17 +1816,12 @@ class Orchestrator(ChatAgent):
                 agent_cfg["backend"] = backend_cfg
             agent_configs.append(agent_cfg)
 
-        # Write agent configs to temp file to avoid command line / env var length limits
-        agent_configs_file = tempfile.NamedTemporaryFile(
-            mode="w",
-            suffix=".json",
-            prefix="massgen_subagent_configs_",
-            delete=False,  # Keep file until subagent reads it
-            dir=str(mcp_temp_dir),
-        )
-        json.dump(agent_configs, agent_configs_file)
-        agent_configs_file.close()
-        agent_configs_path = agent_configs_file.name
+        # Write agent configs to a deterministic file to avoid command line
+        # length limits.  Deterministic names (keyed by agent_id) prevent
+        # accumulation across runs — each run simply overwrites.
+        agent_configs_path = str(mcp_temp_dir / f"{agent_id}_agent_configs.json")
+        with open(agent_configs_path, "w") as f:
+            json.dump(agent_configs, f)
 
         # Extract context_paths from orchestrator config to pass to subagents
         # This allows subagents to read the same codebase/files as the parent
@@ -1805,16 +1833,9 @@ class Orchestrator(ChatAgent):
                 parent_context_paths = agent.backend.config.get("context_paths", [])
 
         if parent_context_paths:
-            context_paths_file = tempfile.NamedTemporaryFile(
-                mode="w",
-                suffix=".json",
-                prefix="massgen_subagent_context_paths_",
-                delete=False,
-                dir=str(mcp_temp_dir),
-            )
-            json.dump(parent_context_paths, context_paths_file)
-            context_paths_file.close()
-            context_paths_path = context_paths_file.name
+            context_paths_path = str(mcp_temp_dir / f"{agent_id}_context_paths.json")
+            with open(context_paths_path, "w") as f:
+                json.dump(parent_context_paths, f)
             logger.info(
                 f"[Orchestrator] Passing {len(parent_context_paths)} context paths to subagent MCP",
             )
@@ -1858,16 +1879,9 @@ class Orchestrator(ChatAgent):
                 }
 
             if parent_coordination_config:
-                coordination_config_file = tempfile.NamedTemporaryFile(
-                    mode="w",
-                    suffix=".json",
-                    prefix="massgen_subagent_coordination_config_",
-                    delete=False,
-                    dir=str(mcp_temp_dir),
-                )
-                json.dump(parent_coordination_config, coordination_config_file)
-                coordination_config_file.close()
-                coordination_config_path = coordination_config_file.name
+                coordination_config_path = str(mcp_temp_dir / f"{agent_id}_coordination_config.json")
+                with open(coordination_config_path, "w") as f:
+                    json.dump(parent_coordination_config, f)
                 logger.info(
                     f"[Orchestrator] Passing coordination config to subagent MCP: {list(parent_coordination_config.keys())}",
                 )
@@ -1944,16 +1958,11 @@ class Orchestrator(ChatAgent):
             specialized_types = scan_subagent_types(allowed_types=_allowed)
             if specialized_types:
                 specialized_data = [t.to_dict() for t in specialized_types]
-                specialized_file = tempfile.NamedTemporaryFile(
-                    mode="w",
-                    suffix=".json",
-                    prefix="massgen_subagent_specialized_types_",
-                    delete=False,
-                    dir=str(mcp_temp_dir),
+                specialized_subagents_path = str(
+                    mcp_temp_dir / f"{agent_id}_specialized_types.json",
                 )
-                json.dump(specialized_data, specialized_file)
-                specialized_file.close()
-                specialized_subagents_path = specialized_file.name
+                with open(specialized_subagents_path, "w") as f:
+                    json.dump(specialized_data, f)
                 logger.info(
                     f"[Orchestrator] Passing {len(specialized_types)} specialized subagent types to MCP",
                 )
@@ -4642,6 +4651,7 @@ Your answer:"""
                                     log_session_dir,
                                     self,
                                 )
+                            await self._cancel_running_background_work_for_agent(agent_id)
                             restart_triggered_id = agent_id  # Last agent to provide new answer
                             reset_signal = True
 
@@ -5414,8 +5424,110 @@ Your answer:"""
                     f"[Orchestrator] Failed to save early-termination snapshot for {agent_id}: {e}",
                 )
 
+    @staticmethod
+    def _has_meaningful_workspace_content(path: Path | None) -> bool:
+        """Return True when path includes deliverable files/directories.
+
+        Excludes symlinks, `.git`, and `memory` when determining whether new
+        workspace content is meaningful enough to replace existing snapshots.
+        """
+        if not path or not path.exists() or not path.is_dir():
+            return False
+        return any(not item.is_symlink() and item.name not in (".git", "memory") for item in path.iterdir())
+
+    @staticmethod
+    def _copy_workspace_contents(
+        source: Path,
+        destination: Path,
+        *,
+        replace_destination: bool = False,
+    ) -> int:
+        """Copy top-level workspace contents from source to destination."""
+        if not source.exists() or not source.is_dir():
+            return 0
+
+        if replace_destination and destination.exists():
+            shutil.rmtree(destination)
+        destination.mkdir(parents=True, exist_ok=True)
+
+        items_copied = 0
+        for item in source.iterdir():
+            if item.is_symlink():
+                continue
+            if item.is_file():
+                shutil.copy2(item, destination / item.name)
+                items_copied += 1
+                continue
+            if item.is_dir():
+                shutil.copytree(
+                    item,
+                    destination / item.name,
+                    dirs_exist_ok=True,
+                    symlinks=True,
+                    ignore_dangling_symlinks=True,
+                )
+                items_copied += 1
+        return items_copied
+
+    def _save_partial_workspace_snapshots_for_interrupted_turn(
+        self,
+        *,
+        agent_id: str,
+        backend: Any,
+        timestamp: str,
+        log_session_dir: Path | None,
+    ) -> None:
+        """Best-effort workspace snapshot persistence for interrupted turns."""
+        filesystem_manager = getattr(backend, "filesystem_manager", None)
+        if not filesystem_manager:
+            return
+
+        current_workspace = filesystem_manager.get_current_workspace()
+        workspace_path = Path(current_workspace) if current_workspace else None
+        if not workspace_path or not workspace_path.exists() or not workspace_path.is_dir():
+            return
+
+        snapshot_storage = filesystem_manager.snapshot_storage
+        workspace_has_content = self._has_meaningful_workspace_content(workspace_path)
+        snapshot_storage_has_content = self._has_meaningful_workspace_content(snapshot_storage)
+        use_snapshot_storage_for_logs = not workspace_has_content and snapshot_storage_has_content
+
+        if not workspace_has_content and not snapshot_storage_has_content:
+            logger.debug(
+                f"[Orchestrator] Skipping interrupted-turn workspace snapshot for {agent_id}: no meaningful content",
+            )
+            return
+
+        if snapshot_storage:
+            if not workspace_has_content and snapshot_storage_has_content:
+                logger.info(
+                    f"[Orchestrator] Preserving existing interrupted-turn snapshot for {agent_id}: " f"{snapshot_storage}",
+                )
+            else:
+                copied = self._copy_workspace_contents(
+                    workspace_path,
+                    snapshot_storage,
+                    replace_destination=True,
+                )
+                logger.info(
+                    f"[Orchestrator] Saved interrupted-turn workspace snapshot for {agent_id} to " f"{snapshot_storage} ({copied} items)",
+                )
+
+        if log_session_dir:
+            source_for_logs = snapshot_storage if use_snapshot_storage_for_logs else workspace_path
+            if source_for_logs:
+                workspace_log_dir = log_session_dir / agent_id / timestamp / "workspace"
+                copied = self._copy_workspace_contents(
+                    Path(source_for_logs),
+                    workspace_log_dir,
+                    replace_destination=False,
+                )
+                logger.info(
+                    f"[Orchestrator] Saved interrupted-turn workspace log for {agent_id} to " f"{workspace_log_dir} ({copied} items)",
+                )
+
     def _save_partial_execution_traces_for_interrupted_turn(self) -> None:
-        """Best-effort trace persistence for interrupted turns (e.g., cancellation)."""
+        """Best-effort trace/workspace persistence for interrupted turns."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         log_session_dir = get_log_session_dir()
 
@@ -5423,6 +5535,18 @@ Your answer:"""
             backend = getattr(agent, "backend", None)
             if not backend or not hasattr(backend, "_save_execution_trace"):
                 continue
+
+            try:
+                self._save_partial_workspace_snapshots_for_interrupted_turn(
+                    agent_id=agent_id,
+                    backend=backend,
+                    timestamp=timestamp,
+                    log_session_dir=log_session_dir,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"[Orchestrator] Failed to save interrupted-turn workspace snapshot for {agent_id}: {e}",
+                )
 
             try:
                 if log_session_dir:
@@ -5544,28 +5668,36 @@ Your answer:"""
         return timestamp
 
     def _compute_plan_progress_stats(self, workspace_path: str) -> dict[str, Any] | None:
-        """Compute task progress stats for an agent's workspace (plan execution mode only).
+        """Compute task/requirement progress stats for an agent's workspace.
 
-        This reads the agent's tasks/plan.json and computes how many tasks are completed
-        vs total. Only works in plan-and-execute mode where tasks/plan.json exists.
+        Reads the agent's tasks/plan.json or tasks/spec.json and computes how
+        many items are completed vs total.  Works in both plan-and-execute mode
+        and spec execution mode.
 
         Args:
             workspace_path: Path to the agent's workspace (temp workspace copy)
 
         Returns:
-            Dict with progress stats, or None if not in plan execution mode or files missing
+            Dict with progress stats, or None if not in execution mode or files missing
         """
         try:
             workspace = Path(workspace_path)
             tasks_plan = workspace / "tasks" / "plan.json"
+            tasks_spec = workspace / "tasks" / "spec.json"
 
-            # Check if this is plan execution mode (has tasks/plan.json)
-            if not tasks_plan.exists():
+            # Check for plan.json first, then spec.json
+            if tasks_plan.exists():
+                artifact_file = tasks_plan
+                items_key = "tasks"
+            elif tasks_spec.exists():
+                artifact_file = tasks_spec
+                items_key = "requirements"
+            else:
                 return None
 
-            # Read task plan
-            tasks_data = json.loads(tasks_plan.read_text())
-            tasks = tasks_data.get("tasks", [])
+            # Read artifact
+            tasks_data = json.loads(artifact_file.read_text())
+            tasks = tasks_data.get(items_key, [])
             total_tasks = len(tasks)
 
             if total_tasks == 0:
@@ -5838,6 +5970,95 @@ Your answer:"""
         except Exception as e:
             logger.error(f"[Orchestrator] Error polling for completed subagents: {e}", exc_info=True)
             return []
+
+    async def _cancel_running_subagents_for_agent(
+        self,
+        agent_id: str,
+    ) -> int:
+        """Cancel active subagents owned by a specific parent agent."""
+        try:
+            list_result = await self._call_subagent_mcp_tool_async(
+                parent_agent_id=agent_id,
+                tool_name="list_subagents",
+                params={},
+            )
+        except Exception as exc:
+            logger.debug(
+                "[Orchestrator] Failed to list subagents for cancellation (%s): %s",
+                agent_id,
+                exc,
+                exc_info=True,
+            )
+            return 0
+
+        if not isinstance(list_result, dict) or not list_result.get("success"):
+            return 0
+
+        subagents = list_result.get("subagents")
+        if not isinstance(subagents, list):
+            return 0
+
+        active_ids: set[str] = set()
+        for entry in subagents:
+            if not isinstance(entry, dict):
+                continue
+            subagent_id = str(entry.get("subagent_id") or "").strip()
+            status = str(entry.get("status") or "").strip().lower()
+            if subagent_id and status in {"running", "pending"}:
+                active_ids.add(subagent_id)
+
+        cancelled = 0
+        for subagent_id in sorted(active_ids):
+            try:
+                cancel_result = await self._call_subagent_mcp_tool_async(
+                    parent_agent_id=agent_id,
+                    tool_name="cancel_subagent",
+                    params={"subagent_id": subagent_id},
+                )
+            except Exception as exc:
+                logger.debug(
+                    "[Orchestrator] Failed to cancel subagent %s for %s: %s",
+                    subagent_id,
+                    agent_id,
+                    exc,
+                    exc_info=True,
+                )
+                continue
+
+            if isinstance(cancel_result, dict) and cancel_result.get("success"):
+                cancelled += 1
+
+        return cancelled
+
+    async def _cancel_running_background_work_for_agent(self, agent_id: str) -> None:
+        """Cancel active subagents and background tool jobs for an agent at round end."""
+        cancelled_subagents = await self._cancel_running_subagents_for_agent(agent_id)
+        cancelled_background_jobs = False
+
+        agent = self.agents.get(agent_id)
+        backend = getattr(agent, "backend", None) if agent else None
+        cancel_background_jobs = getattr(backend, "_cancel_all_background_tool_jobs", None)
+        if callable(cancel_background_jobs):
+            try:
+                maybe_awaitable = cancel_background_jobs()
+                if inspect.isawaitable(maybe_awaitable):
+                    await maybe_awaitable
+                cancelled_background_jobs = True
+            except Exception as exc:
+                logger.debug(
+                    "[Orchestrator] Failed to cancel background jobs for %s: %s",
+                    agent_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        if cancelled_subagents or cancelled_background_jobs:
+            logger.info(
+                "[Orchestrator] Round-end cleanup for %s: cancelled_subagents=%s, cancelled_background_jobs=%s",
+                agent_id,
+                cancelled_subagents,
+                cancelled_background_jobs,
+            )
 
     def _get_pending_subagent_results(
         self,
@@ -7121,11 +7342,13 @@ Your answer:"""
         subagent_id: str,
         message: str,
         timeout_seconds: int | None = None,
+        background: bool = True,
     ) -> bool:
         """Continue a terminal subagent from TUI runtime controls."""
         params: dict[str, Any] = {
             "subagent_id": subagent_id,
             "message": message,
+            "background": bool(background),
         }
         if timeout_seconds is not None:
             params["timeout_seconds"] = timeout_seconds
@@ -7137,6 +7360,47 @@ Your answer:"""
                 params=params,
             )
             if isinstance(result, dict) and result.get("success"):
+                if background:
+                    self._injected_subagents.setdefault(parent_agent_id, set()).discard(subagent_id)
+
+                    display = None
+                    if hasattr(self, "coordination_ui") and self.coordination_ui:
+                        display = getattr(self.coordination_ui, "display", None)
+
+                    continued_subagent_id = subagent_id
+                    subagents_payload = result.get("subagents")
+                    if isinstance(subagents_payload, list) and subagents_payload:
+                        first = subagents_payload[0]
+                        if isinstance(first, dict):
+                            continued_subagent_id = str(first.get("subagent_id") or subagent_id)
+
+                    if display and hasattr(display, "notify_runtime_subagent_started"):
+                        try:
+                            task_preview = message.strip() or f"Continue {continued_subagent_id}"
+                            if len(task_preview) > 300:
+                                task_preview = task_preview[:297] + "..."
+                            timeout_for_display = int(
+                                timeout_seconds or self.config.coordination_config.subagent_default_timeout or 300,
+                            )
+                            call_id = f"continue_{continued_subagent_id}_{int(time.time() * 1000)}"
+                            display.notify_runtime_subagent_started(
+                                agent_id=parent_agent_id,
+                                subagent_id=continued_subagent_id,
+                                task=task_preview,
+                                timeout_seconds=timeout_for_display,
+                                call_id=call_id,
+                                status_callback=self._build_tui_continue_status_callback(
+                                    parent_agent_id=parent_agent_id,
+                                    fallback_task=task_preview,
+                                    fallback_timeout_seconds=timeout_for_display,
+                                ),
+                                log_path=None,
+                            )
+                        except Exception:
+                            logger.opt(exception=True).warning(
+                                f"[Orchestrator] Failed to notify TUI of continued subagent " f"{subagent_id} for parent {parent_agent_id}",
+                            )
+
                 logger.info(
                     f"[Orchestrator] Continue request dispatched for subagent {subagent_id} via {parent_agent_id}",
                 )
@@ -7152,6 +7416,109 @@ Your answer:"""
             f"[Orchestrator] Failed to continue subagent {subagent_id} after trying {len(self.agents)} parent agent route(s)",
         )
         return False
+
+    def _build_tui_continue_status_callback(
+        self,
+        parent_agent_id: str,
+        fallback_task: str,
+        fallback_timeout_seconds: int | None,
+    ):
+        """Build status callback for TUI-initiated continue-subagent cards."""
+        from .subagent.models import SubagentDisplayData
+
+        def _map_status(raw_status: Any) -> tuple[str, int]:
+            normalized = str(raw_status or "").lower().strip()
+            if normalized == "completed":
+                return "completed", 100
+            if normalized in {"completed_but_timeout", "partial", "timeout"}:
+                return "timeout", 100
+            if normalized in {"failed", "error"}:
+                return "failed", 0
+            if normalized in {"cancelled", "canceled", "stopped"}:
+                return "canceled", 0
+            if normalized == "pending":
+                return "pending", 0
+            return "running", 0
+
+        def _callback(subagent_id: str) -> SubagentDisplayData | None:
+            payload = self._call_subagent_mcp_tool(
+                parent_agent_id=parent_agent_id,
+                tool_name="list_subagents",
+                params={},
+            )
+            if not isinstance(payload, dict) or not payload.get("success"):
+                return None
+
+            subagents = payload.get("subagents")
+            if not isinstance(subagents, list):
+                return None
+
+            matched_entry = None
+            for entry in subagents:
+                if not isinstance(entry, dict):
+                    continue
+                candidate_id = str(entry.get("subagent_id") or entry.get("id") or "").strip()
+                if candidate_id == subagent_id:
+                    matched_entry = entry
+                    break
+
+            if not isinstance(matched_entry, dict):
+                return None
+
+            result_payload = matched_entry.get("result")
+            if not isinstance(result_payload, dict):
+                result_payload = {}
+
+            status_source = matched_entry.get("status", result_payload.get("status"))
+            display_status, progress = _map_status(status_source)
+
+            answer = result_payload.get("answer")
+            answer_preview = None
+            if isinstance(answer, str) and answer:
+                answer_preview = answer[:200]
+
+            error = result_payload.get("error")
+            if not error:
+                error = matched_entry.get("error")
+
+            execution_time = result_payload.get("execution_time_seconds")
+            if execution_time is None:
+                execution_time = matched_entry.get("execution_time_seconds", 0.0)
+            try:
+                elapsed_seconds = float(execution_time or 0.0)
+            except Exception:
+                elapsed_seconds = 0.0
+
+            timeout_seconds = matched_entry.get("timeout_seconds", fallback_timeout_seconds)
+            try:
+                timeout_value = float(timeout_seconds or fallback_timeout_seconds or 300)
+            except Exception:
+                timeout_value = float(fallback_timeout_seconds or 300)
+
+            workspace = str(
+                result_payload.get("workspace") or matched_entry.get("workspace") or "",
+            )
+
+            task = str(matched_entry.get("task") or fallback_task or "")
+
+            return SubagentDisplayData(
+                id=subagent_id,
+                task=task,
+                status=display_status,
+                progress_percent=progress,
+                elapsed_seconds=elapsed_seconds,
+                timeout_seconds=timeout_value,
+                workspace_path=workspace,
+                workspace_file_count=0,
+                last_log_line=str(error or ""),
+                error=str(error) if isinstance(error, str) and error else None,
+                answer_preview=answer_preview,
+                log_path=result_payload.get("log_path"),
+                context_paths=[],
+                subagent_type=None,
+            )
+
+        return _callback
 
     def _configure_human_input_hook_callbacks(self) -> None:
         """Configure queue callbacks for runtime-input-aware wait interruption."""
@@ -8944,44 +9311,52 @@ Your answer:"""
                 from .filesystem_manager import IsolationContextManager
 
                 workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
-                round_suffix = secrets.token_hex(4)
 
-                round_isolation_mgr = IsolationContextManager(
-                    session_id=f"{self.session_id}-{round_suffix}",
-                    write_mode=write_mode,
-                    workspace_path=workspace_path,
-                )
-
-                # Check for explicit context paths to create worktrees for
+                # Check for explicit context paths and filter to writable ones
+                # Read-only paths don't need worktree isolation
                 ppm = agent.backend.filesystem_manager.path_permission_manager
                 context_paths = ppm.get_context_paths() if ppm else []
-                round_worktree_paths = {}
+                writable_context_paths = [cp for cp in context_paths if cp.get("will_be_writable", False)]
 
-                if context_paths:
-                    # Has context paths: create worktrees for each
-                    for ctx_config in context_paths:
-                        ctx_path = ctx_config.get("path", "")
-                        if ctx_path:
-                            isolated = round_isolation_mgr.initialize_context(ctx_path, agent_id)
-                            round_worktree_paths[isolated] = ctx_path
+                # Skip isolation entirely if all context paths are read-only
+                if context_paths and not writable_context_paths:
+                    logger.info(
+                        f"[Orchestrator] All context paths are read-only for {agent_id}, " "skipping per-round worktree isolation",
+                    )
                 else:
-                    # No context paths: use workspace itself with scratch + branches
-                    round_isolation_mgr.setup_workspace_scratch(workspace_path, agent_id)
-                    round_worktree_paths[workspace_path] = workspace_path
+                    round_suffix = secrets.token_hex(4)
+                    round_isolation_mgr = IsolationContextManager(
+                        session_id=f"{self.session_id}-{round_suffix}",
+                        write_mode=write_mode,
+                        workspace_path=workspace_path,
+                    )
+                    round_worktree_paths = {}
 
-                # Track the new branch name
-                for ctx_info in round_isolation_mgr.list_contexts():
-                    branch = ctx_info.get("branch_name") if ctx_info else None
-                    if branch:
-                        self._agent_current_branches[agent_id] = branch
-                        break
+                    if writable_context_paths:
+                        # Create worktrees only for writable context paths
+                        for ctx_config in writable_context_paths:
+                            ctx_path = ctx_config.get("path", "")
+                            if ctx_path:
+                                isolated = round_isolation_mgr.initialize_context(ctx_path, agent_id)
+                                round_worktree_paths[isolated] = ctx_path
+                    else:
+                        # No context paths at all: use workspace itself with scratch + branches
+                        round_isolation_mgr.setup_workspace_scratch(workspace_path, agent_id)
+                        round_worktree_paths[workspace_path] = workspace_path
 
-                # Store for cleanup in finally block
-                self._round_isolation_managers[agent_id] = round_isolation_mgr
-                self._round_worktree_paths[agent_id] = round_worktree_paths
-                logger.info(
-                    f"[Orchestrator] Created per-round worktree for {agent_id}: {round_worktree_paths}",
-                )
+                    # Track the new branch name
+                    for ctx_info in round_isolation_mgr.list_contexts():
+                        branch = ctx_info.get("branch_name") if ctx_info else None
+                        if branch:
+                            self._agent_current_branches[agent_id] = branch
+                            break
+
+                    # Store for cleanup in finally block
+                    self._round_isolation_managers[agent_id] = round_isolation_mgr
+                    self._round_worktree_paths[agent_id] = round_worktree_paths
+                    logger.info(
+                        f"[Orchestrator] Created per-round worktree for {agent_id}: {round_worktree_paths}",
+                    )
             except Exception as e:
                 logger.warning(f"[Orchestrator] Failed to create per-round worktree for {agent_id}: {e}")
                 round_worktree_paths = None
@@ -11657,19 +12032,6 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         # Get agent's configurable system message using the standard interface
         agent.get_configurable_system_message()
 
-        # Check if image generation is enabled for this agent
-        enable_image_generation = False
-        if hasattr(agent, "config") and agent.config:
-            enable_image_generation = agent.config.backend_params.get(
-                "enable_image_generation",
-                False,
-            )
-        elif hasattr(agent, "backend") and hasattr(agent.backend, "backend_params"):
-            enable_image_generation = agent.backend.backend_params.get(
-                "enable_image_generation",
-                False,
-            )
-
         # Extract command execution parameters
         enable_command_execution = False
         docker_mode = False
@@ -11703,19 +12065,6 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 "concurrent_tool_execution",
                 False,
             )
-        # Check if audio generation is enabled for this agent
-        enable_audio_generation = False
-        if hasattr(agent, "config") and agent.config:
-            enable_audio_generation = agent.config.backend_params.get(
-                "enable_audio_generation",
-                False,
-            )
-        elif hasattr(agent, "backend") and hasattr(agent.backend, "backend_params"):
-            enable_audio_generation = agent.backend.backend_params.get(
-                "enable_audio_generation",
-                False,
-            )
-
         # Check if file generation is enabled for this agent
         enable_file_generation = False
         if hasattr(agent, "config") and agent.config:
@@ -11729,19 +12078,6 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 False,
             )
 
-        # Check if video generation is enabled for this agent
-        enable_video_generation = False
-        if hasattr(agent, "config") and agent.config:
-            enable_video_generation = agent.config.backend_params.get(
-                "enable_video_generation",
-                False,
-            )
-        elif hasattr(agent, "backend") and hasattr(agent.backend, "backend_params"):
-            enable_video_generation = agent.backend.backend_params.get(
-                "enable_video_generation",
-                False,
-            )
-
         # Check if agent has write access to context paths (requires file delivery)
         has_irreversible_actions = False
         if agent.backend.filesystem_manager:
@@ -11750,20 +12086,32 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             has_irreversible_actions = any(cp.get("permission") == "write" for cp in context_paths)
 
         # Build system message using section architecture
+        # Determine artifact_type for spec-aware presenter instructions
+        _presenter_artifact_type = None
+        if self._plan_session_id:
+            try:
+                from massgen.plan_storage import PlanSession
+
+                _ps = PlanSession(self._plan_session_id)
+                _pm = _ps.load_metadata()
+                _presenter_artifact_type = getattr(_pm, "artifact_type", None)
+            except Exception:
+                logger.opt(exception=True).warning(
+                    f"[Orchestrator] Could not load artifact_type for presenter agent " f"(plan_session={self._plan_session_id}); artifact type context will be omitted.",
+                )
+
         base_system_message = self._get_system_message_builder().build_presentation_message(
             agent=agent,
             all_answers=all_answers,
             previous_turns=self._previous_turns,
-            enable_image_generation=enable_image_generation,
-            enable_audio_generation=enable_audio_generation,
             enable_file_generation=enable_file_generation,
-            enable_video_generation=enable_video_generation,
             has_irreversible_actions=has_irreversible_actions,
             enable_command_execution=enable_command_execution,
             docker_mode=docker_mode,
             enable_sudo=enable_sudo,
             concurrent_tool_execution=concurrent_tool_execution,
             agent_mapping=self.coordination_tracker.get_reverse_agent_mapping(),
+            artifact_type=_presenter_artifact_type,
         )
 
         # Change the status of all agents that were not selected to AgentStatus.COMPLETED
@@ -13835,9 +14183,28 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                         f"[Orchestrator] Cleared workspace for {agent_id}: {workspace_path}",
                     )
 
-                    # Pre-populate with previous turn's results if available (creates writable copy).
+                    # Per-agent workspace pre-population from cancelled/incomplete turn
+                    if self._pre_populated_workspaces and agent_id in self._pre_populated_workspaces:
+                        source = self._pre_populated_workspaces[agent_id]
+                        if source.exists():
+                            logger.info(
+                                f"[Orchestrator] Pre-populating {agent_id} workspace " f"with writable copy from cancelled turn: {source}",
+                            )
+                            for item in source.iterdir():
+                                dest = Path(workspace_path) / item.name
+                                if item.is_file():
+                                    shutil.copy2(item, dest)
+                                elif item.is_dir():
+                                    shutil.copytree(
+                                        item,
+                                        dest,
+                                        dirs_exist_ok=True,
+                                        symlinks=True,
+                                        ignore_dangling_symlinks=True,
+                                    )
+                    # Normal pre-populate with previous turn's results (creates writable copy).
                     # In execute mode, this preserves chunk-to-chunk workspace continuity.
-                    if previous_turn_workspace and previous_turn_workspace.exists():
+                    elif previous_turn_workspace and previous_turn_workspace.exists():
                         if self._plan_session_id:
                             logger.info(
                                 "[Orchestrator] Plan execution mode: restoring previous chunk " "workspace for %s from %s (plan_session: %s)",
@@ -13868,6 +14235,10 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                             "[Orchestrator] Plan execution mode: no previous turn workspace " "available to restore (plan_session: %s)",
                             self._plan_session_id,
                         )
+
+        # Clear pre-populated workspaces after use (only needed for first turn after resume)
+        if self._pre_populated_workspaces is not None:
+            self._pre_populated_workspaces = None
 
         # In plan execution mode, workspace clear removes tasks/plan.json; re-seed immediately.
         self._seed_plan_execution_workspaces(context="workspace_clear")

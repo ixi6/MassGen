@@ -17,7 +17,6 @@ import asyncio
 import atexit
 import json
 import logging
-import os
 import signal
 from datetime import datetime
 from pathlib import Path
@@ -243,11 +242,10 @@ async def create_server() -> fastmcp.FastMCP:
                 _parent_agent_configs = json.load(f)
             if not isinstance(_parent_agent_configs, list):
                 _parent_agent_configs = [_parent_agent_configs]
-            # Clean up the temp file after reading
-            try:
-                os.unlink(args.agent_configs_file)
-            except OSError:
-                pass  # Ignore if file already deleted
+            # Do NOT delete the file here. The MCP server process may start
+            # after a delay (Docker, lazy launch) or be restarted, and early
+            # deletion causes a race where the file is gone before it can be
+            # read. The orchestrator owns cleanup via mcp_temp_dir.
         except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
             logger.warning(f"Failed to load agent configs from {args.agent_configs_file}: {e}")
             _parent_agent_configs = []
@@ -271,11 +269,7 @@ async def create_server() -> fastmcp.FastMCP:
                 _parent_context_paths = json.load(f)
             if not isinstance(_parent_context_paths, list):
                 _parent_context_paths = []
-            # Clean up the temp file after reading
-            try:
-                os.unlink(args.context_paths_file)
-            except OSError:
-                pass  # Ignore if file already deleted
+            # Do NOT delete — see agent_configs_file comment above.
             logger.info(f"[SubagentMCP] Loaded {len(_parent_context_paths)} parent context paths")
         except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
             logger.warning(f"Failed to load context paths from {args.context_paths_file}: {e}")
@@ -289,11 +283,7 @@ async def create_server() -> fastmcp.FastMCP:
                 _parent_coordination_config = json.load(f)
             if not isinstance(_parent_coordination_config, dict):
                 _parent_coordination_config = {}
-            # Clean up the temp file after reading
-            try:
-                os.unlink(args.coordination_config_file)
-            except OSError:
-                pass  # Ignore if file already deleted
+            # Do NOT delete — see agent_configs_file comment above.
             logger.info("[SubagentMCP] Loaded parent coordination config")
         except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
             logger.warning(f"Failed to load coordination config from {args.coordination_config_file}: {e}")
@@ -311,11 +301,7 @@ async def create_server() -> fastmcp.FastMCP:
                 for td in types_data:
                     config = SpecializedSubagentConfig.from_dict(td)
                     _specialized_subagents[config.name.lower()] = config.to_dict()
-            # Clean up the temp file after reading
-            try:
-                os.unlink(args.specialized_subagents_file)
-            except OSError:
-                pass
+            # Do NOT delete — see agent_configs_file comment above.
             logger.info(f"[SubagentMCP] Loaded {len(_specialized_subagents)} specialized subagent types")
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, FileNotFoundError, OSError) as e:
             logger.warning(f"Failed to load specialized subagent types from {args.specialized_subagents_file}: {e}")
@@ -737,6 +723,7 @@ async def create_server() -> fastmcp.FastMCP:
         subagent_id: str,
         message: str,
         timeout_seconds: int | None = None,
+        background: bool = False,
     ) -> dict[str, Any]:
         """
         Continue a previously spawned subagent with a new message.
@@ -755,9 +742,12 @@ async def create_server() -> fastmcp.FastMCP:
             subagent_id: ID of the subagent to continue (from spawn_subagents or list_subagents)
             message: New message to send to the subagent
             timeout_seconds: Optional timeout override (uses default if not specified)
+            background: If True, continue in background and return immediately
 
         Returns:
-            Dictionary with subagent result (same format as spawn_subagents results):
+            Dictionary with subagent result.
+
+            Blocking mode (background=False):
             {
                 "success": bool,
                 "subagent_id": "...",
@@ -766,6 +756,21 @@ async def create_server() -> fastmcp.FastMCP:
                 "answer": "..." | null,
                 "execution_time_seconds": float,
                 "token_usage": {"input_tokens": N, "output_tokens": N}
+            }
+
+            Background mode (background=True):
+            {
+                "success": true,
+                "operation": "continue_subagent",
+                "mode": "background",
+                "subagents": [
+                    {
+                        "subagent_id": "...",
+                        "status": "running",
+                        "workspace": "...",
+                        "status_file": "..."
+                    }
+                ]
             }
 
         Examples:
@@ -805,6 +810,28 @@ async def create_server() -> fastmcp.FastMCP:
                     "error": "Missing required 'message' parameter",
                 }
 
+            if background:
+                info = manager.continue_subagent_background(
+                    subagent_id=subagent_id,
+                    new_message=message,
+                    timeout_seconds=timeout_seconds,
+                )
+                if str(info.get("status", "")).lower() == "error" or info.get("error"):
+                    return {
+                        "success": False,
+                        "operation": "continue_subagent",
+                        "mode": "background",
+                        "error": str(info.get("error") or "Failed to continue subagent in background"),
+                        "subagents": [info],
+                    }
+                return {
+                    "success": True,
+                    "operation": "continue_subagent",
+                    "mode": "background",
+                    "subagents": [info],
+                    "note": "Results will be automatically injected when subagent completes.",
+                }
+
             # Use asyncio.run to execute the async method
             # This is safe because MCP tool handlers run in their own context
             from massgen.utils import run_async_safely
@@ -821,6 +848,7 @@ async def create_server() -> fastmcp.FastMCP:
                 return {
                     "success": False,
                     "operation": "continue_subagent",
+                    "mode": "blocking",
                     "error": result.error,
                     **result.to_dict(),
                 }
@@ -828,6 +856,7 @@ async def create_server() -> fastmcp.FastMCP:
             return {
                 "success": True,
                 "operation": "continue_subagent",
+                "mode": "blocking",
                 **result.to_dict(),
             }
 

@@ -54,6 +54,24 @@ class _PanelStub:
         return self._timeline
 
 
+class _SubagentPanelStub(_PanelStub):
+    def __init__(self, timeline: TimelineSection) -> None:
+        super().__init__(timeline)
+        self.subagent_args_calls: list[str] = []
+        self.subagent_result_calls: list[str] = []
+
+    def _is_subagent_tool(self, tool_name: str, _args_payload=None) -> bool:  # noqa: ANN001
+        return "continue_subagent" in str(tool_name).lower()
+
+    def _show_subagent_card_from_args(self, tool_data, _timeline, round_number: int | None = None):  # noqa: ANN001
+        self.subagent_args_calls.append(str(getattr(tool_data, "tool_id", "")))
+        return None
+
+    def _update_subagent_card_with_results(self, tool_data, _timeline):  # noqa: ANN001
+        self.subagent_result_calls.append(str(getattr(tool_data, "tool_id", "")))
+        return None
+
+
 def _make_tool(tool_id: str, tool_name: str) -> ToolDisplayData:
     return ToolDisplayData(
         tool_id=tool_id,
@@ -238,6 +256,49 @@ async def test_event_adapter_does_not_batch_when_text_arrives_between_tools():
         assert timeline.get_tool("t2") is not None
         assert timeline.get_tool_batch("t1") is None
         assert timeline.get_tool_batch("t2") is None
+
+
+@pytest.mark.asyncio
+async def test_event_adapter_continue_subagent_keeps_expandable_tool_card_and_subagent_callbacks():
+    """continue_subagent should keep a normal tool card while still driving subagent card wiring."""
+    app = _TimelineApp()
+    async with app.run_test(headless=True) as pilot:
+        timeline = app.query_one(TimelineSection)
+        panel = _SubagentPanelStub(timeline)
+        adapter = TimelineEventAdapter(panel)
+
+        adapter.handle_event(
+            MassGenEvent.create(
+                EventType.TOOL_START,
+                agent_id="agent_a",
+                tool_id="continue_1",
+                tool_name="mcp__subagent_agent_a__continue_subagent",
+                args={
+                    "subagent_id": "jazz_researcher",
+                    "message": "continue with more detail",
+                    "background": True,
+                },
+                server_name="subagent_agent_a",
+            ),
+        )
+        adapter.handle_event(
+            MassGenEvent.create(
+                EventType.TOOL_COMPLETE,
+                agent_id="agent_a",
+                tool_id="continue_1",
+                tool_name="mcp__subagent_agent_a__continue_subagent",
+                result='{"success": true, "operation": "continue_subagent", "mode": "background", "subagents": [{"subagent_id": "jazz_researcher", "status": "running"}]}',
+                elapsed_seconds=0.02,
+                is_error=False,
+            ),
+        )
+        await pilot.pause()
+
+        card = timeline.get_tool("continue_1")
+        assert card is not None
+        assert card.status == "success"
+        assert panel.subagent_args_calls == ["continue_1"]
+        assert panel.subagent_result_calls == ["continue_1"]
 
 
 @pytest.mark.asyncio

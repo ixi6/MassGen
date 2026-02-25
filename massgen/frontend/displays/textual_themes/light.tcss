@@ -405,6 +405,11 @@ ModeToggle.state-plan {
     color: #238636;
 }
 
+ModeToggle.state-spec {
+    background: #d4f4dc;
+    color: #238636;
+}
+
 ModeToggle.state-execute {
     background: #d4f4dc;
     color: #238636;

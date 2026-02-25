@@ -617,6 +617,17 @@ ModeToggle.state-plan:focus {
     border-bottom: tall $accent-success;
 }
 
+ModeToggle.state-spec {
+    color: $accent-success;
+    border-bottom: tall $accent-success;
+}
+
+ModeToggle.state-spec:hover,
+ModeToggle.state-spec:focus {
+    color: $accent-success;
+    border-bottom: tall $accent-success;
+}
+
 ModeToggle.state-execute {
     color: $accent-success;
     border-bottom: tall $accent-success;

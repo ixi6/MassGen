@@ -316,11 +316,15 @@ def _evaluate_gap_report(report_path: str, state: dict[str, Any]) -> dict[str, A
     result["file_exists"] = True
     result["content"] = report_text
 
-    if require_report and len(report_text.strip()) < _DIAGNOSTIC_REPORT_MIN_LENGTH:
+    has_multimodal = bool(state.get("has_multimodal_tools", False))
+    min_length = 300 if has_multimodal else _DIAGNOSTIC_REPORT_MIN_LENGTH
+
+    if require_report and len(report_text.strip()) < min_length:
         result["passed"] = False
-        result["issues"].append(
-            "Report is too short to contain meaningful diagnostic analysis. " "Include Failure Patterns, Root Causes, and Goal Alignment sections.",
-        )
+        msg = "Report is too short to contain meaningful diagnostic analysis. " "Include Failure Patterns, Root Causes, and Goal Alignment sections."
+        if has_multimodal:
+            msg += " When visual evaluation tools are available, your diagnostic " "report must include specific findings from read_media analysis."
+        result["issues"].append(msg)
 
     return result
 
@@ -424,8 +428,8 @@ def evaluate_checklist_submission(
         # Dynamic core/tail from item_categories in state, with fallback
         stored_categories = state.get("item_categories")
         if stored_categories:
-            core_item_candidates = tuple(k for k, v in stored_categories.items() if v == "core")
-            tail_failure_ids = {k for k, v in stored_categories.items() if v == "stretch"}
+            core_item_candidates = tuple(k for k, v in stored_categories.items() if v in ("core", "must", "should"))
+            tail_failure_ids = {k for k, v in stored_categories.items() if v in ("stretch", "could")}
         else:
             # Legacy fallback: all items except last are core
             all_ids = [f"{item_prefix}{i+1}" for i in range(len(items))]
@@ -511,17 +515,40 @@ def evaluate_checklist_submission(
                     )
             # Novelty subagent guidance: when no transformative work identified,
             # suggest spawning a novelty subagent to break anchoring
-            if state.get("novelty_subagent_enabled", False) and has_existing_answers and substantiveness_eval.get("valid", False) and substantiveness_eval.get("transformative_count", 0) == 0:
-                explanation += (
-                    "Your evaluation found zero transformative changes. To break through "
-                    "this plateau, spawn a novelty subagent in the background — pass it "
-                    "your diagnostic analysis, the current workspace, and evaluation "
-                    "findings. The novelty subagent will propose fundamentally different "
-                    "directions while you continue working on any structural or "
-                    "incremental improvements already identified. When its results "
-                    "arrive, incorporate at least one transformative suggestion into "
-                    "your work. "
-                )
+            _novelty_enabled = state.get("novelty_subagent_enabled", False)
+            _critic_enabled = state.get("critic_subagent_enabled", False)
+            if has_existing_answers and substantiveness_eval.get("valid", False) and substantiveness_eval.get("transformative_count", 0) == 0:
+                if _novelty_enabled and _critic_enabled:
+                    explanation += (
+                        "Before starting your next iteration, spawn two background "
+                        "subagents in parallel: "
+                        "1. A `critic` subagent: pass it the current answer, all "
+                        "previous answers, and the evaluation criteria. It will provide "
+                        "honest external assessment. "
+                        "2. A `novelty` subagent: pass it your diagnostic analysis and "
+                        "current workspace. It will propose fundamentally different "
+                        "directions. "
+                        "Wait for both results before committing to your improvement "
+                        "strategy. "
+                    )
+                elif _novelty_enabled:
+                    explanation += (
+                        "Your evaluation found zero transformative changes. To break through "
+                        "this plateau, spawn a novelty subagent in the background — pass it "
+                        "your diagnostic analysis, the current workspace, and evaluation "
+                        "findings. The novelty subagent will propose fundamentally different "
+                        "directions while you continue working on any structural or "
+                        "incremental improvements already identified. When its results "
+                        "arrive, incorporate at least one transformative suggestion into "
+                        "your work. "
+                    )
+                elif _critic_enabled:
+                    explanation += (
+                        "Before starting your next iteration, spawn a `critic` subagent "
+                        "in the background — pass it the current answer, all previous "
+                        "answers, and the evaluation criteria. The critic will provide "
+                        "honest external assessment to guide your improvements. "
+                    )
             explanation += "Your new answer MUST make material changes — do NOT simply copy or " "resubmit the same content."
             if improvements_text:
                 explanation += (

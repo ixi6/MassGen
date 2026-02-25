@@ -190,6 +190,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
+
+Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging via `target_agents` parameter. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
+
 **v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
 
 Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
@@ -197,10 +201,6 @@ Specialized subagent roles (evaluator, explorer, researcher, novelty) with disco
 **v0.1.54 (February 20, 2026)** - Subagent Messaging & Copilot SDK Backend
 
 Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
-
-**v0.1.53 (February 18, 2026)** - Background Tool Execution
-
-Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
 
 :doc:`Full changelog → <changelog>`
 

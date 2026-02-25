@@ -267,6 +267,7 @@ class TimelineEventAdapter:
         tool_data = output.tool_data
         if tool_data is None:
             return
+        tool_name_lower = str(getattr(tool_data, "tool_name", "") or "").lower()
 
         is_planning_tool = False
         if hasattr(self._panel, "_is_planning_mcp_tool"):
@@ -287,6 +288,9 @@ class TimelineEventAdapter:
             except Exception:
                 is_subagent_tool = False
 
+        # Keep continue_subagent visually consistent with normal tools while still
+        # rendering/updating SubagentCard state.
+        render_tool_card_for_subagent = is_subagent_tool and ("continue_subagent" in tool_name_lower)
         skip_batching = is_planning_tool or is_subagent_tool
 
         if tool_data.status == "running":
@@ -317,6 +321,8 @@ class TimelineEventAdapter:
                         timeline,
                         round_number=round_number,
                     )
+                    if render_tool_card_for_subagent:
+                        timeline.add_tool(tool_data, round_number=round_number)
                 except Exception as e:
                     tui_log(f"[TimelineEventAdapter] {e}")
             elif is_planning_tool:
@@ -338,7 +344,7 @@ class TimelineEventAdapter:
                 else:
                     timeline.add_tool(tool_data, round_number=round_number)
         else:
-            if not is_planning_tool and not is_subagent_tool:
+            if not is_planning_tool and (not is_subagent_tool or render_tool_card_for_subagent):
                 # Check if this tool already exists in the timeline
                 try:
                     existing = timeline.get_tool(tool_data.tool_id)

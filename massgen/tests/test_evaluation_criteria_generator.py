@@ -27,56 +27,60 @@ class TestDefaultCriteria:
             assert c.id.startswith("E"), f"Expected E-prefix, got {c.id}"
 
     def test_default_criteria_count(self):
-        """Default criteria should have exactly 4 items."""
+        """Default criteria should have exactly 5 items (4 base + quality/craft)."""
         criteria = get_default_criteria(has_changedoc=False)
-        assert len(criteria) == 4
+        assert len(criteria) == 5
 
-    def test_default_criteria_have_core_and_stretch(self):
-        """Default criteria should have 3 core + 1 stretch."""
+    def test_default_criteria_have_must_should_could(self):
+        """Default criteria should have 2 must + 2 should + 1 could."""
         criteria = get_default_criteria(has_changedoc=False)
-        core_count = sum(1 for c in criteria if c.category == "core")
-        stretch_count = sum(1 for c in criteria if c.category == "stretch")
-        assert core_count == 3
-        assert stretch_count == 1
+        must_count = sum(1 for c in criteria if c.category == "must")
+        should_count = sum(1 for c in criteria if c.category == "should")
+        could_count = sum(1 for c in criteria if c.category == "could")
+        assert must_count == 2
+        assert should_count == 2
+        assert could_count == 1
 
-    def test_default_criteria_last_is_stretch(self):
-        """The last default criterion should be the stretch item."""
+    def test_default_criteria_includes_quality_craft(self):
+        """Default criteria must include the quality/craft criterion."""
         criteria = get_default_criteria(has_changedoc=False)
-        assert criteria[-1].category == "stretch"
+        craft_criteria = [c for c in criteria if "craft" in c.text or "intentional" in c.text]
+        assert len(craft_criteria) == 1
+        assert craft_criteria[0].category == "should"
 
     def test_default_criteria_sequential_ids(self):
-        """Default criteria should have sequential E1, E2, E3, E4 IDs."""
+        """Default criteria should have sequential E1-E5 IDs."""
         criteria = get_default_criteria(has_changedoc=False)
         ids = [c.id for c in criteria]
-        assert ids == ["E1", "E2", "E3", "E4"]
+        assert ids == ["E1", "E2", "E3", "E4", "E5"]
 
 
 class TestChangedocDefaults:
     """Tests for changedoc mode defaults."""
 
     def test_changedoc_adds_traceability_criterion(self):
-        """Changedoc mode should add a 5th core traceability criterion."""
+        """Changedoc mode should add traceability after quality/craft."""
         criteria = get_default_criteria(has_changedoc=True)
-        assert len(criteria) == 5
+        assert len(criteria) == 6
 
-    def test_changedoc_traceability_is_core(self):
-        """The changedoc traceability criterion should be tagged core."""
+    def test_changedoc_traceability_is_must(self):
+        """The changedoc traceability criterion should be tagged must."""
         criteria = get_default_criteria(has_changedoc=True)
-        traceability = criteria[4]  # 5th item
-        assert traceability.category == "core"
-        assert traceability.id == "E5"
+        traceability = criteria[5]  # 6th item (after quality/craft at E5)
+        assert traceability.category == "must"
+        assert traceability.id == "E6"
 
     def test_changedoc_traceability_mentions_changedoc(self):
         """Changedoc traceability criterion text should mention changedoc."""
         criteria = get_default_criteria(has_changedoc=True)
-        traceability = criteria[4]
+        traceability = criteria[5]
         assert "changedoc" in traceability.text.lower() or "decision" in traceability.text.lower()
 
     def test_changedoc_preserves_base_criteria(self):
-        """Changedoc mode should preserve all 4 base criteria."""
+        """Changedoc mode should preserve all 5 base criteria (4 + quality/craft)."""
         base = get_default_criteria(has_changedoc=False)
         changedoc = get_default_criteria(has_changedoc=True)
-        for i in range(4):
+        for i in range(5):
             assert base[i].text == changedoc[i].text
 
 
@@ -135,8 +139,8 @@ class TestCriteriaValidation:
         assert len(result) == 4
         assert result[0].id == "E1"
         assert result[0].text == "Goal alignment check"
-        assert result[0].category == "core"
-        assert result[3].category == "stretch"
+        assert result[0].category == "must"
+        assert result[3].category == "could"
 
     def test_parse_invalid_json_returns_none(self):
         """Invalid JSON should return None (triggering fallback)."""
@@ -238,10 +242,10 @@ class TestCriteriaValidation:
         result = _parse_criteria_response(response, min_criteria=4, max_criteria=10)
         assert result is not None
         assert len(result) == 8
-        core_count = sum(1 for c in result if c.category == "core")
-        stretch_count = sum(1 for c in result if c.category == "stretch")
-        assert core_count == 6
-        assert stretch_count == 2
+        must_count = sum(1 for c in result if c.category == "must")
+        could_count = sum(1 for c in result if c.category == "could")
+        assert must_count == 6
+        assert could_count == 2
 
 
 class TestGenerationPrompt:

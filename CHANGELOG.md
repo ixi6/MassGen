@@ -9,16 +9,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
+Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
+
 **v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
 Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
 
 **v0.1.54 (February 20, 2026)** - Subagent Messaging & Copilot SDK Backend
 Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
 
-**v0.1.53 (February 18, 2026)** - Background Tool Execution
-Background tool execution for non-blocking long-running work. Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
-
 ---
+
+## [0.1.56] - 2026-02-25
+
+### Added
+- **Critic Subagent** ([#945](https://github.com/massgen/MassGen/pull/945)): New subagent type for honest, unbiased quality assessment
+  - Detects genuine vs incremental improvement across refinement rounds
+  - First impression, quality ceiling assessment, incrementalism verdict, independent E-criterion scoring
+  - Describes the 10/10 vision and distance to excellence
+  - Complements existing subagent types (evaluator, explorer, researcher, novelty)
+
+- **Spec Plan Mode** ([#945](https://github.com/massgen/MassGen/pull/945)): Formal requirements specification before execution
+  - `plan_mode="spec"` for structured requirements gathering
+  - Spec creation, approval modal, and execution pipeline
+  - TUI spec mode state with dedicated mode bar support
+  - Spec storage and changedoc integration
+
+- **read_media Conversation Continuity** ([#945](https://github.com/massgen/MassGen/pull/945)): Follow-up conversations on supported media (image) via `continue_from` conversation_id
+  - Multi-turn image analysis with severity parsing
+
+- **ask_others Targeted Messaging** ([#937](https://github.com/massgen/MassGen/pull/937)): `target_agents` parameter for focused agent-to-agent communication
+  - Validation and per-target response counting
+  - Shadow-agent prompt improvements for prior work separation
+
+- **Codex OAuth Login Fix** ([#937](https://github.com/massgen/MassGen/pull/937), MAS-322): Codex backend always available in WebUI regardless of OPENAI_API_KEY
+  - OAuth authentication fix via `codex login`
+
+- **Background Subagent Continuation** ([#945](https://github.com/massgen/MassGen/pull/945)): Non-blocking subagent task execution
+  - Enhanced subagent state tracking and graceful cancellation
+
+- **Docker Configuration Mounting** ([#945](https://github.com/massgen/MassGen/pull/945)): Claude and Codex configuration mounting options for Docker containers
+
+### Changed
+- **Evaluation Criteria Taxonomy** ([#945](https://github.com/massgen/MassGen/pull/945)): Updated from core/stretch to must/should/could tiers
+- **Novelty Subagent Enhancement** ([#945](https://github.com/massgen/MassGen/pull/945)): Updated guidance for growth-oriented refinement
+- **Multimodal Tool Configs** ([#945](https://github.com/massgen/MassGen/pull/945)): Updated text-to-image, text-to-speech, and text-to-video generation configs
+
+### Fixed
+- Test and spec reading fixes ([#945](https://github.com/massgen/MassGen/pull/945))
+- Audio cleanup for future release stability ([#945](https://github.com/massgen/MassGen/pull/945))
+
+### Documentation, Configurations and Resources
+- New `massgen/subagent_types/critic/SUBAGENT.md` - Critic subagent type definition
+- Updated `massgen/subagent_types/novelty/SUBAGENT.md` - Enhanced novelty guidance
+- Updated `massgen/tool/_multimodal_tools/TOOL.md` - Audio multimodal documentation
+- Updated `massgen/configs/features/background_subagent_example.yaml`
+- Updated multimodal tool configs (text-to-image, text-to-speech, text-to-video)
+- New `ROADMAP_v0.1.57.md` - Next release roadmap
+
+### Technical Details
+- **Major Focus**: Spec plan mode, targeted messaging, critic subagent
+- **PRs Merged**: [#945](https://github.com/massgen/MassGen/pull/945) (Spec mode, critic subagent, audio multimodal), [#937](https://github.com/massgen/MassGen/pull/937) (Codex OAuth, ask_others targeting)
+- **Files Changed**: 89 files, +8684/-1089 lines
+- **New Tests**: 16 new test files covering spec execution, spec storage, spec approval modal, audio multimodal, read_media analysis/followup, refinement quality, and more
+- **Contributors**: @HenryQi (3 commits), @MuL1ian (3 commits), and the MassGen team (4 commits)
 
 ## [0.1.55] - 2026-02-23
 

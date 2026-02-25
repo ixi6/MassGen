@@ -553,16 +553,14 @@ class SystemMessageBuilder:
         agent,  # ChatAgent
         all_answers: dict[str, str],
         previous_turns: list[dict[str, Any]],
-        enable_image_generation: bool = False,
-        enable_audio_generation: bool = False,
         enable_file_generation: bool = False,
-        enable_video_generation: bool = False,
         has_irreversible_actions: bool = False,
         enable_command_execution: bool = False,
         docker_mode: bool = False,
         enable_sudo: bool = False,
         concurrent_tool_execution: bool = False,
         agent_mapping: dict[str, str] | None = None,
+        artifact_type: str | None = None,
     ) -> str:
         """Build system message for final presentation phase.
 
@@ -573,10 +571,7 @@ class SystemMessageBuilder:
             agent: The presenting agent
             all_answers: All answers from coordination phase
             previous_turns: List of previous turn data for filesystem context
-            enable_image_generation: Whether image generation is enabled
-            enable_audio_generation: Whether audio generation is enabled
             enable_file_generation: Whether file generation is enabled
-            enable_video_generation: Whether video generation is enabled
             has_irreversible_actions: Whether agent has write access
             enable_command_execution: Whether command execution is enabled
             docker_mode: Whether commands run in Docker
@@ -594,14 +589,10 @@ class SystemMessageBuilder:
         if agent_system_message is None:
             agent_system_message = ""
 
-        # Get presentation instructions from message_templates
-        # (This contains special logic for image/audio/file/video generation)
+        # Get presentation instructions from message_templates.
         presentation_instructions = self.message_templates.final_presentation_system_message(
             original_system_message=agent_system_message,
-            enable_image_generation=enable_image_generation,
-            enable_audio_generation=enable_audio_generation,
             enable_file_generation=enable_file_generation,
-            enable_video_generation=enable_video_generation,
             has_irreversible_actions=has_irreversible_actions,
             enable_command_execution=enable_command_execution,
         )
@@ -676,6 +667,13 @@ This makes the work reusable for similar future tasks."""
                 sections_content.append(_CHANGEDOC_PRESENTER_INSTRUCTIONS)
                 logger.info("[SystemMessageBuilder] Added changedoc consolidation instructions for presentation")
 
+            # Add spec compliance instructions if executing against a spec
+            if artifact_type == "spec":
+                from massgen.system_prompt_sections import _SPEC_PRESENTER_INSTRUCTIONS
+
+                sections_content.append(_SPEC_PRESENTER_INSTRUCTIONS)
+                logger.info("[SystemMessageBuilder] Added spec compliance instructions for presentation")
+
             # Combine: filesystem sections + presentation instructions
             filesystem_content = "\n\n".join(sections_content)
             return f"{filesystem_content}\n\n## Instructions\n{presentation_instructions}"
@@ -688,6 +686,12 @@ This makes the work reusable for similar future tasks."""
                 )
 
                 presentation_instructions += _CHANGEDOC_PRESENTER_INSTRUCTIONS
+
+            # Add spec compliance instructions if executing against a spec
+            if artifact_type == "spec":
+                from massgen.system_prompt_sections import _SPEC_PRESENTER_INSTRUCTIONS
+
+                presentation_instructions += _SPEC_PRESENTER_INSTRUCTIONS
 
             # No filesystem - just return presentation instructions
             return presentation_instructions

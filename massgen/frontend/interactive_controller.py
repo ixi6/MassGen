@@ -500,12 +500,12 @@ class TextualInteractiveAdapter(UIAdapter):
         if self._display and self._display._app and hasattr(self._display._app, "_mode_state"):
             mode_state = self._display._app._mode_state
             logger.info(f"[TextualAdapter] plan_mode={mode_state.plan_mode}, has_answer={bool(result.answer_text)}")
-            if mode_state.plan_mode == "plan" and result.answer_text and not result.was_cancelled and not result.error:
+            if mode_state.plan_mode in ("plan", "spec") and result.answer_text and not result.was_cancelled and not result.error:
                 # Planning completed - trigger approval flow
                 logger.info("[TextualAdapter] Triggering plan approval flow")
                 self._trigger_plan_approval(result, mode_state)
                 return
-            if mode_state.plan_mode == "plan" and getattr(mode_state, "quick_edit_restore_pending", False) and (result.was_cancelled or result.error):
+            if mode_state.plan_mode in ("plan", "spec") and getattr(mode_state, "quick_edit_restore_pending", False) and (result.was_cancelled or result.error):
                 restore_mode = mode_state.quick_edit_prev_agent_mode or "multi"
                 restore_selected = mode_state.quick_edit_prev_selected_agent
                 mode_state.agent_mode = restore_mode
@@ -552,11 +552,15 @@ class TextualInteractiveAdapter(UIAdapter):
             return
 
         plan_path, plan_data = plan_result
+        # Support both plan (tasks) and spec (requirements) artifacts
         tasks = plan_data.get("tasks", [])
-        logger.info(f"[TextualAdapter] Found plan with {len(tasks)} tasks at {plan_path}")
+        requirements = plan_data.get("requirements", [])
+        items = tasks or requirements
+        logger.info(f"[TextualAdapter] Found artifact with {len(items)} items at {plan_path}")
 
-        if not tasks:
-            self.notify("Plan has no tasks", "warning")
+        if not items:
+            artifact_label = "spec" if requirements else "plan"
+            self.notify(f"{artifact_label.capitalize()} has no items", "warning")
             mode_state.reset_plan_state()
             if self._display and self._display._app and hasattr(self._display._app, "_mode_bar"):
                 self._display._call_app_method("_update_mode_bar_plan_mode", "normal")
@@ -567,16 +571,17 @@ class TextualInteractiveAdapter(UIAdapter):
         mode_state.planning_iteration_count = (getattr(mode_state, "planning_iteration_count", 0) or 0) + 1
 
         # Show modal via display
+        # For spec artifacts, pass requirements as tasks for the approval modal
         if self._display:
             logger.info("[TextualAdapter] Calling show_plan_approval_modal")
-            self._display.show_plan_approval_modal(tasks, plan_path, plan_data, mode_state)
+            self._display.show_plan_approval_modal(items, plan_path, plan_data, mode_state)
 
     def _find_plan_from_workspace(
         self,
         *,
         prefer_execution_scope: bool = False,
     ) -> tuple | None:
-        """Find and parse plan.json from agent workspace.
+        """Find and parse plan.json or spec.json from agent workspace.
 
         Returns:
             Tuple of (plan_path, plan_data) if found, None otherwise.
@@ -598,7 +603,7 @@ class TextualInteractiveAdapter(UIAdapter):
             # Track JSON errors to report if no valid plan found
             json_errors = []
 
-            # Check agent workspaces for plan
+            # Check agent workspaces for plan or spec
             for agent_dir in final_dir.glob("agent_*/workspace"):
                 if prefer_execution_scope:
                     search_order = [
@@ -606,40 +611,48 @@ class TextualInteractiveAdapter(UIAdapter):
                         agent_dir / "plan.json",
                         agent_dir / "deliverable" / "project_plan.json",
                         agent_dir / "project_plan.json",
+                        agent_dir / "tasks" / "spec.json",
+                        agent_dir / "spec.json",
+                        agent_dir / "deliverable" / "project_spec.json",
+                        agent_dir / "project_spec.json",
                     ]
                 else:
                     search_order = [
                         agent_dir / "deliverable" / "project_plan.json",
                         agent_dir / "project_plan.json",
                         agent_dir / "tasks" / "plan.json",
+                        agent_dir / "deliverable" / "project_spec.json",
+                        agent_dir / "project_spec.json",
+                        agent_dir / "tasks" / "spec.json",
                     ]
 
                 for plan_location in search_order:
                     if plan_location.exists():
                         try:
                             plan_data = json.loads(plan_location.read_text())
-                            if "tasks" in plan_data:
-                                logger.info(f"[PlanApproval] Found plan at {plan_location}")
+                            # Accept either "tasks" (plan) or "requirements" (spec)
+                            if "tasks" in plan_data or "requirements" in plan_data:
+                                logger.info(f"[PlanApproval] Found artifact at {plan_location}")
                                 return plan_location, plan_data
                             else:
                                 logger.warning(
-                                    f"[PlanApproval] Plan file missing 'tasks' key: {plan_location}",
+                                    f"[PlanApproval] Artifact file missing 'tasks'/'requirements' key: {plan_location}",
                                 )
                         except json.JSONDecodeError as e:
                             error_msg = f"{plan_location.name}: {e}"
                             json_errors.append(error_msg)
                             logger.warning(
-                                f"[PlanApproval] Corrupted plan file at {plan_location}: {e}",
+                                f"[PlanApproval] Corrupted artifact file at {plan_location}: {e}",
                             )
                             continue
 
             # Log all JSON errors if we failed to find a valid plan
             if json_errors:
                 logger.error(
-                    f"[PlanApproval] Found plan file(s) but all had JSON errors: {json_errors}",
+                    f"[PlanApproval] Found artifact file(s) but all had JSON errors: {json_errors}",
                 )
 
-            logger.debug("[PlanApproval] No valid plan found in any agent workspace")
+            logger.debug("[PlanApproval] No valid plan/spec found in any agent workspace")
             return None
         except Exception as e:
             logger.error(f"[PlanApproval] Error finding plan: {e}")

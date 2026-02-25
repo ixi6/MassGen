@@ -233,6 +233,46 @@ def _should_use_conversation_history_for_turn(
     return _has_evolving_skills_enabled(agents)
 
 
+def _is_planning_turn(
+    mode_state: Any | None,
+    cli_plan_enabled: bool = False,
+) -> bool:
+    """Return True when the current turn is a planning turn."""
+    if mode_state and getattr(mode_state, "plan_mode", None) in {"plan", "plan_and_execute"}:
+        return True
+    return bool(cli_plan_enabled)
+
+
+def _disable_evaluation_criteria_generation_for_planning(
+    coordination_config: Any | None,
+) -> bool:
+    """Disable dynamic evaluation criteria generation for planning turns.
+
+    Returns True when a config value was changed.
+    """
+    if coordination_config is None:
+        return False
+
+    # YAML/dict config path
+    if isinstance(coordination_config, dict):
+        ec_cfg = coordination_config.get("evaluation_criteria_generator")
+        if not isinstance(ec_cfg, dict):
+            return False
+        if not ec_cfg.get("enabled", False):
+            return False
+        ec_cfg["enabled"] = False
+        return True
+
+    # Dataclass/object config path
+    ec_cfg = getattr(coordination_config, "evaluation_criteria_generator", None)
+    if ec_cfg is None:
+        return False
+    if not getattr(ec_cfg, "enabled", False):
+        return False
+    ec_cfg.enabled = False
+    return True
+
+
 def _setup_event_streaming() -> None:
     """Configure event streaming to stdout for subprocess-based TUI display.
 
@@ -752,6 +792,216 @@ Write `project_plan.json` with this structure:
 - Verification criteria should be testable and specific
 - Use verification_group to batch related tasks (e.g., verify all pages after building them)
 - For user-facing tasks, include at least one verification step that checks the actual user-visible output
+
+---
+
+USER'S REQUEST:
+"""
+
+
+def get_spec_creation_prompt_prefix(
+    broadcast_mode: "Literal['human', 'agents'] | bool" = "human",
+    target_chunks: int | None = None,
+) -> str:
+    """Generate the user prompt prefix for spec creation mode.
+
+    This prefix is prepended to the user's question when --spec mode is active.
+    It instructs agents to create a structured requirements specification using
+    EARS notation (Easy Approach to Requirements Syntax).
+
+    Args:
+        broadcast_mode: One of "human", "agents", or False.
+            Controls whether ask_others() is available for scope confirmation.
+        target_chunks: Optional target number of execution chunks.
+
+    Returns:
+        The prompt prefix string to prepend to the user's question.
+    """
+    if target_chunks is not None and target_chunks > 0:
+        chunk_target_line = f"- Target chunks: around {target_chunks}"
+    else:
+        chunk_target_line = "- Target chunks: around 1 " "(single-run default unless complexity requires splitting)"
+
+    # Scope section reuses the same human vs autonomous pattern as plan mode
+    if broadcast_mode == "human":
+        scope_section = """\
+### 1. Scope Confirmation (REQUIRED FIRST)
+
+Before any deep research, analyze the request and verify scope with the user.
+
+**Categorize the request** into:
+1. **Explicitly Stated** - What the user directly mentioned
+2. **Critical Assumptions** - High-level decisions needing human verification \
+(intent, architecture, compliance, scope boundaries)
+3. **Technical Assumptions** - Lower-level choices for agent consensus \
+(frameworks, patterns, practices)
+
+**Ask the human** only about critical assumptions where you cannot make a \
+good decision without input. Offer recommendations with reasoning.
+
+**After critical verification, proceed to research.**"""
+    else:
+        scope_section = """\
+### 1. Scope Analysis (REQUIRED FIRST)
+
+Before any deep research, analyze the request and make decisions \
+through agent consensus.
+
+**Categorize the request** into:
+1. **Explicitly Stated** - What the user directly mentioned
+2. **Critical Assumptions** - High-level decisions (intent, architecture, \
+compliance, scope boundaries)
+3. **Technical Assumptions** - Lower-level choices (frameworks, patterns, \
+practices)
+
+**Make opinionated recommendations** for ALL assumptions with reasoning. \
+Other agents will challenge, refine, and vote on consensus.
+
+**After consensus is reached, proceed to research.**"""
+
+    return f"""\
+# SPEC CREATION MODE
+
+You are in spec creation mode. Your goal is to **interactively** create \
+a structured requirements specification.
+
+## CRITICAL: SPEC ONLY - DO NOT BUILD THE DELIVERABLE
+
+**YOU ARE A SPEC WRITER, NOT AN EXECUTOR.**
+
+- **DO NOT** create the actual deliverable (no final code, no implementations)
+- **DO NOT** execute the user's task - only specify it
+- **DO** create `project_spec.json` with requirements that a FUTURE agent \
+will implement
+- **DO** research and explore to understand the task scope
+
+**Allowed files:**
+1. `project_spec.json` - the requirements specification (REQUIRED)
+2. Supporting docs - design decisions, technical context, user stories
+3. Scratch/research files - scripts to parse data, analyze structure, \
+gather info FOR SPEC WRITING
+
+**NOT allowed:**
+- The actual deliverable the user requested (code, website, app, etc.)
+- Implementation code that would be the end product
+
+If you find yourself building what the user asked for - STOP. \
+You're only specifying it. A different agent will implement this spec later.
+
+## Spec Process
+
+Follow this process in order:
+
+{scope_section}
+
+### 2. Research & Exploration
+Once scope is confirmed:
+- Explore the codebase to understand existing structure
+- Investigate integration points
+- Identify potential technical challenges
+
+### 3. Clarifying Questions
+As you research, ask follow-up questions about:
+- Edge cases and error handling expectations
+- Performance or security requirements
+- User experience preferences
+- Anything ambiguous you discovered
+
+### 4. Spec Creation
+Only after scope confirmation and sufficient research:
+- Create the requirements specification
+- Use EARS notation for each requirement
+- Group requirements into execution chunks
+- Include verification criteria for each requirement
+
+## Output Requirements
+
+1. **Primary artifact**: `project_spec.json` - Write this file using \
+file write tools:
+   - If `deliverable/` folder exists in your workspace, put it there: \
+`deliverable/project_spec.json`
+   - Otherwise, put it in your workspace root: `project_spec.json`
+2. **Supporting docs**: Create additional markdown docs as needed \
+(same location as project_spec.json):
+   - Design decisions and rationale
+   - Technical context and constraints
+   - User stories or acceptance criteria
+
+**IMPORTANT**: Write `project_spec.json` directly as a file. Do NOT use \
+MCP planning tools (create_task_plan, update_task_status, etc.) to create \
+this deliverable.
+
+## EARS Notation
+
+Use the **Easy Approach to Requirements Syntax** (EARS) for each \
+requirement's `ears` field:
+- **Event-driven**: WHEN <trigger> THE SYSTEM SHALL <response>
+- **State-driven**: WHILE <state> THE SYSTEM SHALL <behavior>
+- **Unwanted behavior**: IF <condition> THEN THE SYSTEM SHALL <response>
+- **Optional**: WHERE <feature> THE SYSTEM SHALL <behavior>
+
+Examples:
+- WHEN user submits login form THE SYSTEM SHALL validate credentials \
+and return a session token
+- WHILE server load exceeds 80% THE SYSTEM SHALL reject new connections \
+with 503 status
+- IF database connection fails THEN THE SYSTEM SHALL retry with \
+exponential backoff up to 3 times
+
+## Spec Format
+Write `project_spec.json` with this structure:
+```json
+{{{{
+  "feature": "Feature Name",
+  "overview": "2-3 sentence description of what this feature accomplishes",
+  "requirements": [
+    {{{{
+      "id": "REQ-001",
+      "chunk": "C01_core",
+      "title": "Short descriptive title",
+      "priority": "P0|P1|P2",
+      "type": "functional|non-functional",
+      "ears": "WHEN <trigger> THE SYSTEM SHALL <response>",
+      "rationale": "Why this requirement exists",
+      "verification": "How to verify this requirement is met",
+      "depends_on": ["REQ-000"]
+    }}}}
+  ]
+}}}}
+```
+
+### Required Chunking Rules
+- Every requirement **MUST** include a non-empty `chunk` string.
+- Use ordered chunk labels (for example: `C01_core`, `C02_api`, \
+`C03_frontend`).
+- Dependencies must not point to future chunks.
+- Keep chunk order deterministic by using consistent, increasing labels.
+- Respect the chunk target guidance below while preserving a valid \
+dependency DAG.
+
+### Field Descriptions
+- **id**: Unique requirement identifier (REQ-001, REQ-002, etc.)
+- **chunk**: Execution phase grouping (C01_core, C02_api, etc.)
+- **title**: Short descriptive title for the requirement
+- **priority**: P0 (critical), P1 (important), P2 (nice-to-have)
+- **type**: "functional" (what it does) or "non-functional" \
+(how well it does it)
+- **ears**: EARS-formatted requirement statement
+- **rationale**: Why this requirement exists - the "why" behind the "what"
+- **verification**: Testable criteria to verify the requirement is met
+- **depends_on**: List of requirement IDs this depends on
+
+## Spec Size Controls
+{chunk_target_line}
+- Requirements should be specific enough to implement and verify
+
+## Quality Criteria
+- Each requirement should be independently verifiable
+- Dependencies (depends_on) should form a valid DAG (no cycles)
+- EARS statements should be unambiguous and testable
+- Scope should be confirmed with user before detailed spec writing
+- Verification criteria should be specific and measurable
+- Rationale should explain the business or technical reason
 
 ---
 
@@ -2965,6 +3215,11 @@ async def run_question_with_history(
         generated_personas=generated_personas,  # Only if persist_across_turns=True
         generated_evaluation_criteria=generated_evaluation_criteria,
     )
+
+    # Apply pre-populated workspaces from incomplete turns (passed from interactive mode)
+    pre_populated_workspaces = kwargs.pop("pre_populated_workspaces", None)
+    if pre_populated_workspaces:
+        orchestrator._pre_populated_workspaces = pre_populated_workspaces
 
     # Parse per-agent subtask assignments for decomposition mode
     if orchestrator_config.coordination_mode == "decomposition":
@@ -5698,13 +5953,29 @@ async def run_textual_interactive_mode(
                 # This injects plan execution guidance into agent system messages
                 mode_state = display.get_mode_state()
                 if mode_state and mode_state.plan_mode == "execute" and mode_state.plan_session:
-                    from .plan_execution import prepare_plan_execution_config
+                    # Check artifact type to route to plan or spec execution
+                    try:
+                        _exec_metadata = mode_state.plan_session.load_metadata()
+                        _artifact_type = getattr(_exec_metadata, "artifact_type", "plan")
+                    except Exception:
+                        _artifact_type = "plan"
 
-                    logger.info("[Textual] Execute mode - applying plan execution config")
-                    modified_config = prepare_plan_execution_config(
-                        modified_config,
-                        mode_state.plan_session,
-                    )
+                    if _artifact_type == "spec":
+                        from .plan_execution import prepare_spec_execution_config
+
+                        logger.info("[Textual] Execute mode - applying spec execution config")
+                        modified_config = prepare_spec_execution_config(
+                            modified_config,
+                            mode_state.plan_session,
+                        )
+                    else:
+                        from .plan_execution import prepare_plan_execution_config
+
+                        logger.info("[Textual] Execute mode - applying plan execution config")
+                        modified_config = prepare_plan_execution_config(
+                            modified_config,
+                            mode_state.plan_session,
+                        )
                     # Update orchestrator_cfg reference for later use
                     orch_cfg = modified_config.get("orchestrator", {})
 
@@ -5776,6 +6047,9 @@ async def run_textual_interactive_mode(
                     f"[Textual] Recreated {len(agents)} agent(s) with analysis log context path",
                 )
 
+            # Track workspaces from incomplete turns (applied to orchestrator after creation)
+            pending_pre_populated_workspaces = {}
+
             # Inject previous turn workspace as read-only context (same as Rich mode)
             if current_turn_num > 0 and original_config and orchestrator_cfg:
                 session_dir = Path(SESSION_STORAGE) / sess_id
@@ -5787,18 +6061,12 @@ async def run_textual_interactive_mode(
                 incomplete_ws = getattr(context, "incomplete_turn_workspaces", {})
 
                 if incomplete_ws:
-                    # Incomplete turn - add all agent workspaces
-                    for ws_agent_id, ws_path in incomplete_ws.items():
-                        if ws_path and Path(ws_path).exists():
-                            context_workspaces_to_add.append(
-                                {
-                                    "path": str(Path(ws_path).resolve()),
-                                    "permission": "read",
-                                    "description": f"Incomplete turn {current_turn_num} - {ws_agent_id}'s workspace",
-                                },
-                            )
+                    # Incomplete turn — store for orchestrator per-agent
+                    # writable copy (not read-only context). Applied after
+                    # orchestrator is created below.
+                    pending_pre_populated_workspaces = {ws_agent_id: Path(ws_path).resolve() for ws_agent_id, ws_path in incomplete_ws.items() if ws_path and Path(ws_path).exists()}
                     logger.info(
-                        f"[Textual] Adding {len(context_workspaces_to_add)} workspace(s) from incomplete turn",
+                        f"[Textual] Prepared {len(pending_pre_populated_workspaces)} " f"per-agent workspace(s) from incomplete turn for writable copy",
                     )
                     # Clear after first use
                     context.incomplete_turn_workspaces = {}
@@ -6051,6 +6319,10 @@ async def run_textual_interactive_mode(
                         if hasattr(orchestrator_config.coordination_config, key):
                             setattr(orchestrator_config.coordination_config, key, value)
 
+                if _is_planning_turn(mode_state):
+                    if _disable_evaluation_criteria_generation_for_planning(orchestrator_config.coordination_config):
+                        logger.info("[Textual] Plan mode: disabled evaluation criteria generation for planning turn")
+
                 planning_turn_mode: str | None = None
                 if mode_state.plan_mode == "plan" and mode_state.pending_planning_mode in {"multi", "single"}:
                     planning_turn_mode = mode_state.pending_planning_mode
@@ -6156,6 +6428,38 @@ async def run_textual_interactive_mode(
                             logger.info(
                                 f"[Textual] Plan mode: Captured {len(mode_state.planning_context_paths)} context paths for execution",
                             )
+                elif mode_state.plan_mode == "spec":
+                    spec_prefix = get_spec_creation_prompt_prefix(
+                        broadcast_mode=mode_state.spec_config.broadcast,
+                    )
+
+                    planning_feedback = (mode_state.pending_planning_feedback or "").strip()
+                    mode_state.pending_planning_feedback = None
+                    effective_planning_mode = planning_turn_mode or ("single" if len(agents) == 1 else "multi")
+                    mode_state.last_planning_mode = effective_planning_mode
+
+                    question = spec_prefix + question
+                    planning_refinement_appendix = build_plan_review_refinement_appendix(
+                        question=question,
+                        planning_feedback=planning_feedback,
+                        include_quick_edit_hint=effective_planning_mode == "single",
+                    )
+                    if planning_refinement_appendix:
+                        question += "\n\n" + planning_refinement_appendix
+                    logger.info(
+                        "[Textual] Spec mode: Prepended spec creation instructions " "(broadcast=%s, planning_turn_mode=%s)",
+                        mode_state.spec_config.broadcast,
+                        effective_planning_mode,
+                    )
+
+                    # Capture context paths for use during execution
+                    if orchestrator_cfg:
+                        mode_state.planning_context_paths = orchestrator_cfg.get("context_paths", [])
+                        if mode_state.planning_context_paths:
+                            logger.info(
+                                "[Textual] Spec mode: Captured %d context paths for execution",
+                                len(mode_state.planning_context_paths),
+                            )
                 elif mode_state.plan_mode == "analysis":
                     analysis_target = getattr(mode_state.analysis_config, "target", "log")
                     if analysis_target == "skills":
@@ -6259,6 +6563,11 @@ async def run_textual_interactive_mode(
                     for aid, subtask in mode_state.decomposition_subtasks.items():
                         if aid in agents and subtask:
                             orchestrator._agent_subtasks[aid] = subtask
+
+            # Apply deferred pre-populated workspaces from incomplete turns
+            if pending_pre_populated_workspaces:
+                orchestrator._pre_populated_workspaces = pending_pre_populated_workspaces
+                pending_pre_populated_workspaces = {}
 
             adapter.update_loading_status("🔌 Connecting to tools...")
 
@@ -6785,18 +7094,14 @@ async def run_interactive_mode(
                     context_workspaces_to_add = []
 
                     if incomplete_turn_workspaces:
-                        # Incomplete turn - add all agent workspaces
-                        for ws_agent_id, ws_path in incomplete_turn_workspaces.items():
-                            if ws_path and Path(ws_path).exists():
-                                context_workspaces_to_add.append(
-                                    {
-                                        "path": str(Path(ws_path).resolve()),
-                                        "permission": "read",
-                                        "description": f"Incomplete turn {current_turn} - {ws_agent_id}'s workspace",
-                                    },
-                                )
+                        # Incomplete turn — store for orchestrator per-agent
+                        # writable copy (not read-only context). Passed via
+                        # kwargs to run_question_with_history which applies
+                        # them after orchestrator creation.
+                        pre_pop = {ws_agent_id: Path(ws_path).resolve() for ws_agent_id, ws_path in incomplete_turn_workspaces.items() if ws_path and Path(ws_path).exists()}
+                        kwargs["pre_populated_workspaces"] = pre_pop
                         logger.info(
-                            f"[CLI] Adding {len(context_workspaces_to_add)} workspace(s) from incomplete turn as context",
+                            f"[CLI] Prepared {len(pre_pop)} " f"per-agent workspace(s) from incomplete turn for writable copy",
                         )
                         # Clear after use (only needed for first turn after resume)
                         incomplete_turn_workspaces = {}
@@ -7507,13 +7812,16 @@ async def _execute_plan_phase(
     from .logger_config import get_log_session_root
     from .plan_execution import (
         PlanValidationError,
+        _get_artifact_items,
         build_execution_prompt,
+        build_spec_execution_prompt,
         evaluate_chunk_progress,
         get_next_pending_chunk,
         initialize_chunk_execution_state,
         load_frozen_plan,
         mark_session_resumable,
         prepare_plan_execution_config,
+        prepare_spec_execution_config,
         record_chunk_checkpoint,
         setup_agent_workspaces_for_execution,
         validate_chunked_plan,
@@ -7521,17 +7829,27 @@ async def _execute_plan_phase(
 
     console = Console()
 
+    # Detect artifact type (spec vs plan) from session metadata
+    metadata = plan_session.load_metadata()
+    _artifact_type = getattr(metadata, "artifact_type", None)
+    is_spec = _artifact_type == "spec"
+    items_key = "requirements" if is_spec else "tasks"
+    items_label = "requirements" if is_spec else "tasks"
+    artifact_word = "spec" if is_spec else "plan"
+
     console.print("\n[bold blue]═══ EXECUTION ═══[/bold blue]")
-    console.print("Executing plan with agents...")
+    console.print(f"Executing {artifact_word} with agents...")
 
     # Update metadata
-    metadata = plan_session.load_metadata()
     metadata.status = "executing"
     plan_session.save_metadata(metadata)
     plan_session.log_event("execution_started", {"question": question})
 
     # Use shared helper to prepare config (adds context paths, enables planning tools, injects guidance)
-    exec_config = prepare_plan_execution_config(config, plan_session)
+    if is_spec:
+        exec_config = prepare_spec_execution_config(config, plan_session)
+    else:
+        exec_config = prepare_plan_execution_config(config, plan_session)
     orchestrator_cfg = exec_config.get("orchestrator", {})
 
     # Create agents with plan context
@@ -7548,19 +7866,20 @@ async def _execute_plan_phase(
         chunk_order, _ = validate_chunked_plan(frozen_plan_data)
     except (FileNotFoundError, PlanValidationError) as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
-        console.print("[red]Cannot execute plan without valid chunk metadata on every task.[/red]")
+        console.print(f"[red]Cannot execute {artifact_word} without valid chunk metadata.[/red]")
         raise SystemExit(1)
 
-    total_tasks = len(frozen_plan_data.get("tasks", []))
-    if total_tasks == 0:
-        console.print("[bold red]Error: Frozen plan has no tasks[/bold red]")
+    _, all_items = _get_artifact_items(frozen_plan_data)
+    total_items = len(all_items)
+    if total_items == 0:
+        console.print(f"[bold red]Error: Frozen {artifact_word} has no {items_label}[/bold red]")
         raise SystemExit(1)
     if not chunk_order:
-        console.print("[bold red]Error: Frozen plan has no chunk order[/bold red]")
+        console.print(f"[bold red]Error: Frozen {artifact_word} has no chunk order[/bold red]")
         raise SystemExit(1)
 
     console.print(
-        f"[dim]Loaded {total_tasks} tasks across {len(chunk_order)} chunks from frozen plan[/dim]",
+        f"[dim]Loaded {total_items} {items_label} across {len(chunk_order)} chunks from frozen {artifact_word}[/dim]",
     )
     if chunk_metadata.status == "resumable" and chunk_metadata.current_chunk:
         console.print(
@@ -7574,18 +7893,25 @@ async def _execute_plan_phase(
         "automation_mode": automation,
     }
 
-    # Maintain a full-plan projection that gets updated chunk by chunk.
+    # Maintain a full-artifact projection that gets updated chunk by chunk.
     working_plan_data = _copy.deepcopy(frozen_plan_data)
     plan_session.workspace_dir.mkdir(parents=True, exist_ok=True)
-    working_plan_file = plan_session.workspace_dir / "plan.json"
+    artifact_filename = "spec.json" if is_spec else "plan.json"
+    working_plan_file = plan_session.workspace_dir / artifact_filename
     working_plan_file.write_text(json.dumps(working_plan_data, indent=2))
 
     def _read_chunk_plan_from_agent(agent_obj: Any) -> dict[str, Any] | None:
-        """Read the operational tasks/plan.json produced by an execution turn."""
+        """Read the operational artifact produced by an execution turn."""
         if not (hasattr(agent_obj.backend, "filesystem_manager") and agent_obj.backend.filesystem_manager):
             return None
         workspace = Path(agent_obj.backend.filesystem_manager.cwd)
-        candidate_files = [workspace / "tasks" / "plan.json", workspace / "plan.json"]
+        # Check for both plan.json and spec.json in tasks/ and workspace root
+        candidate_files = [
+            workspace / "tasks" / artifact_filename,
+            workspace / artifact_filename,
+            workspace / "tasks" / "plan.json",
+            workspace / "plan.json",
+        ]
         for candidate in candidate_files:
             if not candidate.exists():
                 continue
@@ -7593,20 +7919,20 @@ async def _execute_plan_phase(
                 payload = json.loads(candidate.read_text())
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, dict) and isinstance(payload.get("tasks"), list):
+            if isinstance(payload, dict) and (isinstance(payload.get("tasks"), list) or isinstance(payload.get("requirements"), list)):
                 return payload
         return None
 
-    def _merge_chunk_updates(full_plan: dict[str, Any], chunk_tasks: list[dict[str, Any]]) -> None:
-        """Merge chunk task updates into the full working plan by task id."""
-        by_id = {str(task.get("id", "")).strip(): task for task in full_plan.get("tasks", []) if isinstance(task, dict)}
-        for updated_task in chunk_tasks:
-            if not isinstance(updated_task, dict):
+    def _merge_chunk_updates(full_plan: dict[str, Any], chunk_items: list[dict[str, Any]]) -> None:
+        """Merge chunk item updates into the full working artifact by id."""
+        by_id = {str(item.get("id", "")).strip(): item for item in full_plan.get(items_key, []) if isinstance(item, dict)}
+        for updated_item in chunk_items:
+            if not isinstance(updated_item, dict):
                 continue
-            task_id = str(updated_task.get("id", "")).strip()
-            if not task_id or task_id not in by_id:
+            item_id = str(updated_item.get("id", "")).strip()
+            if not item_id or item_id not in by_id:
                 continue
-            by_id[task_id].update(updated_task)
+            by_id[item_id].update(updated_item)
 
     retry_budget_per_chunk = 2
     retry_counts: dict[str, int] = {}
@@ -7654,18 +7980,26 @@ async def _execute_plan_phase(
             )
             if task_count == 0:
                 raise RuntimeError(
-                    f"No executable tasks found for chunk '{active_chunk}'",
+                    f"No executable {items_label} found for chunk '{active_chunk}'",
                 )
 
             console.print(
-                f"[bold cyan]Chunk {active_chunk}[/bold cyan] " f"[dim](attempt {attempt}, {task_count} tasks)[/dim]",
+                f"[bold cyan]Chunk {active_chunk}[/bold cyan] " f"[dim](attempt {attempt}, {task_count} {items_label})[/dim]",
             )
 
-            execution_prompt = build_execution_prompt(
-                question,
-                active_chunk=active_chunk,
-                chunk_order=chunk_order,
-            )
+            if is_spec:
+                execution_prompt = build_spec_execution_prompt(
+                    question,
+                    plan_session=plan_session,
+                    active_chunk=active_chunk,
+                    chunk_order=chunk_order,
+                )
+            else:
+                execution_prompt = build_execution_prompt(
+                    question,
+                    active_chunk=active_chunk,
+                    chunk_order=chunk_order,
+                )
 
             result = await run_single_question(
                 execution_prompt,
@@ -7690,10 +8024,10 @@ async def _execute_plan_phase(
                     if chunk_plan_data:
                         break
 
-            chunk_tasks = chunk_plan_data.get("tasks", []) if chunk_plan_data else []
-            progress = evaluate_chunk_progress(chunk_tasks)
-            if chunk_tasks:
-                _merge_chunk_updates(working_plan_data, chunk_tasks)
+            chunk_items = chunk_plan_data.get(items_key, []) or chunk_plan_data.get("tasks", []) if chunk_plan_data else []
+            progress = evaluate_chunk_progress(chunk_items)
+            if chunk_items:
+                _merge_chunk_updates(working_plan_data, chunk_items)
                 working_plan_file.write_text(json.dumps(working_plan_data, indent=2))
 
             if bool(coordination_result.get("is_orchestrator_timeout")):
@@ -7866,26 +8200,95 @@ async def run_execute_plan(
     console.print(f"Created: {metadata.created_at}")
     console.print(f"Status: {metadata.status}")
 
-    # Read frozen plan to get task count - fail fast if missing or unreadable
+    # Read frozen plan/spec to get task count - fail fast if missing or unreadable
     frozen_plan_file = plan_session.frozen_dir / "plan.json"
-    if not frozen_plan_file.exists():
-        console.print(f"[bold red]Error: Frozen plan not found at {frozen_plan_file}[/bold red]")
-        console.print("[red]Cannot execute plan without a valid frozen plan.json[/red]")
+    frozen_spec_file = plan_session.frozen_dir / "spec.json"
+    if frozen_plan_file.exists():
+        artifact_file = frozen_plan_file
+    elif frozen_spec_file.exists():
+        artifact_file = frozen_spec_file
+    else:
+        console.print(f"[bold red]Error: Frozen plan/spec not found at {plan_session.frozen_dir}[/bold red]")
+        console.print("[red]Cannot execute without a valid plan.json or spec.json[/red]")
         raise SystemExit(1)
 
     try:
-        plan_data = json.loads(frozen_plan_file.read_text())
+        plan_data = json.loads(artifact_file.read_text())
     except json.JSONDecodeError as e:
-        console.print(f"[bold red]Error: Failed to parse frozen plan: {e}[/bold red]")
-        console.print(f"[red]File: {frozen_plan_file}[/red]")
+        console.print(f"[bold red]Error: Failed to parse frozen artifact: {e}[/bold red]")
+        console.print(f"[red]File: {artifact_file}[/red]")
         raise SystemExit(1)
 
-    task_count = len(plan_data.get("tasks", []))
-    console.print(f"Tasks: {task_count}")
+    items = plan_data.get("tasks", []) or plan_data.get("requirements", [])
+    items_label = "Requirements" if "requirements" in plan_data else "Tasks"
+    console.print(f"{items_label}: {len(items)}")
 
     # Build question if not provided
     if question is None:
         question = "Execute the plan in tasks/plan.json."
+
+    # Run execution phase
+    final_answer, _ = await _execute_plan_phase(
+        config=config,
+        plan_session=plan_session,
+        question=question,
+        automation=automation,
+    )
+
+    return final_answer, plan_session
+
+
+async def run_execute_spec(
+    config: dict[str, Any],
+    spec_path: str,
+    question: str | None = None,
+    automation: bool = False,
+) -> tuple[str, Any]:
+    """
+    Execute against an existing spec (skips spec creation phase).
+
+    Args:
+        config: Full config dict
+        spec_path: Path to spec directory, spec/plan ID, or "latest"
+        question: Optional task description override
+        automation: Whether in automation mode
+
+    Returns:
+        Tuple of (final_answer, plan_session)
+    """
+    from rich.console import Console
+
+    console = Console()
+
+    # Resolve spec path to session (reuses plan path resolution)
+    plan_session = resolve_plan_path(spec_path)
+
+    # Load metadata
+    metadata = plan_session.load_metadata()
+    console.print(f"\n[bold cyan]Executing spec: {plan_session.plan_id}[/bold cyan]")
+    console.print(f"Created: {metadata.created_at}")
+    console.print(f"Status: {metadata.status}")
+
+    # Read frozen spec to get requirement count - fail fast if missing
+    frozen_spec_file = plan_session.frozen_dir / "spec.json"
+    if not frozen_spec_file.exists():
+        console.print(f"[bold red]Error: Frozen spec not found at {frozen_spec_file}[/bold red]")
+        console.print("[red]Cannot execute spec without a valid frozen spec.json[/red]")
+        raise SystemExit(1)
+
+    try:
+        spec_data = json.loads(frozen_spec_file.read_text())
+    except json.JSONDecodeError as e:
+        console.print(f"[bold red]Error: Failed to parse frozen spec: {e}[/bold red]")
+        console.print(f"[red]File: {frozen_spec_file}[/red]")
+        raise SystemExit(1)
+
+    req_count = len(spec_data.get("requirements", []))
+    console.print(f"Requirements: {req_count}")
+
+    # Build question if not provided
+    if question is None:
+        question = "Execute the spec in tasks/spec.json. Implement all requirements."
 
     # Run execution phase
     final_answer, _ = await _execute_plan_phase(
@@ -8082,11 +8485,12 @@ async def run_plan_and_execute(
         context_paths = orchestrator_cfg.get("context_paths", [])
         storage.finalize_planning_phase(plan_session, workspace_source, context_paths=context_paths)
 
-        # Verify a valid plan was created - if not, clean up and fail
+        # Verify a valid artifact was created - if not, clean up and fail
         frozen_plan = plan_session.frozen_dir / "plan.json"
-        if not frozen_plan.exists():
-            console.print("[bold red]Error: Planning phase did not produce a valid plan.json[/bold red]")
-            console.print("[red]The planning agent may have ended early or failed to create a task plan.[/red]")
+        frozen_spec = plan_session.frozen_dir / "spec.json"
+        if not frozen_plan.exists() and not frozen_spec.exists():
+            console.print("[bold red]Error: Planning phase did not produce a valid plan.json or spec.json[/bold red]")
+            console.print("[red]The planning agent may have ended early or failed to create an artifact.[/red]")
             # Clean up the empty plan session directory
             if plan_session.plan_dir.exists():
                 shutil.rmtree(plan_session.plan_dir)
@@ -8466,6 +8870,9 @@ async def main(args):
                     resolved_plan_target_chunks = 1
             orchestrator_cfg_plan["coordination"]["plan_target_chunks"] = resolved_plan_target_chunks
 
+            if _disable_evaluation_criteria_generation_for_planning(orchestrator_cfg_plan["coordination"]):
+                logger.info("[Plan Mode] Disabled evaluation criteria generation for planning turn")
+
             logger.info(
                 "[Plan Mode] Enabled with depth=%s, target_steps=%s, target_chunks=%s, broadcast=%s",
                 args.plan_depth,
@@ -8553,6 +8960,13 @@ async def main(args):
             mode = "single-question" if args.question else "interactive"
             logger.info(f"📝 Created session for {mode} mode: {memory_session_id}")
 
+            # Write session_id sentinel for parent process discovery.
+            # Subprocess cwd is the workspace (set via cwd= in manager.py),
+            # so this writes to {workspace}/.massgen/.session_id.
+            _sentinel_dir = Path(".massgen")
+            _sentinel_dir.mkdir(parents=True, exist_ok=True)
+            (Path(".massgen") / ".session_id").write_text(memory_session_id)
+
             # Register new session immediately (before first turn runs)
             # Get log directory for session metadata
             from massgen.logger_config import get_log_session_dir, get_log_session_root
@@ -8636,6 +9050,35 @@ async def main(args):
             logger.info(
                 f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, target_steps={plan_target_steps}, "
                 f"target_chunks={plan_target_chunks}, subagents={enable_subagents}, broadcast={broadcast_mode})",
+            )
+
+        # Prepend spec creation instructions if --spec mode is active
+        if args.question and getattr(args, "spec", False) and not getattr(args, "plan", False):
+            coordination_cfg = config.get("orchestrator", {}).get("coordination", {})
+            plan_target_chunks = getattr(args, "plan_chunks", None)
+            if plan_target_chunks is None:
+                cfg_chunks = coordination_cfg.get("plan_target_chunks")
+                if isinstance(cfg_chunks, int) and cfg_chunks > 0:
+                    plan_target_chunks = cfg_chunks
+            if plan_target_chunks is None:
+                plan_target_chunks = 1
+
+            # Broadcast mode priority: CLI arg > config > default "human"
+            cli_broadcast = getattr(args, "broadcast", None)
+            if cli_broadcast == "false":
+                broadcast_mode = False
+            elif cli_broadcast is not None:
+                broadcast_mode = cli_broadcast
+            else:
+                broadcast_mode = coordination_cfg.get("broadcast", "human")
+
+            spec_prefix = get_spec_creation_prompt_prefix(
+                broadcast_mode=broadcast_mode,
+                target_chunks=plan_target_chunks,
+            )
+            args.question = spec_prefix + args.question
+            logger.info(
+                f"[Spec Mode] Prepended spec creation instructions " f"(target_chunks={plan_target_chunks}, broadcast={broadcast_mode})",
             )
 
         # For interactive mode without initial question, defer agent creation until first prompt
@@ -8802,6 +9245,42 @@ async def main(args):
                 if args.automation:
                     _automation_print(f"PLAN_DIR: {plan_session.plan_dir}")
                     _automation_print(f"PLAN_ID: {plan_session.plan_id}")
+
+                sys.exit(0)
+
+            except FileNotFoundError as e:
+                print(f"❌ {e}")
+                sys.exit(1)
+
+        # Handle --execute-spec mode (execute existing spec without spec creation phase)
+        if getattr(args, "execute_spec", None):
+            from rich.console import Console
+            from rich.panel import Panel
+
+            try:
+                final_answer, plan_session = await run_execute_spec(
+                    config=config,
+                    spec_path=args.execute_spec,
+                    question=args.question,  # Optional override
+                    automation=args.automation,
+                )
+
+                # Print results
+                if not args.automation:
+                    console = Console()
+                    console.print(Panel(final_answer, title="Final Answer", border_style="green"))
+
+                # Write output file if specified
+                if args.output_file:
+                    output_path = Path(args.output_file)
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_text(final_answer)
+                    _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
+
+                # Print spec location for automation mode
+                if args.automation:
+                    _automation_print(f"SPEC_DIR: {plan_session.plan_dir}")
+                    _automation_print(f"SPEC_ID: {plan_session.plan_id}")
 
                 sys.exit(0)
 
@@ -9537,6 +10016,19 @@ Environment Variables:
         help="Execute an existing plan. Provide the plan directory path (e.g., .massgen/plans/plan_20260115_173113_836955) "
         "or plan ID (e.g., 20260115_173113_836955) or 'latest' for most recent plan. "
         "Skips planning phase and runs execution directly from the frozen plan.",
+    )
+    parser.add_argument(
+        "--spec",
+        action="store_true",
+        help="Spec creation mode. Agents produce a requirements specification (EARS notation) instead of a task plan. "
+        "Output is project_spec.json with requirements, verification criteria, and chunked execution phases.",
+    )
+    parser.add_argument(
+        "--execute-spec",
+        type=str,
+        metavar="SPEC_PATH",
+        help="Execute against an existing spec. Provide the spec directory path, spec ID, or 'latest' for most recent spec session. "
+        "Skips spec creation phase and runs execution directly from the frozen spec.",
     )
     parser.add_argument(
         "--no-session-registry",

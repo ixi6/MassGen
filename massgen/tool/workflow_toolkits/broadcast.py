@@ -166,6 +166,15 @@ class BroadcastToolkit(BaseToolkit):
                                 "constraints, and any important details they need to give a useful answer."
                             ),
                         },
+                        "target_agents": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": (
+                                "OPTIONAL: List of specific agents to send your question to (e.g., ['agent1', 'agent2']). "
+                                "Use anonymous agent IDs as seen in your context (agent1, agent2, etc.). "
+                                "If not provided, broadcasts to all other agents."
+                            ),
+                        },
                         "wait": {
                             "type": "boolean",
                             "description": (
@@ -202,6 +211,15 @@ class BroadcastToolkit(BaseToolkit):
                                     "FALLBACK: A simple text question for truly open-ended questions where predefined options don't make sense. "
                                     f"{target.capitalize()} cannot see your files or workspace, so include requirements, "
                                     "constraints, and any important details they need to give a useful answer."
+                                ),
+                            },
+                            "target_agents": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": (
+                                    "OPTIONAL: List of specific agents to send your question to (e.g., ['agent1', 'agent2']). "
+                                    "Use anonymous agent IDs as seen in your context (agent1, agent2, etc.). "
+                                    "If not provided, broadcasts to all other agents."
                                 ),
                             },
                             "wait": {
@@ -357,12 +375,69 @@ class BroadcastToolkit(BaseToolkit):
         Returns:
             JSON string with broadcast responses
         """
-        # In human mode, serialize all ask_others calls so agents wait for each other
-        # This ensures the second agent sees the first agent's Q&A before asking
-        if self.broadcast_mode == "human":
-            return await self._execute_ask_others_serialized(arguments, agent_id)
-        else:
-            return await self._execute_ask_others_impl(arguments, agent_id)
+        result = None
+        error = None
+        try:
+            # In human mode, serialize all ask_others calls so agents wait for each other
+            # This ensures the second agent sees the first agent's Q&A before asking
+            if self.broadcast_mode == "human":
+                result = await self._execute_ask_others_serialized(arguments, agent_id)
+            else:
+                result = await self._execute_ask_others_impl(arguments, agent_id)
+            return result
+        except Exception as exc:
+            error = str(exc)
+            raise
+        finally:
+            self._log_ask_others_call(agent_id, arguments, result, error)
+
+    def _log_ask_others_call(
+        self,
+        agent_id: str,
+        arguments: Any,
+        result: str | None,
+        error: str | None,
+    ) -> None:
+        """Persist ask_others call details to a local JSONL file for debugging."""
+        from datetime import datetime, timezone
+
+        from ...logger_config import get_log_session_dir, logger
+
+        try:
+            log_dir = get_log_session_dir()
+            log_path = log_dir / "ask_others_calls.jsonl"
+
+            parsed_args = None
+            if isinstance(arguments, str):
+                try:
+                    parsed_args = json.loads(arguments)
+                except Exception:
+                    parsed_args = None
+            else:
+                parsed_args = arguments
+
+            parsed_result = None
+            if isinstance(result, str):
+                try:
+                    parsed_result = json.loads(result)
+                except Exception:
+                    parsed_result = None
+
+            entry = {
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "agent_id": agent_id,
+                "broadcast_mode": self.broadcast_mode,
+                "arguments_raw": arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False, default=str),
+                "arguments": parsed_args,
+                "result_raw": result,
+                "result": parsed_result,
+                "error": error,
+            }
+
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False, default=str) + "\n")
+        except Exception as exc:
+            logger.warning(f"[ask_others] Failed to write call log: {exc}")
 
     async def _execute_ask_others_serialized(self, arguments: str, agent_id: str) -> str:
         """Execute ask_others with serialization lock for human mode."""
@@ -388,6 +463,11 @@ class BroadcastToolkit(BaseToolkit):
         wait = args.get("wait")
         if wait is None:
             wait = self.wait_by_default
+
+        # Parse target_agents (optional - for targeted verification)
+        target_agents = args.get("target_agents", None)
+        if target_agents:
+            logger.info(f"📢 [{agent_id}] Targeting specific agents: {target_agents}")
 
         # Determine question type: structured (questions array) or simple (question string)
         questions_data = args.get("questions")
@@ -425,6 +505,7 @@ class BroadcastToolkit(BaseToolkit):
         request_id = await self.orchestrator.broadcast_channel.create_broadcast(
             sender_agent_id=agent_id,
             question=question,
+            target_agents=target_agents,
         )
         await self.orchestrator.broadcast_channel.inject_into_agents(request_id)
 
@@ -434,6 +515,8 @@ class BroadcastToolkit(BaseToolkit):
                 request_id,
                 timeout=self.orchestrator.config.coordination_config.broadcast_timeout,
             )
+
+            await self.orchestrator.broadcast_channel.cleanup_broadcast(request_id)
 
             # Include human Q&A history in response for context (human mode only)
             # This allows agents running in parallel to see what human already answered
@@ -493,10 +576,24 @@ class BroadcastToolkit(BaseToolkit):
         Returns:
             JSON string with broadcast responses
         """
+        from loguru import logger
+
         args = json.loads(arguments) if isinstance(arguments, str) else arguments
         request_id = args.get("request_id", "")
 
         responses = self.orchestrator.broadcast_channel.get_broadcast_responses(request_id)
+
+        # Clean up broadcast resources if completed or timed out
+        # This prevents resource leaks in polling mode
+        status = responses.get("status")
+        if status in ["completed", "timeout"]:
+            try:
+                await self.orchestrator.broadcast_channel.cleanup_broadcast(request_id)
+                logger.debug(f"📢 [{agent_id}] Cleaned up broadcast {request_id} (status: {status})")
+            except Exception as e:
+                # Don't fail the request if cleanup fails
+                logger.warning(f"📢 [{agent_id}] Failed to cleanup broadcast {request_id}: {e}")
+
         return json.dumps(responses)
 
     async def execute_respond_to_broadcast(self, arguments: str, agent_id: str) -> str:

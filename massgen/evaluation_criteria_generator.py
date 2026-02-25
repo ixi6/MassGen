@@ -5,9 +5,15 @@ consensus run, replacing fixed T1-T4 items with dynamic E1-EN criteria tailored
 to the actual task. When generation is disabled or fails, concrete static defaults
 are used instead.
 
-Each criterion is tagged as "core" (must-pass for quality) or "stretch"
-(aspirational excellence). The convergence off-ramp fires when only stretch
-items fail and core items all pass.
+Each criterion is tagged with a tier:
+- "must": Hard requirements — failing these means the answer is wrong.
+- "should": Quality expectations — missing these means the answer is mediocre.
+- "could": Excellence markers — missing these is acceptable but achieving them
+  shows real craft.
+
+For backward compatibility, old "core" maps to "must" and "stretch" maps to "could".
+The convergence off-ramp fires when only "could" items fail and "must"/"should"
+items all pass.
 """
 
 import json
@@ -49,7 +55,7 @@ class GeneratedCriterion:
 
     id: str
     text: str
-    category: str  # "core" or "stretch"
+    category: str  # "must", "should", or "could" (legacy: "core"→"must", "stretch"→"could")
 
 
 # Static defaults inspired by GEPA's diagnostic structure.
@@ -62,7 +68,7 @@ _DEFAULT_CRITERIA_TEXTS = [
     ("The output shows care beyond correctness — thoughtful choices," " consistent style, attention to edge cases, or creative elements that" " distinguish it from adequate work."),
 ]
 
-_DEFAULT_CATEGORIES = ["core", "core", "core", "stretch"]
+_DEFAULT_CATEGORIES = ["must", "must", "should", "could"]
 
 # ---------------------------------------------------------------------------
 # Domain-specific criteria presets
@@ -78,29 +84,29 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
             " meaningfully different outputs — not just surface variation in tone or"
             " vocabulary. Two personas that would produce essentially the same answer"
             " are a failure.",
-            "core",
+            "must",
         ),
         (
             "Personas are grounded in the actual task. Each perspective is relevant to" " the problem domain and brings a genuinely useful lens, not an arbitrary" " or forced viewpoint.",
-            "core",
+            "must",
         ),
         (
             "Personas are actionable instructions, not character descriptions. An agent"
             " receiving this persona knows exactly how it changes their approach,"
             " priorities, and decision-making — not just who they are pretending to be.",
-            "core",
+            "must",
         ),
         (
             "The persona set collectively provides coverage — the major reasonable"
             " approaches, value trade-offs, or methodological choices for this task are"
             " represented. No critical perspective is missing.",
-            "core",
+            "should",
         ),
         (
             "Personas are vivid enough to resist homogenization under peer pressure."
             " The perspective is strongly stated so that even after seeing other agents'"
             " answers, the core viewpoint remains distinguishable.",
-            "stretch",
+            "could",
         ),
     ],
     "decomposition": [
@@ -108,62 +114,62 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
             "Subtasks are collectively exhaustive — completing all subtasks fully"
             " produces the complete output. No significant aspect of the original task"
             " falls through the cracks between subtasks.",
-            "core",
+            "must",
         ),
         (
             "Subtasks have minimal coupling — each can be executed independently"
             " without requiring intermediate results from other subtasks. Where"
             " dependencies exist, they are explicit and the dependency order is"
             " specified.",
-            "core",
+            "must",
         ),
         (
             "Subtask scoping is balanced — no single subtask is trivial while another"
             " carries the bulk of the complexity. Work is distributed so each agent has"
             " a meaningful, roughly comparable contribution.",
-            "core",
+            "should",
         ),
         (
             "Each subtask description is self-contained and specific enough that an" " agent can execute it without needing to infer intent from other subtasks" " or the original prompt.",
-            "core",
+            "must",
         ),
         (
             "The decomposition strategy is appropriate for the task type — creative"
             " tasks split along conceptual boundaries, technical tasks along component"
             " boundaries, analytical tasks along dimension boundaries.",
-            "stretch",
+            "could",
         ),
     ],
     "evaluation": [
         (
             "Each criterion is specific to the actual task — not generic advice that" " applies to any output. A criterion that could be copy-pasted to an" " unrelated task is too vague.",
-            "core",
+            "must",
         ),
         (
             "Criteria are evaluable — an agent can determine pass/fail by examining the"
             ' output, not by making subjective judgments about intent. "Addresses edge'
             ' cases" is vague; "handles empty input, null values, and boundary'
             ' conditions" is evaluable.',
-            "core",
+            "must",
         ),
         (
             "The criteria set distinguishes excellent work from adequate work. If every"
             " competent first draft would pass all criteria, the bar is too low. At"
             " least one criterion should require genuine effort to satisfy.",
-            "core",
+            "should",
         ),
         (
-            "Core vs. stretch categorization is correct. Core criteria represent"
-            " non-negotiable requirements; stretch criteria represent quality"
-            " differentiators. A misclassified core criterion blocks good work; a"
-            " misclassified stretch criterion lets mediocre work pass.",
-            "core",
+            "Tier categorization is correct. MUST criteria represent"
+            " non-negotiable requirements; COULD criteria represent quality"
+            " differentiators. A misclassified MUST criterion blocks good work; a"
+            " misclassified COULD criterion lets mediocre work pass.",
+            "must",
         ),
         (
             "Criteria do not conflict with each other or create impossible trade-offs."
             " Meeting one criterion should not require violating another. Where genuine"
             " tensions exist, the criteria acknowledge the trade-off explicitly.",
-            "stretch",
+            "could",
         ),
     ],
     "prompt": [
@@ -172,53 +178,53 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
             " would produce the intended type of output without additional"
             " clarification. Test: could you hand this to a capable model cold and get"
             " back what you need?",
-            "core",
+            "must",
         ),
         (
             "The prompt is appropriately scoped — it constrains enough to prevent" " unhelpful outputs but does not over-constrain in ways that eliminate" " valid approaches.",
-            "core",
+            "must",
         ),
         (
             "Important requirements are explicit, not implied. The prompt does not" ' depend on shared context, cultural assumptions, or "obvious" intentions' " that a model might miss.",
-            "core",
+            "should",
         ),
         (
             "The prompt is structured for parseability — key instructions are" " prominent, not buried in paragraphs. An agent skimming the prompt would" " still catch the critical constraints.",
-            "stretch",
+            "could",
         ),
         (
             "The prompt anticipates likely failure modes for its task type and includes"
             ' guardrails against them (e.g., "do not summarize when asked to analyze"'
             ' or "include concrete examples, not abstract principles").',
-            "stretch",
+            "could",
         ),
     ],
     "analysis": [
         (
             "The analysis identifies concrete, specific findings — not vague" " observations. Each finding points to a specific location, pattern, or" " data point in the source material.",
-            "core",
+            "must",
         ),
         (
             "Findings are supported by evidence from the actual data, not inferred from"
             ' assumptions about what "usually" happens. Claims include references to'
             " specific log entries, metrics, or examples.",
-            "core",
+            "must",
         ),
         (
             "The analysis distinguishes symptoms from root causes. Surface-level"
             ' observations (e.g., "agent 2 was slow") are traced to underlying'
             ' explanations (e.g., "agent 2 hit rate limits due to tool call volume").',
-            "core",
+            "should",
         ),
         (
             "Actionable recommendations follow from findings. Each significant finding" " includes a concrete suggestion for what to change, not just a description" " of what went wrong.",
-            "core",
+            "must",
         ),
         (
             "The analysis identifies patterns across the dataset, not just individual"
             " anomalies. Recurring behaviors, systematic biases, or structural issues"
             " are surfaced alongside one-off events.",
-            "stretch",
+            "could",
         ),
     ],
 }
@@ -249,6 +255,17 @@ def get_criteria_for_preset(preset: str) -> list[GeneratedCriterion]:
     return [GeneratedCriterion(id=f"E{i + 1}", text=text, category=category) for i, (text, category) in enumerate(_CRITERIA_PRESETS[preset])]
 
 
+# Quality/craft criterion — always appended as the last should-tier criterion.
+# Ensures evaluators assess whether the output shows intentional, thoughtful
+# choices beyond functional correctness. Without this, agents satisfy all
+# requirements while producing output that feels like a minimum viable version.
+_QUALITY_CRAFT_TEXT = (
+    "The output reflects intentional, thoughtful choices — not just"
+    " minimum viable execution. A knowledgeable person in this domain"
+    " would recognize craft, not just correctness. The whole feels"
+    " cohesive and considered, not assembled from adequate parts."
+)
+
 # Changedoc traceability criterion — appended when changedoc is enabled
 _CHANGEDOC_TRACEABILITY_TEXT = (
     "Changedoc is honest, complete, and traceable. Every significant"
@@ -263,8 +280,11 @@ def get_default_criteria(has_changedoc: bool = False) -> list[GeneratedCriterion
     These are used when generation is disabled or fails. They are concrete,
     GEPA-inspired defaults that work for any task type.
 
+    Always appends a quality/craft criterion.  Optionally appends changedoc
+    traceability when changedoc mode is active.
+
     Args:
-        has_changedoc: If True, append changedoc traceability as a 5th core criterion.
+        has_changedoc: If True, append changedoc traceability criterion.
 
     Returns:
         List of GeneratedCriterion with E-prefix IDs.
@@ -280,12 +300,21 @@ def get_default_criteria(has_changedoc: bool = False) -> list[GeneratedCriterion
         )
     ]
 
+    # Always append quality/craft criterion
+    criteria.append(
+        GeneratedCriterion(
+            id=f"E{len(criteria) + 1}",
+            text=_QUALITY_CRAFT_TEXT,
+            category="should",
+        ),
+    )
+
     if has_changedoc:
         criteria.append(
             GeneratedCriterion(
                 id=f"E{len(criteria) + 1}",
                 text=_CHANGEDOC_TRACEABILITY_TEXT,
-                category="core",
+                category="must",
             ),
         )
 
@@ -362,13 +391,17 @@ def _parse_criteria_response(
             )
             return None
 
-        # Parse into GeneratedCriterion objects
+        # Parse into GeneratedCriterion objects with tier mapping
+        # Backward compat: "core" → "must", "stretch" → "could"
+        _CATEGORY_MAP = {"core": "must", "stretch": "could"}
+        _VALID_CATEGORIES = {"must", "should", "could"}
         criteria = []
         for i, item in enumerate(raw_criteria):
             text = item.get("text", "")
-            category = item.get("category", "core")
-            if category not in ("core", "stretch"):
-                category = "core"
+            raw_category = item.get("category", "core")
+            category = _CATEGORY_MAP.get(raw_category, raw_category)
+            if category not in _VALID_CATEGORIES:
+                category = "must"
             criteria.append(
                 GeneratedCriterion(
                     id=f"E{i + 1}",
@@ -377,8 +410,8 @@ def _parse_criteria_response(
                 ),
             )
 
-        # Validate: at least min_criteria - 1 core items
-        core_count = sum(1 for c in criteria if c.category == "core")
+        # Validate: at least min_criteria - 1 must/should items
+        core_count = sum(1 for c in criteria if c.category in ("must", "should"))
         if core_count < min_criteria - 1:
             logger.warning(
                 f"Not enough core criteria: {core_count} < {min_criteria - 1}",
@@ -436,26 +469,59 @@ class EvaluationCriteriaGenerator:
   Tag this criterion as "core".
 """
 
-        return f"""You are generating evaluation dimensions for a multi-agent AI system.
+        return f"""You are generating evaluation criteria for a multi-agent AI system.
 
 ## Task Being Evaluated
 {task}
 
 ## Your Goal
-Generate {min_criteria}-{max_criteria} evaluation dimensions specific to THIS task.
-Each dimension names an aspect of quality that an evaluator scores on a 1-10 scale.
+Generate {min_criteria}-{max_criteria} concrete, verifiable evaluation criteria \
+specific to THIS task. Each criterion describes what to look for and how to score it.
 
-Dimensions are NOT requirements or acceptance tests. They are the axes along which
-output quality varies. Think: "what are the independent aspects of quality for this
-specific task that an evaluator should score?"
+Criteria must be **concrete and verifiable** — specific enough that an evaluator \
+can point to evidence in the output.
+
+Important: do NOT only generate functional/correctness criteria. A correct output \
+can still be mediocre. Include at least one criterion that assesses whether the \
+output shows intentional craft — cohesive choices, not just adequate execution. \
+Tag it as "should".
+
+BAD (abstract): "Rate visual design quality. SCORE: X/10"
+GOOD (concrete): "Typography is legible at mobile resolution (16px+ body text, \
+sufficient contrast). Layout has clear visual hierarchy. Color palette is \
+consistent across all pages. SCORE: X/10"
+
+BAD (abstract): "Rate code quality. SCORE: X/10"
+GOOD (concrete): "Functions have single responsibility. Error paths are handled \
+(no swallowed exceptions). Public API has type annotations. No hardcoded secrets \
+or credentials. SCORE: X/10"
+
+BAD (only functional): all criteria check correctness, completeness, and requirements
+GOOD (includes craft): at least one criterion asks whether the output shows \
+intentional quality — cohesive design choices, consistent style, or elegant \
+structure that a domain expert would recognize as crafted, not just assembled.
+
+## Tier System
+
+Organize criteria into three tiers:
+- **MUST**: Hard requirements from the task. Failing these means the answer is wrong. \
+(e.g., "Output is a working 30-second video, not a still image or broken render")
+- **SHOULD**: Quality expectations a demanding user would have. Missing these means \
+the answer is mediocre. (e.g., "Text is readable without pausing the video")
+- **COULD**: Excellence markers that separate good from outstanding. Missing these is \
+acceptable but achieving them shows real craft. (e.g., "Visual transitions \
+reinforce the narrative rather than just being decorative")
 
 ## Requirements
-1. Generate between {min_criteria} and {max_criteria} dimensions
-2. Tag each as "core" (primary quality axis) or "stretch" (differentiator axis)
-3. At least {min_criteria - 1} dimensions must be "core"
-4. 1-3 dimensions may be "stretch" (what separates good from exceptional)
-5. Each dimension must be specific to THIS task, not generic
-6. Each dimension should be scoreable — an evaluator rates it, not checks TRUE/FALSE
+1. Generate between {min_criteria} and {max_criteria} criteria
+2. Tag each as "must", "should", or "could"
+3. At least {min_criteria - 1} criteria must be "must" or "should"
+4. 1-3 criteria may be "could" (what separates good from exceptional)
+5. Each criterion must be specific to THIS task, not generic
+6. Each criterion should be scoreable — an evaluator rates it on a 1-10 scale
+7. **One criterion MUST assess overall quality/craft** — whether the output \
+shows intentional, cohesive choices beyond functional correctness. Tag it \
+as "should". Without this, agents produce correct but mediocre output.
 {changedoc_instruction}
 ## Examples
 
@@ -470,8 +536,8 @@ For a task "Write an API client library":
 - "Rate error handling: resilience to network failures, rate limits, malformed responses. SCORE: X/10"
 - "Rate developer ergonomics: naming clarity, discoverability, documentation. SCORE: X/10"
 
-Notice: these are short, dimension-focused, and end with SCORE: X/10. They name the
-quality axis and list what to look for — they do NOT prescribe specific quantities,
+Notice: these are short, criterion-focused, and end with SCORE: X/10. They name the \
+quality axis and list what to look for — they do NOT prescribe specific quantities, \
 thresholds, or implementation choices.
 
 BAD (prescriptive requirement): "The website contains at least 4 distinct pages covering history, discography, members, and legacy"
@@ -484,14 +550,14 @@ GOOD (evaluation dimension): "Rate individual member coverage: biographical accu
 Return JSON with this structure:
 {{
     "criteria": [
-        {{"text": "Rate [aspect]: [what to look for]. SCORE: X/10", "category": "core"}},
-        {{"text": "Rate [aspect]: [what to look for]. SCORE: X/10", "category": "core"}},
-        {{"text": "Rate [aspect]: [what to look for]. SCORE: X/10", "category": "stretch"}}
+        {{"text": "Rate [aspect]: [concrete things to look for]. SCORE: X/10", "category": "must"}},
+        {{"text": "Rate [aspect]: [concrete things to look for]. SCORE: X/10", "category": "should"}},
+        {{"text": "Rate [aspect]: [concrete things to look for]. SCORE: X/10", "category": "could"}}
     ]
 }}
 
 Write the JSON to a file called `criteria.json` in your workspace.
-Generate evaluation dimensions now for the task above."""
+Generate evaluation criteria now for the task above."""
 
     async def generate_criteria_via_subagent(
         self,

@@ -58,7 +58,8 @@ class DockerManager:
             cpu_limit: CPU limit (e.g., 2.0 for 2 CPUs)
             enable_sudo: Enable sudo access in containers (isolated from host system)
             credentials: Credential management configuration:
-                mount: List of credential types to mount ["ssh_keys", "git_config", "gh_config", "npm_config", "pypi_config"]
+                mount: List of credential types to mount
+                    ["ssh_keys", "git_config", "gh_config", "npm_config", "pypi_config", "claude_config", "codex_config"]
                 additional_mounts: Custom volume mounts {host_path: {bind: container_path, mode: ro/rw}}
                 env_file: Path to .env file to load
                 env_vars: List of environment variables to pass from host
@@ -103,6 +104,7 @@ class DockerManager:
         self.mount_gh_config = "gh_config" in mount_list
         self.mount_npm_config = "npm_config" in mount_list
         self.mount_pypi_config = "pypi_config" in mount_list
+        self.mount_claude_config = "claude_config" in mount_list
         self.mount_codex_config = "codex_config" in mount_list
         self.additional_mounts = credentials.get("additional_mounts", {})
         self.env_file_path = credentials.get("env_file")
@@ -353,8 +355,24 @@ class DockerManager:
             else:
                 logger.warning(f"⚠️ [Docker] npm config not found: {npm_config}")
 
-        # Codex config: handled separately via _copy_codex_auth() after container creation
-        # (Codex needs write access to ~/.codex/ for session files, so we can't mount read-only)
+        # Mount Claude Code config (read-only)
+        if self.mount_claude_config:
+            claude_config = home_dir / ".claude"
+            if claude_config.exists():
+                mounts[str(claude_config)] = {"bind": "/home/massgen/.claude", "mode": "ro"}
+                logger.info(f"🔐 [Docker] Mounting Claude config: {claude_config} → /home/massgen/.claude (ro)")
+            else:
+                logger.warning(f"⚠️ [Docker] Claude config directory not found: {claude_config}")
+
+        # Mount Codex config (read-only). Useful for keyless OAuth pass-through
+        # when nested workflows/subagents need access to host codex login state.
+        if self.mount_codex_config:
+            codex_config = home_dir / ".codex"
+            if codex_config.exists():
+                mounts[str(codex_config)] = {"bind": "/home/massgen/.codex", "mode": "ro"}
+                logger.info(f"🔐 [Docker] Mounting Codex config: {codex_config} → /home/massgen/.codex (ro)")
+            else:
+                logger.warning(f"⚠️ [Docker] Codex config directory not found: {codex_config}")
 
         # Mount pypi config (read-only)
         if self.mount_pypi_config:

@@ -29,10 +29,13 @@ async def call_openai(
     loaded_images: list[LoadedImage],
     prompt: str,
     model: str,
-) -> str:
+    system_prompt: str | None = None,
+    previous_response_id: str | None = None,
+) -> tuple[str, str | None]:
     """Call OpenAI Responses API for image understanding.
 
-    Refactored from the inline code previously in understand_image().
+    Returns (response_text, response_id) tuple. The response_id can be passed
+    back as previous_response_id for follow-up conversations.
     """
     from openai import AsyncOpenAI
 
@@ -53,22 +56,34 @@ async def call_openai(
 
     logger.info(f"[image_backends] Using OpenAI {model} for {len(loaded_images)} image(s)")
 
-    response = await client.responses.create(
-        model=model,
-        input=[{"role": "user", "content": content}],
-    )
+    create_kwargs: dict = {
+        "model": model,
+        "input": [{"role": "user", "content": content}],
+    }
+    if system_prompt:
+        create_kwargs["instructions"] = system_prompt
+    if previous_response_id:
+        create_kwargs["previous_response_id"] = previous_response_id
 
-    return response.output_text if hasattr(response, "output_text") else str(response.output)
+    response = await client.responses.create(**create_kwargs)
+
+    text = response.output_text if hasattr(response, "output_text") else str(response.output)
+    resp_id = getattr(response, "id", None)
+    return (text, resp_id)
 
 
 async def call_claude(
     loaded_images: list[LoadedImage],
     prompt: str,
     model: str,
-) -> str:
+    system_prompt: str | None = None,
+    conversation_messages: list[dict] | None = None,
+) -> tuple[str, None]:
     """Call Anthropic Claude API for image understanding.
 
-    Uses the same content block format as understand_video._process_with_anthropic.
+    Returns (response_text, None) tuple. Claude does not support server-side
+    conversation threading, so conversation_messages must be re-sent for
+    follow-ups.
     """
     import anthropic
 
@@ -94,23 +109,36 @@ async def call_claude(
 
     logger.info(f"[image_backends] Using Claude {model} for {len(loaded_images)} image(s)")
 
-    response = await client.messages.create(
-        model=model,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": content}],
-    )
+    messages: list[dict] = []
+    if conversation_messages:
+        messages.extend(conversation_messages)
+    messages.append({"role": "user", "content": content})
 
-    return response.content[0].text
+    create_kwargs: dict = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": messages,
+    }
+    if system_prompt:
+        create_kwargs["system"] = system_prompt
+
+    response = await client.messages.create(**create_kwargs)
+
+    return (response.content[0].text, None)
 
 
 async def call_gemini(
     loaded_images: list[LoadedImage],
     prompt: str,
     model: str,
-) -> str:
+    system_prompt: str | None = None,
+    conversation_messages: list[dict] | None = None,
+) -> tuple[str, None]:
     """Call Google Gemini API for image understanding.
 
-    Uses the same Part.from_bytes format as understand_video._process_with_gemini.
+    Returns (response_text, None) tuple. Gemini does not support server-side
+    conversation threading; conversation_messages are prepended to contents
+    for follow-ups.
     """
     from google import genai
 
@@ -121,6 +149,9 @@ async def call_gemini(
     client = genai.Client(api_key=api_key)
 
     contents = []
+    if conversation_messages:
+        for msg in conversation_messages:
+            contents.append(msg.get("content", ""))
     for img in loaded_images:
         contents.append(
             genai.types.Part.from_bytes(
@@ -132,19 +163,28 @@ async def call_gemini(
 
     logger.info(f"[image_backends] Using Gemini {model} for {len(loaded_images)} image(s)")
 
-    response = client.models.generate_content(model=model, contents=contents)
+    generate_kwargs: dict = {"model": model, "contents": contents}
+    if system_prompt:
+        generate_kwargs["config"] = genai.types.GenerateContentConfig(
+            system_instruction=system_prompt,
+        )
 
-    return response.text
+    response = client.models.generate_content(**generate_kwargs)
+
+    return (response.text, None)
 
 
 async def call_grok(
     loaded_images: list[LoadedImage],
     prompt: str,
     model: str,
-) -> str:
+    system_prompt: str | None = None,
+    conversation_messages: list[dict] | None = None,
+) -> tuple[str, None]:
     """Call xAI Grok API for image understanding.
 
-    Uses OpenAI-compatible chat completions format, same as understand_video._process_with_grok.
+    Returns (response_text, None) tuple. Grok uses OpenAI-compatible chat
+    completions; conversation_messages are prepended for follow-ups.
     """
     from openai import AsyncOpenAI
 
@@ -153,6 +193,12 @@ async def call_grok(
         raise ValueError("XAI_API_KEY not found in environment")
 
     client = AsyncOpenAI(api_key=api_key, base_url="https://api.x.ai/v1")
+
+    messages: list[dict] = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    if conversation_messages:
+        messages.extend(conversation_messages)
 
     content: list[dict] = [{"type": "text", "text": prompt}]
     for img in loaded_images:
@@ -164,15 +210,16 @@ async def call_grok(
                 },
             },
         )
+    messages.append({"role": "user", "content": content})
 
     logger.info(f"[image_backends] Using Grok {model} for {len(loaded_images)} image(s)")
 
     response = await client.chat.completions.create(
         model=model,
-        messages=[{"role": "user", "content": content}],
+        messages=messages,
     )
 
-    return response.choices[0].message.content
+    return (response.choices[0].message.content, None)
 
 
 async def call_claude_code(
@@ -180,11 +227,12 @@ async def call_claude_code(
     prompt: str,
     model: str | None = None,
     agent_cwd: str | None = None,
-) -> str:
+    system_prompt: str | None = None,
+) -> tuple[str, None]:
     """Call Claude Code SDK for image understanding.
 
-    Copies images to a temporary directory and uses the Claude Code SDK
-    query() function with Read-only permissions.
+    Returns (response_text, None) tuple. Claude Code subprocess does not
+    support conversation threading.
     """
     from claude_agent_sdk import (  # type: ignore
         AssistantMessage,
@@ -203,7 +251,8 @@ async def call_claude_code(
             image_refs.append(dest.name)
 
         image_list = ", ".join(image_refs)
-        full_prompt = f"Read and analyze the image(s) in this directory: {image_list}\n\n{prompt}"
+        prefix = f"[System instruction]\n{system_prompt}\n\n" if system_prompt else ""
+        full_prompt = f"{prefix}Read and analyze the image(s) in this directory: {image_list}\n\n{prompt}"
 
         options_kwargs: dict = {
             "allowed_tools": ["Read"],
@@ -241,17 +290,20 @@ async def call_claude_code(
         finally:
             await client.disconnect()
 
-    return response_text
+    return (response_text, None)
 
 
 async def call_codex(
     loaded_images: list[LoadedImage],
     prompt: str,
+    model: str | None = None,
     agent_cwd: str | None = None,
-) -> str:
+    system_prompt: str | None = None,
+) -> tuple[str, None]:
     """Call OpenAI Codex CLI for image understanding.
 
-    Copies images to a temporary directory and uses the Codex CLI with -i flag.
+    Returns (response_text, None) tuple. Codex subprocess does not support
+    conversation threading.
 
     Sandboxing:
     - ``--skip-git-repo-check``: temp dir is not a git repo
@@ -282,10 +334,14 @@ async def call_codex(
 
         logger.info(f"[image_backends] Using Codex CLI for {len(loaded_images)} image(s)")
 
+        effective_prompt = prompt
+        if system_prompt:
+            effective_prompt = f"[System instruction]\n{system_prompt}\n\n{prompt}"
+
         cmd = [
             "codex",
             "exec",
-            prompt,
+            effective_prompt,
             "--full-auto",
             "--skip-git-repo-check",
             "--disable",
@@ -311,4 +367,4 @@ async def call_codex(
         if result.returncode != 0:
             raise RuntimeError(f"Codex CLI failed (exit {result.returncode}): {result.stderr}")
 
-    return result.stdout
+    return (result.stdout, None)

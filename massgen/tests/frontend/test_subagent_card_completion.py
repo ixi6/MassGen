@@ -447,6 +447,35 @@ def test_show_subagent_card_from_args_respects_round_number() -> None:
     assert isinstance(timeline.added_card, SubagentCard)
 
 
+def test_show_subagent_card_from_args_supports_continue_subagent() -> None:
+    """Continue-subagent tool args should render a single-running SubagentCard."""
+    panel_cls = textual_display_module.AgentPanel
+    panel = panel_cls.__new__(panel_cls)
+    panel.agent_id = "agent_a"
+
+    timeline = _ArgsTimeline()
+    tool_data = SimpleNamespace(
+        tool_id="call:subagent.continue",
+        tool_name="subagent_agent_a/continue_subagent",
+        args_full=json.dumps(
+            {
+                "subagent_id": "evaluator",
+                "message": "Continue with deeper accessibility review",
+                "timeout_seconds": 240,
+            },
+        ),
+    )
+
+    assert panel._is_subagent_tool(tool_data.tool_name, tool_data.args_full) is True
+    panel._show_subagent_card_from_args(tool_data, timeline, round_number=3)
+
+    assert timeline.added_round_number == 3
+    assert isinstance(timeline.added_card, SubagentCard)
+    assert timeline.added_card.subagents[0].id == "evaluator"
+    assert timeline.added_card.subagents[0].status == "running"
+    assert "deeper accessibility review" in timeline.added_card.subagents[0].task
+
+
 def test_show_subagent_card_from_args_accepts_start_background_wrapper_payload() -> None:
     """Wrapper start_background_tool payloads targeting spawn_subagents should still render SubagentCard."""
     panel_cls = textual_display_module.AgentPanel
@@ -479,6 +508,55 @@ def test_show_subagent_card_from_args_accepts_start_background_wrapper_payload()
     assert timeline.added_round_number == 2
     assert isinstance(timeline.added_card, SubagentCard)
     assert timeline.added_card.subagents[0].id == "jazz_researcher"
+
+
+def test_update_subagent_card_with_continue_result_payload_updates_status() -> None:
+    """continue_subagent payloads should update existing SubagentCard status."""
+    panel_cls = textual_display_module.AgentPanel
+    panel = panel_cls.__new__(panel_cls)
+
+    running = _make_subagent("evaluator", status="running")
+    card = _FakeCard([running], tool_call_id="item_77")
+    timeline = _FakeTimeline(card)
+
+    result_payload = {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(
+                    {
+                        "success": True,
+                        "operation": "continue_subagent",
+                        "subagent_id": "evaluator",
+                        "status": "completed",
+                        "answer": "Follow-up complete with accessibility fixes.",
+                        "workspace": "/tmp/workspace",
+                        "execution_time_seconds": 8.0,
+                    },
+                ),
+            },
+        ],
+        "structured_content": {
+            "success": True,
+            "operation": "continue_subagent",
+            "subagent_id": "evaluator",
+            "status": "completed",
+            "answer": "Follow-up complete with accessibility fixes.",
+            "workspace": "/tmp/workspace",
+            "execution_time_seconds": 8.0,
+        },
+    }
+    tool_data = SimpleNamespace(
+        tool_id="item_77",
+        tool_name="subagent_agent_a/continue_subagent",
+        result_full=str(result_payload),  # real logs often use Python repr payloads
+    )
+
+    panel._update_subagent_card_with_results(tool_data, timeline)
+
+    assert card.last_update is not None
+    assert card.subagents[0].status == "completed"
+    assert card.subagents[0].answer_preview == "Follow-up complete with accessibility fixes."
 
 
 def test_show_subagent_card_from_args_builds_card_scoped_status_callback(monkeypatch) -> None:  # noqa: ANN001 - pytest fixture type

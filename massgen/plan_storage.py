@@ -38,6 +38,8 @@ class PlanMetadata:
     completed_chunks: list[str] | None = None
     chunk_history: list[dict[str, Any]] | None = None
     resumable_state: dict[str, Any] | None = None
+    # Artifact type: "plan" for task plans, "spec" for requirement specs
+    artifact_type: str = "plan"  # "plan" | "spec"
 
 
 class PlanSession:
@@ -87,6 +89,12 @@ class PlanSession:
 
     def compute_plan_diff(self) -> dict[str, Any]:
         """Compare workspace/ and frozen/ to detect plan drift."""
+        # Spec sessions use spec.json, not plan.json — diff not yet supported
+        workspace_spec = self.workspace_dir / "spec.json"
+        frozen_spec = self.frozen_dir / "spec.json"
+        if workspace_spec.exists() or frozen_spec.exists():
+            return {"info": "spec_session_no_diff"}
+
         # Plan is stored as plan.json in workspace root (renamed from project_plan.json during finalize)
         workspace_plan = self.workspace_dir / "plan.json"
         frozen_plan = self.frozen_dir / "plan.json"
@@ -299,10 +307,17 @@ class PlanStorage:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(item, dest)
 
-            # Step 2: Rename project_plan.json -> plan.json in temp workspace
-            # Planning phase outputs project_plan.json (to distinguish from internal tasks/plan.json)
-            # but execution phase expects plan/plan.json to align with MCP tools
+            # Step 2: Rename artifact files in temp workspace
+            # Planning phase outputs project_plan.json or project_spec.json
+            # (to distinguish from internal tasks/ files).
+            # Execution phase expects plan.json or spec.json at workspace root.
+            is_spec_artifact = False
             project_plan = temp_workspace / "project_plan.json"
+            project_spec = temp_workspace / "project_spec.json"
+            if project_spec.exists():
+                project_spec.rename(temp_workspace / "spec.json")
+                logger.info("[PlanStorage] Renamed project_spec.json -> spec.json")
+                is_spec_artifact = True
             if project_plan.exists():
                 project_plan.rename(temp_workspace / "plan.json")
                 logger.info("[PlanStorage] Renamed project_plan.json -> plan.json")
@@ -332,8 +347,35 @@ class PlanStorage:
             # Empty list [] means "no new paths provided, retain existing value".
             if context_paths:
                 metadata.context_paths = context_paths
-            metadata.execution_mode = metadata.execution_mode or "chunked_by_planner_v1"
-            metadata.chunk_order = metadata.chunk_order or []
+
+            if is_spec_artifact:
+                metadata.artifact_type = "spec"
+                # Extract chunk order from spec requirements
+                spec_file = session.workspace_dir / "spec.json"
+                if spec_file.exists():
+                    try:
+                        spec_data = json.loads(spec_file.read_text())
+                        seen: set[str] = set()
+                        chunks: list[str] = []
+                        for req in spec_data.get("requirements", []):
+                            chunk = req.get("chunk", "")
+                            if chunk and chunk not in seen:
+                                seen.add(chunk)
+                                chunks.append(chunk)
+                        metadata.chunk_order = chunks
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(
+                            f"[PlanStorage] Failed to parse chunk order from spec.json: {e}. " f"chunk_order will be empty.",
+                        )
+                        metadata.chunk_order = []
+                else:
+                    metadata.chunk_order = []
+                metadata.execution_mode = metadata.execution_mode or "chunked_by_planner_v1"
+            else:
+                metadata.artifact_type = "plan"
+                metadata.execution_mode = metadata.execution_mode or "chunked_by_planner_v1"
+                metadata.chunk_order = metadata.chunk_order or []
+
             metadata.completed_chunks = metadata.completed_chunks or []
             metadata.chunk_history = metadata.chunk_history or []
             metadata.planning_feedback_history = metadata.planning_feedback_history or []

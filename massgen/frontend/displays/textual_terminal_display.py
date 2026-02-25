@@ -254,7 +254,7 @@ def _extract_spawn_subagents_args_for_tool(
     tool_name: Any,
     args_payload: Any,
 ) -> dict[str, Any] | None:
-    """Extract spawn_subagents arguments from direct or wrapper tool payloads."""
+    """Extract subagent-tool arguments from direct or wrapper tool payloads."""
     parsed = _parse_spawn_subagents_args(args_payload)
     if not isinstance(parsed, dict):
         return None
@@ -266,7 +266,7 @@ def _extract_spawn_subagents_args_for_tool(
         return parsed
 
     target_tool = str(parsed.get("tool_name") or parsed.get("tool") or "").strip().lower()
-    if "spawn_subagent" not in target_tool:
+    if "spawn_subagent" not in target_tool and "continue_subagent" not in target_tool:
         return parsed
 
     nested_raw = parsed.get("arguments", parsed.get("args"))
@@ -275,11 +275,13 @@ def _extract_spawn_subagents_args_for_tool(
         return nested
 
     merged = {key: value for key, value in parsed.items() if key not in {"tool_name", "tool", "arguments", "args"}}
-    return merged if isinstance(merged.get("tasks"), list) else parsed
+    if isinstance(merged.get("tasks"), list) or merged.get("subagent_id"):
+        return merged
+    return parsed
 
 
 def _extract_spawned_subagents(result_text: Any) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
-    """Return normalized spawn_subagents payload plus extracted subagent entries."""
+    """Return normalized subagent payload plus extracted subagent entries."""
     result_data = _parse_spawn_subagents_result(result_text)
     if not isinstance(result_data, dict):
         return None, []
@@ -288,11 +290,17 @@ def _extract_spawned_subagents(result_text: Any) -> tuple[dict[str, Any] | None,
         "results",
         result_data.get("spawned_subagents", result_data.get("subagents", [])),
     )
-    if not isinstance(spawned_raw, list):
-        return result_data, []
+    if isinstance(spawned_raw, list):
+        spawned = [entry for entry in spawned_raw if isinstance(entry, dict)]
+        if spawned:
+            return result_data, spawned
 
-    spawned = [entry for entry in spawned_raw if isinstance(entry, dict)]
-    return result_data, spawned
+    # continue_subagent returns a single subagent payload rather than a list.
+    single_subagent_id = result_data.get("subagent_id") or result_data.get("id")
+    if single_subagent_id and result_data.get("status"):
+        return result_data, [result_data]
+
+    return result_data, []
 
 
 # Pre-collab subagent IDs that get dedicated full-screen treatment
@@ -5219,7 +5227,7 @@ if TEXTUAL_AVAILABLE:
 
                 # Store question for plan execution if in plan mode
                 # Only capture the FIRST user input - don't overwrite with subsequent/injected inputs
-                if not text.startswith("/") and self._mode_state.plan_mode == "plan":
+                if not text.startswith("/") and self._mode_state.plan_mode in ("plan", "spec"):
                     if self._mode_state.last_planning_question is None:
                         self._mode_state.last_planning_question = text
                         self._mode_state.planning_started_turn = self.coordination_display.current_turn
@@ -8207,7 +8215,10 @@ Type your question and press Enter to ask the agents.
                 event.stop()
                 return
 
-            self._mode_state.plan_config.broadcast = event.broadcast
+            if self._mode_state.plan_mode == "spec":
+                self._mode_state.spec_config.broadcast = event.broadcast
+            else:
+                self._mode_state.plan_config.broadcast = event.broadcast
 
             if event.broadcast == "human":
                 self.notify("Broadcast: Agents can ask human questions", severity="information", timeout=2)
@@ -8443,7 +8454,10 @@ Type your question and press Enter to ask the agents.
                 popover._current_chunk_target = self._mode_state.plan_config.target_chunks
                 popover._current_execute_auto_continue = self._mode_state.plan_config.execute_auto_continue_chunks
                 popover._current_execute_refinement_mode = self._mode_state.plan_config.execute_refinement_mode
-                popover._current_broadcast = self._mode_state.plan_config.broadcast
+                if self._mode_state.plan_mode == "spec":
+                    popover._current_broadcast = self._mode_state.spec_config.broadcast
+                else:
+                    popover._current_broadcast = self._mode_state.plan_config.broadcast
                 popover._analysis_target_type = getattr(self._mode_state.analysis_config, "target", "log")
                 popover._analysis_profile = self._mode_state.analysis_config.profile
                 popover._analysis_log_options = analysis_log_options
@@ -8888,6 +8902,7 @@ Type your question and press Enter to ask the agents.
                 from massgen.plan_execution import (
                     PlanValidationError,
                     build_execution_prompt,
+                    build_spec_execution_prompt,
                     resolve_active_chunk,
                 )
                 from massgen.plan_storage import PlanStorage
@@ -8924,10 +8939,12 @@ Type your question and press Enter to ask the agents.
                 self._mode_state.plan_session = plan
                 self._mode_state.selected_plan_id = plan.plan_id
 
-                # Load metadata to get the original planning prompt
+                # Load metadata to get the original planning prompt and artifact type
+                _artifact_type = None
                 try:
                     metadata = plan.load_metadata()
                     original_question = getattr(metadata, "planning_prompt", None) or user_text or "Execute the plan"
+                    _artifact_type = getattr(metadata, "artifact_type", None)
                 except Exception:
                     original_question = user_text or "Execute the plan"
 
@@ -8996,11 +9013,19 @@ Type your question and press Enter to ask the agents.
                 if additional_instructions:
                     prompt_question = f"{original_question}\n\nAdditional instructions: {additional_instructions}"
 
-                execution_prompt = build_execution_prompt(
-                    prompt_question,
-                    active_chunk=chunk_metadata.current_chunk,
-                    chunk_order=chunk_order,
-                )
+                if _artifact_type == "spec":
+                    execution_prompt = build_spec_execution_prompt(
+                        prompt_question,
+                        plan_session=plan,
+                        active_chunk=chunk_metadata.current_chunk,
+                        chunk_order=chunk_order,
+                    )
+                else:
+                    execution_prompt = build_execution_prompt(
+                        prompt_question,
+                        active_chunk=chunk_metadata.current_chunk,
+                        chunk_order=chunk_order,
+                    )
 
                 if range_selection:
                     execution_prompt += (
@@ -9332,7 +9357,13 @@ Type your question and press Enter to ask the agents.
                     self._mode_bar.set_plan_mode("plan")
                 self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
             elif self._mode_state.plan_mode == "plan":
-                # plan → execute (show plan selector if plans exist)
+                # plan → spec
+                self._mode_state.plan_mode = "spec"
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode("spec")
+                self.notify("Spec Mode: ON - Submit query to create requirements spec", severity="information", timeout=3)
+            elif self._mode_state.plan_mode == "spec":
+                # spec → execute (show plan/spec selector if sessions exist)
                 self._enter_execute_mode()
             elif self._mode_state.plan_mode == "execute":
                 # execute -> analysis
@@ -12423,6 +12454,7 @@ Type your question and press Enter to ask the agents.
             subagent_tools = [
                 "spawn_subagents",
                 "spawn_subagent",
+                "continue_subagent",
             ]
             tool_lower = str(tool_name or "").lower()
             if any(st in tool_lower for st in subagent_tools):
@@ -12445,7 +12477,7 @@ Type your question and press Enter to ask the agents.
             timeline,
             round_number: int | None = None,
         ) -> None:
-            """Show SubagentCard when spawn_subagents tool starts, parsing tasks from args.
+            """Show SubagentCard when subagent tools start, parsing args payloads.
 
             This allows users to see subagents as they're being spawned, not just after completion.
             NOTE: This is a fallback path - the callback via show_subagent_card_from_spawn
@@ -12488,8 +12520,46 @@ Type your question and press Enter to ask the agents.
                 tui_log(f"_show_subagent_card_from_args: failed to parse args: {str(args)[:100]}")
                 return
 
-            # Extract tasks from args
+            # Extract tasks from args.
             tasks = args_data.get("tasks", [])
+            if not isinstance(tasks, list):
+                tasks = []
+
+            def _find_existing_subagent(subagent_id: str) -> SubagentDisplayData | None:
+                try:
+                    for existing_card in timeline.query(SubagentCard):
+                        for candidate in getattr(existing_card, "subagents", []):
+                            if getattr(candidate, "id", None) == subagent_id:
+                                return candidate
+                except Exception as e:
+                    tui_log(f"[TextualDisplay] {e}")
+                return None
+
+            if not tasks:
+                # continue_subagent payloads target a single subagent instead of tasks[].
+                subagent_id = str(args_data.get("subagent_id") or args_data.get("id") or "").strip()
+                if subagent_id:
+                    existing = _find_existing_subagent(subagent_id)
+                    continue_message = str(args_data.get("message") or "").strip()
+                    existing_task = str(getattr(existing, "task", "") or "").strip() if existing else ""
+                    task_desc = str(args_data.get("task") or "").strip()
+                    if not task_desc:
+                        task_desc = existing_task
+                    if not task_desc and continue_message:
+                        task_desc = continue_message
+                    if not task_desc:
+                        task_desc = "Continue subagent"
+                    timeout_seconds = args_data.get("timeout_seconds") or (getattr(existing, "timeout_seconds", None) if existing else None) or 300
+                    tasks = [
+                        {
+                            "subagent_id": subagent_id,
+                            "task": task_desc,
+                            "timeout_seconds": timeout_seconds,
+                            "context_paths": list(getattr(existing, "context_paths", []) or []) if existing else [],
+                            "subagent_type": getattr(existing, "subagent_type", None) if existing else None,
+                        },
+                    ]
+
             if not tasks:
                 tui_log("_show_subagent_card_from_args: no tasks in args")
                 return
@@ -12658,6 +12728,7 @@ Type your question and press Enter to ask the agents.
             Subagent tools include:
             - spawn_subagents
             - spawn_subagent
+            - continue_subagent
             """
             # Check if tool name matches a subagent tool
             tool_name = tool_data.tool_name.lower()

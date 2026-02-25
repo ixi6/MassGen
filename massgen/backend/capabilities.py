@@ -282,8 +282,9 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         default_model="gpt-5.3-codex",
         env_var="OPENAI_API_KEY",
         notes=(
-            "OpenAI Codex CLI with OAuth support. Works with ChatGPT Plus/Pro subscription "
-            "(via `codex login`) or OPENAI_API_KEY. Native filesystem access via CLI. "
+            "OpenAI Codex CLI with OAuth support. Run `codex login` and complete the browser "
+            "OAuth flow with your ChatGPT Plus/Pro account, or use OPENAI_API_KEY as a fallback. "
+            "Native filesystem access via CLI. "
             "Requires: npm install -g @openai/codex. "
             "SANDBOX LIMITATION: OS-level sandbox (Seatbelt/Landlock) only restricts writes, "
             "NOT reads. For security-sensitive workloads, prefer Docker mode for full isolation."

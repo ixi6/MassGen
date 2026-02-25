@@ -156,13 +156,27 @@ def test_interrupted_turn_partial_result_flushes_execution_trace_for_all_backend
     snapshot_storage = tmp_path / backend_kind / "snapshots"
 
     backend = _build_backend(backend_kind, workspace, temp_parent, monkeypatch)
+    workspace_file = workspace / "interrupted_workspace_file.txt"
+    workspace_file.write_text("workspace snapshot content", encoding="utf-8")
     backend._clear_streaming_buffer(agent_id="agent_a")
     backend._add_reasoning_to_trace("Interrupted turn trace flush.")
 
     orchestrator = _build_orchestrator(backend, snapshot_storage, temp_parent)
-    _ = orchestrator.get_partial_result()
+    partial = orchestrator.get_partial_result()
+    assert partial is not None
 
     trace_path = backend.filesystem_manager.snapshot_storage / "execution_trace.md"
     assert trace_path.exists()
     trace_text = trace_path.read_text()
     assert "Interrupted turn trace flush." in trace_text
+
+    # Interrupted-turn partial result should persist current workspace snapshot.
+    snapshot_workspace_file = backend.filesystem_manager.snapshot_storage / "interrupted_workspace_file.txt"
+    assert snapshot_workspace_file.exists()
+    assert snapshot_workspace_file.read_text(encoding="utf-8") == "workspace snapshot content"
+
+    log_session_dir = logger_config.get_log_session_dir()
+    log_workspace_matches = list(
+        (log_session_dir / "agent_a").glob("*/workspace/interrupted_workspace_file.txt"),
+    )
+    assert log_workspace_matches

@@ -100,7 +100,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_claude.return_value = "This is a test image"
+            mock_claude.return_value = ("This is a test image", None)
 
             result = await understand_image(
                 image_path=str(fake_image),
@@ -124,7 +124,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_gemini.return_value = "Gemini analysis"
+            mock_gemini.return_value = ("Gemini analysis", None)
 
             result = await understand_image(
                 image_path=str(fake_image),
@@ -147,7 +147,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_grok.return_value = "Grok analysis"
+            mock_grok.return_value = ("Grok analysis", None)
 
             result = await understand_image(
                 image_path=str(fake_image),
@@ -170,7 +170,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_openai.return_value = "OpenAI analysis"
+            mock_openai.return_value = ("OpenAI analysis", "resp_123")
 
             result = await understand_image(
                 image_path=str(fake_image),
@@ -193,7 +193,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_cc.return_value = "Claude Code analysis"
+            mock_cc.return_value = ("Claude Code analysis", None)
 
             result = await understand_image(
                 image_path=str(fake_image),
@@ -217,7 +217,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_codex.return_value = "Codex analysis"
+            mock_codex.return_value = ("Codex analysis", None)
 
             result = await understand_image(
                 image_path=str(fake_image),
@@ -240,7 +240,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_openai.return_value = "OpenAI fallback"
+            mock_openai.return_value = ("OpenAI fallback", "resp_fb")
 
             await understand_image(
                 image_path=str(fake_image),
@@ -265,7 +265,7 @@ class TestUnderstandImageRouting:
             patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
         ):
             mock_load.return_value = _make_loaded_image()
-            mock_openai.return_value = "OpenAI default"
+            mock_openai.return_value = ("OpenAI default", "resp_def")
 
             await understand_image(
                 image_path=str(fake_image),
@@ -287,7 +287,7 @@ class TestUnderstandImageRouting:
         ):
             mock_load.return_value = _make_loaded_image()
             mock_claude.side_effect = Exception("Model does not support image input")
-            mock_openai.return_value = "OpenAI fallback after error"
+            mock_openai.return_value = ("OpenAI fallback after error", "resp_err")
 
             result = await understand_image(
                 image_path=str(fake_image),
@@ -328,7 +328,7 @@ class TestReadMediaWiring:
         ):
             mock_ctx.return_value = ("some context", None)
             mock_load.return_value = _make_loaded_image()
-            mock_openai.return_value = "analysis"
+            mock_openai.return_value = ("analysis", "resp_an")
 
             result = await read_media(
                 file_path=str(fake_image),
@@ -354,7 +354,7 @@ class TestReadMediaWiring:
         ):
             mock_ctx.return_value = ("some context", None)
             mock_load.return_value = _make_loaded_image()
-            mock_claude.return_value = "claude analysis"
+            mock_claude.return_value = ("claude analysis", None)
 
             result = await read_media(
                 file_path=str(fake_image),
@@ -380,7 +380,7 @@ class TestReadMediaWiring:
         ):
             mock_ctx.return_value = ("some context", None)
             mock_load.return_value = _make_loaded_image()
-            mock_openai.return_value = "analysis"
+            mock_openai.return_value = ("analysis", "resp_an")
 
             await read_media(
                 file_path=str(fake_image),
@@ -408,7 +408,7 @@ class TestReadMediaWiring:
         ):
             mock_ctx.return_value = ("some context", None)
             mock_load.return_value = _make_loaded_image()
-            mock_claude.return_value = "batch analysis"
+            mock_claude.return_value = ("batch analysis", None)
 
             result = await read_media(
                 inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
@@ -491,7 +491,7 @@ class TestImageBackendFunctions:
 
                 result = await call_openai([loaded], "describe", "gpt-5.2")
 
-                assert result == "OpenAI response"
+                assert result[0] == "OpenAI response"
                 mock_client.responses.create.assert_called_once()
 
     @pytest.mark.asyncio
@@ -511,7 +511,7 @@ class TestImageBackendFunctions:
 
                 result = await call_claude([loaded], "describe", "claude-sonnet-4-5")
 
-                assert result == "Claude response"
+                assert result[0] == "Claude response"
                 mock_client.messages.create.assert_called_once()
                 call_kwargs = mock_client.messages.create.call_args[1]
                 assert call_kwargs["model"] == "claude-sonnet-4-5"
@@ -542,7 +542,7 @@ class TestImageBackendFunctions:
 
                     result = await call_gemini([loaded], "describe", "gemini-3-flash-preview")
 
-                    assert result == "Gemini response"
+                    assert result[0] == "Gemini response"
                     mock_client.models.generate_content.assert_called_once()
 
     @pytest.mark.asyncio
@@ -563,7 +563,7 @@ class TestImageBackendFunctions:
 
                 result = await call_grok([loaded], "describe", "grok-4")
 
-                assert result == "Grok response"
+                assert result[0] == "Grok response"
                 MockClient.assert_called_once()
                 call_kwargs = MockClient.call_args[1]
                 assert "x.ai" in call_kwargs["base_url"]

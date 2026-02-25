@@ -127,6 +127,10 @@ class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
         "high": "#f85149",
         "medium": "#d29922",
         "low": "#8b949e",
+        # Spec priority levels (P0=urgent, P1=high, P2=normal)
+        "p0": "#f85149",
+        "p1": "#d29922",
+        "p2": "#8b949e",
     }
 
     def __init__(
@@ -140,15 +144,18 @@ class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
         classes: str | None = None,
     ):
         super().__init__(name=name, id=id, classes=classes)
-        plan_tasks = plan_data.get("tasks", [])
-        if isinstance(plan_tasks, list):
-            self.tasks = [task for task in plan_tasks if isinstance(task, dict)]
+        # Detect spec artifacts (requirements key, no tasks key)
+        self._is_spec = "requirements" in plan_data and "tasks" not in plan_data
+        items_key = "requirements" if self._is_spec else "tasks"
+        plan_items = plan_data.get(items_key, [])
+        if isinstance(plan_items, list):
+            self.tasks = [task for task in plan_items if isinstance(task, dict)]
             self.plan_data = dict(plan_data)
-            self.plan_data["tasks"] = self.tasks
+            self.plan_data[items_key] = self.tasks
         else:
             self.tasks = [task for task in tasks if isinstance(task, dict)]
             self.plan_data = dict(plan_data)
-            self.plan_data["tasks"] = self.tasks
+            self.plan_data[items_key] = self.tasks
         self.plan_path = plan_path
         self.revision = revision
         self._expanded = True
@@ -187,23 +194,27 @@ class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
             pass
 
     def compose(self) -> ComposeResult:
+        # Adapt labels for spec vs plan artifacts
+        artifact_label = "Spec" if self._is_spec else "Plan"
+        items_label = "Requirements" if self._is_spec else "Tasks"
+
         container_classes = "expanded" if self._expanded else None
         with Container(classes=container_classes):
             with Container(classes="modal-header"):
                 with Container(classes="header-row"):
-                    title = "Planning Review"
+                    title = f"{artifact_label} Review"
                     if self.revision:
-                        title = f"Planning Review (rev {self.revision})"
+                        title = f"{artifact_label} Review (rev {self.revision})"
                     yield Static(title, classes="modal-title")
                     expand_label = "Collapse View" if self._expanded else "Expand View"
                     yield Button(expand_label, variant="default", classes="modal-expand", id="expand_btn")
                     yield Button("✕", variant="default", classes="modal-close", id="close_btn")
 
             with Horizontal(classes="modal-stats"):
-                yield Static(f"Tasks: {len(self.tasks)}", classes="stat-item")
+                yield Static(f"{items_label}: {len(self.tasks)}", classes="stat-item")
                 yield Static(f"Chunks: {len(self._chunk_order)}", classes="stat-item")
                 yield Static(f"View: {'Expanded' if self._expanded else 'Compact'}", classes="stat-item")
-                high_priority = sum(1 for t in self.tasks if t.get("priority") == "high")
+                high_priority = sum(1 for t in self.tasks if str(t.get("priority", "")).lower() in {"high", "p0"})
                 if high_priority > 0:
                     yield Static(f"High Priority: {high_priority}", classes="stat-item")
 
@@ -221,7 +232,7 @@ class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
 
             with Container(classes="plan-json-actions"):
                 yield Button(
-                    "Edit Plan JSON",
+                    f"Edit {artifact_label} JSON",
                     variant="default",
                     id="edit_plan_json_btn",
                     classes="edit-plan-json-button",
@@ -229,23 +240,24 @@ class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
                 if self._json_edit_status:
                     yield Static(self._json_edit_status, classes="plan-json-edit-status")
 
+            rework_label = "spec refinement" if self._is_spec else "planning"
             yield from self.compose_rework_controls(
-                feedback_label="Prompt for next planning turn (required for Continue/Quick Edit):",
-                feedback_placeholder="Example: tighten scope, reorder chunks, add migration tasks",
-                continue_label="Continue Planning",
+                feedback_label=f"Prompt for next {rework_label} turn (required for Continue/Quick Edit):",
+                feedback_placeholder="Example: tighten scope, reorder chunks, add requirements" if self._is_spec else "Example: tighten scope, reorder chunks, add migration tasks",
+                continue_label=f"Continue {artifact_label}",
                 quick_edit_label="Quick Edit (Single Agent)",
             )
 
             with Container(classes="modal-footer"):
                 with Horizontal(classes="footer-buttons"):
                     yield Button(
-                        "Finalize Plan and Execute (Enter)",
+                        f"Finalize {artifact_label} and Execute (Enter)",
                         variant="primary",
                         id="finalize_btn",
                         classes="execute-button",
                     )
                     yield Button(
-                        "Finalize Plan (Manual Execute)",
+                        f"Finalize {artifact_label} (Manual Execute)",
                         variant="default",
                         id="finalize_manual_btn",
                     )
@@ -267,10 +279,16 @@ class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
         if priority in self.PRIORITY_COLORS:
             text.append("● ", style=self.PRIORITY_COLORS[priority])
 
-        name = task.get("name") or task.get("description", "Untitled task")
+        name = task.get("name") or task.get("title") or task.get("description", "Untitled")
         if not self._expanded and len(name) > 72:
             name = name[:69] + "..."
         text.append(name)
+
+        # For spec requirements, show EARS statement as dimmed suffix
+        ears = task.get("ears", "")
+        if ears and self._is_spec:
+            ears_display = ears if len(ears) <= 60 else ears[:57] + "..."
+            text.append(f" — {ears_display}", style="dim")
 
         deps = task.get("depends_on") or task.get("dependencies") or []
         if isinstance(deps, list) and deps:
@@ -320,29 +338,32 @@ class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
             self.refresh(recompose=True)
             return False
 
+        items_key = "requirements" if self._is_spec else "tasks"
+        items_label = "requirements" if self._is_spec else "tasks"
+
         if not isinstance(parsed, dict):
-            self._json_edit_status = "Plan JSON must be an object with a tasks array."
+            self._json_edit_status = f"JSON must be an object with a '{items_key}' array."
             self.refresh(recompose=True)
             return False
 
-        raw_tasks = parsed.get("tasks")
-        if not isinstance(raw_tasks, list) or not raw_tasks:
-            self._json_edit_status = "Plan JSON must include a non-empty 'tasks' array."
+        raw_items = parsed.get(items_key)
+        if not isinstance(raw_items, list) or not raw_items:
+            self._json_edit_status = f"JSON must include a non-empty '{items_key}' array."
             self.refresh(recompose=True)
             return False
 
-        parsed_tasks = [task for task in raw_tasks if isinstance(task, dict)]
-        if not parsed_tasks:
-            self._json_edit_status = "Plan JSON contains no valid task objects."
+        parsed_items = [item for item in raw_items if isinstance(item, dict)]
+        if not parsed_items:
+            self._json_edit_status = f"JSON contains no valid {items_label} objects."
             self.refresh(recompose=True)
             return False
 
-        parsed["tasks"] = parsed_tasks
+        parsed[items_key] = parsed_items
         self.plan_data = parsed
-        self.tasks = parsed_tasks
+        self.tasks = parsed_items
         self._plan_json_value = json.dumps(self.plan_data, indent=2)
         self._rebuild_chunk_groups()
-        self._json_edit_status = f"Applied JSON edits ({len(self.tasks)} task(s) loaded)."
+        self._json_edit_status = f"Applied JSON edits ({len(self.tasks)} {items_label} loaded)."
         self._persist_plan_data()
         self.refresh(recompose=True)
         return True

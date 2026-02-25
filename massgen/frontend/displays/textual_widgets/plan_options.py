@@ -391,6 +391,8 @@ class PlanOptionsPopover(Widget):
         # Title changes based on mode
         if self._plan_mode == "plan":
             yield Label("Planning Options", id="popover_title")
+        elif self._plan_mode == "spec":
+            yield Label("Spec Options", id="popover_title")
         elif self._plan_mode == "analysis":
             title = "Skill Organization" if self._analysis_target_type == "skills" else "Log Analysis Options"
             yield Label(title, id="popover_title")
@@ -400,7 +402,7 @@ class PlanOptionsPopover(Widget):
         with VerticalScroll(id="popover_content"):
             # Execute mode: Show plan selector and details
             if self._plan_mode == "execute" and self._available_plans:
-                yield Label("Select Plan:", classes="section-label")
+                yield Label("Select Plan/Spec:", classes="section-label")
 
                 # Build plan options
                 has_resumable = False
@@ -417,8 +419,10 @@ class PlanOptionsPopover(Widget):
                 for plan in self._available_plans[:5]:  # Limit to 5 most recent
                     try:
                         metadata = plan.load_metadata()
-                        # Format: plan_id (status)
-                        label = f"{plan.plan_id[:15]}... ({metadata.status})"
+                        # Show artifact type icon to distinguish plans from specs
+                        artifact_type = getattr(metadata, "artifact_type", "plan")
+                        type_marker = "[spec]" if artifact_type == "spec" else "[plan]"
+                        label = f"{type_marker} {plan.plan_id[:13]}... ({metadata.status})"
                         plan_options.append((label, plan.plan_id))
                     except Exception:
                         plan_options.append((plan.plan_id[:20], plan.plan_id))
@@ -436,8 +440,17 @@ class PlanOptionsPopover(Widget):
                 # Load initial plan details
                 self._update_plan_details(self._current_plan_id or "latest")
 
-                # View Plan button - opens full task list modal
-                yield Button("View Full Plan", id="view_plan_btn", variant="primary")
+                # View Plan/Spec button - opens full task/requirement list modal
+                selected = self._get_selected_plan_session()
+                _view_label = "View Full Plan"
+                if selected:
+                    try:
+                        _sel_meta = selected.load_metadata()
+                        if getattr(_sel_meta, "artifact_type", "plan") == "spec":
+                            _view_label = "View Full Spec"
+                    except Exception:
+                        pass
+                yield Button(_view_label, id="view_plan_btn", variant="primary")
 
                 yield Label("Execution Flow:", classes="section-label")
                 execute_auto_options = [
@@ -560,6 +573,40 @@ class PlanOptionsPopover(Widget):
                     ("Disabled (autonomous)", "off"),
                 ]
                 # Convert False to "off" for display
+                broadcast_value = self._current_broadcast if self._current_broadcast else "off"
+                if broadcast_value is True:
+                    broadcast_value = "human"
+                yield Select(
+                    broadcast_options,
+                    value=broadcast_value,
+                    id="broadcast_selector",
+                )
+
+            # Spec mode: chunk target + human feedback (no depth/task count)
+            if self._plan_mode == "spec":
+                yield Label("Chunk Count Target:", classes="section-label")
+                chunk_target_options = [
+                    ("Dynamic", "dynamic"),
+                    ("1 chunk (single run)", "1"),
+                    ("3 chunks", "3"),
+                    ("5 chunks", "5"),
+                    ("7 chunks", "7"),
+                    ("10 chunks", "10"),
+                    ("12 chunks", "12"),
+                ]
+                current_chunks_value = str(self._current_chunk_target) if self._current_chunk_target and self._current_chunk_target > 0 else "dynamic"
+                yield Select(
+                    chunk_target_options,
+                    value=self._safe_select_value(chunk_target_options, current_chunks_value),
+                    id="chunk_target_selector",
+                )
+
+                yield Label("Human Feedback:", classes="section-label")
+                broadcast_options = [
+                    ("Enabled (agents ask human)", "human"),
+                    ("Agents only (no human)", "agents"),
+                    ("Disabled (autonomous)", "off"),
+                ]
                 broadcast_value = self._current_broadcast if self._current_broadcast else "off"
                 if broadcast_value is True:
                     broadcast_value = "human"
@@ -819,25 +866,38 @@ class PlanOptionsPopover(Widget):
             except Exception:
                 created_str = metadata.created_at[:16]
 
-            # Get task count and preview
-            task_count = 0
-            task_preview = ""
-            plan_file = plan.workspace_dir / "plan.json"
-            if plan_file.exists():
-                try:
-                    data = json.loads(plan_file.read_text())
-                    tasks = data.get("tasks", [])
-                    task_count = len(tasks)
+            # Get item count and preview (supports both plan.json and spec.json)
+            item_count = 0
+            item_preview = ""
+            artifact_type = getattr(metadata, "artifact_type", "plan")
+            is_spec = artifact_type == "spec"
+            items_label = "Requirements" if is_spec else "Tasks"
 
-                    # Get first 2-3 task descriptions as preview
-                    if tasks:
+            plan_file = plan.workspace_dir / "plan.json"
+            spec_file = plan.workspace_dir / "spec.json"
+            artifact_file = spec_file if is_spec and spec_file.exists() else plan_file
+
+            if artifact_file.exists():
+                try:
+                    data = json.loads(artifact_file.read_text())
+                    items_key = "requirements" if is_spec else "tasks"
+                    items = data.get(items_key, [])
+                    item_count = len(items)
+
+                    # Get first 2-3 item descriptions as preview
+                    if items:
                         previews = []
-                        for t in tasks[:3]:
-                            desc = t.get("description", "")[:40]
-                            if len(t.get("description", "")) > 40:
-                                desc += "..."
+                        for t in items[:3]:
+                            if is_spec:
+                                desc = t.get("title", "")[:40]
+                                if len(t.get("title", "")) > 40:
+                                    desc += "..."
+                            else:
+                                desc = t.get("description", "")[:40]
+                                if len(t.get("description", "")) > 40:
+                                    desc += "..."
                             previews.append(f"  • {desc}")
-                        task_preview = "\n".join(previews)
+                        item_preview = "\n".join(previews)
                 except Exception:
                     pass
 
@@ -854,7 +914,7 @@ class PlanOptionsPopover(Widget):
 
             details = f"[bold]Status:[/] [{status_color}]{status}[/]\n"
             details += f"[bold]Created:[/] {created_str}\n"
-            details += f"[bold]Tasks:[/] {task_count}"
+            details += f"[bold]{items_label}:[/] {item_count}"
 
             chunk_entries = self._build_chunk_browser_entries(plan)
             if chunk_entries:
@@ -884,9 +944,9 @@ class PlanOptionsPopover(Widget):
                 # Show turn info if available
                 turn_info = f" [dim](turn {planning_turn})[/]" if planning_turn else ""
                 details += f"\n[dim]Query{turn_info}:[/]\n[italic]{prompt_preview}[/]"
-            elif task_preview:
-                # Fall back to task preview if no prompt stored
-                details += f"\n[dim]Preview:[/]\n{task_preview}"
+            elif item_preview:
+                # Fall back to item preview if no prompt stored
+                details += f"\n[dim]Preview:[/]\n{item_preview}"
 
             self._plan_details_widget.update(details)
 

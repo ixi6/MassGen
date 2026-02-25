@@ -32,7 +32,7 @@ class TestDefaultCriteriaEPrefix:
         criteria = get_default_criteria(has_changedoc=True)
         for c in criteria:
             assert c.id.startswith("E")
-        assert criteria[-1].id == "E5"
+        assert criteria[-1].id == "E6"
 
 
 class TestItemCategoriesInState:
@@ -56,7 +56,7 @@ class TestItemCategoriesInState:
 
         assert state["item_prefix"] == "E"
         assert "E1" in state["item_categories"]
-        assert state["item_categories"]["E1"] == "core"
+        assert state["item_categories"]["E1"] == "must"
 
     def test_item_categories_match_default_criteria(self):
         """Default categories must match get_default_criteria() output."""
@@ -68,14 +68,14 @@ class TestItemCategoriesInState:
             assert _CHECKLIST_ITEM_CATEGORIES[c.id] == c.category
 
     def test_changedoc_categories_have_4_items(self):
-        """Changedoc categories must have 4 items (3 core + 1 stretch)."""
+        """Changedoc categories must have 4 items (3 must + 1 could)."""
         from massgen.system_prompt_sections import _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC
 
         assert len(_CHECKLIST_ITEM_CATEGORIES_CHANGEDOC) == 4
-        core_count = sum(1 for v in _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC.values() if v == "core")
-        stretch_count = sum(1 for v in _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC.values() if v == "stretch")
-        assert core_count == 3
-        assert stretch_count == 1
+        must_count = sum(1 for v in _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC.values() if v == "must")
+        could_count = sum(1 for v in _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC.values() if v == "could")
+        assert must_count == 3
+        assert could_count == 1
 
 
 class TestDynamicCriteriaInToolSchema:

@@ -127,14 +127,21 @@ _CHECKLIST_ITEMS = [
     ("No broken functionality, errors, or obvious defects. Everything that's" " present works correctly. A working output with fewer features beats a" " broken one with more."),
     ("The output is thorough — no significant gaps, thin sections, or" " placeholder content. Each component has enough depth to be genuinely" " useful, not just present."),
     ("The output shows care beyond correctness — thoughtful choices," " consistent style, attention to edge cases, or creative elements that" " distinguish it from adequate work."),
+    (
+        "The output reflects intentional, thoughtful choices — not just"
+        " minimum viable execution. A knowledgeable person in this domain"
+        " would recognize craft, not just correctness. The whole feels"
+        " cohesive and considered, not assembled from adequate parts."
+    ),
 ]
 
-# Category tags for default checklist items: "core" or "stretch"
+# Category tags for default checklist items: "must", "should", or "could"
 _CHECKLIST_ITEM_CATEGORIES = {
-    "E1": "core",
-    "E2": "core",
-    "E3": "core",
-    "E4": "stretch",
+    "E1": "must",
+    "E2": "must",
+    "E3": "should",
+    "E4": "could",
+    "E5": "should",  # quality/craft — always present
 }
 
 _CHECKLIST_ITEMS_CHANGEDOC = [
@@ -153,10 +160,10 @@ _CHECKLIST_ITEMS_CHANGEDOC = [
 
 # Category tags for changedoc checklist items
 _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC = {
-    "E1": "core",
-    "E2": "core",
-    "E3": "core",
-    "E4": "stretch",
+    "E1": "must",
+    "E2": "must",
+    "E3": "must",
+    "E4": "could",
 }
 
 
@@ -251,6 +258,10 @@ If an answer has no meaningful failures, say so explicitly — but this should b
 rare. First attempts almost always have significant gaps.
 If you cannot find meaningful failures, your review is probably too generous.
 
+**Evidence-Based Findings:** If you used read_media to evaluate the output,
+include its key findings here. If read_media flagged fundamental issues with
+the approach, these belong in root causes — not just surface notes.
+
 ### Success Patterns
 
 What works well and MUST be preserved in any revision? Regression on these is
@@ -301,26 +312,32 @@ fix the failures you identified? Be targeted:
 - "Agent 1's data model is stronger but Agent 3's UI handles edge cases better"
 - Don't just say "combine the best of both" — specify exactly what to take and why.
 
-### Fresh Approach Consideration
+### Approach Challenge
 
-Don't only think about polishing the existing best answer — also consider whether
-**varying your approach** for key parts might produce a better result. You don't need
-to start from scratch, but changing how you tackle the most important sections can
-lead somewhere that incremental refinement never would.
+Before scoring, answer honestly: **Is the current approach the right approach,
+or just the first approach that was tried?**
 
-- Could a different structure, method, or creative direction for the core parts
-  improve the result — even while keeping other parts that already work well?
-- Are all current answers converging on the same basic approach? If so, varying
-  has extra value — it explores paths that pure refinement misses.
+Name one fundamentally different way to solve this problem — not a variation,
+a genuinely different strategy. If you can name one that would plausibly produce
+a better result, seriously consider pursuing it. Polishing a mediocre approach
+will never produce an excellent result.
 
-### Pre-Score Audit
+If all current answers share the same basic approach, that is a warning sign,
+not validation. If the output has accumulated features across rounds but still
+feels unpolished, the problem is the foundation, not the feature count.
 
-Before you score, re-read your Failure Patterns section. For EACH criterion:
-- Name the single biggest remaining weakness. If you wrote "no meaningful failures"
-  for any criterion, reconsider — what would a harsh critic say?
-- Ask: "If I gave this to someone with high standards, what would they complain about?"
-- Your score for each criterion should reflect the severity of that biggest weakness,
-  not the average of strengths and weaknesses.\""""
+### Pre-Score Audit (MANDATORY)
+
+For EACH E-criterion:
+1. Copy your single biggest finding from Failure Patterns for this criterion.
+2. Ask: does my planned score honestly reflect this finding's severity?
+3. If your finding describes a missing requirement or broken behavior, a score
+   above 5 needs strong justification.
+4. If your finding describes a significant gap, a score above 7 is suspect.
+5. If you wrote "no meaningful failures": what would a harsh critic say?
+
+A score that contradicts your own Failure Patterns section is dishonest — fix
+either the analysis or the score.\""""
 
 
 def _build_changedoc_checklist_analysis() -> str:
@@ -377,6 +394,10 @@ For each answer:
 - **E4+ (remaining criteria)**: Quality gaps against each remaining criterion?
 
 If you cannot find meaningful failures, your review is probably too generous.
+
+**Evidence-Based Findings:** If you used read_media to evaluate the output,
+include its key findings here. If read_media flagged fundamental issues with
+the approach, these belong in root causes — not just surface notes.
 
 ### Success Patterns
 
@@ -449,27 +470,32 @@ If no planned changes are TRANSFORMATIVE or STRUCTURAL, seriously consider wheth
 further iteration will produce meaningful improvement — or just accumulate incremental
 changes. Voting may be the better choice.
 
-### Fresh Approach Consideration
+### Approach Challenge
 
-Don't only think about polishing the existing changedoc — also consider whether
-**different decisions entirely** might produce a better result. Could a fundamentally
-different architectural choice, creative direction, or problem decomposition lead
-somewhere that incremental refinement of existing decisions never would?
+Before scoring, answer honestly: **Is the current approach the right approach,
+or just the first approach that was tried?**
 
-- Are all current changedocs converging on the same basic decisions? If so, varying
-  has extra value — it explores decision paths that pure refinement misses.
-- Could challenging a core assumption in the changedoc unlock a better outcome?
-- Could FEWER decisions produce a better result? Quality often comes from restraint —
-  removing weak decisions can strengthen the overall answer more than adding new ones.
+Name one fundamentally different way to solve this problem — not a variation,
+a genuinely different strategy. If you can name one that would plausibly produce
+a better result, seriously consider pursuing it. Polishing a mediocre approach
+will never produce an excellent result.
 
-### Pre-Score Audit
+If all current answers share the same basic approach, that is a warning sign,
+not validation. If the output has accumulated features across rounds but still
+feels unpolished, the problem is the foundation, not the feature count.
 
-Before you score, re-read your Failure Patterns section. For EACH criterion:
-- Name the single biggest remaining weakness. If you wrote "no meaningful failures"
-  for any criterion, reconsider — what would a harsh critic say?
-- Ask: "If I gave this to someone with high standards, what would they complain about?"
-- Your score for each criterion should reflect the severity of that biggest weakness,
-  not the average of strengths and weaknesses.\""""
+### Pre-Score Audit (MANDATORY)
+
+For EACH E-criterion:
+1. Copy your single biggest finding from Failure Patterns for this criterion.
+2. Ask: does my planned score honestly reflect this finding's severity?
+3. If your finding describes a missing requirement or broken behavior, a score
+   above 5 needs strong justification.
+4. If your finding describes a significant gap, a score above 7 is suspect.
+5. If you wrote "no meaningful failures": what would a harsh critic say?
+
+A score that contradicts your own Failure Patterns section is dishonest — fix
+either the analysis or the score.\""""
 
 
 def _build_checklist_decision(
@@ -594,22 +620,15 @@ Based on your analysis, rate your confidence (0-10) in each of the following
 statements. 0 = completely disagree, 10 = fully agree, no reservations.
 
 Calibrate your scores against these anchors:
-- **9-10**: Near-flawless. An expert reviewer would find only cosmetic nitpicks.
-  This score is rare and must be justified by the absence of any meaningful gap.
-- **7-8**: Solid execution with notable gaps. A demanding user would identify
-  specific things they wish were better. Most good first attempts land here.
-- **5-6**: Functional but mediocre. Meets the literal request but lacks depth,
-  polish, or thoughtfulness. A user would say "okay, but I expected more."
-- **3-4**: Weak. Key requirements are missing or poorly handled. The output
-  needs significant rework, not just polish.
-- **1-2**: Broken or fundamentally off-target. Does not meaningfully address
-  the request.
+- **9-10**: A professional would publish this as-is. No meaningful improvement possible.
+- **7-8**: Good with real gaps. You can name specific things a demanding user would improve.
+- **5-6**: Adequate but uninspired. Does what was asked but not well. Most first drafts belong here.
+- **3-4**: Significant problems. Approach may be sound but execution has clear failures.
+- **1-2**: Fundamentally wrong direction or non-functional.
 
-First attempts almost never deserve above 7. Subsequent iterations that address
-only incremental changes should not score higher than the previous round.
-A score of 8+ requires your diagnostic analysis found only minor polish issues.
-If your analysis identified ANY structural or significant gaps but your scores
-are 8+, your scores are inflated — lower them to match your analysis.
+Calibration rule: your score for each criterion MUST be consistent with the
+weaknesses in your diagnostic analysis. If your analysis identified significant
+gaps but your scores are 8+, your scores are inflated — lower them to match.
 
 {numbered}
 
@@ -723,22 +742,15 @@ Depth, features, polish, and richness all count — they are never "beyond scope
 Rate your confidence (0-10) in each of the following statements.
 0 = completely disagree, 10 = fully agree, no reservations.
 Calibrate your scores against these anchors:
-- **9-10**: Near-flawless. An expert reviewer would find only cosmetic nitpicks.
-  This score is rare and must be justified by the absence of any meaningful gap.
-- **7-8**: Solid execution with notable gaps. A demanding user would identify
-  specific things they wish were better. Most good first attempts land here.
-- **5-6**: Functional but mediocre. Meets the literal request but lacks depth,
-  polish, or thoughtfulness. A user would say "okay, but I expected more."
-- **3-4**: Weak. Key requirements are missing or poorly handled. The output
-  needs significant rework, not just polish.
-- **1-2**: Broken or fundamentally off-target. Does not meaningfully address
-  the request.
+- **9-10**: A professional would publish this as-is. No meaningful improvement possible.
+- **7-8**: Good with real gaps. You can name specific things a demanding user would improve.
+- **5-6**: Adequate but uninspired. Does what was asked but not well. Most first drafts belong here.
+- **3-4**: Significant problems. Approach may be sound but execution has clear failures.
+- **1-2**: Fundamentally wrong direction or non-functional.
 
-First attempts almost never deserve above 7. Subsequent iterations that address
-only incremental changes should not score higher than the previous round.
-A score of 8+ requires your diagnostic analysis found only minor polish issues.
-If your analysis identified ANY structural or significant gaps but your scores
-are 8+, your scores are inflated — lower them to match your analysis.
+Calibration rule: your score for each criterion MUST be consistent with the
+weaknesses in your diagnostic analysis. If your analysis identified significant
+gaps but your scores are 8+, your scores are inflated — lower them to match.
 
 {numbered}
 
@@ -1448,13 +1460,13 @@ from servers.github import create_issue
 from custom_tools.string_utils import reverse_string
 
 # Tool in subdirectory: from custom_tools.{{dir}}.{{file}} import {{function}}
-# Example from TOOL.md: entry_points[0] = {{file: "_multimodal_tools/text_to_image_generation.py", function: "text_to_image_generation"}}
-from custom_tools._multimodal_tools.text_to_image_generation import text_to_image_generation
+# Example from TOOL.md: entry_points[0] = {{file: "_multimodal_tools/generation/generate_media.py", function: "generate_media"}}
+from custom_tools._multimodal_tools.generation.generate_media import generate_media
 
 # Use the tools
 weather = get_forecast("San Francisco", days=3)
 reversed_text = reverse_string("hello")
-image = await text_to_image_generation(prompt="sunset", output_path="sunset.png")
+image = await generate_media(prompt="sunset", mode="image")
 ```
 
 **Important:**
@@ -3330,11 +3342,24 @@ the changedoc as you make it. Update the Implementation fields to reference YOUR
    features you plan to add — only what is already built.
 5. **Submit your answer** via `new_answer` once your work is complete. The changedoc should already be up to date.
 
-### Synthesizing from prior answers
+### Evaluating prior answers
 
-Draw from ALL available answers — do not pick one as your "base" and refine it.
-Your answer should reflect YOUR best judgment, informed by all prior work but not
-anchored to any single answer. The DEC Origin fields track per-decision lineage.
+Before building anything, form an honest opinion: **are the existing answers good,
+or just present?** Prior work is evidence of what has been tried, not a foundation
+you must build on. Your job is to produce the best possible answer, which may mean:
+
+- Adopting the best elements from multiple answers (synthesis)
+- Taking a completely different approach because current ones are mediocre
+- Keeping most of one answer but replacing its weakest component with something novel
+
+**Warning: the copy-as-base trap.** You may see prior deliverables already in your
+workspace. Do NOT default to patching them. Adding features to a mediocre base
+produces a feature-rich mediocre result. Ask honestly: if you were starting fresh
+with everything you now know, would you build it the same way? If the answer is no,
+rebuilding the weak parts is higher-value work than adding new parts on top.
+
+Default to "what would the best answer look like?" then decide whether existing
+work gets you there. The DEC Origin fields track per-decision lineage.
 
 For each decision the task requires:
 
@@ -3470,6 +3495,29 @@ A developer who was not present should be able to read the changedoc and:
 - Identify which ideas were genuinely new contributions (NEW markers)
 - Follow how decisions evolved through the deliberation trail"""
 
+_SPEC_PRESENTER_INSTRUCTIONS = """\
+
+### Spec Compliance Report
+
+Before presenting the final answer, produce a spec compliance summary. \
+For each requirement in the spec:
+
+1. List the requirement by ID and title
+2. Mark status: **SATISFIED** / **PARTIAL** / **NOT ADDRESSED**
+3. For PARTIAL requirements, explain what remains
+4. Note any requirements blocked by dependencies or deferred to a later chunk
+5. Report overall coverage (e.g., "8/10 requirements satisfied, 1 partial, 1 deferred")
+
+Format as a markdown table in your changedoc under `## Spec Compliance`:
+
+| REQ-ID | Title | Status | Notes |
+|--------|-------|--------|-------|
+| REQ-001 | ... | SATISFIED | Implemented in src/auth.py |
+| REQ-002 | ... | PARTIAL | Missing edge case handling |
+
+This compliance report is the primary quality signal for spec-driven execution. \
+Be honest — marking an unsatisfied requirement as SATISFIED defeats the purpose."""
+
 
 class NoveltyPressureSection(SystemPromptSection):
     """Injects novelty pressure when convergence is detected.
@@ -3496,6 +3544,13 @@ class NoveltyPressureSection(SystemPromptSection):
 
     def build_content(self) -> str:
         n = self.consecutive_incremental_rounds
+        if n == 0:
+            return (
+                "Before committing to a refinement strategy, consider whether the "
+                "existing approach is the RIGHT approach, not just the CURRENT approach. "
+                "If a fundamentally different direction would serve the user better, "
+                "now is the cheapest time to change course."
+            )
         if self.novelty_level == "gentle":
             return (
                 "Previous rounds identified only incremental improvements. Consider whether a "
@@ -4384,17 +4439,38 @@ Choose the evidence format that actually proves correctness for your artifact:
 
 You can create any evidence you need: Playwright `recordVideo()`, `ffmpeg` screen/audio capture, VHS terminal recordings, or plain screenshots. `read_media` accepts images, video, and audio.
 
-### CRITICAL: Be Skeptical, Not Charitable
-When evaluating your own or others' work, use prompts that look for **flaws**:
+### Built-In Critical Analysis
+The vision model is already instructed to be a critical reviewer — it will identify
+problems and distinguish fundamental issues from surface-level fixes. You don't need
+to write elaborate critical prompts, but you should still be specific about what to
+evaluate.
 
-**BAD prompts (too charitable):**
-- "Does the layout look correct?"
-- "Describe this screenshot"
+**Good prompts by domain (e.g.):**
+- Website/UI: "What flaws, layout issues, or broken elements do you see? Does it look polished or like a template?"
+- Generated image: "Does this match what was requested? What's off about composition, style, or detail?"
+- Chart/diagram: "Is the data clearly communicated? Are labels readable? What's misleading?"
+- Document/presentation: "Is the content well-organized? What would a reviewer flag as unclear or incomplete?"
 
-**GOOD prompts (skeptical):**
-- "What flaws, issues, or missing elements do you see? Be critical."
-- "What would a demanding user complain about?"
-- "Does this fully meet the requirements, or are there gaps?"
+If read_media reports fundamental issues with the approach, treat this as a signal
+to reconsider your direction — not just patch individual problems.
+
+### Follow-Up Conversations
+You can ask follow-up questions to a previous read_media analysis by passing
+`continue_from` with the `conversation_id` from a previous result. This continues
+the vision model conversation — it remembers the previous images and analysis.
+
+Use follow-ups for:
+- Comparing before/after: "I fixed the spacing. Is it better now?"
+- Drilling into specifics: "Focus on just the navigation bar"
+- Verifying fixes: "Does this version address the issues you found?"
+
+You can include a new `file_path` with a follow-up, or just send a new prompt
+to ask about the same image(s).
+
+A broad first analysis often flags issues in passing without going deep. Use
+follow-ups to drill into specific quality dimensions that matter for your task —
+don't settle for a single surface-level pass when a targeted follow-up would
+give you better direction.
 
 **Supported formats:**
 - Images: png, jpg, jpeg, gif, webp, bmp

@@ -2054,18 +2054,13 @@ class ConfigBuilder:
                             checked=True,
                         ),
                         questionary.Choice(
-                            "text_to_image_generation - Generate images from text prompts",
-                            value="text_to_image_generation",
+                            "generate_media - Unified image/video/audio generation",
+                            value="generate_media",
                             checked=True,
                         ),
                         questionary.Choice(
                             "image_to_image_generation - Transform existing images",
                             value="image_to_image_generation",
-                            checked=True,
-                        ),
-                        questionary.Choice(
-                            "text_to_video_generation - Generate videos from text prompts",
-                            value="text_to_video_generation",
                             checked=True,
                         ),
                         questionary.Choice(
@@ -2098,18 +2093,13 @@ class ConfigBuilder:
                             checked=True,
                         ),
                         questionary.Choice(
-                            "text_to_image_generation - Generate images from text prompts",
-                            value="text_to_image_generation",
+                            "generate_media - Unified image/video/audio generation",
+                            value="generate_media",
                             checked=False,
                         ),
                         questionary.Choice(
                             "image_to_image_generation - Transform existing images",
                             value="image_to_image_generation",
-                            checked=False,
-                        ),
-                        questionary.Choice(
-                            "text_to_video_generation - Generate videos from text prompts",
-                            value="text_to_video_generation",
                             checked=False,
                         ),
                         questionary.Choice(
@@ -2142,18 +2132,13 @@ class ConfigBuilder:
                             checked=False,
                         ),
                         questionary.Choice(
-                            "text_to_image_generation - Generate images from text prompts",
-                            value="text_to_image_generation",
+                            "generate_media - Unified image/video/audio generation",
+                            value="generate_media",
                             checked=False,
                         ),
                         questionary.Choice(
                             "image_to_image_generation - Transform existing images",
                             value="image_to_image_generation",
-                            checked=False,
-                        ),
-                        questionary.Choice(
-                            "text_to_video_generation - Generate videos from text prompts",
-                            value="text_to_video_generation",
                             checked=False,
                         ),
                         questionary.Choice(
@@ -2181,13 +2166,29 @@ class ConfigBuilder:
                     if "custom_tools" not in agent["backend"]:
                         agent["backend"]["custom_tools"] = []
 
+                    # Tools not located directly under massgen/tool/_multimodal_tools/
+                    # need explicit entry-point mapping.
+                    multimodal_tool_entry_points = {
+                        "generate_media": {
+                            "path": "massgen/tool/_multimodal_tools/generation/generate_media.py",
+                            "function": "generate_media",
+                        },
+                    }
+
                     # Add selected tools
                     for tool_name in selected_mm_tools:
+                        entry_point = multimodal_tool_entry_points.get(
+                            tool_name,
+                            {
+                                "path": f"massgen/tool/_multimodal_tools/{tool_name}.py",
+                                "function": tool_name,
+                            },
+                        )
                         tool_config = {
                             "name": [tool_name],
                             "category": "multimodal",
-                            "path": f"massgen/tool/_multimodal_tools/{tool_name}.py",
-                            "function": [tool_name],
+                            "path": entry_point["path"],
+                            "function": [entry_point["function"]],
                         }
                         agent["backend"]["custom_tools"].append(tool_config)
 

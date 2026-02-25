@@ -85,6 +85,19 @@ def test_codex_custom_tools_mcp_config_includes_wait_interrupt_file(tmp_path: Pa
     assert args[index + 1] == str(tmp_path / ".codex" / "background_wait_interrupt.json")
 
 
+def test_codex_custom_tools_mcp_env_sets_claude_config_dir_for_docker_mount(tmp_path: Path):
+    """Docker-mode Codex should expose CLAUDE_CONFIG_DIR when claude_config is mounted."""
+    backend = CodexBackend(
+        cwd=str(tmp_path),
+        command_line_execution_mode="docker",
+        command_line_docker_credentials={"mount": ["claude_config"]},
+    )
+
+    env = backend._build_custom_tools_mcp_env()
+
+    assert env["CLAUDE_CONFIG_DIR"] == "/home/massgen/.claude"
+
+
 class TestCodexParseItemMcpNoStreamChunkDuplication:
     """Verify _parse_item emits events but NOT mcp_status StreamChunks for MCP tool calls.
 

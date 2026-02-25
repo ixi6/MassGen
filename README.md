@@ -40,7 +40,7 @@
   <i>Scaling AI with collaborative, continuously improving agents</i>
 </p>
 
-MassGen is a cutting-edge multi-agent framework that coordinates AI agents to solve complex tasks through redundancy and iterative refinement. Every agent tackles the full problem, observing, critiquing, and building on each other's work across cycles of refinement and restarts. When agents believe they have a strong enough answer, they vote, and the best collectively validated answer wins. This approach to parallel refinement and collective validation lays the groundwork for principled multi-agent scaling, where the system continuously improves its outputs by leveraging diverse agent perspectives and enforcing quality through consensus.
+MassGen is a cutting-edge multi-agent framework that coordinates AI agents to solve complex tasks through redundancy and iterative refinement. Every agent tackles the full problem, observing, critiquing, and building on each other's work across cycles of refinement and restarts. When agents believe there is a strong enough answer, they vote, and the best collectively validated answer wins. This approach to parallel refinement and collective validation lays the groundwork for principled multi-agent scaling, where the system continuously improves its outputs by leveraging diverse agent perspectives and enforcing quality through consensus.
 
 This project started with the "threads of thought" and "iterative refinement" ideas presented in [The Myth of Reasoning](https://docs.ag2.ai/latest/docs/blog/2025/04/16/Reasoning/), and extends the classic "multi-agent conversation" idea in [AG2](https://github.com/ag2ai/ag2). Here is a [video recording](https://www.youtube.com/watch?v=xM2Uguw1UsQ) of the background context introduction presented at the Berkeley Agentic AI Summit 2025.
 
@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.55 Features](#-latest-features-v0155)
+- [v0.1.56 Features](#-latest-features-v0156)
 </details>
 
 <details open>
@@ -122,8 +122,8 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.55)](#recent-achievements-v0155)
-- [Previous Achievements (v0.0.3 - v0.1.54)](#previous-achievements-v003---v0154)
+- [Recent Achievements (v0.1.56)](#recent-achievements-v0156)
+- [Previous Achievements (v0.0.3 - v0.1.55)](#previous-achievements-v003---v0155)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
@@ -155,23 +155,23 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.55)
+## 🆕 Latest Features (v0.1.56)
 
-**🎉 Released: February 23, 2026**
+**🎉 Released: February 25, 2026**
 
-**What's New in v0.1.55:**
-- **🧩 Specialized Subagent Types** - Discovery-based system for specialized subagent roles (evaluator, explorer, researcher, novelty) via `SUBAGENT.md` frontmatter. TUI visualization for subagent roles.
-- **📊 Dynamic Evaluation Criteria** - GEPA-inspired task-specific evaluation criteria replacing static E1-E4 items. Domain-specific presets with core/stretch categorization for smarter convergence off-ramps.
-- **🖼️ Native Backend Image Routing** - `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI.
-- **🎬 Configurable Video Frame Extraction** - Scene-based (PySceneDetect) or uniform extraction modes with `max_frames` cost guardrail.
+**What's New in v0.1.56:**
+- **📋 Spec Plan Mode** - `plan_mode="spec"` for formal requirements specification before execution with TUI spec mode support.
+- **🎯 ask_others Targeting** - `target_agents` parameter for focused agent-to-agent communication instead of broadcast.
+- **🔍 Critic Subagent** - New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement.
+- **🔧 Codex OAuth Login Fix** - Codex backend always available in WebUI regardless of OPENAI_API_KEY.
 
-**Try v0.1.55 Features:**
+**Try v0.1.56 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Multi-agent coordination with specialized subagents
-uv run massgen --config massgen/configs/features/background_subagent_example.yaml --cwd-context ro "Use an explorer subagent to analyze this repo"
+# Launch MassGen, then press Shift+Tab twice to enter 'spec' mode
+uv run massgen
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1233,34 +1233,31 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.55)
+### Recent Achievements (v0.1.56)
 
-**🎉 Released: February 23, 2026**
+**🎉 Released: February 25, 2026**
 
-#### Specialized Subagent Types
-- **Discovery-Based Roles**: Specialized subagent roles via `SUBAGENT.md` frontmatter with built-in types: evaluator (programmatic verification), explorer (investigation), researcher (deep analysis), novelty (breaks refinement plateaus)
-- **TUI Visualization**: Subagent roles displayed in the terminal UI
+#### Spec Plan Mode
+- **Formal Requirements**: `plan_mode="spec"` for structured requirements specification before execution
+- **TUI Integration**: Spec creation, approval modal, and dedicated TUI spec mode state
+- **Changedoc Integration**: Spec storage and change document workflow
 
-#### Dynamic Evaluation Criteria
-- **Task-Specific Quality Gates**: GEPA-inspired evaluation criteria generation replacing static E1-E4 items
-- **Domain Presets**: persona, decomposition, evaluation, prompt, analysis presets
-- **Core/Stretch Categorization**: Smarter convergence off-ramps when all core items pass
-
-#### Native Backend Image Routing
-- **Own-Backend Routing**: `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI
-- **Fallback**: OpenAI fallback for backends without `image_understanding` capability
+#### ask_others Targeted Messaging
+- **Targeted Communication**: `target_agents` parameter for focused agent-to-agent communication instead of broadcast
+- **Validation**: Per-target response counting and shadow-agent prompt improvements
 
 #### Also in this release
-- **Configurable Video Frame Extraction**: Scene-based (PySceneDetect) or uniform extraction with `max_frames` cost guardrail
-- **Remotion Skill in Quickstart**: Video generation/editing skill installed when selected during quickstart
-- **Checklist System Update**: T-prefix to E-prefix naming, 0-100 to 0-10 score scale, core/stretch item categories
-- **Unified Pre-Collaboration**: Persona generation, decomposition, and eval criteria generation unified as composable primitives
+- **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
+- **read_media Conversation Continuity**: Follow-up conversations on supported media (image) via `continue_from` conversation_id
+- **Codex OAuth Login Fix**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
 
 #### Bug Fixes
-- Background subagent cancel name fix
-- Initial TUI sizing fix
+- Spec reading and test fixes
+- Audio cleanup for future release
 
-### Previous Achievements (v0.0.3 - v0.1.54)
+### Previous Achievements (v0.0.3 - v0.1.55)
+
+✅ **Specialized Subagent Types & Dynamic Evaluation Criteria (v0.1.55)**: Discovery-based subagent roles (evaluator, explorer, researcher, novelty) via `SUBAGENT.md` frontmatter. GEPA-inspired task-specific evaluation criteria with core/stretch gates. Native backend image routing. Configurable video frame extraction.
 
 ✅ **Subagent Messaging & Copilot SDK Backend (v0.1.54)**: Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
 

@@ -450,6 +450,8 @@ class TestConfigPassthrough:
     @pytest.mark.asyncio
     async def test_understand_video_creates_config_from_dict(self, tmp_path):
         """understand_video should parse video_extraction_config into VideoExtractionConfig."""
+        import json
+
         video_file = tmp_path / "test.mp4"
         video_file.write_bytes(b"\x00" * 100)
 
@@ -473,7 +475,7 @@ class TestConfigPassthrough:
 
             from massgen.tool._multimodal_tools.understand_video import understand_video
 
-            await understand_video(
+            result = await understand_video(
                 video_path=str(video_file),
                 prompt="describe",
                 video_extraction_config={
@@ -481,6 +483,11 @@ class TestConfigPassthrough:
                     "num_frames": 5,
                 },
             )
+
+            data = json.loads(result.output_blocks[0].data)
+            assert data["frame_extraction_performed"] is True
+            assert data["frame_extraction_reason"] == "frame_sampling"
+            assert data["frames_extracted"] == 2
 
             # extract_frames should have been called with a VideoExtractionConfig
             mock_extract.assert_called_once()
@@ -495,6 +502,49 @@ class TestConfigPassthrough:
             assert isinstance(config_arg, VideoExtractionConfig)
             assert config_arg.extraction_mode == ExtractionMode.UNIFORM
             assert config_arg.num_frames == 5
+
+    @pytest.mark.asyncio
+    async def test_understand_video_marks_native_backend_no_frame_extraction(self, tmp_path):
+        """Gemini native video path should report that frame extraction was not performed."""
+        import json
+
+        video_file = tmp_path / "test.mp4"
+        video_file.write_bytes(b"\x00" * 100)
+
+        with (
+            patch(
+                "massgen.tool._multimodal_tools.understand_video._process_with_gemini",
+                new_callable=AsyncMock,
+            ) as mock_gemini,
+            patch(
+                "massgen.tool._multimodal_tools.understand_video.extract_frames",
+            ) as mock_extract,
+            patch(
+                "massgen.tool._multimodal_tools.understand_video.get_backend",
+            ) as mock_backend,
+        ):
+            from massgen.tool._multimodal_tools.backend_selector import BackendConfig
+            from massgen.tool._multimodal_tools.understand_video import understand_video
+
+            mock_backend.return_value = BackendConfig(
+                name="gemini",
+                model="gemini-3-flash-preview",
+                api_key_env_vars=["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+            )
+            mock_gemini.return_value = "native analysis"
+
+            result = await understand_video(
+                video_path=str(video_file),
+                prompt="describe",
+            )
+
+            data = json.loads(result.output_blocks[0].data)
+            assert data["success"] is True
+            assert data["backend"] == "gemini"
+            assert data["frames_extracted"] == 0
+            assert data["frame_extraction_performed"] is False
+            assert data["frame_extraction_reason"] == "native_backend"
+            mock_extract.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

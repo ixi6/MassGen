@@ -86,7 +86,7 @@ class ModeToggle(Static):
 
     # Icons for different modes - using radio indicators for clean look
     ICONS = {
-        "plan": {"normal": "○", "plan": "◉", "execute": "◉", "analysis": "◉"},
+        "plan": {"normal": "○", "plan": "◉", "spec": "◉", "execute": "◉", "analysis": "◉"},
         "agent": {"multi": "◉", "single": "○"},
         "coordination": {"parallel": "◉", "decomposition": "○"},
         "refinement": {"on": "◉", "off": "○"},
@@ -95,7 +95,7 @@ class ModeToggle(Static):
 
     # Labels for states - concise without redundant ON/OFF
     LABELS = {
-        "plan": {"normal": "Normal", "plan": "Planning", "execute": "Executing", "analysis": "Analyzing"},
+        "plan": {"normal": "Normal", "plan": "Planning", "spec": "Spec", "execute": "Executing", "analysis": "Analyzing"},
         "agent": {"multi": "Multi-Agent", "single": "Single"},
         "coordination": {"parallel": "Parallel", "decomposition": "Decomposition"},
         "refinement": {"on": "Refine", "off": "Refine OFF"},
@@ -103,7 +103,7 @@ class ModeToggle(Static):
     }
 
     COMPACT_LABELS = {
-        "plan": {"normal": "Norm", "plan": "Plan", "execute": "Exec", "analysis": "Anly"},
+        "plan": {"normal": "Norm", "plan": "Plan", "spec": "Spec", "execute": "Exec", "analysis": "Anly"},
         "agent": {"multi": "Multi", "single": "Single"},
         "coordination": {"parallel": "Par", "decomposition": "Decomp"},
         "refinement": {"on": "Refine", "off": "Refine Off"},
@@ -204,11 +204,13 @@ class ModeToggle(Static):
 
         _mode_log(f"ModeToggle.on_click: {self.mode_type} current={self._current_state}")
 
-        # For plan mode, cycle through: normal -> plan -> execute -> analysis -> normal
+        # For plan mode, cycle through: normal -> plan -> spec -> execute -> analysis -> normal
         if self.mode_type == "plan":
             if self._current_state == "normal":
                 new_state = "plan"
             elif self._current_state == "plan":
+                new_state = "spec"
+            elif self._current_state == "spec":
                 new_state = "execute"
             elif self._current_state == "execute":
                 new_state = "analysis"
@@ -278,7 +280,7 @@ class ModeBar(Widget):
                 self._plan_toggle = ModeToggle(
                     mode_type="plan",
                     initial_state="normal",
-                    states=["normal", "plan", "execute", "analysis"],
+                    states=["normal", "plan", "spec", "execute", "analysis"],
                     id="plan_toggle",
                 )
                 yield self._plan_toggle

@@ -603,9 +603,10 @@ class SubagentManager:
     def _save_subagent_to_registry(
         self,
         subagent_id: str,
-        session_id: str,
+        session_id: str | None,
         config: SubagentConfig,
         result: SubagentResult,
+        continuable_via: str = "session",
     ) -> None:
         """Save subagent metadata to parent workspace registry.
 
@@ -621,9 +622,10 @@ class SubagentManager:
 
         Args:
             subagent_id: Unique subagent identifier
-            session_id: Session ID for continuation
+            session_id: Session ID for continuation (None if not yet available)
             config: Subagent configuration
             result: Execution result
+            continuable_via: How this subagent can be continued ("session" or "context_recovery")
         """
         registry_file = self.subagents_base / "_registry.json"
 
@@ -665,6 +667,7 @@ class SubagentManager:
             "execution_time_seconds": result.execution_time_seconds,
             "success": result.success,
             "continuable": True,
+            "continuable_via": continuable_via,
             "source_agent": self.parent_agent_id,
         }
 
@@ -1658,7 +1661,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
     def _parse_subprocess_status(self, workspace: Path) -> tuple[dict[str, Any], str | None, str | None]:
         """
-        Parse token usage, log path, and session ID from the subprocess's status.json.
+        Parse token usage, log path, and session ID from the subprocess.
+
+        Session ID is read from the sentinel file ({workspace}/.massgen/.session_id)
+        which is written at subprocess startup. The status.json meta.session_id field
+        is NOT used because it stores "attempt_1" (the log_dir.name), not the real
+        session identifier.
 
         Args:
             workspace: Workspace path where status.json might be
@@ -1666,10 +1674,19 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         Returns:
             Tuple of (token_usage dict, subprocess_log_dir path or None, session_id or None)
         """
-        # Look for status.json in the subprocess's .massgen logs
+        # Read session_id from sentinel file (written at subprocess startup)
+        sentinel_file = workspace / ".massgen" / ".session_id"
+        session_id = None
+        if sentinel_file.exists():
+            try:
+                session_id = sentinel_file.read_text().strip()
+            except OSError:
+                pass
+
+        # Look for status.json in the subprocess's .massgen logs for token usage
         massgen_logs = workspace / ".massgen" / "massgen_logs"
         if not massgen_logs.exists():
-            return {}, None, None
+            return {}, None, session_id
 
         # Find most recent log directory
         for log_dir in sorted(massgen_logs.glob("log_*"), reverse=True):
@@ -1683,14 +1700,34 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         "output_tokens": costs.get("total_output_tokens", 0),
                         "estimated_cost": costs.get("total_estimated_cost", 0.0),
                     }
-                    # Extract session_id from meta section
-                    session_id = data.get("meta", {}).get("session_id")
                     return token_usage, str(log_dir / "turn_1" / "attempt_1"), session_id
                 except (json.JSONDecodeError, OSError, KeyError, TypeError) as e:
                     logger.warning(
                         f"[SubagentManager] Failed to parse {status_file}: {e}",
                     )
-        return {}, None, None
+        return {}, None, session_id
+
+    def _session_has_saved_turns(self, workspace: Path, session_id: str | None) -> bool:
+        """Return True when workspace-local session storage has at least one saved turn."""
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_session_id:
+            return False
+
+        session_dir = workspace / ".massgen" / "sessions" / normalized_session_id
+        if not session_dir.exists() or not session_dir.is_dir():
+            return False
+
+        try:
+            for item in session_dir.iterdir():
+                if item.is_dir() and item.name.startswith("turn_"):
+                    return True
+        except OSError as e:
+            logger.debug(
+                f"[SubagentManager] OSError checking session turns for {session_dir}: {e}",
+            )
+            return False
+
+        return False
 
     def _write_subprocess_log_reference(
         self,
@@ -2229,6 +2266,192 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             "status_file": status_file,
         }
 
+    def continue_subagent_background(
+        self,
+        subagent_id: str,
+        new_message: str,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, Any]:
+        """Continue a subagent in background mode (non-blocking).
+
+        This schedules ``continue_subagent`` on a background asyncio task and
+        returns immediately with running status metadata.
+
+        Args:
+            subagent_id: ID of the subagent to continue
+            new_message: Continuation message
+            timeout_seconds: Optional timeout override
+
+        Returns:
+            Dictionary with background status metadata.
+        """
+        normalized_id = str(subagent_id or "").strip()
+        normalized_message = str(new_message or "").strip()
+
+        if not normalized_id:
+            return {
+                "subagent_id": "",
+                "status": "error",
+                "error": "Missing required 'subagent_id' parameter",
+            }
+        if not normalized_message:
+            return {
+                "subagent_id": normalized_id,
+                "status": "error",
+                "error": "Missing required 'message' parameter",
+            }
+
+        existing_task = self._background_tasks.get(normalized_id)
+        if existing_task:
+            if existing_task.done():
+                self._background_tasks.pop(normalized_id, None)
+            else:
+                return {
+                    "subagent_id": normalized_id,
+                    "status": "error",
+                    "error": (f"Subagent {normalized_id} is already running in background. " "Use send_message_to_subagent() to steer the active run."),
+                }
+
+        state = self._subagents.get(normalized_id)
+        if state and state.status in ("running", "pending"):
+            return {
+                "subagent_id": normalized_id,
+                "status": "error",
+                "error": (f"Subagent {normalized_id} is currently running. " "Use send_message_to_subagent() for runtime steering."),
+            }
+
+        workspace_hint = ""
+        if state and state.workspace_path:
+            workspace_hint = str(state.workspace_path)
+
+        if not workspace_hint:
+            for entry in self.list_subagents():
+                if str(entry.get("subagent_id") or "") == normalized_id:
+                    workspace_hint = str(entry.get("workspace") or "")
+                    break
+
+        if not workspace_hint:
+            return {
+                "subagent_id": normalized_id,
+                "status": "error",
+                "error": f"Subagent {normalized_id} not found in any registry.",
+            }
+
+        if state is not None:
+            state.status = "running"
+            state.result = None
+            state.started_at = datetime.now()
+            state.finished_at = None
+
+        clamped_timeout = self._clamp_timeout(timeout_seconds)
+
+        async def _run_background_continue() -> SubagentResult:
+            async with self._semaphore:
+                try:
+                    result = await self.continue_subagent(
+                        subagent_id=normalized_id,
+                        new_message=normalized_message,
+                        timeout_seconds=clamped_timeout,
+                    )
+                except asyncio.CancelledError:
+                    current_state = self._subagents.get(normalized_id)
+                    workspace_path = current_state.workspace_path if current_state and current_state.workspace_path else workspace_hint
+                    result = SubagentResult.create_error(
+                        subagent_id=normalized_id,
+                        error="Subagent cancelled",
+                        workspace_path=workspace_path,
+                    )
+                    if current_state is not None:
+                        current_state.status = "cancelled"
+                        current_state.result = result
+                        current_state.finished_at = datetime.now()
+                except Exception as e:
+                    logger.opt(exception=True).error(
+                        f"[SubagentManager] Background continue failed for {normalized_id}: {e}",
+                    )
+                    current_state = self._subagents.get(normalized_id)
+                    workspace_path = current_state.workspace_path if current_state and current_state.workspace_path else workspace_hint
+                    result = SubagentResult.create_error(
+                        subagent_id=normalized_id,
+                        error=str(e),
+                        workspace_path=workspace_path,
+                    )
+                    if current_state is not None:
+                        current_state.status = "failed"
+                        current_state.result = result
+                        current_state.finished_at = datetime.now()
+
+            self._invoke_completion_callbacks(normalized_id, result)
+            self._background_tasks.pop(normalized_id, None)
+            return result
+
+        self._background_tasks[normalized_id] = asyncio.create_task(_run_background_continue())
+
+        status_file = None
+        if self._subagent_logs_base:
+            status_file = str(self._subagent_logs_base / normalized_id / "full_logs" / "status.json")
+
+        return {
+            "subagent_id": normalized_id,
+            "status": "running",
+            "workspace": workspace_hint,
+            "status_file": status_file,
+        }
+
+    async def _continue_via_context_recovery(
+        self,
+        subagent_id: str,
+        subagent_entry: dict[str, Any],
+        new_message: str,
+        timeout_seconds: int | None,
+        *,
+        reuse_subagent_id: bool = False,
+    ) -> SubagentResult:
+        """Continue a subagent via fresh spawn with execution trace context.
+
+        Fallback for when the subprocess was killed before writing the session_id
+        sentinel. Gathers any execution traces from snapshots and starts a new
+        subagent with the original task + new message.
+
+        Args:
+            subagent_id: Original subagent identifier
+            subagent_entry: Registry entry for the cancelled subagent
+            new_message: New message to continue with
+            timeout_seconds: Optional timeout override
+            reuse_subagent_id: If True, continue using the original subagent_id
+
+        Returns:
+            SubagentResult from the fresh spawn
+        """
+        workspace = Path(subagent_entry.get("workspace", ""))
+        original_task = subagent_entry.get("task", "")
+        context_files: list[str] = []
+
+        # Gather execution traces from snapshots
+        snapshots = workspace / "snapshots"
+        if snapshots.exists():
+            for agent_dir in snapshots.iterdir():
+                if not agent_dir.is_dir():
+                    continue
+                trace = agent_dir / "execution_trace.md"
+                if trace.exists():
+                    context_files.append(str(trace))
+
+        # Build recovery task with original context and new message
+        task = f"{original_task}\n\n{new_message}"
+        fresh_id = subagent_id if reuse_subagent_id else f"{subagent_id}_recovery_{int(time.time())}"
+
+        logger.info(
+            f"[SubagentManager] Context recovery for {subagent_id} → " f"spawning {fresh_id} with {len(context_files)} trace file(s)",
+        )
+
+        return await self.spawn_subagent(
+            task=task,
+            subagent_id=fresh_id,
+            context_files=context_files or None,
+            timeout_seconds=timeout_seconds,
+        )
+
     async def continue_subagent(
         self,
         subagent_id: str,
@@ -2295,7 +2518,25 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 except json.JSONDecodeError:
                     logger.warning(f"[SubagentManager] Failed to parse registry for agent {agent_dir.name}")
 
-        # If still not found, return error
+        # If not found in any registry, check in-memory state (cancelled subagents
+        # that were saved to registry might not be discoverable if registry write failed)
+        if not subagent_entry:
+            in_memory = self._subagents.get(subagent_id)
+            if in_memory and in_memory.status in ("cancelled", "canceled"):
+                subagent_entry = {
+                    "subagent_id": subagent_id,
+                    "session_id": self._subagent_sessions.get(subagent_id),
+                    "task": in_memory.config.task,
+                    "workspace": in_memory.workspace_path or "",
+                    "continuable_via": "context_recovery",
+                }
+                # Create a minimal registry structure for _persist_continuation_outcome
+                registry = {
+                    "parent_agent_id": self.parent_agent_id,
+                    "orchestrator_id": self.orchestrator_id,
+                    "subagents": [subagent_entry],
+                }
+
         if not subagent_entry:
             return SubagentResult.create_error(
                 subagent_id=subagent_id,
@@ -2303,10 +2544,19 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             )
 
         session_id = subagent_entry.get("session_id")
+        continuable_via = subagent_entry.get("continuable_via", "session")
         if not session_id:
+            if continuable_via == "context_recovery":
+                return await self._continue_via_context_recovery(
+                    subagent_id,
+                    subagent_entry,
+                    new_message,
+                    timeout_seconds,
+                    reuse_subagent_id=True,
+                )
             return SubagentResult.create_error(
                 subagent_id=subagent_id,
-                error=f"Subagent {subagent_id} has no session_id in registry. Cannot continue.",
+                error=f"Subagent {subagent_id} has no session_id and no recovery path.",
             )
 
         # Get the existing workspace from the registry
@@ -2315,6 +2565,20 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             return SubagentResult.create_error(
                 subagent_id=subagent_id,
                 error=f"Subagent workspace not found: {workspace}",
+            )
+
+        # Sentinel recovery can produce a session_id before any turn is flushed.
+        # Detect this upfront to avoid noisy session restore failures.
+        if not self._session_has_saved_turns(workspace, session_id):
+            logger.warning(
+                f"[SubagentManager] Session {session_id} for {subagent_id} has no saved turns; " "continuing via context recovery",
+            )
+            return await self._continue_via_context_recovery(
+                subagent_id,
+                subagent_entry,
+                new_message,
+                timeout_seconds,
+                reuse_subagent_id=True,
             )
 
         state = self._subagents.get(subagent_id)
@@ -2510,18 +2774,19 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 # Still try to get log path for debugging
                 _, subprocess_log_dir, _ = self._parse_subprocess_status(workspace)
                 self._write_subprocess_log_reference(subagent_id, subprocess_log_dir, error=error_msg)
-                log_dir = self._get_subagent_log_dir(subagent_id)
 
-                error_result = SubagentResult.create_error(
-                    subagent_id=subagent_id,
-                    error=error_msg,
-                    workspace_path=str(workspace),
-                    execution_time_seconds=time.time() - start_time,
-                    log_path=str(log_dir) if log_dir else None,
-                    warning=runtime_warning,
+                # Session-based continuation failed — fall back to context recovery
+                # using workspace files from the cancelled run
+                logger.warning(
+                    f"[SubagentManager] Session continuation failed for {subagent_id} " f"(exit code {process.returncode}), falling back to context recovery",
                 )
-                _persist_continuation_outcome(error_result)
-                return error_result
+                return await self._continue_via_context_recovery(
+                    subagent_id,
+                    subagent_entry,
+                    new_message,
+                    timeout_seconds,
+                    reuse_subagent_id=True,
+                )
 
         except Exception as e:
             execution_time = time.time() - start_time
@@ -3060,26 +3325,45 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 "error": f"Subagent {subagent_id} already in terminal state: {state.status}",
             }
 
-        # Cancel asyncio background task if present
+        # Graceful shutdown: send SIGINT BEFORE cancelling bg_task.
+        # bg_task.cancel() raises CancelledError into _execute_with_orchestrator,
+        # whose handler calls process.terminate()/kill() — which would kill the
+        # subprocess before SIGINT can be processed by CancellationManager.
+        process = self._active_processes.get(subagent_id)
+        if process and process.returncode is None:
+            try:
+                import signal as sig
+
+                # SIGINT triggers CancellationManager → save_partial_turn()
+                # which saves per-agent workspaces, answers, and execution traces
+                process.send_signal(sig.SIGINT)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=10.0)
+                    logger.info(
+                        f"[SubagentManager] Graceful SIGINT shutdown for {subagent_id}",
+                    )
+                except TimeoutError:
+                    logger.warning(
+                        f"[SubagentManager] SIGINT timeout, sending SIGTERM to {subagent_id}",
+                    )
+                    process.terminate()
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                    except TimeoutError:
+                        logger.warning(
+                            f"[SubagentManager] Force killing {subagent_id}",
+                        )
+                        process.kill()
+                        await process.wait()
+            except Exception as e:
+                logger.error(f"[SubagentManager] Error cancelling {subagent_id}: {e}")
+
+        # Cancel asyncio background task AFTER process exit — the process is already
+        # dead so CancelledError handler won't race with our SIGINT shutdown.
         bg_task = self._background_tasks.get(subagent_id)
         if bg_task and not bg_task.done():
             bg_task.cancel()
             logger.info(f"[SubagentManager] Cancelled background task for {subagent_id}")
-
-        # Terminate subprocess if present
-        process = self._active_processes.get(subagent_id)
-        if process and process.returncode is None:
-            try:
-                process.terminate()
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5.0)
-                except TimeoutError:
-                    logger.warning(f"[SubagentManager] Force killing subagent {subagent_id}")
-                    process.kill()
-                    await process.wait()
-                logger.info(f"[SubagentManager] Terminated process for {subagent_id}")
-            except Exception as e:
-                logger.error(f"[SubagentManager] Error terminating {subagent_id}: {e}")
 
         state.status = "cancelled"
         if state.finished_at is None:
@@ -3094,6 +3378,30 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 workspace_path=state.workspace_path or "",
                 execution_time_seconds=elapsed,
             )
+
+        # Best-effort session_id recovery from sentinel file
+        workspace = Path(state.workspace_path) if state.workspace_path else None
+        session_id_recovered = None
+        if workspace and workspace.exists():
+            _, _, recovered_id = self._parse_subprocess_status(workspace)
+            if recovered_id and self._session_has_saved_turns(workspace, recovered_id):
+                session_id_recovered = recovered_id
+                self._subagent_sessions[subagent_id] = recovered_id
+            elif recovered_id:
+                logger.info(
+                    f"[SubagentManager] Ignoring empty recovered session for {subagent_id}: {recovered_id}",
+                )
+
+        # Always save to registry so continue_subagent can find this entry
+        continuable_via = "session" if session_id_recovered else "context_recovery"
+        self._save_subagent_to_registry(
+            subagent_id=subagent_id,
+            session_id=session_id_recovered,
+            config=state.config,
+            result=state.result,
+            continuable_via=continuable_via,
+        )
+
         logger.info(f"[SubagentManager] Cancelled subagent {subagent_id}")
 
         return {

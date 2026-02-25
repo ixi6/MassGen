@@ -211,6 +211,27 @@ class TestSubagentMcpConfigEnv:
         assert config["env"]["OPENAI_API_KEY"] == "sk-openai-test"
         assert config["env"]["FASTMCP_SHOW_CLI_BANNER"] == "false"
 
+    def test_subagent_mcp_config_bridges_claude_config_dir_from_codex_backend(self, tmp_path):
+        """Codex Docker credential mounts should flow through to subagent MCP env."""
+        from massgen.backend.codex import CodexBackend
+
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        codex_workspace = tmp_path / "codex_workspace"
+        codex_workspace.mkdir(parents=True, exist_ok=True)
+
+        agent.backend = CodexBackend(
+            cwd=str(codex_workspace),
+            command_line_execution_mode="docker",
+            command_line_docker_credentials={"mount": ["claude_config"]},
+        )
+        orch.agents["test_agent"].backend.config = {
+            "type": "codex",
+            "command_line_execution_mode": "docker",
+        }
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        assert config["env"]["CLAUDE_CONFIG_DIR"] == "/home/massgen/.claude"
+
     def test_subagent_mcp_config_sets_tool_timeout_buffer(self, tmp_path):
         """Subagent MCP config should raise Codex tool timeout above 60s default."""
         orch, agent = self._make_orchestrator_and_agent(tmp_path)
@@ -323,6 +344,7 @@ class TestSubagentMcpConfigEnv:
             "model": "gpt-5.3-codex",
             "enable_mcp_command_line": True,
             "command_line_execution_mode": "docker",
+            "command_line_docker_credentials": {"mount": ["codex_config"]},
             "enable_code_based_tools": True,
         }
 
@@ -333,6 +355,7 @@ class TestSubagentMcpConfigEnv:
 
         assert payload[0]["backend"]["enable_mcp_command_line"] is True
         assert payload[0]["backend"]["command_line_execution_mode"] == "docker"
+        assert payload[0]["backend"]["command_line_docker_credentials"]["mount"] == ["codex_config"]
         assert payload[0]["backend"]["enable_code_based_tools"] is True
 
     def test_subagent_mcp_coordination_config_includes_skill_inheritance_fields(self, tmp_path):

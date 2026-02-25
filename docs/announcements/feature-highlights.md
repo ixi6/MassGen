@@ -15,7 +15,7 @@ Update this when major new features ship.
 
 🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Both modes support personas, refinement, specialized subagent roles, and dynamic evaluation criteria. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
 
-📋Task planning & execution— Agents create structured plans with chunked execution, progress checkpoints, iterative review, and verification requirements. Configurable plan depth and persistent storage for re-execution. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/task_planning.html
+📋Task planning & execution— Agents create structured plans with chunked execution, progress checkpoints, iterative review, and verification requirements. Spec mode for formal requirements before execution. Configurable plan depth and persistent storage for re-execution. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/task_planning.html
 
 🛠️Work with files, apps, and projects — MCP tools and agent skills for file read/write (with worktree isolation), background tool execution, web browsing, computer use, and project editing — all with a robust permission system. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/tools/index.html
 
@@ -37,7 +37,7 @@ Update this when major new features ship.
 
 🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Both modes support personas, refinement, specialized subagent roles, and dynamic evaluation criteria. 👉 More Info: https://lnkd.in/gTH5prec
 
-📋Task planning & execution — Agents create structured plans with chunked execution, progress checkpoints, iterative review, and verification requirements. Configurable plan depth and persistent storage for re-execution. 👉 More Info: https://lnkd.in/gy5qtbau
+📋Task planning & execution — Agents create structured plans with chunked execution, progress checkpoints, iterative review, and verification requirements. Spec mode for formal requirements before execution. Configurable plan depth and persistent storage for re-execution. 👉 More Info: https://lnkd.in/gy5qtbau
 
 🛠️Work with files, apps, and projects — MCP tools and agent skills for file read/write (with worktree isolation), background tool execution, web browsing, computer use, and project editing — all with a robust permission system. 👉 More Info: https://lnkd.in/gXaCJfkq
 

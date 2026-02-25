@@ -2041,6 +2041,11 @@ class FilesystemManager:
                 if item.name == ".git":
                     logger.debug(f"[FilesystemManager] Preserving .git directory during clear: {item}")
                     continue
+                # Preserve .massgen directory — it holds subagent MCP config
+                # files written at session start that must survive across rounds.
+                if item.name == ".massgen":
+                    logger.debug(f"[FilesystemManager] Preserving .massgen directory during clear: {item}")
+                    continue
                 if item.is_file():
                     item.unlink()
                 elif item.is_dir():

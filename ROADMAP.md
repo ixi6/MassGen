@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.55
+**Current Version:** v0.1.56
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** February 23, 2026
+**Last Updated:** February 25, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,381 +42,71 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.56** | 02/25/26 | Spec Support for Planning Mode | @ncrispino | Add spec/proposal support to planning workflows ([#881](https://github.com/massgen/MassGen/issues/881)) |
-| | | Refactor ask_others for Targeted Agent Queries | @ncrispino | Support targeted agent queries via subagent for more efficient coordination ([#809](https://github.com/massgen/MassGen/issues/809)) |
-| **v0.1.57** | 02/27/26 | Curated Recommended Models List for Quickstart Wizard | @ncrispino | Curated model recommendations in quickstart wizard ([#840](https://github.com/massgen/MassGen/issues/840)) |
-| | | Support Dragging Screenshots into TUI Bar on Mac | @ncrispino | Enable drag-and-drop screenshot functionality in TUI input bar ([#831](https://github.com/massgen/MassGen/issues/831)) |
-| **v0.1.58** | 03/01/26 | Per-agent Isolated Write Contexts During Coordination | @ncrispino | Per-agent isolated write contexts during coordination ([#854](https://github.com/massgen/MassGen/issues/854)) |
-| | | Fix Rounds Appearing and Log Dir Content in Multi-Turn | @ncrispino | Fix round display and log directory issues in multi-turn sessions ([#848](https://github.com/massgen/MassGen/issues/848)) |
+| **v0.1.57** | 02/27/26 | Per-Subagent Runtime Isolation in Docker | @ncrispino | True per-subagent isolation when parent runs in Docker ([#910](https://github.com/massgen/MassGen/issues/910)) |
+| | | Improve Iterative Refinement | @ncrispino | Better convergence detection and quality-driven iteration ([#874](https://github.com/massgen/MassGen/issues/874)) |
+| **v0.1.58** | 03/01/26 | ElevenLabs TTS & STT Support | @ncrispino | Add ElevenLabs support for TTS and speech-to-text in generate/read media ([#942](https://github.com/massgen/MassGen/issues/942)) |
+| **v0.1.59** | 03/04/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.49 - Coordination Quality: Log Analysis TUI, Fairness Gate & Checklist Voting
+## 📋 v0.1.57 - Subagent Isolation & Iterative Refinement
 
 ### Features
 
-**1. Log Analysis Mode in TUI** (@ncrispino)
-- PR: [#869](https://github.com/massgen/MassGen/pull/869)
-- New "Analyzing" state in TUI mode bar (Normal → Planning → Executing → Analyzing)
-- Browse and select log directories and turns directly in the TUI
-- Configurable analysis profiles for different analysis depths
-- **Use Case**: Analyze runs without leaving the terminal
+**1. Per-Subagent Runtime Isolation in Docker** (@ncrispino)
+- Issue: [#910](https://github.com/massgen/MassGen/issues/910)
+- True per-subagent runtime isolation when parent runs in Docker
+- Eliminates port collisions, shared server state, and ambiguous timeout behavior between subagents
+- **Use Case**: Subagent evaluators that launch local servers no longer interfere with one another
 
-**2. Fairness Gate for Coordination** (@ncrispino)
-- PR: [#869](https://github.com/massgen/MassGen/pull/869)
-- Prevents fast agents from dominating coordination rounds
-- Configurable `fairness_lead_cap_answers` and `max_midstream_injections_per_round`
-- **Use Case**: Balanced multi-agent participation regardless of agent speed
-
-**3. Checklist Voting Tool** (@ncrispino)
-- PR: [#869](https://github.com/massgen/MassGen/pull/869)
-- New `checklist_tools_server.py` MCP server for structured quality evaluation
-- Binary pass/fail scoring for objective quality assessment
-- **Use Case**: Consistent, repeatable evaluation across coordination rounds
-
-**4. Automated Testing Infrastructure** (@ncrispino)
-- PR: [#869](https://github.com/massgen/MassGen/pull/869)
-- CI/CD workflow (`tests.yml`), SVG snapshot baselines, 16+ new test files
-- **Use Case**: Continuous quality assurance and visual regression testing
-
-**5. Shadow Agent Bug Fix** (@MuL1ian)
-- PR: [#861](https://github.com/massgen/MassGen/pull/861)
-- Fixed "[No response generated]" errors caused by incorrect chunk type comparison
-- **Use Case**: Reliable shadow agent responses
+**2. Improve Iterative Refinement** (@ncrispino)
+- Issue: [#874](https://github.com/massgen/MassGen/issues/874)
+- Better convergence detection: distinguish genuine vs incremental improvement
+- Fix checklist off-ramp so voting threshold actually affects required pass count
+- Categorize improvements as transformative/structural/incremental for smarter convergence
+- **Use Case**: Agents stop iterating when quality is good enough, push harder when there's real room to improve
 
 ### Success Criteria
-- ✅ Fairness gate prevents fast agents from dominating
-- ✅ Checklist voting provides structured quality evaluation
-- ✅ ROI framework guides iteration decisions
-- ✅ CI/CD pipeline running with SVG snapshot baselines
-- ✅ Shadow agent responses working correctly
-- ✅ Persona easing accessible from TUI mode bar
+- ✅ Subagents run in isolated runtime environments when parent is in Docker
+- ✅ Checklist off-ramp respects voting threshold configuration
+- ✅ Convergence detection distinguishes incremental from structural improvements
 
 ---
 
-## 📋 v0.1.50 - Chunked Plan Execution & Skill Lifecycle Management
+## 📋 v0.1.58 - ElevenLabs Media
 
 ### Features
 
-**1. Chunked Plan Execution** (@ncrispino)
-- PR: [#877](https://github.com/massgen/MassGen/pull/877)
-- Plans divided into chunks (e.g., `C01_foundation`) and executed one chunk at a time with progress checkpoints
-- Chunk browsing in TUI, frozen plan snapshots, `target_steps`/`target_chunks` parameters
-- **Use Case**: Safer long-form task completion with progress tracking
-
-**2. Iterative Planning Review Modal** (@ncrispino)
-- PR: [#877](https://github.com/massgen/MassGen/pull/877)
-- New modal with Continue Planning / Quick Edit / Finalize Plan options
-- **Use Case**: Plan iteration before execution begins
-
-**3. Skill Lifecycle Management** (@ncrispino)
-- PR: [#878](https://github.com/massgen/MassGen/pull/878)
-- New lifecycle modes (`create_or_update`, `create_new`, `consolidate`), skill organizer for merging overlapping skills
-- `SKILL_REGISTRY.md` routing guide, `load_previous_session_skills` config
-- **Use Case**: Reusable skill workflows with consolidation and previous-session loading
-
-**4. Local Skills MCP** (@ncrispino)
-- PR: [#878](https://github.com/massgen/MassGen/pull/878)
-- New MCP tool for skill list/read access in Docker/local execution contexts
-- **Use Case**: Skill access without filesystem tools
-
-**5. Worktree Improvements** (@ncrispino)
-- PR: [#877](https://github.com/massgen/MassGen/pull/877)
-- Branch accumulation across rounds, cross-agent diff visibility via `generate_branch_summaries()`, orphan cleanup
-- **Use Case**: Better worktree isolation with cross-agent visibility
-
-**6. Responsive TUI Mode Bar** (@ncrispino)
-- PR: [#877](https://github.com/massgen/MassGen/pull/877)
-- Vertical/horizontal adaptive layout with compact labels on narrow terminals
-- **Use Case**: TUI usability on varying terminal sizes
+**1. ElevenLabs TTS & STT Support** (@ncrispino)
+- Issue: [#942](https://github.com/massgen/MassGen/issues/942)
+- Add ElevenLabs as a provider for text-to-speech and speech-to-text
+- Integration with existing `generate_media` and `read_media` tools
+- **Use Case**: High-quality voice synthesis and transcription via ElevenLabs API
 
 ### Success Criteria
-- ✅ Chunked plan execution with progress checkpoints
-- ✅ Iterative planning review modal with Continue/Edit/Finalize options
-- ✅ Skill lifecycle management with consolidation and previous-session loading
-- ✅ Responsive TUI mode bar adapting to terminal width
-- ✅ Worktree branch accumulation and cross-agent diff visibility
+- ✅ ElevenLabs TTS working via `generate_media`
+- ✅ ElevenLabs STT working via `read_media`
 
 ---
 
-## 📋 v0.1.51 - Reviewing Coordination & Change Documents
+## 📋 v0.1.59 - Skill Use & Exploration
 
 ### Features
 
-**1. Change Documents (Changedoc)** (@ncrispino)
-- PR: [#896](https://github.com/massgen/MassGen/pull/896)
-- Decision journals agents write in `tasks/changedoc.md` during coordination, capturing decision provenance, rationale, and code traceability
-- Changedocs passed to other agents in `<changedoc>` tags for shared decision awareness
-- Config: `enable_changedoc: true` (default on)
-- **Use Case**: Multi-agent coordination traceability with decision provenance
-
-**2. Changedoc-Anchored Evaluation Checklist** (@ncrispino)
-- PR: [#896](https://github.com/massgen/MassGen/pull/896)
-- 5 changedoc-specific checklist items: Decision Completeness, Rationale Quality, Traceability, Output Quality, Novel Elements
-- Mandatory gap report before verdict (`checklist_require_gap_report: true`)
-- **Use Case**: Structured quality evaluation anchored to decision documents
-
-**3. Review Modal Improvements** (@ncrispino)
-- PR: [#896](https://github.com/massgen/MassGen/pull/896)
-- Multi-context, multi-file diff visualization with critique capabilities
-- **Use Case**: Enhanced code review with multi-file diff support
-
-**4. Drift Conflict Policy** (@ncrispino)
-- Configurable handling of target-file drift when applying isolated changes
-- `drift_conflict_policy: skip|prefer_presenter|fail`
-- **Use Case**: Safer change application when target files have been modified
-
-**5. CLI `--cwd-context` Flag** (@ncrispino)
-- Inject CWD into context paths: `ro`/`read` for read-only, `rw`/`write` for write access
-- Equivalent to `Ctrl+P` in TUI
-- **Use Case**: Quick project context injection from CLI
+**1. Improve Skill Use and Exploration** (@ncrispino)
+- Issue: [#873](https://github.com/massgen/MassGen/issues/873)
+- Local skill execution without Docker mode (local MCP tool for skill reading)
+- Skill registry with hierarchical organization replacing flat skill inclusion in system prompts
+- Skill consolidation/cleanup submode in analyze mode
+- TUI indicator when skill cleaning threshold reached
+- **Use Case**: Better skill lifecycle management and reduced system prompt bloat
 
 ### Success Criteria
-- ✅ Changedoc system captures decision provenance during coordination
-- ✅ Changedoc-anchored evaluation checklist with gap reports
-- ✅ Review modal supports multi-file diffs
-- ✅ Drift conflict policy prevents unsafe change application
-- ✅ `--cwd-context` CLI flag injects project context
-
----
-
-## 📋 v0.1.52 - Final Answer Modal & Coordination Quality Gates
-
-### Features
-
-**1. Dedicated Final Answer Modal** (@ncrispino)
-- PR: [#901](https://github.com/massgen/MassGen/pull/901)
-- Tabbed modal with Answer tab (markdown content, post-evaluation, file list) and Workspace/Review Changes tab (diff review)
-- Trophy header with agent identity and model name
-- Approve/Reject/Cancel action bar with rework controls for iteration
-- **Use Case**: Structured final answer review with clear approve/reject workflow
-
-**2. Substantive Gate** (@ncrispino)
-- PR: [#901](https://github.com/massgen/MassGen/pull/901)
-- Quality gate preventing coordination from continuing with only incremental changes
-- Tracks `transformative`/`structural`/`incremental` classification
-- Detects `decision_space_exhausted` for convergence
-- Config: `require_substantiveness: true` (mandatory in checklist)
-- **Use Case**: Prevent low-value iteration rounds that waste compute
-
-**3. Novelty Injection** (@ncrispino)
-- PR: [#901](https://github.com/massgen/MassGen/pull/901)
-- Creative pressure injection when agents converge or stall
-- Levels: `none` (default), `gentle`, `moderate`, `aggressive`
-- Intensifies after restarts
-- Config: `novelty_injection` in coordination section
-- **Use Case**: Combat premature convergence by introducing creative diversity
-
-**4. Agent Identity & Versioning** (@ncrispino)
-- PR: [#901](https://github.com/massgen/MassGen/pull/901)
-- Unique agent identity with versioned answer labels (e.g., `agent1.2`)
-- `answer_label_mapping` for provenance tracking
-- **Use Case**: Track which agent produced which answer version
-
-**5. Subagent Evaluation Infrastructure** (@ncrispino)
-- PR: [#901](https://github.com/massgen/MassGen/pull/901)
-- Foundation for delegating evaluation to spawned subagent instances
-- **Use Case**: Scalable evaluation through delegation
-
-**6. First Answer Non-Restart** (@ncrispino)
-- PR: [#901](https://github.com/massgen/MassGen/pull/901)
-- First answer from each agent no longer triggers automatic restarts even if quality checks fail
-- **Use Case**: More natural coordination flow without unnecessary early restarts
-
-### Success Criteria
-- ✅ Final answer modal with tabbed Answer/Review Changes interface
-- ✅ Substantive gate prevents low-value iteration rounds
-- ✅ Novelty injection combats premature convergence
-- ✅ Agent identity versioning tracks answer provenance
-- ✅ First answer non-restart enables natural coordination flow
-
----
-
-## 📋 v0.1.53 - Background Tool Execution
-
-### Features
-
-**1. Background Tool Execution** (@ncrispino)
-- PR: [#917](https://github.com/massgen/MassGen/pull/917)
-- Non-blocking lifecycle tools: `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
-- Compatible with custom tools and MCP server tools
-- **Use Case**: Agents continue foreground work while long-running tools execute in the background
-
-**2. Planning Task Verification** (@ncrispino)
-- PR: [#917](https://github.com/massgen/MassGen/pull/917)
-- Tasks now require `verification` and `verification_method` fields by default
-- `--no-require-verification` flag to opt out; framework-injected tasks exempt
-- **Use Case**: Ensure every planned task has clear verification criteria
-
-**3. TUI Background Job Indicators** (@ncrispino)
-- PR: [#917](https://github.com/massgen/MassGen/pull/917)
-- Agent status ribbon with background job indicators
-- Background tasks modal with lifecycle controls
-- **Use Case**: Visual feedback for background tool execution in the terminal UI
-
-**4. Subagent Infrastructure** (@ncrispino)
-- PR: [#917](https://github.com/massgen/MassGen/pull/917)
-- Groundwork for specialized subagent types: Evaluator and Explorer definitions via `SUBAGENT.md` frontmatter
-- Tool argument normalization for consistent handling across backends
-- **Use Case**: Foundation for specialized subagent types (maturing in future releases)
-
-### Success Criteria
-- ✅ Background tool lifecycle (start, monitor, wait, cancel, list) working
-- ✅ Planning tasks require verification fields by default
-- ✅ TUI background job indicators and modal controls
-- ✅ Subagent type infrastructure (Evaluator, Explorer)
-
----
-
-## 📋 v0.1.54 - Subagent Messaging & Copilot SDK Backend
-
-### Features
-
-**1. Copilot SDK Backend** (@ncrispino)
-- PR: [#862](https://github.com/massgen/MassGen/pull/862)
-- New `copilot` backend using `github-copilot-sdk` with native MCP server integration
-- Custom tool handling, session management with cache invalidation
-- Auth via GitHub subscription
-- **Use Case**: GitHub Copilot as a MassGen backend with native tool support
-
-**2. Subagent Runtime Messaging** (@ncrispino)
-- PR: [#926](https://github.com/massgen/MassGen/pull/926)
-- New `send_message_to_subagent` tool to steer running background subagents mid-execution
-- Supports per-agent targeting within subagent orchestrators
-- **Use Case**: Runtime control and guidance of background subagent work
-
-**3. Gemini 3.1 Pro Support** (@ncrispino)
-- PR: [#926](https://github.com/massgen/MassGen/pull/926), MAS-312
-- `gemini-3.1-pro-preview` model added to capabilities registry
-- **Use Case**: Access to Google's latest Gemini model
-
-**4. Per-Agent Injection Targeting** (@ncrispino)
-- PR: [#926](https://github.com/massgen/MassGen/pull/926)
-- Injections can target specific agents or broadcast to all
-- **Use Case**: Fine-grained control over which agents receive injected content
-
-### Success Criteria
-- ✅ Copilot SDK backend with native MCP and custom tool support
-- ✅ `send_message_to_subagent` tool for runtime subagent messaging
-- ✅ Gemini 3.1 Pro model available in capabilities registry
-- ✅ Per-agent injection targeting functional
-
----
-
-## 📋 v0.1.55 - Specialized Subagent Types & Dynamic Evaluation Criteria
-
-### Features
-
-**1. Specialized Subagent Types** (@ncrispino)
-- PR: [#938](https://github.com/massgen/MassGen/pull/938)
-- Discovery-based system for specialized subagent roles via `SUBAGENT.md` frontmatter
-- Built-in types: evaluator (programmatic verification), explorer (investigation), researcher (deep analysis), novelty (breaks refinement plateaus)
-- TUI visualization for subagent roles
-- **Use Case**: Specialized subagent delegation with role-appropriate behavior and tools
-
-**2. Dynamic Evaluation Criteria** (@ncrispino)
-- PR: [#938](https://github.com/massgen/MassGen/pull/938)
-- GEPA-inspired task-specific evaluation criteria generation replacing static E1-E4 items
-- Domain-specific presets (persona, decomposition, evaluation, prompt, analysis)
-- Core/stretch categorization for smarter convergence off-ramps
-- Score scale 0-10, config: `evaluation_criteria_generator`
-- **Use Case**: Task-appropriate quality gates that adapt to the domain instead of generic checklists
-
-**3. Native Backend Image Routing** (@ncrispino)
-- PR: [#938](https://github.com/massgen/MassGen/pull/938), MAS-300
-- `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI
-- Fallback to OpenAI for backends without `image_understanding` capability
-- **Use Case**: Better image understanding quality by using each agent's native vision capabilities
-
-**4. Configurable Video Frame Extraction** (@ncrispino)
-- PR: [#938](https://github.com/massgen/MassGen/pull/938)
-- Scene-based (PySceneDetect) or uniform extraction modes
-- `max_frames` cost guardrail (default 30, max 60)
-- Config: `multimodal_config.video`
-- **Use Case**: Cost-controlled video analysis with intelligent frame selection
-
-**5. Remotion Skill in Quickstart** (@ncrispino)
-- PR: [#938](https://github.com/massgen/MassGen/pull/938)
-- Video generation/editing skill installed when selected during quickstart
-- **Use Case**: Video creation capabilities available out of the box
-
-**6. Composition Documentation** (@ncrispino)
-- New `docs/modules/composition.md` documenting composable primitives, phase architecture, and domain-specific checklist gates
-- **Use Case**: Developer reference for the quality matrix and how personas, eval criteria, decomposition, and planning compose
-
-### Success Criteria
-- ✅ Specialized subagent types (evaluator, explorer, researcher, novelty) with TUI visualization
-- ✅ Dynamic evaluation criteria with domain presets and core/stretch categorization
-- ✅ Native backend image routing with fallback
-- ✅ Configurable video frame extraction with cost guardrails
-- ✅ Unified pre-collaboration composable primitives
-
----
-
-## 📋 v0.1.56 - Spec Support for Planning & Targeted Agent Queries
-
-### Features
-
-**1. Spec Support for Planning Mode** (@ncrispino)
-- Issue: [#881](https://github.com/massgen/MassGen/issues/881)
-- Add spec/proposal support to planning workflows
-- **Use Case**: Structured specification creation and review during planning mode
-
-**2. Refactor ask_others for Targeted Agent Queries** (@ncrispino)
-- Issue: [#809](https://github.com/massgen/MassGen/issues/809)
-- Support targeted queries to specific agents via subagent spawning
-- Three modes: broadcast to all, selective broadcast with per-agent prompts, targeted ask about past answer
-- Pass full `_streaming_buffer` to shadow agents for improved context
-- **Use Case**: More efficient coordination by querying specific agents rather than broadcasting to all
-
-### Success Criteria
-- ✅ Spec support integrated into planning workflows
-- ✅ Targeted `ask_others(target_agent_id="Agent-1", question="...")` working
-- ✅ Selective broadcast with `agent_prompts` dict functional
-- ✅ Improved context passing via streaming buffer
-
----
-
-## 📋 v0.1.57 - Quickstart Model Curation & TUI Screenshots
-
-### Features
-
-**1. Curated Recommended Models List for Quickstart Wizard** (@ncrispino)
-- Issue: [#840](https://github.com/massgen/MassGen/issues/840)
-- Curated model recommendations in quickstart wizard
-- **Use Case**: Better first-run experience with recommended model selections
-
-**2. Support Dragging Screenshots into TUI Bar on Mac** (@ncrispino)
-- Issue: [#831](https://github.com/massgen/MassGen/issues/831)
-- Enable drag-and-drop screenshot functionality in TUI input bar
-- **Use Case**: Quick image sharing for multimodal agent coordination
-
-### Success Criteria
-- ✅ Curated model list displayed in quickstart wizard
-- ✅ Drag-and-drop screenshots into TUI input bar working on Mac
-
----
-
-## 📋 v0.1.58 - Per-agent Isolated Write Contexts & Multi-Turn Fixes
-
-### Features
-
-**1. Per-agent Isolated Write Contexts During Coordination** (@ncrispino)
-- Issue: [#854](https://github.com/massgen/MassGen/issues/854)
-- Per-agent isolated write contexts during coordination
-- **Use Case**: Each agent gets its own isolated write context during coordination rounds
-
-**2. Fix Rounds Appearing and Log Dir Content in Multi-Turn** (@ncrispino)
-- Issue: [#848](https://github.com/massgen/MassGen/issues/848)
-- Fix round display and log directory content issues in multi-turn sessions
-- **Use Case**: Correct round tracking and log organization across turns
-
-### Success Criteria
-- ✅ Per-agent write contexts properly isolated during coordination
-- ✅ Rounds display correctly in multi-turn sessions
-- ✅ Log directory content correct across turns
+- ✅ Skills usable in local (non-Docker) mode
+- ✅ Skill registry created and used in system prompts
+- ✅ Skill consolidation workflow available in analyze mode
 
 ---
 
@@ -1174,5 +864,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** February 20, 2026
+**Last Updated:** February 25, 2026
 **Maintained By:** MassGen Team

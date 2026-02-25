@@ -219,10 +219,6 @@ async def _generate_single_with_input_images(
             input_image_paths=input_image_paths,
         )
 
-        # Add instructions to extra_params for audio
-        if instructions and media_type == MediaType.AUDIO:
-            config.extra_params["instructions"] = instructions
-
         # Execute generation
         result = await generate_image(config)
 
@@ -277,6 +273,7 @@ async def generate_media(
     voice: str | None = None,
     aspect_ratio: str | None = None,
     audio_format: str | None = None,
+    audio_type: Literal["speech", "music", "sound_effect"] = "speech",
     instructions: str | None = None,
     extra_params: dict[str, Any] | None = None,
     max_concurrent: int = 4,
@@ -315,6 +312,9 @@ async def generate_media(
         voice: For audio: voice ID (e.g., "alloy", "echo", "nova", "shimmer")
         aspect_ratio: For image/video: aspect ratio (e.g., "16:9", "1:1")
         audio_format: For audio: output format (mp3, wav, opus, etc.)
+        audio_type: For audio: type of audio to generate.
+                    Currently only "speech" is supported. "music" and
+                    "sound_effect" are reserved and return an unsupported error.
         instructions: For audio: speaking instructions (tone, style)
         extra_params: Backend-specific parameters
         max_concurrent: Maximum concurrent generations for batch mode (default: 4)
@@ -355,17 +355,25 @@ async def generate_media(
     Supported Backends:
         Image: openai (GPT-4.1), google (Imagen), openrouter
         Video: google (Veo), openai (Sora-2)
-        Audio: openai (gpt-4o-mini-tts)
+        Audio (speech): openai (gpt-4o-mini-tts)
     """
     try:
+        # Parse mode to MediaType
+        try:
+            media_type = MediaType(mode)
+        except ValueError:
+            return _error_result(
+                f"Invalid mode '{mode}'. Must be 'image', 'video', or 'audio'",
+            )
+
         # Load task_context dynamically from CONTEXT.md (it may be created during execution)
         # This allows agents to create CONTEXT.md after the backend starts streaming
         from massgen.context.task_context import load_task_context_with_warning
 
         task_context, context_warning = load_task_context_with_warning(agent_cwd, task_context)
 
-        # Require CONTEXT.md for external API calls
-        if not task_context:
+        # For external generation APIs, context is mandatory for image/video but optional for pure TTS.
+        if not task_context and media_type != MediaType.AUDIO:
             return _error_result(
                 "CONTEXT.md not found in workspace. "
                 "Before using generate_media, create a CONTEXT.md file with task context. "
@@ -382,14 +390,6 @@ async def generate_media(
         # Normalize to list for unified processing
         prompt_list = prompts if prompts else [prompt]
         is_batch = len(prompt_list) > 1
-
-        # Parse mode to MediaType
-        try:
-            media_type = MediaType(mode)
-        except ValueError:
-            return _error_result(
-                f"Invalid mode '{mode}'. Must be 'image', 'video', or 'audio'",
-            )
 
         base_dir = Path(agent_cwd) if agent_cwd else Path.cwd()
         allowed_paths_list = [Path(p) for p in allowed_paths] if allowed_paths else None
@@ -462,8 +462,11 @@ async def generate_media(
                         filename = f"{timestamp}_{clean_prompt}.{ext}"
                     output_path = output_dir / filename
 
-                    # Inject task context into prompt for generation
-                    augmented_prompt = format_prompt_with_context(single_prompt, task_context)
+                    # Keep pure TTS input as spoken text; avoid prepending task context.
+                    if media_type == MediaType.AUDIO:
+                        augmented_prompt = single_prompt
+                    else:
+                        augmented_prompt = format_prompt_with_context(single_prompt, task_context)
 
                     # Build config
                     config = GenerationConfig(
@@ -481,9 +484,11 @@ async def generate_media(
                         input_image_paths=[],
                     )
 
-                    # Add instructions to extra_params for audio
-                    if instructions and media_type == MediaType.AUDIO:
-                        config.extra_params["instructions"] = instructions
+                    # Add audio-specific params to extra_params
+                    if media_type == MediaType.AUDIO:
+                        config.extra_params["audio_type"] = audio_type
+                        if instructions:
+                            config.extra_params["instructions"] = instructions
 
                     # Execute generation based on media type
                     if media_type == MediaType.IMAGE:

@@ -48,6 +48,15 @@ async def _build_spawn_subagents_handler(monkeypatch, tmp_path):
     raise RuntimeError("spawn_subagents tool not found")
 
 
+async def _build_continue_subagent_handler(monkeypatch, tmp_path):
+    """Create the subagent MCP server and return (module, continue_subagent handler)."""
+    server, mcp = await _build_subagent_server(monkeypatch, tmp_path)
+    for tool in mcp._tool_manager._tools.values():
+        if tool.name == "continue_subagent":
+            return server, tool.fn
+    raise RuntimeError("continue_subagent tool not found")
+
+
 async def _invoke_handler(handler, **kwargs):
     """Invoke FastMCP handler regardless of sync/async function type."""
     result = handler(**kwargs)
@@ -62,6 +71,8 @@ class _FakeSubagentManager:
     def __init__(self):
         self.background_calls = []
         self.parallel_calls = []
+        self.continue_background_calls = []
+        self.continue_calls = []
 
     class _FakeResult:
         def __init__(self, subagent_id: str):
@@ -103,6 +114,31 @@ class _FakeSubagentManager:
     def list_subagents(self):
         return []
 
+    async def continue_subagent(self, subagent_id, new_message, timeout_seconds=None):  # noqa: ANN001
+        self.continue_calls.append(
+            {
+                "subagent_id": subagent_id,
+                "new_message": new_message,
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+        return self._FakeResult(subagent_id)
+
+    def continue_subagent_background(self, subagent_id, new_message, timeout_seconds=None):  # noqa: ANN001
+        self.continue_background_calls.append(
+            {
+                "subagent_id": subagent_id,
+                "new_message": new_message,
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+        return {
+            "subagent_id": subagent_id,
+            "status": "running",
+            "workspace": f"/tmp/{subagent_id}",
+            "status_file": f"/tmp/{subagent_id}/status.json",
+        }
+
 
 class TestSubagentToolSurface:
     """Tool availability contract for subagent MCP server."""
@@ -116,6 +152,59 @@ class TestSubagentToolSurface:
         assert "check_subagent_status" not in tool_names
         assert "get_subagent_result" not in tool_names
         assert "get_subagent_costs" not in tool_names
+
+
+class TestContinueSubagentBackground:
+    """Background behavior contract for continue_subagent MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_signature_uses_background_param(self, monkeypatch, tmp_path):
+        _, handler = await _build_continue_subagent_handler(monkeypatch, tmp_path)
+        sig = inspect.signature(handler)
+        assert "background" in sig.parameters
+
+    @pytest.mark.asyncio
+    async def test_background_true_returns_running_contract(self, monkeypatch, tmp_path):
+        server, handler = await _build_continue_subagent_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            subagent_id="sub_1",
+            message="continue with additional depth",
+            timeout_seconds=180,
+            background=True,
+        )
+
+        assert result["success"] is True
+        assert result["operation"] == "continue_subagent"
+        assert result["mode"] == "background"
+        assert result["subagents"][0]["subagent_id"] == "sub_1"
+        assert result["subagents"][0]["status"] == "running"
+        assert len(fake_manager.continue_background_calls) == 1
+        assert fake_manager.continue_background_calls[0]["new_message"] == "continue with additional depth"
+        assert fake_manager.continue_calls == []
+
+    @pytest.mark.asyncio
+    async def test_background_false_uses_blocking_continue(self, monkeypatch, tmp_path):
+        server, handler = await _build_continue_subagent_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            subagent_id="sub_1",
+            message="keep going",
+            background=False,
+        )
+
+        assert result["success"] is True
+        assert result["operation"] == "continue_subagent"
+        assert result["subagent_id"] == "sub_1"
+        assert len(fake_manager.continue_calls) == 1
+        assert fake_manager.continue_calls[0]["new_message"] == "keep going"
+        assert fake_manager.continue_background_calls == []
 
 
 class TestSpawnSubagentsContextPathsRequirement:
@@ -247,6 +336,107 @@ class TestSpawnSubagentsContextPathsRequirement:
         assert result["success"] is True
         assert result["mode"] == "background"
         assert len(fake_manager.background_calls) == 1
+
+
+class TestSpecializedTypesFileNotDeleted:
+    """Temp config files must survive MCP server startup (no race condition)."""
+
+    @pytest.mark.asyncio
+    async def test_specialized_types_file_persists_after_create_server(self, monkeypatch, tmp_path):
+        """The MCP server must NOT delete the specialized subagent types file.
+
+        Regression test for: agent_a gets 'Available subagent types: (none configured)'
+        because the file was deleted before the MCP server process could read it.
+        """
+        import json
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._manager = None
+        server._workspace_path = None
+
+        # Write a real specialized types file
+        types_file = tmp_path / "specialized_types.json"
+        types_data = [
+            {
+                "name": "novelty",
+                "description": "Novelty direction finder",
+                "system_prompt": "You suggest novel directions.",
+                "skills": [],
+            },
+        ]
+        types_file.write_text(json.dumps(types_data))
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "subagent-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_1",
+                "--workspace-path",
+                str(tmp_path),
+                "--specialized-subagents-file",
+                str(types_file),
+            ],
+        )
+
+        await server.create_server()
+
+        # File must still exist — no race condition
+        assert types_file.exists(), "MCP server deleted the specialized types file"
+        # And the types should have been loaded
+        assert "novelty" in server._specialized_subagents
+
+    @pytest.mark.asyncio
+    async def test_all_config_files_persist_after_create_server(self, monkeypatch, tmp_path):
+        """All temp config files (agent_configs, context_paths, coordination_config)
+        must survive MCP server startup."""
+        import json
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._manager = None
+        server._workspace_path = None
+
+        # Create all temp config files
+        agent_configs_file = tmp_path / "agent_configs.json"
+        agent_configs_file.write_text(json.dumps([{"id": "agent_a", "backend": {"type": "claude"}}]))
+
+        context_paths_file = tmp_path / "context_paths.json"
+        context_paths_file.write_text(json.dumps(["/some/path"]))
+
+        coordination_config_file = tmp_path / "coordination_config.json"
+        coordination_config_file.write_text(json.dumps({"max_rounds": 3}))
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "subagent-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_1",
+                "--workspace-path",
+                str(tmp_path),
+                "--agent-configs-file",
+                str(agent_configs_file),
+                "--context-paths-file",
+                str(context_paths_file),
+                "--coordination-config-file",
+                str(coordination_config_file),
+            ],
+        )
+
+        await server.create_server()
+
+        # All files must still exist
+        assert agent_configs_file.exists(), "MCP server deleted agent_configs file"
+        assert context_paths_file.exists(), "MCP server deleted context_paths file"
+        assert coordination_config_file.exists(), "MCP server deleted coordination_config file"
 
 
 class TestSpawnSubagentsSpecializedTypeResolution:

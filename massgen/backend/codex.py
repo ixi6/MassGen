@@ -531,6 +531,15 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
             else:
                 logger.warning(f"⚠️ [Codex] Requested env var '{var_name}' not found in host environment")
 
+        # Bridge Claude Code login state to MCP-launched subprocesses.
+        # Codex Docker can mount ~/.claude into /home/massgen/.claude via
+        # command_line_docker_credentials.mount: ["claude_config"].
+        if "CLAUDE_CONFIG_DIR" not in env_vars:
+            docker_mode = str(self.config.get("command_line_execution_mode", "")).lower() == "docker"
+            mount_list = creds.get("mount", []) or []
+            if docker_mode and "claude_config" in mount_list:
+                env_vars["CLAUDE_CONFIG_DIR"] = "/home/massgen/.claude"
+
         # Always enforce banner suppression
         env_vars["FASTMCP_SHOW_CLI_BANNER"] = "false"
         return env_vars

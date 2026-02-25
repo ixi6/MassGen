@@ -108,3 +108,97 @@ def test_get_coordination_result_includes_timeout_metadata(mock_orchestrator):
 
     assert result["is_orchestrator_timeout"] is True
     assert result["timeout_reason"] == "Time limit exceeded (120.0s/120s)"
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_background_work_for_agent_cancels_active_subagents_and_jobs(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """Round-end cleanup should cancel running/pending subagents and backend jobs."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    call_log: list[tuple[str, str, dict[str, object]]] = []
+
+    async def fake_subagent_call(parent_agent_id: str, tool_name: str, params: dict[str, object]):
+        call_log.append((parent_agent_id, tool_name, dict(params)))
+        assert parent_agent_id == agent_id
+        if tool_name == "list_subagents":
+            return {
+                "success": True,
+                "subagents": [
+                    {"subagent_id": "subagent_running", "status": "running"},
+                    {"subagent_id": "subagent_pending", "status": "pending"},
+                    {"subagent_id": "subagent_done", "status": "completed"},
+                ],
+            }
+        if tool_name == "cancel_subagent":
+            return {"success": True, "status": "cancelled", "subagent_id": params.get("subagent_id")}
+        raise AssertionError(f"Unexpected tool call: {tool_name}")
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_call_subagent_mcp_tool_async",
+        fake_subagent_call,
+    )
+
+    cancel_background_jobs = AsyncMock()
+    monkeypatch.setattr(
+        orchestrator.agents[agent_id].backend,
+        "_cancel_all_background_tool_jobs",
+        cancel_background_jobs,
+        raising=False,
+    )
+
+    await orchestrator._cancel_running_background_work_for_agent(agent_id)
+
+    cancel_calls = [entry for entry in call_log if entry[1] == "cancel_subagent"]
+    assert {entry[2]["subagent_id"] for entry in cancel_calls} == {
+        "subagent_running",
+        "subagent_pending",
+    }
+    cancel_background_jobs.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_new_answer_triggers_round_end_background_cleanup(mock_orchestrator, monkeypatch):
+    """Submitting a new_answer should trigger immediate round-end background cleanup."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Submit an answer and clean background work."
+    agent_id = "agent_a"
+
+    monkeypatch.setattr("massgen.orchestrator.get_log_session_dir", lambda: None)
+    orchestrator._save_agent_snapshot = AsyncMock(return_value="snapshot-ts")
+    cancel_background_work = AsyncMock()
+    monkeypatch.setattr(
+        orchestrator,
+        "_cancel_running_background_work_for_agent",
+        cancel_background_work,
+    )
+
+    call_count = {"count": 0}
+
+    async def fake_stream_agent_execution(
+        aid: str,
+        task: str,
+        answers: dict[str, str],
+        conversation_context: dict[str, object] | None = None,
+        paraphrase: str | None = None,
+    ):
+        _ = (aid, task, answers, conversation_context, paraphrase)
+        call_count["count"] += 1
+        if call_count["count"] == 1:
+            yield ("result", ("answer", "answer v1"))
+            yield ("done", None)
+            return
+
+        yield ("result", ("vote", {"agent_id": agent_id, "reason": "done"}))
+        yield ("done", None)
+
+    monkeypatch.setattr(orchestrator, "_stream_agent_execution", fake_stream_agent_execution)
+
+    votes: dict[str, dict[str, object]] = {}
+    async for _chunk in orchestrator._stream_coordination_with_agents(votes, {}):
+        pass
+
+    cancel_background_work.assert_awaited_once_with(agent_id)

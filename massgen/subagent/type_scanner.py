@@ -12,7 +12,7 @@ from massgen.subagent.models import SpecializedSubagentConfig
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SUBAGENT_TYPES: list[str] = ["evaluator", "explorer", "researcher"]
+DEFAULT_SUBAGENT_TYPES: list[str] = ["evaluator", "explorer", "researcher", "critic"]
 
 
 def scan_subagent_types(

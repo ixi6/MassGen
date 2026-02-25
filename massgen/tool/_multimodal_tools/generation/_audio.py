@@ -1,9 +1,4 @@
-"""
-Audio generation backends: OpenAI TTS.
-
-This module contains all audio generation implementations that are
-routed through by generate_media when mode="audio".
-"""
+"""Audio generation backend: OpenAI TTS only."""
 
 from openai import AsyncOpenAI
 
@@ -24,18 +19,35 @@ AUDIO_FORMATS = ["mp3", "opus", "aac", "flac", "wav", "pcm"]
 
 
 async def generate_audio(config: GenerationConfig) -> GenerationResult:
-    """Generate audio using the selected backend.
+    """Generate audio using OpenAI speech synthesis.
 
-    Currently only OpenAI TTS is supported.
-
-    Args:
-        config: GenerationConfig with prompt (text), output_path, voice, etc.
-
-    Returns:
-        GenerationResult with success status and file info
+    Notes:
+    - Only ``audio_type="speech"`` is supported in this release.
+    - ElevenLabs backend support is intentionally disabled for now.
     """
-    # Currently only OpenAI TTS is supported (backend selection ignored for now)
-    _ = config.backend  # Reserved for future multi-backend support
+    audio_type = str(config.extra_params.get("audio_type", "speech"))
+    backend = (config.backend or "openai").lower()
+
+    if audio_type != "speech":
+        return GenerationResult(
+            success=False,
+            backend_name=backend,
+            error=(f"Audio type '{audio_type}' is not supported in this release. " "Supported audio_type: 'speech'."),
+        )
+
+    if backend in {"elevenlabs", "eleven_labs"}:
+        return GenerationResult(
+            success=False,
+            backend_name=backend,
+            error=("Audio backend 'elevenlabs' is not supported in this release. " "Use backend='openai'."),
+        )
+
+    if backend != "openai":
+        logger.warning(
+            "Unknown audio backend '%s'; falling back to OpenAI TTS.",
+            backend,
+        )
+
     return await _generate_audio_openai(config)
 
 
@@ -66,7 +78,9 @@ async def _generate_audio_openai(config: GenerationConfig) -> GenerationResult:
         # Validate voice
         if voice not in OPENAI_VOICES:
             logger.warning(
-                f"Unknown voice '{voice}', using 'alloy'. " f"Available: {', '.join(OPENAI_VOICES)}",
+                "Unknown voice '%s', using 'alloy'. Available: %s",
+                voice,
+                ", ".join(OPENAI_VOICES),
             )
             voice = "alloy"
 
@@ -89,7 +103,7 @@ async def _generate_audio_openai(config: GenerationConfig) -> GenerationResult:
 
         # Use streaming response for efficient file handling
         async with client.audio.speech.with_streaming_response.create(**request_params) as response:
-            response.stream_to_file(config.output_path)
+            await response.stream_to_file(config.output_path)
 
         # Get file info
         file_size = config.output_path.stat().st_size
@@ -114,5 +128,5 @@ async def _generate_audio_openai(config: GenerationConfig) -> GenerationResult:
         return GenerationResult(
             success=False,
             backend_name="openai",
-            error=f"OpenAI TTS error: {str(e)}",
+            error=f"OpenAI TTS error: {e}",
         )

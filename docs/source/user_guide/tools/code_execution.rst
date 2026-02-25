@@ -81,6 +81,8 @@ Mount credential files from your host into the container (all mounted read-only)
        - "gh_config"    # ~/.config/gh → /home/massgen/.config/gh
        - "npm_config"   # ~/.npmrc → /home/massgen/.npmrc
        - "pypi_config"  # ~/.pypirc → /home/massgen/.pypirc
+       - "claude_config"  # ~/.claude → /home/massgen/.claude
+       - "codex_config"  # ~/.codex → /home/massgen/.codex
 
 **Available mount types:**
 
@@ -89,6 +91,8 @@ Mount credential files from your host into the container (all mounted read-only)
 - ``gh_config`` - GitHub CLI authentication (use if you've run ``gh auth login``)
 - ``npm_config`` - Private npm package authentication
 - ``pypi_config`` - Private PyPI package authentication
+- ``claude_config`` - Claude Code CLI session/config files (for Claude auth inheritance in Docker)
+- ``codex_config`` - Codex CLI OAuth/session files (for keyless Codex auth inheritance in Docker)
 
 **2. Pass Environment Variables**
 

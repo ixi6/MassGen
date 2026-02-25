@@ -388,6 +388,8 @@ async def understand_video(
         - prompt: The prompt used
         - model: Model used for analysis
         - backend: Backend used ("gemini" or "openai")
+        - frame_extraction_performed: Whether local frame extraction was run
+        - frame_extraction_reason: Why extraction was or wasn't run
         - response: The model's understanding/description of the video
 
     Examples:
@@ -509,8 +511,9 @@ async def understand_video(
         )
 
         # Extract frames once before backend dispatch (skip for Gemini — native video)
+        frame_extraction_performed = selected_backend != "gemini"
         frames_base64: list[str] | None = None
-        if selected_backend != "gemini":
+        if frame_extraction_performed:
             frames_base64 = extract_frames(vid_path, ext_config)
             logger.info(
                 f"[understand_video] Extracted {len(frames_base64)} frames " f"(mode={ext_config.extraction_mode.value}) for {vid_path.name}",
@@ -558,6 +561,8 @@ async def understand_video(
                 "backend": selected_backend,
                 "extraction_mode": ext_config.extraction_mode.value,
                 "frames_extracted": len(frames_base64) if frames_base64 else 0,
+                "frame_extraction_performed": frame_extraction_performed,
+                "frame_extraction_reason": "frame_sampling" if frame_extraction_performed else "native_backend",
                 "response": response_text,
             }
             return ExecutionResult(

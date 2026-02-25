@@ -135,6 +135,8 @@ class BroadcastRequest:
         timeout: Maximum time to wait for responses (seconds)
         responses_received: Number of responses collected so far
         expected_response_count: Expected number of responses (num agents + human if applicable)
+        target_agents: Optional list of specific agents to query (anonymous IDs like ['agent1', 'agent2']).
+            If None, broadcasts to all other agents. If provided, only queries specified agents.
         response_mode: How the broadcast should be handled ("inline" only for now; other modes like "background" could be added in future)
         metadata: Additional metadata for the broadcast
     """
@@ -147,6 +149,7 @@ class BroadcastRequest:
     timeout: int = 300
     responses_received: int = 0
     expected_response_count: int = 0
+    target_agents: list[str] | None = None
     response_mode: str = "inline"  # Always "inline" for now. Could support other modes (e.g., "background") in future if needed.
     metadata: dict[str, Any] = field(default_factory=dict)
 

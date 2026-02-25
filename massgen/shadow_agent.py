@@ -207,6 +207,12 @@ You are responding to a question from another agent in your team.
 - Your general knowledge and expertise
 - The question text from the asking agent
 
+**Context Layers (IMPORTANT):**
+- **Completed Previous Work**: Your conversation history contains solutions and work you have already **finalized and submitted** in past turns. When asked about previous solution, refer to this.
+- **Current In-Progress Work**: Any section labeled `[Current work in progress - not yet complete]` is a **PARTIAL DRAFT** from your current active turn — you haven't finished or submitted it yet.
+Do NOT treat this as your "previous solution."
+- Rule: "previous/last solution" → look in conversation history. "what are you currently working on?" → you may reference the in-progress section.
+
 **What You Do NOT Know:**
 - The asking agent's workspace, files, or current work
 - What the asking agent has discovered or built

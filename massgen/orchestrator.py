@@ -1979,6 +1979,14 @@ class Orchestrator(ChatAgent):
         else:
             workspace_root = PathlibPath(fs_manager.cwd).resolve()
         workspace_path = str(workspace_root)
+        agent_temporary_workspace_path = ""
+        fs_temp_workspace = getattr(fs_manager, "agent_temporary_workspace", None)
+        if fs_temp_workspace:
+            agent_temporary_workspace_path = str(PathlibPath(fs_temp_workspace).resolve())
+        else:
+            orchestrator_temp_workspace = getattr(self, "_agent_temporary_workspace", None)
+            if orchestrator_temp_workspace:
+                agent_temporary_workspace_path = str(PathlibPath(orchestrator_temp_workspace).resolve())
         # Keep subagent MCP temp config files inside the mounted workspace so
         # Docker-based Codex can read them. Host /tmp paths are not guaranteed
         # to be mounted in the container.
@@ -2156,6 +2164,8 @@ class Orchestrator(ChatAgent):
             self.orchestrator_id,
             "--workspace-path",
             workspace_path,
+            "--agent-temporary-workspace",
+            agent_temporary_workspace_path,
             "--agent-configs-file",
             agent_configs_path,
             "--max-concurrent",

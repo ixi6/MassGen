@@ -34,6 +34,7 @@ _manager: SubagentManager | None = None
 
 # Server configuration
 _workspace_path: Path | None = None
+_agent_temporary_workspace: str | None = None
 _parent_agent_id: str | None = None
 _orchestrator_id: str | None = None
 _parent_agent_configs: list[dict[str, Any]] = []
@@ -131,6 +132,7 @@ def _get_manager() -> SubagentManager:
             max_timeout=_max_timeout,
             parent_context_paths=_parent_context_paths,
             parent_coordination_config=_parent_coordination_config,
+            agent_temporary_workspace=_agent_temporary_workspace,
             subagent_runtime_mode=_subagent_runtime_mode,
             subagent_runtime_fallback_mode=_subagent_runtime_fallback_mode,
             subagent_host_launch_prefix=_subagent_host_launch_prefix,
@@ -174,7 +176,7 @@ async def create_server() -> fastmcp.FastMCP:
     global _subagent_orchestrator_config, _log_directory, _parent_context_paths
     global _max_concurrent, _default_timeout, _min_timeout, _max_timeout
     global _subagent_runtime_mode, _subagent_runtime_fallback_mode, _subagent_host_launch_prefix
-    global _parent_coordination_config, _specialized_subagents
+    global _parent_coordination_config, _specialized_subagents, _agent_temporary_workspace
 
     parser = argparse.ArgumentParser(description="Subagent MCP Server")
     parser.add_argument(
@@ -194,6 +196,13 @@ async def create_server() -> fastmcp.FastMCP:
         type=str,
         required=True,
         help="Path to parent agent workspace for subagent workspaces",
+    )
+    parser.add_argument(
+        "--agent-temporary-workspace",
+        type=str,
+        required=False,
+        default="",
+        help="Path to parent agent temporary workspace root (read-only shared reference)",
     )
     parser.add_argument(
         "--agent-configs-file",
@@ -285,6 +294,7 @@ async def create_server() -> fastmcp.FastMCP:
 
     # Set global configuration
     _workspace_path = Path(args.workspace_path)
+    _agent_temporary_workspace = args.agent_temporary_workspace or None
     _parent_agent_id = args.agent_id
     _orchestrator_id = args.orchestrator_id
 

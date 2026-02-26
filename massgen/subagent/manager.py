@@ -396,6 +396,17 @@ class SubagentManager:
             root = Path(pcp["path"])
             if root not in allowed_roots:
                 allowed_roots.append(root)
+        # If the parent has a shared temp-workspace root, allow explicit task
+        # context paths under that root. This preserves least-privilege: only
+        # the parent's configured temp workspace is accepted.
+        if self._agent_temporary_workspace:
+            temp_root = self._agent_temporary_workspace
+            if not temp_root.is_absolute():
+                temp_root = (self.parent_workspace / temp_root).resolve()
+            else:
+                temp_root = temp_root.resolve()
+            if temp_root not in allowed_roots:
+                allowed_roots.append(temp_root)
 
         seen: set[str] = set()
         for rel_path in config.context_paths:

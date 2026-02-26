@@ -391,6 +391,144 @@ class TestSpecializedTypesFileNotDeleted:
         assert context_paths_file.exists(), "MCP server deleted context_paths file"
         assert coordination_config_file.exists(), "MCP server deleted coordination_config file"
 
+    @pytest.mark.asyncio
+    async def test_agent_temporary_workspace_is_passed_to_manager(self, monkeypatch, tmp_path):
+        """Server should forward --agent-temporary-workspace to SubagentManager."""
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._manager = None
+        server._workspace_path = None
+
+        temp_workspace = (tmp_path / "temp_workspaces" / "agent_a").resolve()
+        temp_workspace.mkdir(parents=True, exist_ok=True)
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "subagent-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_1",
+                "--workspace-path",
+                str(tmp_path),
+                "--agent-temporary-workspace",
+                str(temp_workspace),
+            ],
+        )
+
+        await server.create_server()
+        manager = server._get_manager()
+
+        assert manager._agent_temporary_workspace is not None
+        assert manager._agent_temporary_workspace.resolve() == temp_workspace
+
+    @pytest.mark.asyncio
+    async def test_missing_agent_configs_file_falls_back_to_temp_workspace_snapshot(self, monkeypatch, tmp_path):
+        """If primary agent-config path is missing, server should load from temp workspace snapshot copy."""
+        import json
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._manager = None
+        server._workspace_path = None
+        server._parent_agent_configs = []
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        temp_workspace = tmp_path / "temp_workspaces" / "agent_a"
+        snapshot_mcp_dir = temp_workspace / "agent1" / ".massgen" / "subagent_mcp"
+        snapshot_mcp_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_payload = [
+            {
+                "id": "agent_a",
+                "backend": {
+                    "type": "codex",
+                    "enable_mcp_command_line": True,
+                    "command_line_execution_mode": "docker",
+                },
+            },
+        ]
+        (snapshot_mcp_dir / "agent_a_agent_configs.json").write_text(json.dumps(snapshot_payload))
+
+        missing_primary_path = workspace / ".massgen" / "subagent_mcp" / "agent_a_agent_configs.json"
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "subagent-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_1",
+                "--workspace-path",
+                str(workspace),
+                "--agent-temporary-workspace",
+                str(temp_workspace),
+                "--agent-configs-file",
+                str(missing_primary_path),
+            ],
+        )
+
+        await server.create_server()
+
+        assert server._parent_agent_configs
+        assert server._parent_agent_configs[0]["backend"]["enable_mcp_command_line"] is True
+        assert server._parent_agent_configs[0]["backend"]["command_line_execution_mode"] == "docker"
+
+    @pytest.mark.asyncio
+    async def test_missing_coordination_config_file_falls_back_to_temp_workspace_snapshot(self, monkeypatch, tmp_path):
+        """If primary coordination config path is missing, server should load from temp workspace snapshot copy."""
+        import json
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._manager = None
+        server._workspace_path = None
+        server._parent_coordination_config = {}
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        temp_workspace = tmp_path / "temp_workspaces" / "agent_a"
+        snapshot_mcp_dir = temp_workspace / "agent1" / ".massgen" / "subagent_mcp"
+        snapshot_mcp_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_payload = {
+            "enable_agent_task_planning": True,
+            "task_planning_filesystem_mode": True,
+            "use_skills": True,
+        }
+        (snapshot_mcp_dir / "agent_a_coordination_config.json").write_text(json.dumps(snapshot_payload))
+
+        missing_primary_path = workspace / ".massgen" / "subagent_mcp" / "agent_a_coordination_config.json"
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "subagent-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_1",
+                "--workspace-path",
+                str(workspace),
+                "--agent-temporary-workspace",
+                str(temp_workspace),
+                "--coordination-config-file",
+                str(missing_primary_path),
+            ],
+        )
+
+        await server.create_server()
+
+        assert server._parent_coordination_config
+        assert server._parent_coordination_config["enable_agent_task_planning"] is True
+        assert server._parent_coordination_config["task_planning_filesystem_mode"] is True
+
 
 class TestLazySubagentTypeLoading:
     """Lazy loading of specialized subagent types from workspace SUBAGENT.md dirs."""

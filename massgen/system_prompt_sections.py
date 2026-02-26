@@ -840,10 +840,52 @@ The tool will evaluate your scores and return a verdict telling you whether
 to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
 
 **Round lifecycle when verdict is `{iterate_action}`:**
-1. Implement the improvements from the plan returned by `submit_checklist`.
-2. Verify your changes landed (screenshots, file checks, tests — this is expected
-   and correct; it is implementation verification, not re-evaluation).
-3. Call the `{iterate_action}` **workflow tool** to submit your completed work.
+
+**Phase 1 — Gather intelligence (before `submit_checklist`).**
+
+If specialized subagents are available:
+- Spawn critic and novelty subagents with `background=True` so they run in
+  parallel while you do your own gap analysis.
+- While they run: read all agents' answers, identify failures, root causes, and
+  candidate improvements. Enumerate *every* improvement you can see — do not
+  filter yet.
+- Collect subagent findings (they will return automatically when done).
+- Update your task plan with every improvement as a separate task. For each task,
+  annotate the executor: `[main]` (you implement inline), `[builder]` (delegate
+  to builder subagent), `[synthesize]` (pull from another agent's answer), or
+  `[skip]` (deprioritized). Add `depends_on` links between tasks that have ordering
+  constraints. Be generous with `[builder]` — transformative, multi-file, or
+  structurally complex improvements are good candidates.
+
+If no specialized subagents are available:
+- Do your own gap analysis inline. Enumerate every improvement and log them all
+  to your task plan as `[main]` tasks before submitting the checklist.
+
+**Phase 2 — Submit the checklist.**
+Call `submit_checklist` with scores informed by Phase 1 findings. Classify
+improvements honestly: truly transformative changes (full rewrites, architecture
+shifts, new sections) go in `transformative`; smaller targeted fixes go in
+`structural`. Do not downgrade transformative work to avoid triggering a new round
+— each round exists to make the output genuinely better.
+
+**Phase 3 — Execute the improvement plan.**
+On `{iterate_action}` verdict, execute your task plan dependency-aware:
+
+1. Find all tasks with no unresolved `depends_on` (`get_ready_tasks`).
+2. Batch all independent `[builder]` tasks into a **single** `spawn_subagents`
+   call — do not call it once per task. Do your own independent `[main]` tasks
+   inline at the same time.
+3. When a batch completes, re-check `get_ready_tasks` — newly unblocked tasks
+   cascade. Repeat until all tasks are done.
+4. For `[synthesize]` tasks: pull the relevant section directly from the other
+   agent's answer rather than rewriting from scratch.
+
+If no specialized subagents are available, execute all tasks inline in
+dependency order.
+
+**Phase 4 — Integrate, verify, submit.**
+After all tasks complete, integrate results into a coherent output, verify that
+prior-round features still work (no regressions), then call `{iterate_action}`.
 
 Do **not** call `submit_checklist` again after receiving a `{iterate_action}` verdict.
 You already have your improvement plan. The next coordination tool call must be
@@ -852,19 +894,10 @@ You already have your improvement plan. The next coordination tool call must be
 **If the verdict is `{iterate_action}`**: your new answer MUST be **obviously and
 substantially better** — not just marginally different. A user should immediately
 notice the improvement. Do NOT simply copy or resubmit the same content with minor
-tweaks. Use your improvements analysis to guide what to build differently, and
-implement the changes you identified — not just acknowledge them.
+tweaks. Implement the changes you identified — not just acknowledge them.
 
-**Implement ALL identified improvements, not just one.** If your gap analysis found
-multiple structural weaknesses, address them all in this round. Do not pick the
-single easiest improvement, implement it, and stop. Each round is expensive — make
-it count by delivering the full scope of improvements you identified.
-
-**Log committed items in your task plan.** Before starting work, add each
-structural and transformative improvement you identified to your task plan as a
-separate task. Check off each task only after it is fully implemented and
-verifiable in the output. Do not substitute easier work — deliver exactly what
-you committed to.
+**Implement ALL identified improvements, not just one.** Each round is expensive —
+make it count by delivering the full scope of improvements you identified.
 
 **Verify existing features before adding new ones.** After making changes, confirm that
 features from prior rounds still work. Adding a feature that breaks existing functionality

@@ -517,7 +517,7 @@ class TestSubagentResultFactories:
 class TestSubagentContextPaths:
     """Tests for context_paths parameter on SubagentConfig and resolution in SubagentManager."""
 
-    def _make_manager(self, parent_workspace, parent_context_paths=None):
+    def _make_manager(self, parent_workspace, parent_context_paths=None, agent_temporary_workspace=None):
         """Helper to create a SubagentManager with minimal config."""
         from massgen.subagent.manager import SubagentManager
 
@@ -529,6 +529,7 @@ class TestSubagentContextPaths:
                 {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
             ],
             parent_context_paths=parent_context_paths,
+            agent_temporary_workspace=str(agent_temporary_workspace) if agent_temporary_workspace else None,
         )
 
     def _resolve_context_paths(self, config, parent_workspace):
@@ -753,6 +754,48 @@ class TestSubagentContextPaths:
         resolved = manager._resolve_context_paths_for_subagent(config)
         assert len(resolved) == 1
         assert resolved[0]["path"] == str(external_src.resolve())
+
+    def test_context_paths_allows_within_agent_temporary_workspace(self, tmp_path):
+        """Paths within parent agent temporary workspace are accepted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        target_file = temp_root / "agent1" / "deliverable" / "index.html"
+        target_file.parent.mkdir(parents=True)
+        target_file.write_text("<html></html>")
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Read shared reference output",
+            parent_agent_id="test-agent",
+            subagent_id="shared-ref-test",
+            context_paths=[str(target_file.resolve())],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(target_file.resolve())
+
+    def test_context_paths_rejects_outside_temp_workspace_and_parent_roots(self, tmp_path):
+        """Even with temp workspace configured, unrelated paths are rejected."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        temp_root.mkdir(parents=True)
+        disallowed = tmp_path / "elsewhere" / "secret.txt"
+        disallowed.parent.mkdir(parents=True)
+        disallowed.write_text("nope")
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Try unrelated path",
+            parent_agent_id="test-agent",
+            subagent_id="outside-test",
+            context_paths=[str(disallowed.resolve())],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert resolved == []
 
     def test_context_paths_rejects_traversal_even_with_parent_context_paths(self, tmp_path):
         """Paths outside BOTH parent workspace and parent context roots are rejected."""

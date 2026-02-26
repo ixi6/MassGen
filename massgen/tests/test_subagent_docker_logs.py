@@ -255,6 +255,18 @@ class TestSubagentMcpConfigEnv:
         assert self._get_arg(args, "--runtime-fallback-mode") == "inherited"
         assert json.loads(self._get_arg(args, "--host-launch-prefix")) == ["host-launch", "--exec"]
 
+    def test_subagent_mcp_config_passes_agent_temporary_workspace(self, tmp_path):
+        """Parent agent temporary workspace should be forwarded for subagent path validation."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        temp_workspace = (tmp_path / "temp_workspaces" / "agent_a").resolve()
+        temp_workspace.mkdir(parents=True, exist_ok=True)
+        agent.backend.filesystem_manager.agent_temporary_workspace = str(temp_workspace)
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+
+        assert self._get_arg(args, "--agent-temporary-workspace") == str(temp_workspace)
+
     def test_subagent_mcp_config_defaults_fallback_for_codex_docker(self, tmp_path):
         """Codex+Docker should default runtime fallback to inherited when unset."""
         orch, agent = self._make_orchestrator_and_agent(tmp_path)

@@ -1558,6 +1558,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         coordination_settings_to_inherit = [
             "enable_agent_task_planning",
             "task_planning_filesystem_mode",
+            "learning_capture_mode",
             "use_skills",
             "massgen_skills",
             "skills_directory",

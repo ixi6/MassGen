@@ -1188,6 +1188,40 @@ class TestCommonBadConfigs:
         assert not result.is_valid()
         assert any("max_midstream_injections_per_round" in error.location for error in result.errors)
 
+    def test_valid_learning_capture_mode(self):
+        """Test learning_capture_mode accepts supported values."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {
+                "coordination": {
+                    "learning_capture_mode": "final_only",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid()
+        assert not result.has_errors()
+
+    def test_invalid_learning_capture_mode(self):
+        """Test learning_capture_mode rejects unsupported values."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {
+                "coordination": {
+                    "learning_capture_mode": "invalid_mode",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("learning_capture_mode" in error.location for error in result.errors)
+
     def test_v1_max_rounds(self):
         """Test V1 max_rounds parameter is rejected."""
         config = {

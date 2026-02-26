@@ -236,6 +236,7 @@ async def test_stream_agent_execution_truncates_injected_buffer_on_retry(mock_or
 
     assert enforcement_messages
     enforcement_content = enforcement_messages[-1]["content"]
-    assert "END_SENTINEL" in enforcement_content
-    assert "START_SENTINEL" not in enforcement_content
+    assert "START_SENTINEL" in enforcement_content
+    assert "END_SENTINEL" not in enforcement_content
     assert "truncated" in enforcement_content.lower()
+    assert "showing first" in enforcement_content.lower()

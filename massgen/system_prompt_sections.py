@@ -1605,15 +1605,17 @@ class MemorySection(SystemPromptSection):
     Args:
         memory_config: Dictionary containing memory system configuration
                       including short-term and long-term memory content
+        read_only: If True, show memory context without write/reminder instructions.
     """
 
-    def __init__(self, memory_config: dict[str, Any]):
+    def __init__(self, memory_config: dict[str, Any], read_only: bool = False):
         super().__init__(
             title="Memory System",
             priority=Priority.HIGH,
             xml_tag="memory",
         )
         self.memory_config = memory_config
+        self.read_only = read_only
 
     def build_content(self) -> str:
         """Build memory system instructions."""
@@ -1744,9 +1746,18 @@ class MemorySection(SystemPromptSection):
                             pass
                     content_parts.append(f"- `{mem_name}.md`: {description}")
 
+        if self.read_only:
+            content_parts.append(
+                "\n### Memory Mode\n\n"
+                "Round-time memory capture is disabled for this run. Use the memory context above as read-only guidance "
+                "during coordination. Consolidation can happen at final presentation.\n",
+            )
+            return "\n".join(content_parts)
+
         # File operations - simple and direct
         content_parts.append(
             "\n### Saving Memories\n\n"
+            "Before writing memory files, review `tasks/changedoc.md`.\n\n"
             "Save memories by writing markdown files to the memory directory:\n"
             "- **Short-term** → `memory/short_term/{name}.md` (auto-loaded every turn)\n"
             "- **Long-term** → `memory/long_term/{name}.md` (load manually when needed)\n\n"
@@ -3572,6 +3583,25 @@ A developer who was not present should be able to read the changedoc and:
 - Identify which ideas were genuinely new contributions (NEW markers)
 - Follow how decisions evolved through the deliberation trail"""
 
+_MEMORY_PRESENTER_INSTRUCTIONS = """
+### Memory Consolidation
+
+Your final output MUST include consolidated memory files in your main agent workspace directory:
+
+1. Write concise reusable memories to `memory/short_term/*.md` (auto-loaded every turn).
+2. Write detailed durable analyses to `memory/long_term/*.md` only when substantial.
+3. Preserve YAML frontmatter (`name`, `description`, `created`, `updated`) in each memory file.
+4. De-duplicate overlaps across agents and keep only the clearest final version of each memory.
+5. Use `tasks/changedoc.md` as your primary source for what to retain:
+   - decision rationale
+   - what worked/failed
+   - pitfalls to avoid next time
+   - user preferences discovered
+6. Use the same changedoc-backed learnings to align both memory files and any consolidated
+   evolving skill (`tasks/evolving_skill/SKILL.md`) so they do not conflict.
+
+Do not copy the changedoc verbatim. Synthesize short, reusable memory entries for future turns."""
+
 _SPEC_PRESENTER_INSTRUCTIONS = """\
 
 ### Spec Compliance Report
@@ -3735,19 +3765,25 @@ class SubagentSection(SystemPromptSection):
                 )
             if t.name.lower() == "builder":
                 lines.append(
-                    "**FOR `BUILDER` TASKS — the novelty → builder loop:**\n"
-                    "When a novelty or critic subagent proposes a transformative direction:\n"
-                    "1. Evaluate it — does it address a real gap and would it meaningfully improve the result?\n"
-                    "2. If yes but too complex/risky to implement inline: **do NOT defer it**. "
-                    "List it in the `transformative` array of your next `submit_checklist` call.\n"
-                    "3. The checklist tool will instruct you to spawn a `builder` subagent. "
-                    "Pass builder: the current workspace, a prescriptive spec (what to build AND "
-                    "what patterns are FORBIDDEN as negative constraints), and the evaluation criteria.\n"
-                    "4. Builder implements it in fresh context without exhausting your token budget. "
-                    "When it reports back, you evaluate the result and proceed.\n\n"
-                    "**Deferring a valid novelty proposal with T=0 wastes a full round** — "
-                    "it re-triggers critic+novelty instead of making progress. "
-                    "The right response to 'too big to do inline' is builder, not deferral.",
+                    "**FOR `BUILDER` TASKS — use whenever work is too large to do inline:**\n"
+                    "Builder is not just for checklist-gated transformative changes. Use it for any "
+                    "work that would exhaust your context or take too long inline — large artifact "
+                    "generation, complex multi-file rewrites, big structural implementations, or "
+                    "novelty proposals too ambitious to execute yourself.\n\n"
+                    "**The novelty → builder loop** (most common pattern when builder+novelty are both enabled):\n"
+                    "1. A novelty or critic subagent proposes something valuable but too large to do inline.\n"
+                    "2. Do NOT defer it. List it in the `transformative` array of your next "
+                    "`submit_checklist` call.\n"
+                    "3. The checklist tool will instruct you to spawn builder. Pass it: the current "
+                    "workspace, a prescriptive spec (what to build AND what patterns are FORBIDDEN "
+                    "as negative constraints), and the evaluation criteria.\n"
+                    "4. Builder implements it in fresh context. You evaluate the result when it returns.\n\n"
+                    "**Direct spawning** (any time the work is simply large/long):\n"
+                    "You can also spawn builder directly without going through the checklist — e.g., "
+                    "generating many images, rewriting a large section, implementing a multi-file "
+                    "refactor. If doing it inline would consume most of your remaining context, delegate it.\n\n"
+                    "**Deferring a valid proposal with T=0 wastes a full round** — "
+                    "it re-triggers critic+novelty instead of making progress.",
                 )
             lines.append("")
 
@@ -4386,9 +4422,10 @@ After execution, the actual scripts live in `scripts/` and can be reused.
 
 1. **BEFORE starting work**: Create `tasks/evolving_skill/SKILL.md` in your main agent workspace directory \
 (NOT in the project code directory or worktree). Evolving skills are internal artifacts and must not be written to the project repository.
-2. **During execution**: Follow your plan, create scripts as documented
-3. **BEFORE answering**: Verify outputs work (run code, view visuals, check files)
-4. **AFTER completing work**: Update SKILL.md with Learnings section
+2. **Use `tasks/changedoc.md` as the canonical decision log for your evolving skill.**
+3. **During execution**: Follow your plan, create scripts as documented
+4. **BEFORE answering**: Verify outputs work (run code, view visuals, check files)
+5. **AFTER completing work**: Update SKILL.md with Learnings section
 
 ### Key Principles
 

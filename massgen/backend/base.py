@@ -339,6 +339,7 @@ class LLMBackend(ABC):
             "drift_conflict_policy",  # Isolated apply drift resolution policy
             "subagent_types",  # Which subagent types to expose (handled by orchestrator)
             "novelty_injection",  # Novelty pressure level (none/gentle/moderate/aggressive)
+            "learning_capture_mode",  # Learning capture timing (round/final_only)
             # Multimodal tools configuration (handled by CustomToolAndMCPBackend)
             "enable_multimodal_tools",
             "multimodal_config",

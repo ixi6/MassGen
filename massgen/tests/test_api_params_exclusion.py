@@ -121,6 +121,7 @@ class TestKnownInternalParamsExcluded:
         "use_two_tier_workspace",
         "write_mode",
         "drift_conflict_policy",
+        "learning_capture_mode",
         "context_paths",
         "context_write_access_enabled",
         "enable_mcp_command_line",

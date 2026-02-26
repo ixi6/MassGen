@@ -29,6 +29,7 @@ def _make_agent(
     workspace: str = "/tmp/workspace",
     enable_code_based_tools: bool = False,
     enable_mcp_command_line: bool = False,
+    auto_discover_custom_tools: bool = False,
 ):
     """Create a minimal agent stub with just the attributes the builder needs."""
     fs_manager = None
@@ -47,7 +48,10 @@ def _make_agent(
         fs_manager.write_mode = None
 
     backend = MagicMock()
-    backend.config = {"model": model}
+    backend.config = {
+        "model": model,
+        "auto_discover_custom_tools": auto_discover_custom_tools,
+    }
     backend.filesystem_manager = fs_manager
     backend.backend_params = {
         "enable_mcp_command_line": enable_mcp_command_line,
@@ -68,6 +72,7 @@ def _make_config(
     enable_subagents: bool = False,
     planning_mode_instruction: str | None = None,
     broadcast: bool = False,
+    learning_capture_mode: str = "round",
 ):
     """Create a minimal config stub."""
     cc = SimpleNamespace(
@@ -75,9 +80,11 @@ def _make_config(
         load_previous_session_skills=False,
         enabled_skill_names=None,
         enable_subagents=enable_subagents,
+        enable_memory_filesystem_mode=enable_memory,
         planning_mode_instruction=planning_mode_instruction,
         broadcast=broadcast,
         task_planning_filesystem_mode=False,
+        learning_capture_mode=learning_capture_mode,
     )
     return SimpleNamespace(coordination_config=cc)
 
@@ -95,9 +102,14 @@ def _make_builder(
     has_filesystem: bool = False,
     use_skills: bool = False,
     enable_memory: bool = False,
+    learning_capture_mode: str = "round",
 ):
     """Create a SystemMessageBuilder with stubs."""
-    config = _make_config(use_skills=use_skills, enable_memory=enable_memory)
+    config = _make_config(
+        use_skills=use_skills,
+        enable_memory=enable_memory,
+        learning_capture_mode=learning_capture_mode,
+    )
     mt = _make_message_templates()
     agents = {"agent_a": _make_agent(has_filesystem=has_filesystem)}
     return SystemMessageBuilder(
@@ -215,6 +227,92 @@ class TestBuildCoordinationMessage:
         # vote_only should influence the evaluation section
         assert "vote" in msg.lower()
 
+    def test_final_only_suppresses_round_evolving_skills_and_memory_writes(self):
+        """final_only keeps memory readable but disables round-time production prompts."""
+        builder = _make_builder(
+            enable_memory=True,
+            learning_capture_mode="final_only",
+        )
+        agent = _make_agent(auto_discover_custom_tools=True)
+
+        with (
+            patch.object(builder, "_get_all_memories", return_value=([], ["Long-term pattern A"])),
+            patch.object(builder, "_load_temp_workspace_memories", return_value=[]),
+            patch.object(builder, "_load_archived_memories", return_value={"short_term": {}, "long_term": {}}),
+        ):
+            msg = builder.build_coordination_message(
+                agent=agent,
+                agent_id="agent_a",
+                answers=None,
+                planning_mode_enabled=False,
+                use_skills=False,
+                enable_memory=True,
+                enable_task_planning=True,
+                previous_turns=[],
+            )
+
+        assert "## Evolving Skills" not in msg
+        assert "Long-term pattern A" in msg
+        assert "Saving Memories" not in msg
+
+    def test_round_mode_keeps_evolving_skills_section(self):
+        """round mode retains existing evolving skills coordination guidance."""
+        builder = _make_builder(
+            enable_memory=True,
+            learning_capture_mode="round",
+        )
+        agent = _make_agent(auto_discover_custom_tools=True)
+
+        with (
+            patch.object(builder, "_get_all_memories", return_value=([], [])),
+            patch.object(builder, "_load_temp_workspace_memories", return_value=[]),
+            patch.object(builder, "_load_archived_memories", return_value={"short_term": {}, "long_term": {}}),
+        ):
+            msg = builder.build_coordination_message(
+                agent=agent,
+                agent_id="agent_a",
+                answers=None,
+                planning_mode_enabled=False,
+                use_skills=False,
+                enable_memory=True,
+                enable_task_planning=True,
+                previous_turns=[],
+            )
+
+        assert "## Evolving Skills" in msg
+        assert "Use `tasks/changedoc.md` as the canonical decision log for your evolving skill" in msg
+        assert "Before writing memory files, review `tasks/changedoc.md`" in msg
+
+    def test_final_only_with_skip_final_presentation_keeps_round_learning_capture(self):
+        """final_only falls back to round capture when final presentation is skipped."""
+        builder = _make_builder(
+            enable_memory=True,
+            learning_capture_mode="final_only",
+        )
+        builder.config.skip_final_presentation = True
+        agent = _make_agent(auto_discover_custom_tools=True)
+
+        with (
+            patch.object(builder, "_get_all_memories", return_value=([], ["Long-term pattern A"])),
+            patch.object(builder, "_load_temp_workspace_memories", return_value=[]),
+            patch.object(builder, "_load_archived_memories", return_value={"short_term": {}, "long_term": {}}),
+        ):
+            msg = builder.build_coordination_message(
+                agent=agent,
+                agent_id="agent_a",
+                answers=None,
+                planning_mode_enabled=False,
+                use_skills=False,
+                enable_memory=True,
+                enable_task_planning=True,
+                previous_turns=[],
+            )
+
+        assert "## Evolving Skills" in msg
+        assert "Saving Memories" in msg
+        assert "Use `tasks/changedoc.md` as the canonical decision log for your evolving skill" in msg
+        assert "Before writing memory files, review `tasks/changedoc.md`" in msg
+
 
 # ---------------------------------------------------------------------------
 # build_presentation_message
@@ -254,6 +352,41 @@ class TestBuildPresentationMessage:
             previous_turns=[],
         )
         assert isinstance(msg, str)
+
+    def test_includes_memory_consolidation_when_memory_enabled(self):
+        builder = _make_builder(
+            has_filesystem=True,
+            enable_memory=True,
+            learning_capture_mode="final_only",
+        )
+        agent = _make_agent(
+            has_filesystem=True,
+            workspace="/tmp/present_ws",
+        )
+        msg = builder.build_presentation_message(
+            agent=agent,
+            all_answers={"agent_a": "Answer A"},
+            previous_turns=[],
+        )
+        assert "### Memory Consolidation" in msg
+        assert "memory/short_term" in msg
+        assert "tasks/changedoc.md" in msg
+
+    def test_omits_memory_consolidation_when_memory_disabled(self):
+        builder = _make_builder(
+            has_filesystem=True,
+            enable_memory=False,
+        )
+        agent = _make_agent(
+            has_filesystem=True,
+            workspace="/tmp/present_ws",
+        )
+        msg = builder.build_presentation_message(
+            agent=agent,
+            all_answers={"agent_a": "Answer A"},
+            previous_turns=[],
+        )
+        assert "### Memory Consolidation" not in msg
 
 
 # ---------------------------------------------------------------------------

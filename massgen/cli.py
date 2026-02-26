@@ -2785,6 +2785,7 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
         task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
         enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+        learning_capture_mode=coord_cfg.get("learning_capture_mode", "round"),
         compression_target_ratio=coord_cfg.get("compression_target_ratio", 0.20),
         use_skills=coord_cfg.get("use_skills", False),
         massgen_skills=coord_cfg.get("massgen_skills", []),

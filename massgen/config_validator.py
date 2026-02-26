@@ -165,6 +165,7 @@ class ConfigValidator:
     VALID_NOVELTY_INJECTION = {"none", "gentle", "moderate", "aggressive"}
     VALID_SUBAGENT_RUNTIME_MODES = {"isolated", "inherited"}
     VALID_SUBAGENT_RUNTIME_FALLBACK_MODES = {"inherited"}
+    VALID_LEARNING_CAPTURE_MODES = {"round", "final_only"}
 
     # Valid gap report modes
     VALID_GAP_REPORT_MODES = {"changedoc", "separate", "none"}
@@ -1046,6 +1047,17 @@ class ConfigValidator:
                         result.add_error(
                             f"Invalid novelty_injection: '{novelty}'",
                             f"{location}.coordination.novelty_injection",
+                            f"Use one of: {valid_values}",
+                        )
+                if "learning_capture_mode" in coordination:
+                    learning_capture_mode = coordination["learning_capture_mode"]
+                    if learning_capture_mode not in self.VALID_LEARNING_CAPTURE_MODES:
+                        valid_values = ", ".join(
+                            sorted(self.VALID_LEARNING_CAPTURE_MODES),
+                        )
+                        result.add_error(
+                            f"Invalid learning_capture_mode: '{learning_capture_mode}'",
+                            f"{location}.coordination.learning_capture_mode",
                             f"Use one of: {valid_values}",
                         )
 

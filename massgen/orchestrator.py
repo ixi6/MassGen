@@ -177,7 +177,7 @@ class Orchestrator(ChatAgent):
     evaluation with the new answers available.
     """
 
-    _ENFORCEMENT_RETRY_BUFFER_TAIL_RATIO = 0.40
+    # TODO: derive this cap dynamically from model context limits per backend.
     _ENFORCEMENT_RETRY_BUFFER_MAX_CHARS = 120_000
 
     def __init__(
@@ -1621,6 +1621,25 @@ class Orchestrator(ChatAgent):
             f"[Orchestrator] Updated MCP servers for {agent_id}, now has {len(mcp_servers) if isinstance(mcp_servers, (list, dict)) else 0} servers",
         )
 
+    def _is_round_learning_capture_enabled(self) -> bool:
+        """Return whether round-time learning capture should be enabled.
+
+        In ``final_only`` mode, if final presentation is skipped (refinement-off
+        flow), we must fall back to round-time capture because there is no later
+        presenter stage to write evolving skills or memories.
+        """
+        coordination_config = getattr(self.config, "coordination_config", None)
+        learning_capture_mode = getattr(
+            coordination_config,
+            "learning_capture_mode",
+            "round",
+        )
+        if learning_capture_mode == "round":
+            return True
+        if learning_capture_mode == "final_only":
+            return bool(getattr(self.config, "skip_final_presentation", False))
+        return False
+
     def _create_planning_mcp_config(self, agent_id: str, agent: Any) -> dict[str, Any]:
         """
         Create MCP server configuration for planning tools.
@@ -1701,13 +1720,15 @@ class Orchestrator(ChatAgent):
         if skills_enabled:
             args.append("--skills-enabled")
 
+        round_learning_capture_enabled = self._is_round_learning_capture_enabled()
+
         auto_discovery_enabled = False
         if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
             auto_discovery_enabled = agent.backend.config.get(
                 "auto_discover_custom_tools",
                 False,
             )
-        if auto_discovery_enabled:
+        if auto_discovery_enabled and round_learning_capture_enabled:
             args.append("--auto-discovery-enabled")
 
         memory_enabled = (
@@ -1718,7 +1739,7 @@ class Orchestrator(ChatAgent):
             )
             and self.config.coordination_config.enable_memory_filesystem_mode
         )
-        if memory_enabled:
+        if memory_enabled and round_learning_capture_enabled:
             args.append("--memory-enabled")
 
         # Enable git commits on task completion if two-tier workspace is enabled
@@ -2011,6 +2032,8 @@ class Orchestrator(ChatAgent):
                 parent_coordination_config["enable_agent_task_planning"] = coord_cfg.enable_agent_task_planning
             if hasattr(coord_cfg, "task_planning_filesystem_mode"):
                 parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
+            if hasattr(coord_cfg, "learning_capture_mode"):
+                parent_coordination_config["learning_capture_mode"] = coord_cfg.learning_capture_mode
             use_skills = getattr(coord_cfg, "use_skills", False)
             enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
             if use_skills or enabled_skill_names is not None:
@@ -6370,7 +6393,7 @@ Your answer:"""
 
         Both paths set up the same hooks:
         1. MidStreamInjectionHook - injects answers from other agents into tool results
-        2. HighPriorityTaskReminderHook - reminds to document high-priority task completions
+        2. HighPriorityTaskReminderHook - reminds to document high-priority task completions (round mode only)
 
         Args:
             agent_id: The agent identifier
@@ -6552,9 +6575,10 @@ Your answer:"""
         # Register mid-stream injection hook first (maintains current behavior order)
         manager.register_global_hook(HookType.POST_TOOL_USE, mid_stream_hook)
 
-        # Register high-priority task reminder hook
-        reminder_hook = HighPriorityTaskReminderHook()
-        manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+        # Register high-priority task reminder hook (enabled round-wise when capture is enabled)
+        if self._is_round_learning_capture_enabled():
+            reminder_hook = HighPriorityTaskReminderHook()
+            manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
         # Register human input hook (shared across all agents)
         manager.register_global_hook(HookType.POST_TOOL_USE, self._human_input_hook)
@@ -8181,9 +8205,10 @@ Your answer:"""
         # Register mid-stream injection hook
         manager.register_global_hook(HookType.POST_TOOL_USE, mid_stream_hook)
 
-        # Register high-priority task reminder hook
-        reminder_hook = HighPriorityTaskReminderHook()
-        manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+        # Register high-priority task reminder hook (enabled round-wise when capture is enabled)
+        if self._is_round_learning_capture_enabled():
+            reminder_hook = HighPriorityTaskReminderHook()
+            manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
         # Register human input hook (shared across all agents)
         self._ensure_runtime_human_input_hook_initialized()
@@ -9099,11 +9124,7 @@ Your answer:"""
         return buffer_content, buffer_chars
 
     def _truncate_enforcement_buffer_content(self, buffer_content: str | None) -> str | None:
-        """Bound enforcement retry buffer to a recent tail to avoid prompt blowups.
-
-        For large buffers, this keeps only the most recent slice (tail) since that's
-        the highest-signal context for finishing an interrupted workflow action.
-        """
+        """Bound enforcement retry buffer size to avoid prompt blowups."""
         if not buffer_content:
             return None
 
@@ -9115,15 +9136,9 @@ Your answer:"""
         if len(normalized) <= max_chars:
             return normalized
 
-        # Keep the latest slice first, then enforce absolute cap.
-        tail_ratio = self._ENFORCEMENT_RETRY_BUFFER_TAIL_RATIO
-        tail_start = max(0, int(len(normalized) * (1 - tail_ratio)))
-        tail = normalized[tail_start:]
-        if len(tail) > max_chars:
-            tail = tail[-max_chars:]
-
-        removed = len(normalized) - len(tail)
-        return f"[... earlier retry context truncated ({removed} chars removed); " f"showing latest {len(tail)} chars ...]\n" f"{tail}"
+        kept = normalized[:max_chars]
+        removed = len(normalized) - len(kept)
+        return f"[... earlier retry context truncated ({removed} chars removed); " f"showing first {len(kept)} chars ...]\n" f"{kept}"
 
     def _save_docker_logs_on_mcp_failure(
         self,

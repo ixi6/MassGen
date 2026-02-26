@@ -90,6 +90,26 @@ class SystemMessageBuilder:
         coord = getattr(self.config, "coordination_config", None)
         return bool(coord and getattr(coord, "enable_changedoc", True))
 
+    @property
+    def _learning_capture_mode(self) -> str:
+        """Return configured learning capture mode."""
+        coord = getattr(self.config, "coordination_config", None)
+        return getattr(coord, "learning_capture_mode", "round")
+
+    @property
+    def _round_learning_capture_enabled(self) -> bool:
+        """Return True when round-time learning capture should be enabled.
+
+        In final_only mode, if final presentation is skipped (refinement-off flow),
+        we must still enable round-time capture so there is a place to write
+        evolving skills and memory.
+        """
+        if self._learning_capture_mode == "round":
+            return True
+        if self._learning_capture_mode == "final_only":
+            return bool(getattr(self.config, "skip_final_presentation", False))
+        return False
+
     @staticmethod
     def _filter_skills_by_enabled_names(
         all_skills: list[dict[str, Any]],
@@ -345,7 +365,12 @@ class SystemMessageBuilder:
                 "temp_workspace_memories": temp_workspace_memories,
                 "archived_memories": archived_memories,
             }
-            builder.add_section(MemorySection(memory_config))
+            builder.add_section(
+                MemorySection(
+                    memory_config,
+                    read_only=not self._round_learning_capture_enabled,
+                ),
+            )
             archived_count = len(archived_memories.get("short_term", {})) + len(archived_memories.get("long_term", {}))
             logger.info(
                 f"[SystemMessageBuilder] Added memory section "
@@ -498,7 +523,7 @@ class SystemMessageBuilder:
         auto_discover_enabled = False
         if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
             auto_discover_enabled = agent.backend.config.get("auto_discover_custom_tools", False)
-        if auto_discover_enabled and enable_task_planning:
+        if auto_discover_enabled and enable_task_planning and self._round_learning_capture_enabled:
             # Check for plan.json to provide plan-aware guidance
             plan_context = None
             if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
@@ -654,6 +679,9 @@ Review these and consolidate into a single `SKILL.md` in the output directory:
 - **## Expected Outputs**: What this workflow produces
 - **## Learnings**: What worked well, what didn't, tips for future use
 
+If `tasks/changedoc.md` exists, use it as the authoritative source for decision rationale and learnings
+when synthesizing the final `SKILL.md`.
+
 This makes the work reusable for similar future tasks."""
                 sections_content.append(evolving_skill_instructions)
                 logger.info("[SystemMessageBuilder] Added evolving skill output instructions for presentation")
@@ -667,6 +695,19 @@ This makes the work reusable for similar future tasks."""
 
                 sections_content.append(_CHANGEDOC_PRESENTER_INSTRUCTIONS)
                 logger.info("[SystemMessageBuilder] Added changedoc consolidation instructions for presentation")
+
+            # Add memory consolidation instructions if memory mode is enabled
+            coordination_config = getattr(self.config, "coordination_config", None)
+            memory_enabled = bool(
+                coordination_config and getattr(coordination_config, "enable_memory_filesystem_mode", False),
+            )
+            if memory_enabled:
+                from massgen.system_prompt_sections import (
+                    _MEMORY_PRESENTER_INSTRUCTIONS,
+                )
+
+                sections_content.append(_MEMORY_PRESENTER_INSTRUCTIONS)
+                logger.info("[SystemMessageBuilder] Added memory consolidation instructions for presentation")
 
             # Add spec compliance instructions if executing against a spec
             if artifact_type == "spec":
@@ -687,6 +728,18 @@ This makes the work reusable for similar future tasks."""
                 )
 
                 presentation_instructions += _CHANGEDOC_PRESENTER_INSTRUCTIONS
+
+            # Add memory consolidation instructions if memory mode is enabled (no filesystem case)
+            coordination_config = getattr(self.config, "coordination_config", None)
+            memory_enabled = bool(
+                coordination_config and getattr(coordination_config, "enable_memory_filesystem_mode", False),
+            )
+            if memory_enabled:
+                from massgen.system_prompt_sections import (
+                    _MEMORY_PRESENTER_INSTRUCTIONS,
+                )
+
+                presentation_instructions += _MEMORY_PRESENTER_INSTRUCTIONS
 
             # Add spec compliance instructions if executing against a spec
             if artifact_type == "spec":

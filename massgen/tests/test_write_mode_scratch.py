@@ -18,6 +18,7 @@ from git import Repo
 from massgen.filesystem_manager._change_applier import ChangeApplier
 from massgen.filesystem_manager._isolation_context_manager import (
     SCRATCH_DIR_NAME,
+    VERIFICATION_DIR_NAME,
     IsolationContextManager,
 )
 
@@ -1521,3 +1522,118 @@ class TestDiffSummariesInSystemPrompt:
         assert "All code changes must be made here" in content
         assert f"cd {wt_path}" in content
         assert "Project Workspace" in content
+
+
+class TestVerificationDirectory:
+    """Tests for .massgen_scratch/verification/ auto-creation."""
+
+    def test_verification_dir_created_in_worktree(self, tmp_path):
+        """Verify verification/ subdir is created inside scratch."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        init_test_repo(repo_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        icm = IsolationContextManager(
+            session_id="test-verification",
+            write_mode="worktree",
+            workspace_path=str(workspace),
+        )
+        isolated = icm.initialize_context(str(repo_path), agent_id="agent1")
+        verification = os.path.join(isolated, SCRATCH_DIR_NAME, VERIFICATION_DIR_NAME)
+
+        assert os.path.isdir(verification), "verification/ should be created in scratch"
+        icm.cleanup_all()
+
+    def test_verification_dir_is_git_excluded(self, tmp_path):
+        """Files in verification/ should be invisible to git status."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        init_test_repo(repo_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        icm = IsolationContextManager(
+            session_id="test-verify-exclude",
+            write_mode="worktree",
+            workspace_path=str(workspace),
+        )
+        isolated = icm.initialize_context(str(repo_path), agent_id="agent1")
+
+        # Write a file in verification subdir
+        verification_dir = os.path.join(
+            isolated,
+            SCRATCH_DIR_NAME,
+            VERIFICATION_DIR_NAME,
+        )
+        verification_file = os.path.join(verification_dir, "test_results.txt")
+        with open(verification_file, "w") as f:
+            f.write("PASS: all tests passed")
+
+        wt_repo = Repo(isolated)
+        untracked = wt_repo.untracked_files
+        assert "test_results.txt" not in str(untracked)
+        assert SCRATCH_DIR_NAME not in str(untracked)
+        icm.cleanup_all()
+
+    def test_verification_dir_preserved_in_archive(self, tmp_path):
+        """Verify verification/ contents are preserved when scratch is archived."""
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        init_test_repo(repo_path)
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        icm = IsolationContextManager(
+            session_id="test-verify-archive",
+            write_mode="worktree",
+            workspace_path=str(workspace),
+        )
+        isolated = icm.initialize_context(str(repo_path), agent_id="agent1")
+
+        # Write a verification artifact
+        verification_dir = os.path.join(
+            isolated,
+            SCRATCH_DIR_NAME,
+            VERIFICATION_DIR_NAME,
+        )
+        verification_file = os.path.join(verification_dir, "screenshot.png")
+        with open(verification_file, "w") as f:
+            f.write("fake png data")
+
+        archive_dir = icm.move_scratch_to_workspace(
+            str(repo_path),
+            archive_label="agent1",
+        )
+        assert archive_dir is not None
+        archived_verification = os.path.join(
+            archive_dir,
+            VERIFICATION_DIR_NAME,
+            "screenshot.png",
+        )
+        assert os.path.exists(archived_verification), "verification/ should be preserved in archive"
+        icm.cleanup_all()
+
+    def test_verification_dir_created_in_shadow_mode(self, tmp_path):
+        """Verify verification/ subdir is created in shadow mode scratch."""
+        non_git_dir = tmp_path / "project"
+        non_git_dir.mkdir()
+        (non_git_dir / "file.txt").write_text("content")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+
+        icm = IsolationContextManager(
+            session_id="test-shadow-verify",
+            write_mode="isolated",
+            workspace_path=str(workspace),
+        )
+        isolated = icm.initialize_context(str(non_git_dir), agent_id="agent1")
+        verification = os.path.join(isolated, SCRATCH_DIR_NAME, VERIFICATION_DIR_NAME)
+
+        assert os.path.isdir(verification), "verification/ should be created in shadow mode"
+        icm.cleanup_all()

@@ -702,7 +702,7 @@ class AgentConfig:
         system_prompt: str | None = None,
         allowed_tools: list | None = None,  # Legacy support
         disallowed_tools: list | None = None,  # Preferred approach
-        max_thinking_tokens: int = 8000,
+        reasoning: dict | None = None,
         cwd: str | None = None,
         **kwargs,
     ) -> "AgentConfig":
@@ -718,7 +718,10 @@ class AgentConfig:
             allowed_tools: [LEGACY] List of allowed tools (use disallowed_tools instead)
             disallowed_tools: List of dangerous operations to block
                             (default: ["Bash(rm*)", "Bash(sudo*)", "Bash(su*)", "Bash(chmod*)", "Bash(chown*)"])
-            max_thinking_tokens: Maximum tokens for internal thinking (default: 8000)
+            reasoning: Reasoning configuration dict. Preferred keys:
+                - type: "adaptive" (default), "enabled", or "disabled"
+                - effort: "low", "medium", "high" (default), or "max"
+                - budget_tokens: int (only for type="enabled")
             cwd: Current working directory for file operations
             **kwargs: Additional backend parameters
 
@@ -726,6 +729,12 @@ class AgentConfig:
             Maximum power configuration (recommended)::
 
                 config = AgentConfig.create_claude_code_config()
+
+            Custom reasoning config::
+
+                config = AgentConfig.create_claude_code_config(
+                    reasoning={"type": "adaptive", "effort": "max"}
+                )
 
             Custom security restrictions::
 
@@ -739,12 +748,6 @@ class AgentConfig:
                     cwd="/path/to/project",
                     system_prompt="You are an expert developer assistant."
                 )
-
-            Legacy allowed_tools approach (not recommended)::
-
-                config = AgentConfig.create_claude_code_config(
-                    allowed_tools=["Read", "Write", "Edit", "Bash"]
-                )
         """
         backend_params = {"model": model, **kwargs}
 
@@ -756,8 +759,8 @@ class AgentConfig:
             backend_params["allowed_tools"] = allowed_tools
         if disallowed_tools:
             backend_params["disallowed_tools"] = disallowed_tools
-        if max_thinking_tokens != 8000:  # Only set if different from default
-            backend_params["max_thinking_tokens"] = max_thinking_tokens
+        if reasoning:
+            backend_params["reasoning"] = reasoning
         if cwd:
             backend_params["cwd"] = cwd
 

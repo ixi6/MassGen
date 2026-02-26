@@ -86,7 +86,7 @@ def build_roi_decision_block(
     *,
     iterate_action: str = "new_answer",
     satisfied_action: str = "vote",
-    satisfied_detail: str = "for the best existing answer",
+    satisfied_detail: str = "for the answer with the strongest overall scores",
 ) -> str:
     """Build the complete ROI rubric + decision rule block.
 
@@ -96,15 +96,20 @@ def build_roi_decision_block(
     quality_bar = _threshold_to_quality_bar(threshold)
     quality_bar, budget_line = _build_budget_line(quality_bar, answers_used, answer_cap)
 
-    return f"""**Step 1: Rate the best existing answer on ALL dimensions (1-10 each):**
+    return f"""**Step 1: Rate EACH answer on ALL dimensions (1-10 each):**
 {_ROI_RUBRIC}
 
+Score every answer separately. Note which answer handles each dimension best —
+this tells you what already exists and is worth keeping vs. what needs to be built.
+
 **Step 2: Check against the quality bar.**
-Your quality bar is **{quality_bar}/10**. If ANY dimension scores below this bar, you SHOULD iterate.
+Your quality bar is **{quality_bar}/10**. For each dimension, look at the
+**best score across all answers**. If any dimension's best score is still below
+the bar, no existing answer has solved that gap yet — you SHOULD iterate.
 
 **Decision Rule:**
-- Any dimension < {quality_bar} -> `{iterate_action}` (improve the weakest dimensions)
-- All dimensions >= {quality_bar} -> `{satisfied_action}` {satisfied_detail}
+- Any dimension's best score < {quality_bar} -> `{iterate_action}` (a real gap exists that no answer fills)
+- All dimensions have at least one answer >= {quality_bar} -> `{satisfied_action}` {satisfied_detail}
 
 A good first draft is rarely perfect. Look for what can be *better*, not just what is *wrong*.{budget_line}"""
 
@@ -557,12 +562,15 @@ def _build_checklist_decision(
 
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
-- `{iterate_action}`: produce an improved answer (synthesizing across answers if multiple exist).
-- `{terminate_action}`: select the best existing answer and stop.
+- `{iterate_action}`: build a new answer from scratch, incorporating only the specific
+  elements from existing answers that your scoring identified as genuinely excellent.
+  Default to fresh thinking — do not anchor to any one answer's structure.
+- `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
-The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that nothing
-of value would be lost — that the best answer already captures everything worth
-keeping. If you cannot confidently make that case, choose `{iterate_action}`.
+The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
+every dimension is already well-covered by at least one existing answer, and the gaps
+between answers are minor enough that synthesis would add little. If you cannot
+confidently make that case, choose `{iterate_action}`.
 
 ### Threshold
 
@@ -570,10 +578,9 @@ Your threshold is **{threshold}** on a 0-10 scale. This controls how strong your
 case for `{terminate_action}` must be:
 - 0: only `{terminate_action}` if answers are virtually identical — any unique content
   justifies `{iterate_action}`.
-- 5: `{terminate_action}` if the best answer is solid and any remaining gaps or unique content
-  in other answers is minor.
-- 10: `{terminate_action}` as long as the best answer is adequate, even if improvements are
-  possible.
+- 5: `{terminate_action}` if all dimensions are well-covered across answers and gaps are minor.
+- 10: `{terminate_action}` as long as answers are adequate across dimensions, even if
+  some improvements remain possible.
 
 ### Budget
 
@@ -625,12 +632,15 @@ def _build_checklist_scored_decision(
 
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
-- `{iterate_action}`: produce an improved answer (synthesizing across answers if multiple exist).
-- `{terminate_action}`: select the best existing answer and stop.
+- `{iterate_action}`: build a new answer from scratch, incorporating only the specific
+  elements from existing answers that your scoring identified as genuinely excellent.
+  Default to fresh thinking — do not anchor to any one answer's structure.
+- `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
-The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that nothing
-of value would be lost — that the best answer already captures everything worth
-keeping. If you cannot confidently make that case, choose `{iterate_action}`.
+The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
+every dimension is already well-covered by at least one existing answer, and the gaps
+between answers are minor enough that synthesis would add little. If you cannot
+confidently make that case, choose `{iterate_action}`.
 
 ### Threshold
 
@@ -638,10 +648,9 @@ Your threshold is **{threshold}** on a 0-10 scale. This controls how strong your
 case for `{terminate_action}` must be:
 - 0: only `{terminate_action}` if answers are virtually identical — any unique content
   justifies `{iterate_action}`.
-- 5: `{terminate_action}` if the best answer is solid and any remaining gaps or unique content
-  in other answers is minor.
-- 10: `{terminate_action}` as long as the best answer is adequate, even if improvements are
-  possible.
+- 5: `{terminate_action}` if all dimensions are well-covered across answers and gaps are minor.
+- 10: `{terminate_action}` as long as answers are adequate across dimensions, even if
+  some improvements remain possible.
 
 ### Budget
 
@@ -737,8 +746,10 @@ def _build_checklist_gated_decision(
 
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
-- `{iterate_action}`: produce an improved answer (synthesizing across answers if multiple exist).
-- `{terminate_action}`: select the best existing answer and stop.
+- `{iterate_action}`: build a new answer from scratch, incorporating only the specific
+  elements from existing answers that your scoring identified as genuinely excellent.
+  Default to fresh thinking — do not anchor to any one answer's structure.
+- `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 ### Substantiveness Test
 
@@ -850,12 +861,15 @@ If specialized subagents are available:
   candidate improvements. Enumerate *every* improvement you can see — do not
   filter yet.
 - Collect subagent findings (they will return automatically when done).
-- Update your task plan with every improvement as a separate task. For each task,
-  annotate the executor: `[main]` (you implement inline), `[builder]` (delegate
-  to builder subagent), `[synthesize]` (pull from another agent's answer), or
-  `[skip]` (deprioritized). Add `depends_on` links between tasks that have ordering
-  constraints. Be generous with `[builder]` — transformative, multi-file, or
-  structurally complex improvements are good candidates.
+- Update your task plan with every improvement as a separate task. Split builder
+  work into the smallest independently executable chunks — each chunk that can
+  run without the others gets its own `[builder]` task, enabling parallel execution.
+  Annotate each task's executor: `[main]` (you implement inline), `[builder]`
+  (one focused chunk per task, not "do everything" in one), `[synthesize]` (a
+  specific element from another answer is already excellent — keep it), or `[skip]`
+  (deprioritized). Add `depends_on` links only where output from one task is
+  genuinely required input for another. Be generous with `[builder]` — transformative,
+  multi-file, or structurally complex improvements are good candidates.
 
 If no specialized subagents are available:
 - Do your own gap analysis inline. Enumerate every improvement and log them all
@@ -873,12 +887,12 @@ On `{iterate_action}` verdict, execute your task plan dependency-aware:
 
 1. Find all tasks with no unresolved `depends_on` (`get_ready_tasks`).
 2. Batch all independent `[builder]` tasks into a **single** `spawn_subagents`
-   call — do not call it once per task. Do your own independent `[main]` tasks
-   inline at the same time.
-3. When a batch completes, re-check `get_ready_tasks` — newly unblocked tasks
-   cascade. Repeat until all tasks are done.
-4. For `[synthesize]` tasks: pull the relevant section directly from the other
-   agent's answer rather than rewriting from scratch.
+   call (`background=True, refine=False`) — they run in parallel. Do your own
+   independent `[main]` tasks inline while they run.
+3. Collect subagent results, then re-check `get_ready_tasks` — newly unblocked
+   tasks cascade. Repeat until all tasks are done.
+4. For `[synthesize]` tasks: pull the specific element from the other agent's
+   answer rather than rewriting it.
 
 If no specialized subagents are available, execute all tasks inline in
 dependency order.
@@ -1949,7 +1963,12 @@ class WorkspaceStructureSection(SystemPromptSection):
                 content_parts.append("## Project Workspace\n")
                 content_parts.append(f"Your project code is at `{wt_path}`. **All code changes must be made here.**")
                 content_parts.append(f"Run `cd {wt_path}` before starting any code work.\n")
-                content_parts.append(f"Scratch space: `{wt_path}/.massgen_scratch/` (git-excluded, for experiments)\n")
+                content_parts.append(
+                    f"Scratch space: `{wt_path}/.massgen_scratch/` "
+                    f"(git-excluded, for experiments)\n"
+                    f"  - Verification: `.massgen_scratch/verification/` — save test output, "
+                    f"screenshots, videos here to confirm your work is correct before submitting\n",
+                )
                 content_parts.append(
                     f"**Important**: Internal files (`tasks/changedoc.md`, `tasks/evolving_skill/`, "
                     f"implementation checklists) belong in your main workspace directory, NOT in the "
@@ -2509,6 +2528,9 @@ class FilesystemBestPracticesSection(SystemPromptSection):
             "final deliverable. For example, move `test_output.txt` or `old_version.py` to scratch. "
             "**Never delete system-managed directories**: `.worktree/`, `.git/`, symlinks to shared "
             "tools, or any directory you did not create.\n"
+            "- **Verification Artifacts**: Save test results, screenshots, videos, and other "
+            "verification evidence to `.massgen_scratch/verification/`. These are preserved "
+            "in scratch archives for reference in subsequent rounds.\n"
             "- **Organization**: Keep files logically organized. If you're combining work from "
             "multiple agents, structure the result clearly.\n"
             "- **Internal Documents**: Never write internal documents (decision journals, evolving "
@@ -2538,6 +2560,12 @@ class FilesystemBestPracticesSection(SystemPromptSection):
             "their workspaces (via Shared Reference)\n"
             "- **For functionality**: Evaluate outcomes by running tests, checking visualizations, "
             "validating outputs, or testing the deliverables\n"
+            "- **Run your own verification**: Do not rely solely on agents' self-reported results. "
+            "Run tests, take screenshots, and validate deliverables yourself. Save your "
+            "verification evidence to `.massgen_scratch/verification/{agentN}/` (create subdirs "
+            "as needed per agent you're evaluating). Agents' own verification may be available "
+            "in their Shared Reference under `.scratch_archive/{agentN}/verification/` as "
+            "optional context, but it may be incomplete or stale — always verify independently.\n"
             "- **Focus verification**: Prioritize critical functionality and substantial differences "
             "rather than exhaustively reviewing every file\n"
             "- **Don't rely solely on answer text**: Ensure the actual work matches their claims\n",
@@ -3787,7 +3815,7 @@ class SubagentSection(SystemPromptSection):
             background_default = background_by_type.get(t.name.lower(), True)
             background_str = "True" if background_default else "False"
             lines.append(f"**{t.name}** — {t.description}")
-            lines.append(f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}", "context_paths": []}}], background={background_str})`')
+            lines.append(f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}", "context_paths": []}}], background={background_str}, refine=False)`')
             if getattr(t, "expected_input", None):
                 lines.append("Expected input for this type:")
                 for item in t.expected_input:
@@ -3943,9 +3971,10 @@ quality and priorities, since you have the full context and the subagent may run
 **DO NOT submit your answer until ALL subagents have returned results.**
 
 When you spawn subagents:
-1. **Wait for the tool to return** - `spawn_subagents` blocks until ALL tasks complete
-2. **Do NOT say "I will now run subagents"** and submit an answer - wait for actual results first
-3. **Only after receiving results** should you integrate outputs and submit your answer
+1. **Use `background=True` (default)** — the tool returns immediately with subagent IDs.
+   Continue your own work while subagents run. Results are auto-injected or retrievable via `list_subagents()`.
+2. **Do NOT say "I will now run subagents"** and submit an answer before collecting results.
+3. **Only after receiving results** should you integrate outputs and submit your answer.
 
 **BAD**: "I spawned 5 subagents. I will now wait for them and report back." (submitting answer before results)
 **GOOD**: Wait for spawn tool to return → read results → integrate → then submit answer with completed work
@@ -4020,8 +4049,8 @@ spawn_subagents(
         {{"task": "Create discography table in discography.md", "subagent_id": "discog", "context_paths": []}},
         {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs", "context_paths": []}}
     ],
-    background=False,  # True to continue while subagent runs; False to wait for completion
-    refine=False,  # True to allow subagents to refine their answers (more expensive and slower but better quality)
+    background=True,  # default: run async, continue working; set False only when you must block
+    refine=False,  # default: single-pass, fast/cheap; set True only when quality justifies cost
 )
 
 # WRONG - DO NOT DO THIS (task 2 depends on task 1's output):
@@ -4032,14 +4061,16 @@ spawn_subagents(
 ```
 
 **background parameter (async mode):**
-- `background=True`: Spawn in background and continue working asynchronously. Results are
-  often auto-injected on a later tool call.
-- Use `list_subagents()` to check status and discover workspace paths for running subagents.
-- `background=False` (default): Wait for results before proceeding. Use when you need outputs to continue.
+- `background=True` **(default)**: Spawn in background and continue working asynchronously.
+  Results are often auto-injected on a later tool call. Use `list_subagents()` to check
+  status and discover workspace paths.
+- `background=False`: Wait for results before proceeding. Only use when you genuinely
+  cannot continue any meaningful work until the subagent completes.
 
 **refine parameter:**
-- `refine=True` (default): Multi-round refinement with voting. Higher quality, slower, more expensive. Use for complex analysis.
-- `refine=False`: Single-pass execution. Faster, cheaper. Use for simple lookups/lists.
+- `refine=False` **(default)**: Single-pass execution. Faster and cheaper. Use for most tasks.
+- `refine=True`: Multi-round refinement with voting. Higher quality but significantly slower
+  and more expensive. Only use when quality is critical and cost is acceptable.
 
 ## Background Subagent Lifecycle
 

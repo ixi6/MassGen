@@ -2512,25 +2512,12 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             # MassGen-specific config options (not ClaudeAgentOptions parameters)
             "enable_web_search",  # Handled above - controls WebSearch/WebFetch tool availability
             "use_default_prompt",  # Handled in stream_with_tools - controls system prompt mode
-            "max_thinking_tokens",  # Handled below - converted to env.MAX_THINKING_TOKENS
+            "max_thinking_tokens",  # Deprecated: handled below via reasoning config
+            "reasoning",  # Unified reasoning config → SDK thinking + effort fields
             # Note: use_mcpwrapped_for_tool_filtering and use_no_roots_wrapper are in base excluded params
             # Note: system_prompt is NOT excluded - it's needed for internal workflow prompt injection
             # Validation prevents it from being set in YAML backend config
         }
-
-        # Handle max_thinking_tokens -> env.MAX_THINKING_TOKENS conversion
-        # This enables extended thinking in Claude Agent SDK, providing ThinkingBlock
-        # outputs with the model's internal reasoning process.
-        # See: https://platform.claude.com/docs/en/build-with-claude/extended-thinking
-        max_thinking_tokens = options_kwargs.get("max_thinking_tokens")
-        if max_thinking_tokens is not None:
-            # Merge with existing env dict if present
-            env_dict = options_kwargs.get("env", {})
-            if env_dict is None:
-                env_dict = {}
-            env_dict["MAX_THINKING_TOKENS"] = str(max_thinking_tokens)
-            options_kwargs["env"] = env_dict
-            logger.info(f"[ClaudeCodeBackend] Extended thinking enabled with budget: {max_thinking_tokens} tokens")
 
         # Get cwd from filesystem manager (always available since we require it in __init__)
         cwd_option = Path(str(self.filesystem_manager.get_current_workspace())).resolve()
@@ -2654,6 +2641,42 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         # "Stream closed" / "Error in hook callback" messages on Ctrl+C.
         # Without this, stderr is inherited and dumps directly to the terminal.
         options["stderr"] = lambda line: logger.debug(f"[ClaudeCode stderr] {line.rstrip()}")
+
+        # Parse unified reasoning config → SDK thinking + effort fields
+        # Supports: reasoning: {type: adaptive, effort: high}
+        # Backward compat: max_thinking_tokens: N → thinking: {type: enabled, budget_tokens: N}
+        # Default: adaptive thinking + high effort (matches Claude Code CLI behavior)
+        reasoning = options_kwargs.get("reasoning", {})
+        max_thinking = options_kwargs.get("max_thinking_tokens")
+
+        if reasoning:
+            thinking_type = reasoning.get("type", "adaptive")
+            if thinking_type == "adaptive":
+                options["thinking"] = {"type": "adaptive"}
+            elif thinking_type == "enabled":
+                options["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": reasoning.get("budget_tokens", 32_000),
+                }
+            elif thinking_type == "disabled":
+                options["thinking"] = {"type": "disabled"}
+            if "effort" in reasoning:
+                options["effort"] = reasoning["effort"]
+        elif max_thinking:
+            # Backward compat: max_thinking_tokens → thinking enabled
+            options["thinking"] = {"type": "enabled", "budget_tokens": max_thinking}
+        else:
+            # Default: match CLI behavior (adaptive thinking)
+            options["thinking"] = {"type": "adaptive"}
+
+        # Default effort if not set by reasoning config
+        # Anthropic recommends: opus → high, sonnet/haiku → medium
+        if "effort" not in options:
+            model = (options.get("model") or "").lower()
+            if "opus" in model:
+                options["effort"] = "high"
+            else:
+                options["effort"] = "medium"
 
         # Debug: Log the full mcp_servers config being passed to SDK
         if "mcp_servers" in options and "filesystem" in options["mcp_servers"]:

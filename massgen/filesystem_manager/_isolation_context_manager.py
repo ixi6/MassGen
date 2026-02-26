@@ -26,6 +26,9 @@ log = logging.getLogger(__name__)
 # Name of the scratch directory inside worktrees (git-excluded)
 SCRATCH_DIR_NAME = ".massgen_scratch"
 
+# Name of the verification subdirectory inside scratch (for test results, screenshots, etc.)
+VERIFICATION_DIR_NAME = "verification"
+
 
 class IsolationContextManager:
     """
@@ -357,6 +360,10 @@ class IsolationContextManager:
         """
         scratch_path = os.path.join(isolated_path, SCRATCH_DIR_NAME)
         os.makedirs(scratch_path, exist_ok=True)
+
+        # Create verification subdirectory for test results, screenshots, etc.
+        verification_path = os.path.join(scratch_path, VERIFICATION_DIR_NAME)
+        os.makedirs(verification_path, exist_ok=True)
 
         # Git-exclude the scratch directory
         try:

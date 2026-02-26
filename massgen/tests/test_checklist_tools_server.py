@@ -1808,4 +1808,136 @@ class TestDiagnosticReportGate:
             state=state,
         )
         assert result["report_gate_triggered"] is True
+
+
+# ---------------------------------------------------------------------------
+# Per-agent scores format
+# ---------------------------------------------------------------------------
+
+
+class TestPerAgentScores:
+    """Tests for the per-agent scores format where each agent is scored separately."""
+
+    def _base_state(self):
+        return {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_gap_report": False,
+        }
+
+    def test_best_agent_passes_returns_terminate(self):
+        """Best agent's scores clear the bar → vote."""
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "solid"}, "E2": {"score": 9, "reasoning": "great"}},
+            "agent2": {"E1": {"score": 5, "reasoning": "weak"}, "E2": {"score": 6, "reasoning": "ok"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=self._base_state(),
+        )
+        assert result["verdict"] == "vote"
+        assert result["best_agent"] == "agent1"
+        assert result["true_count"] == 2
+
+    def test_best_agent_fails_returns_iterate(self):
+        """Even the best agent fails a dimension → new_answer."""
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 4, "reasoning": "poor"}},
+            "agent2": {"E1": {"score": 6, "reasoning": "ok"}, "E2": {"score": 5, "reasoning": "poor"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="E2 is weak across all agents",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=self._base_state(),
+        )
+        assert result["verdict"] == "new_answer"
+        assert result["best_agent"] == "agent1"  # agent1 has higher aggregate
+        assert result["true_count"] == 1
+
+    def test_best_agent_selected_by_aggregate(self):
+        """Agent with highest total score is selected as best."""
+        scores = {
+            "agent1": {"E1": {"score": 9, "reasoning": "great"}, "E2": {"score": 5, "reasoning": "weak"}},
+            "agent2": {"E1": {"score": 7, "reasoning": "good"}, "E2": {"score": 8, "reasoning": "solid"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=self._base_state(),
+        )
+        # agent1 total=14, agent2 total=15 → agent2 wins
+        assert result["best_agent"] == "agent2"
+
+    def test_per_agent_breakdown_included_in_response(self):
+        """Response includes full per-agent score breakdown."""
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}},
+            "agent2": {"E1": {"score": 5, "reasoning": "weak"}, "E2": {"score": 6, "reasoning": "ok"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=self._base_state(),
+        )
+        assert "per_agent_scores" in result
+        assert "agent1" in result["per_agent_scores"]
+        assert "agent2" in result["per_agent_scores"]
+
+    def test_flat_scores_still_work_backward_compat(self):
+        """Legacy flat E-keyed scores still produce correct verdicts."""
+        scores = {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}}
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=self._base_state(),
+        )
+        assert result["verdict"] == "vote"
+        assert result["true_count"] == 2
+        # No best_agent key for flat format
+        assert "best_agent" not in result
+
+    def test_single_agent_per_agent_format(self):
+        """Single agent in per-agent format works correctly."""
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=self._base_state(),
+        )
+        assert result["verdict"] == "vote"
+        assert result["best_agent"] == "agent1"
+
+    def test_per_agent_incomplete_scores_rejected(self):
+        """Per-agent format: best agent missing a criterion triggers rejection."""
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}},  # missing E2
+            "agent2": {"E1": {"score": 5, "reasoning": "weak"}, "E2": {"score": 6, "reasoning": "ok"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=self._base_state(),
+        )
+        assert result["verdict"] == "new_answer"
+        assert result.get("incomplete_scores") is True
         assert result["verdict"] == "new_answer"

@@ -329,6 +329,41 @@ def _evaluate_gap_report(report_path: str, state: dict[str, Any]) -> dict[str, A
     return result
 
 
+def _is_per_agent_scores(scores: dict[str, Any], item_prefix: str) -> bool:
+    """Return True if scores is per-agent format (keyed by agent label, not E/T-prefixed)."""
+    if not scores:
+        return False
+    return not any(k.startswith(item_prefix) or k.startswith("T") or k.startswith("E") for k in scores)
+
+
+def _extract_flat_scores(
+    per_agent: dict[str, Any],
+    item_prefix: str,
+    n_items: int,
+) -> tuple[str, dict[str, Any], dict[str, dict[str, int]]]:
+    """Find the best agent by aggregate score and return (best_label, flat_scores, per_agent_summary).
+
+    per_agent_summary maps agent_label -> {criterion: score} for inclusion in the response.
+    """
+    per_agent_summary: dict[str, dict[str, int]] = {}
+    best_label = ""
+    best_total = -1
+    best_scores: dict[str, Any] = {}
+
+    for agent_label, agent_scores in per_agent.items():
+        if not isinstance(agent_scores, dict):
+            continue
+        total = sum(_extract_score(agent_scores.get(f"{item_prefix}{i+1}", agent_scores.get(f"E{i+1}", 0))) for i in range(n_items))
+        summary = {f"{item_prefix}{i+1}": _extract_score(agent_scores.get(f"{item_prefix}{i+1}", agent_scores.get(f"E{i+1}", 0))) for i in range(n_items)}
+        per_agent_summary[agent_label] = summary
+        if total > best_total:
+            best_total = total
+            best_label = agent_label
+            best_scores = agent_scores
+
+    return best_label, best_scores, per_agent_summary
+
+
 def evaluate_checklist_submission(
     scores: dict[str, Any],
     improvements: str,
@@ -350,6 +385,39 @@ def evaluate_checklist_submission(
     # Determine item prefix: use E-prefix (new default), but accept T-prefix
     # submissions for backwards compatibility
     item_prefix = state.get("item_prefix", "E")
+
+    # Detect per-agent format and normalise to flat scores for verdict logic.
+    # Per-agent: {"agent1": {"E1": ..., "E2": ...}, "agent2": {...}}
+    # Flat (legacy): {"E1": ..., "E2": ...}
+    best_agent: str | None = None
+    per_agent_scores: dict[str, dict[str, int]] | None = None
+    if _is_per_agent_scores(scores, item_prefix):
+        # Validate completeness for ALL agents before selecting best.
+        expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}
+        incomplete_agents = []
+        for agent_label, agent_scores in scores.items():
+            if not isinstance(agent_scores, dict):
+                continue
+            agent_keys = {k.replace("T", item_prefix, 1) if k.startswith("T") else k for k in agent_scores}
+            missing = sorted(expected_keys - agent_keys)
+            if missing:
+                incomplete_agents.append((agent_label, missing))
+        if incomplete_agents and has_existing_answers:
+            report_eval = _evaluate_gap_report(report_path, state)
+            details = "; ".join(f"{a}: missing {', '.join(m)}" for a, m in incomplete_agents)
+            return {
+                "verdict": iterate_action,
+                "explanation": (f"Incomplete per-agent submission: {details}. " f"You must score ALL {len(items)} criteria for EVERY agent. " f"Resubmit with complete scores."),
+                "incomplete_scores": True,
+                "true_count": 0,
+                "required": required,
+                "items": [],
+                "report": report_eval,
+                "report_gate_triggered": False,
+                "substantiveness_gate_triggered": False,
+                "convergence_offramp_triggered": False,
+            }
+        best_agent, scores, per_agent_scores = _extract_flat_scores(scores, item_prefix, len(items))
 
     # Reject incomplete submissions — agent must score ALL criteria
     expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}
@@ -607,7 +675,7 @@ def evaluate_checklist_submission(
         substantiveness_summary += f" Substantiveness issues: {'; '.join(substantiveness_eval['issues'])}."
     explanation += substantiveness_summary
 
-    return {
+    result = {
         "verdict": verdict,
         "explanation": explanation,
         "true_count": true_count,
@@ -619,6 +687,11 @@ def evaluate_checklist_submission(
         "substantiveness_gate_triggered": substantiveness_gate_triggered,
         "convergence_offramp_triggered": convergence_offramp_triggered,
     }
+    if best_agent is not None:
+        result["best_agent"] = best_agent
+    if per_agent_scores is not None:
+        result["per_agent_scores"] = per_agent_scores
+    return result
 
 
 def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
@@ -667,10 +740,15 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         return json.dumps(result)
 
     submit_checklist.__doc__ = (
-        "Submit your checklist evaluation. Each score in 'scores' must be an "
-        "object with 'score' (0-10) and 'reasoning' (why you gave that score). "
-        "The 'improvements' field should describe features or content that an "
-        "ideal answer would have but no existing answer has attempted. "
+        "Submit your checklist evaluation. "
+        "Score each agent's answer separately per criterion, then submit all "
+        "agent scores in 'scores' as a nested object: "
+        '{"agent1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2": {...}}. '
+        "The verdict is determined by the strongest agent's scores — the agent "
+        "with the highest aggregate across all criteria. Include all agents so "
+        "the evaluation is transparent and auditable. "
+        "The 'improvements' field should describe dimensions where even the "
+        "best agent fell short — genuine gaps requiring a new answer. "
         "Use the 'substantiveness' object to report planned change counts "
         "(transformative/structural/incremental) and whether decision space is exhausted. "
         "Use 'report_path' to provide a markdown gap report when report gating "

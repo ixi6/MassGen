@@ -77,3 +77,60 @@ def test_settings_disabled_with_skill_tool_off(tmp_path: Path):
     options = backend._build_claude_options()
 
     assert list(options.setting_sources) == []
+
+
+# ── Reasoning / thinking config tests ──────────────────────────────────────
+
+
+def _build_options_with_kwargs(tmp_path: Path, **kwargs):
+    """Helper: build ClaudeAgentOptions with given backend kwargs."""
+    backend = ClaudeCodeBackend(cwd=str(tmp_path))
+    skills_dir = tmp_path / ".agent" / "skills"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    backend.filesystem_manager = _build_filesystem_manager_stub(tmp_path, skills_dir)
+    return backend._build_claude_options(**kwargs)
+
+
+def test_reasoning_adaptive_default_sonnet(tmp_path: Path):
+    """Without reasoning config, sonnet defaults to adaptive thinking + medium effort."""
+    options = _build_options_with_kwargs(tmp_path, model="claude-sonnet-4-6")
+    assert options.thinking == {"type": "adaptive"}
+    assert options.effort == "medium"
+
+
+def test_reasoning_adaptive_default_opus(tmp_path: Path):
+    """Without reasoning config, opus defaults to adaptive thinking + high effort."""
+    options = _build_options_with_kwargs(tmp_path, model="claude-opus-4-6")
+    assert options.thinking == {"type": "adaptive"}
+    assert options.effort == "high"
+
+
+def test_reasoning_explicit_config(tmp_path: Path):
+    """Explicit reasoning config with type=disabled overrides default."""
+    options = _build_options_with_kwargs(
+        tmp_path,
+        reasoning={"type": "disabled"},
+    )
+    assert options.thinking == {"type": "disabled"}
+
+
+def test_reasoning_effort_override(tmp_path: Path):
+    """Reasoning config can override effort level."""
+    options = _build_options_with_kwargs(
+        tmp_path,
+        reasoning={"type": "adaptive", "effort": "max"},
+    )
+    assert options.thinking == {"type": "adaptive"}
+    assert options.effort == "max"
+
+
+def test_max_thinking_tokens_backward_compat(tmp_path: Path):
+    """Legacy max_thinking_tokens maps to thinking type=enabled."""
+    options = _build_options_with_kwargs(tmp_path, max_thinking_tokens=8000)
+    assert options.thinking == {"type": "enabled", "budget_tokens": 8000}
+
+
+def test_no_env_var_workaround(tmp_path: Path):
+    """MAX_THINKING_TOKENS should NOT appear in env dict (old workaround removed)."""
+    options = _build_options_with_kwargs(tmp_path, max_thinking_tokens=10000)
+    assert "MAX_THINKING_TOKENS" not in options.env

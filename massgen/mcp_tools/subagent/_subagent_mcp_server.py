@@ -51,6 +51,49 @@ _parent_context_paths: list[dict[str, str]] = []
 _parent_coordination_config: dict[str, Any] = {}
 _specialized_subagents: dict[str, dict[str, Any]] = {}  # name -> type config dict
 _subagent_types_loaded: bool = False  # set to True after first lazy scan
+_next_subagent_index: int = 0  # auto-increment counter for default subagent IDs
+
+
+def _find_temp_workspace_mcp_fallback(file_name: str) -> Path | None:
+    """Find a subagent MCP config file copied into agent temp workspace snapshots.
+
+    During round transitions, workspace branch switches may remove
+    workspace/.massgen/subagent_mcp/* before lazy MCP startup. Snapshot copies
+    under agent temp workspace remain available and are safe fallback sources.
+    """
+    if not _agent_temporary_workspace:
+        return None
+
+    temp_root = Path(_agent_temporary_workspace)
+    if not temp_root.exists() or not temp_root.is_dir():
+        return None
+
+    candidates = [path for path in temp_root.glob(f"*/.massgen/subagent_mcp/{file_name}") if path.is_file()]
+    if not candidates:
+        return None
+
+    try:
+        candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    except OSError:
+        candidates.sort(reverse=True)
+
+    return candidates[0]
+
+
+def _load_json_with_temp_workspace_fallback(path_str: str) -> tuple[Any, Path]:
+    """Load JSON from primary path, falling back to temp workspace snapshot copy."""
+    primary = Path(path_str)
+    try:
+        with open(primary) as f:
+            return json.load(f), primary
+    except json.JSONDecodeError:
+        raise
+    except (FileNotFoundError, OSError) as primary_err:
+        fallback = _find_temp_workspace_mcp_fallback(primary.name)
+        if fallback is None:
+            raise primary_err
+        with open(fallback) as f:
+            return json.load(f), fallback
 
 
 def _ensure_specialized_types_loaded() -> None:
@@ -302,10 +345,17 @@ async def create_server() -> fastmcp.FastMCP:
     _parent_agent_configs = []
     if args.agent_configs_file:
         try:
-            with open(args.agent_configs_file) as f:
-                _parent_agent_configs = json.load(f)
+            _agent_configs_loaded_path: Path | None = None
+            _parent_agent_configs, _agent_configs_loaded_path = _load_json_with_temp_workspace_fallback(
+                args.agent_configs_file,
+            )
             if not isinstance(_parent_agent_configs, list):
                 _parent_agent_configs = [_parent_agent_configs]
+            if _agent_configs_loaded_path and _agent_configs_loaded_path != Path(args.agent_configs_file):
+                logger.info(
+                    "[SubagentMCP] Loaded agent configs via temp workspace fallback: %s",
+                    _agent_configs_loaded_path,
+                )
             # Do NOT delete the file here. The MCP server process may start
             # after a delay (Docker, lazy launch) or be restarted, and early
             # deletion causes a race where the file is gone before it can be
@@ -329,11 +379,18 @@ async def create_server() -> fastmcp.FastMCP:
     _parent_context_paths = []
     if args.context_paths_file:
         try:
-            with open(args.context_paths_file) as f:
-                _parent_context_paths = json.load(f)
+            _context_paths_loaded_path: Path | None = None
+            _parent_context_paths, _context_paths_loaded_path = _load_json_with_temp_workspace_fallback(
+                args.context_paths_file,
+            )
             if not isinstance(_parent_context_paths, list):
                 _parent_context_paths = []
             # Do NOT delete — see agent_configs_file comment above.
+            if _context_paths_loaded_path and _context_paths_loaded_path != Path(args.context_paths_file):
+                logger.info(
+                    "[SubagentMCP] Loaded parent context paths via temp workspace fallback: %s",
+                    _context_paths_loaded_path,
+                )
             logger.info(f"[SubagentMCP] Loaded {len(_parent_context_paths)} parent context paths")
         except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
             logger.warning(f"Failed to load context paths from {args.context_paths_file}: {e}")
@@ -343,11 +400,18 @@ async def create_server() -> fastmcp.FastMCP:
     _parent_coordination_config = {}
     if args.coordination_config_file:
         try:
-            with open(args.coordination_config_file) as f:
-                _parent_coordination_config = json.load(f)
+            _coord_cfg_loaded_path: Path | None = None
+            _parent_coordination_config, _coord_cfg_loaded_path = _load_json_with_temp_workspace_fallback(
+                args.coordination_config_file,
+            )
             if not isinstance(_parent_coordination_config, dict):
                 _parent_coordination_config = {}
             # Do NOT delete — see agent_configs_file comment above.
+            if _coord_cfg_loaded_path and _coord_cfg_loaded_path != Path(args.coordination_config_file):
+                logger.info(
+                    "[SubagentMCP] Loaded parent coordination config via temp workspace fallback: %s",
+                    _coord_cfg_loaded_path,
+                )
             logger.info("[SubagentMCP] Loaded parent coordination config")
         except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
             logger.warning(f"Failed to load coordination config from {args.coordination_config_file}: {e}")
@@ -355,9 +419,10 @@ async def create_server() -> fastmcp.FastMCP:
 
     # Specialized subagent types are loaded lazily on first spawn_subagents call
     # by _ensure_specialized_types_loaded() scanning workspace/.massgen/subagent_types/.
-    global _specialized_subagents, _subagent_types_loaded
+    global _specialized_subagents, _subagent_types_loaded, _next_subagent_index
     _specialized_subagents = {}
     _subagent_types_loaded = False
+    _next_subagent_index = 0
 
     # Set concurrency and timeout limits
     _max_concurrent = args.max_concurrent
@@ -555,10 +620,16 @@ async def create_server() -> fastmcp.FastMCP:
                         "error": (f"Task at index {i} has invalid 'context_paths' type: expected list, got {actual_type}. " "Use [] for no extra context or a list of path strings."),
                     }
 
-            # Normalize task IDs
+            # Normalize task IDs using a global counter so IDs are unique
+            # across multiple spawn_subagents calls (not just within one call).
+            global _next_subagent_index
             normalized_tasks = []
-            for i, t in enumerate(tasks):
-                task_id = t.get("subagent_id", f"subagent_{i}")
+            for t in tasks:
+                if "subagent_id" in t:
+                    task_id = t["subagent_id"]
+                else:
+                    task_id = f"subagent_{_next_subagent_index}"
+                    _next_subagent_index += 1
                 normalized_tasks.append(
                     {
                         **t,

@@ -22,6 +22,7 @@ async def _build_subagent_server(monkeypatch, tmp_path):
     server._workspace_path = None
     server._specialized_subagents = {}
     server._subagent_types_loaded = False
+    server._next_subagent_index = 0
 
     monkeypatch.setattr(
         sys,
@@ -207,6 +208,98 @@ class TestContinueSubagentBackground:
         assert len(fake_manager.continue_calls) == 1
         assert fake_manager.continue_calls[0]["new_message"] == "keep going"
         assert fake_manager.continue_background_calls == []
+
+
+class TestSpawnSubagentsAutoIncrementIds:
+    """Default subagent IDs must be globally unique across multiple spawn calls."""
+
+    @pytest.mark.asyncio
+    async def test_successive_spawns_get_incrementing_ids(self, monkeypatch, tmp_path):
+        """Two spawn calls without explicit IDs must NOT reuse subagent_0."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        # First call: 2 tasks with no explicit subagent_id
+        result1 = await _invoke_handler(
+            handler,
+            tasks=[
+                {"task": "Critique the site", "context_paths": []},
+                {"task": "Propose novelty", "context_paths": []},
+            ],
+            background=True,
+            refine=False,
+        )
+        assert result1["success"] is True
+        ids_first = [s["subagent_id"] for s in result1["subagents"]]
+        assert ids_first == ["subagent_0", "subagent_1"]
+
+        # Second call: 1 task with no explicit subagent_id
+        result2 = await _invoke_handler(
+            handler,
+            tasks=[
+                {"task": "Build the site", "context_paths": []},
+            ],
+            background=True,
+            refine=False,
+        )
+        assert result2["success"] is True
+        ids_second = [s["subagent_id"] for s in result2["subagents"]]
+        # Must be subagent_2, NOT subagent_0
+        assert ids_second == ["subagent_2"], f"Expected ['subagent_2'] but got {ids_second} — " "default IDs must auto-increment across spawn calls"
+
+    @pytest.mark.asyncio
+    async def test_explicit_ids_do_not_affect_counter(self, monkeypatch, tmp_path):
+        """Explicit subagent_id values should not consume counter slots."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        # First call with explicit IDs
+        result1 = await _invoke_handler(
+            handler,
+            tasks=[
+                {"task": "Research", "subagent_id": "my_researcher", "context_paths": []},
+            ],
+            background=True,
+            refine=False,
+        )
+        assert result1["success"] is True
+
+        # Second call with auto-generated IDs should still start from 0
+        # because no auto-IDs have been consumed yet
+        result2 = await _invoke_handler(
+            handler,
+            tasks=[
+                {"task": "Build", "context_paths": []},
+            ],
+            background=True,
+            refine=False,
+        )
+        assert result2["success"] is True
+        ids = [s["subagent_id"] for s in result2["subagents"]]
+        assert ids == ["subagent_0"]
+
+    @pytest.mark.asyncio
+    async def test_mixed_explicit_and_auto_ids(self, monkeypatch, tmp_path):
+        """Mix of explicit and auto IDs in one call: auto IDs still increment."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {"task": "Auto task", "context_paths": []},
+                {"task": "Named task", "subagent_id": "custom_name", "context_paths": []},
+                {"task": "Another auto", "context_paths": []},
+            ],
+            background=True,
+            refine=False,
+        )
+        assert result["success"] is True
+        ids = [s["subagent_id"] for s in result["subagents"]]
+        assert ids == ["subagent_0", "custom_name", "subagent_1"]
 
 
 class TestSpawnSubagentsContextPathsRequirement:

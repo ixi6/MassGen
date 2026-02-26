@@ -458,6 +458,39 @@ def test_subagent_section_includes_evaluator_task_brief_details():
     assert "pass/fail format" in content
 
 
+def test_subagent_section_includes_builder_novelty_delegation_guidance():
+    """Builder section must tell agents to list novelty proposals as transformative, not defer them."""
+    from massgen.subagent.models import SpecializedSubagentConfig
+    from massgen.system_prompt_sections import SubagentSection
+
+    types = [
+        SpecializedSubagentConfig(name="builder", description="Implements transformative changes"),
+    ]
+    section = SubagentSection("/workspace", max_concurrent=3, specialized_subagents=types)
+    content = section.build_content().lower()
+
+    # Must tell agents that novelty proposals too complex for inline → list as transformative
+    assert "novelty" in content
+    assert "transformative" in content
+    # Must steer agents away from deferring
+    assert "defer" in content or "inline" in content
+
+
+def test_subagent_section_builder_guidance_not_shown_without_builder():
+    """Builder-specific guidance should not appear when builder is not in subagent types."""
+    from massgen.subagent.models import SpecializedSubagentConfig
+    from massgen.system_prompt_sections import SubagentSection
+
+    types = [
+        SpecializedSubagentConfig(name="evaluator", description="Checks features"),
+    ]
+    section = SubagentSection("/workspace", max_concurrent=3, specialized_subagents=types)
+    content = section.build_content()
+
+    # Builder delegation guidance should not appear when builder is absent
+    assert "for `builder` tasks" not in content.lower()
+
+
 # ── Test 13-15: EvaluationSection with evaluator subagent ──
 
 

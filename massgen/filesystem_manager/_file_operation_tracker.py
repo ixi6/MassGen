@@ -83,6 +83,21 @@ class FileOperationTracker:
 
         return was_read or was_created
 
+    def was_created(self, file_path: Path) -> bool:
+        """
+        Check if a file was created by the agent in the current run.
+
+        Args:
+            file_path: Path to check
+
+        Returns:
+            True if the file was created by the agent
+        """
+        resolved_path = file_path.resolve()
+        was_created = resolved_path in self._created_files
+        logger.debug(f"[FileOperationTracker] Checking created status for {resolved_path}: created={was_created}")
+        return was_created
+
     def _is_auto_generated(self, file_path: Path) -> bool:
         """
         Check if a file matches auto-generated patterns and is exempt from read-before-delete.

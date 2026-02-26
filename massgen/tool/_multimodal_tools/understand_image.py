@@ -279,10 +279,12 @@ async def understand_image(
         )
 
     try:
-        # Validate image_path / images - exactly one must be provided
+        # Validate image inputs. Fresh calls need image_path or images.
+        # Follow-ups may omit new images if conversation threading context exists.
+        has_threading_context = bool(previous_response_id or conversation_messages)
         if image_path and images:
             return _error("Provide either 'image_path' or 'images', not both")
-        if not image_path and not images:
+        if not image_path and not images and not has_threading_context:
             return _error("Must provide either 'image_path' or 'images'")
 
         # Convert allowed_paths from strings to Path objects
@@ -309,7 +311,7 @@ async def understand_image(
                 loaded_images.append(loaded)
             except (ValueError, Exception) as e:
                 return _error(str(e))
-        else:
+        elif images:
             # Multi-image mode with names from dict keys
             for name, path in images.items():
                 try:
@@ -317,6 +319,9 @@ async def understand_image(
                     loaded_images.append(loaded)
                 except (ValueError, Exception) as e:
                     return _error(f"Error loading '{name}': {str(e)}")
+        else:
+            # Follow-up mode: rely on conversation threading, no new image payload.
+            logger.info("[understand_image] Follow-up without new image input")
 
         try:
             # Inject task context into prompt if available

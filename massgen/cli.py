@@ -2808,6 +2808,9 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         enable_changedoc=coord_cfg.get("enable_changedoc", True),
         subagent_types=coord_cfg.get("subagent_types"),
         novelty_injection=coord_cfg.get("novelty_injection", "none"),
+        checklist_criteria_preset=coord_cfg.get("checklist_criteria_preset"),
+        checklist_criteria_inline=coord_cfg.get("checklist_criteria_inline"),
+        resume_from_log=coord_cfg.get("resume_from_log"),
     )
 
 

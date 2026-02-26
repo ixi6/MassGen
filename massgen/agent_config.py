@@ -191,6 +191,8 @@ class CoordinationConfig:
     subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
     checklist_criteria_preset: str | None = None  # "persona" | "decomposition" | "evaluation" | "prompt" | "analysis"
+    checklist_criteria_inline: list[dict[str, str]] | None = None  # [{text: str, category: must|should|could}]
+    resume_from_log: dict[str, Any] | None = None  # {log_path: str, round: int}
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -312,6 +314,12 @@ class AgentConfig:
         fairness_enabled: Enable fairness controls across all coordination modes (default: True)
         fairness_lead_cap_answers: Maximum allowed lead in answer revisions over slowest active peer
         max_midstream_injections_per_round: Maximum unseen source updates injected per agent per round
+        max_checklist_calls_per_round: Maximum submit_checklist calls per answer before blocking
+            (default 1). After a new_answer verdict, the agent must implement and submit
+            new_answer rather than calling submit_checklist again.
+        checklist_first_answer: Allow submit_checklist before the first answer is submitted
+            (default False). When False, checklist evaluation begins from round 2 — agents
+            build and submit their first answer directly without checklist gating.
     """
 
     # Core backend configuration (includes tool enablement)
@@ -331,6 +339,8 @@ class AgentConfig:
     fairness_enabled: bool = True
     fairness_lead_cap_answers: int = 2
     max_midstream_injections_per_round: int = 2
+    max_checklist_calls_per_round: int = 1
+    checklist_first_answer: bool = False
 
     # Agent customization
     agent_id: str | None = None
@@ -1034,6 +1044,8 @@ class AgentConfig:
             "fairness_enabled": self.fairness_enabled,
             "fairness_lead_cap_answers": self.fairness_lead_cap_answers,
             "max_midstream_injections_per_round": self.max_midstream_injections_per_round,
+            "max_checklist_calls_per_round": self.max_checklist_calls_per_round,
+            "checklist_first_answer": self.checklist_first_answer,
             "timeout_config": {
                 "orchestrator_timeout_seconds": self.timeout_config.orchestrator_timeout_seconds,
                 "initial_round_timeout_seconds": self.timeout_config.initial_round_timeout_seconds,
@@ -1085,6 +1097,8 @@ class AgentConfig:
         fairness_enabled = data.get("fairness_enabled", True)
         fairness_lead_cap_answers = data.get("fairness_lead_cap_answers", 2)
         max_midstream_injections_per_round = data.get("max_midstream_injections_per_round", 2)
+        max_checklist_calls_per_round = data.get("max_checklist_calls_per_round", 1)
+        checklist_first_answer = data.get("checklist_first_answer", False)
 
         # Handle timeout_config
         timeout_config = TimeoutConfig()
@@ -1122,6 +1136,8 @@ class AgentConfig:
             fairness_enabled=fairness_enabled,
             fairness_lead_cap_answers=fairness_lead_cap_answers,
             max_midstream_injections_per_round=max_midstream_injections_per_round,
+            max_checklist_calls_per_round=max_checklist_calls_per_round,
+            checklist_first_answer=checklist_first_answer,
             timeout_config=timeout_config,
             coordination_config=coordination_config,
         )

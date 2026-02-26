@@ -243,7 +243,7 @@ class ConfigValidator:
 
         # Validate orchestrator (if present)
         if "orchestrator" in config:
-            self._validate_orchestrator(config["orchestrator"], result)
+            self._validate_orchestrator(config["orchestrator"], result, config=config)
 
         # Validate UI (if present)
         if "ui" in config:
@@ -759,7 +759,7 @@ class ConfigValidator:
                     "Use true or false",
                 )
 
-    def _validate_orchestrator(self, orchestrator_config: dict[str, Any], result: ValidationResult) -> None:
+    def _validate_orchestrator(self, orchestrator_config: dict[str, Any], result: ValidationResult, config: dict[str, Any] | None = None) -> None:
         """Validate orchestrator configuration (Level 5)."""
         location = "orchestrator"
 
@@ -1082,6 +1082,109 @@ class ConfigValidator:
                                 f"Use one of: {valid_values}",
                             )
 
+                if "checklist_criteria_inline" in coordination:
+                    inline = coordination["checklist_criteria_inline"]
+                    if inline is not None:
+                        valid_categories = {"must", "should", "could"}
+                        if not isinstance(inline, list):
+                            result.add_error(
+                                "checklist_criteria_inline must be a list",
+                                f"{location}.coordination.checklist_criteria_inline",
+                                "Provide a list of {{text, category}} dicts",
+                            )
+                        else:
+                            for i, item in enumerate(inline):
+                                if not isinstance(item, dict):
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] must be a dict",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        "Each item needs 'text' and 'category' keys",
+                                    )
+                                    continue
+                                if "text" not in item or not item.get("text"):
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] missing 'text'",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        "Each criterion needs a 'text' field",
+                                    )
+                                if "category" not in item:
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] missing 'category'",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        "Each criterion needs a 'category' (must/should/could)",
+                                    )
+                                elif item["category"] not in valid_categories:
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] invalid category: '{item['category']}'",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        f"Use one of: {', '.join(sorted(valid_categories))}",
+                                    )
+
+                        # Warn if both inline and eval generator are enabled
+                        eval_gen = coordination.get("evaluation_criteria_generator", {})
+                        if inline and eval_gen.get("enabled", False):
+                            result.add_warning(
+                                "checklist_criteria_inline is set alongside evaluation_criteria_generator.enabled; " "inline criteria will take priority and generated criteria will be ignored",
+                                f"{location}.coordination.checklist_criteria_inline",
+                            )
+
+                if "resume_from_log" in coordination:
+                    resume = coordination["resume_from_log"]
+                    if resume is not None:
+                        if not isinstance(resume, dict):
+                            result.add_error(
+                                "resume_from_log must be a dict with 'log_path' and 'round'",
+                                f"{location}.coordination.resume_from_log",
+                                "Example: {{log_path: '.massgen/massgen_logs/...', round: 1}}",
+                            )
+                        else:
+                            log_path = resume.get("log_path")
+                            resume_round = resume.get("round")
+
+                            if not log_path:
+                                result.add_error(
+                                    "resume_from_log missing 'log_path'",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Provide the path to a previous log's turn/attempt directory",
+                                )
+                            elif not Path(log_path).is_dir():
+                                result.add_error(
+                                    f"resume_from_log log_path does not exist: {log_path}",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Provide a valid path to a previous log directory",
+                                )
+                            else:
+                                # Validate agent IDs match
+                                metadata_path = Path(log_path) / "execution_metadata.yaml"
+                                if metadata_path.exists():
+                                    try:
+                                        import yaml
+
+                                        metadata = yaml.safe_load(metadata_path.read_text())
+                                        log_agent_ids = sorted(a["id"] for a in metadata.get("config", {}).get("agents", []))
+                                        config_agent_ids = sorted(a.get("id", "") for a in (config or {}).get("agents", []))
+                                        if log_agent_ids != config_agent_ids:
+                                            result.add_error(
+                                                f"resume_from_log agent IDs don't match: " f"log has {log_agent_ids}, config has {config_agent_ids}",
+                                                f"{location}.coordination.resume_from_log",
+                                                "Resume requires the same agent IDs as the original run",
+                                            )
+                                    except Exception:
+                                        pass  # Non-fatal: skip agent ID check if metadata unreadable
+
+                            if resume_round is None:
+                                result.add_error(
+                                    "resume_from_log missing 'round'",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Specify which round to resume after (e.g., round: 1)",
+                                )
+                            elif not isinstance(resume_round, int) or resume_round < 0:
+                                result.add_error(
+                                    f"resume_from_log 'round' must be a non-negative integer, got: {resume_round}",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Specify the round number to resume after (0-based)",
+                                )
+
         # Validate voting_sensitivity if present
         if "voting_sensitivity" in orchestrator_config:
             voting_sensitivity = orchestrator_config["voting_sensitivity"]
@@ -1163,6 +1266,24 @@ class ConfigValidator:
                     f"'max_midstream_injections_per_round' must be a positive integer, got {type(injection_cap).__name__}",
                     f"{location}.max_midstream_injections_per_round",
                     "Use a positive integer like 1 or 2",
+                )
+
+        if "max_checklist_calls_per_round" in orchestrator_config:
+            checklist_cap = orchestrator_config["max_checklist_calls_per_round"]
+            if isinstance(checklist_cap, bool) or not isinstance(checklist_cap, int) or checklist_cap < 1:
+                result.add_error(
+                    f"'max_checklist_calls_per_round' must be a positive integer >= 1, got {type(checklist_cap).__name__}",
+                    f"{location}.max_checklist_calls_per_round",
+                    "Use a positive integer like 1 or 2 (default: 1)",
+                )
+
+        if "checklist_first_answer" in orchestrator_config:
+            cfa = orchestrator_config["checklist_first_answer"]
+            if not isinstance(cfa, bool):
+                result.add_error(
+                    f"'checklist_first_answer' must be a boolean, got {type(cfa).__name__}",
+                    f"{location}.checklist_first_answer",
+                    "Use true or false (default: false)",
                 )
 
         # Validate timeout if present

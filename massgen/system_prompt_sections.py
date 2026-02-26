@@ -220,7 +220,50 @@ def _checklist_confidence_cutoff(effective_threshold: int) -> int:
     return max(4, int(10 - effective_threshold * 0.5))
 
 
-def _build_checklist_analysis() -> str:
+def _build_criteria_failure_bullets(custom_checklist_items: list[str] | None = None) -> str:
+    """Build failure-pattern bullets from criteria list.
+
+    When custom items are provided, generates E1/E2/... bullets with short
+    labels derived from the first ~60 chars of each criterion text.
+    Otherwise returns the hardcoded generic labels.
+    """
+    if custom_checklist_items:
+        lines = []
+        for i, text in enumerate(custom_checklist_items):
+            label = text[:60].rstrip(" .,—-")
+            lines.append(f"- **E{i + 1} ({label})**: Gaps or failures against this criterion?")
+        return "\n".join(lines)
+    return (
+        "- **E1 (goal alignment)**: Requirements missing or only partially met?\n"
+        "- **E2 (correctness)**: Broken behavior, wrong results, regressions?\n"
+        "- **E3+ (remaining criteria)**: Quality gaps against each remaining criterion?"
+    )
+
+
+def _build_changedoc_failure_bullets(custom_checklist_items: list[str] | None = None) -> str:
+    """Build changedoc-specific failure-pattern bullets.
+
+    When custom items are provided, uses dynamic labels. Otherwise uses the
+    default changedoc labels (goal alignment, correctness, changedoc quality,
+    alignment, remaining criteria).
+    """
+    if custom_checklist_items:
+        return _build_criteria_failure_bullets(custom_checklist_items)
+    return (
+        "- **E1 (goal alignment)**: Output failures — what doesn't work? What produces wrong\n"
+        "  results? What would a demanding user be disappointed by?\n"
+        "- **E2 (correctness)**: Regression failures — does the deliverable actually work\n"
+        "  end-to-end? Are features from earlier rounds still functioning? A working output\n"
+        "  with fewer features beats a broken output with more.\n"
+        "- **E3 (changedoc quality)**: Which decisions have thin rationale? Which alternatives\n"
+        "  are strawmen? Which Implementation fields are vague, incorrect, or fabricated?\n"
+        "- **E3 (alignment)**: Where did the code drift from documented decisions? What was\n"
+        "  built but never decided? What was decided but poorly implemented?\n"
+        "- **E4+ (remaining criteria)**: Quality gaps against each remaining criterion?"
+    )
+
+
+def _build_checklist_analysis(custom_checklist_items: list[str] | None = None) -> str:
     """Build GEPA-style diagnostic analysis section for checklist modes.
 
     Uses structured diagnostic feedback (failure patterns, success patterns,
@@ -230,7 +273,8 @@ def _build_checklist_analysis() -> str:
 
     The analysis handles both N=1 and N>1 in a single template.
     """
-    return """## Diagnostic Analysis
+    failure_bullets = _build_criteria_failure_bullets(custom_checklist_items)
+    return f"""## Diagnostic Analysis
 
 Complete your full analysis before reading the Decision section below. Do not let
 the decision criteria influence your assessment.
@@ -245,9 +289,7 @@ What specific errors, gaps, or broken functionality exist in each answer?
 Be concrete — "login form has no error states" not "could be better."
 
 For each answer, map failures to the evaluation criteria they violate:
-- **E1 (goal alignment)**: Requirements missing or only partially met?
-- **E2 (correctness)**: Broken behavior, wrong results, regressions?
-- **E3+ (remaining criteria)**: Quality gaps against each remaining criterion?
+{failure_bullets}
 
 Example format:
 - E1: Missing mobile navigation = core requirement unmet
@@ -340,14 +382,14 @@ A score that contradicts your own Failure Patterns section is dishonest — fix
 either the analysis or the score.\""""
 
 
-def _build_changedoc_checklist_analysis() -> str:
+def _build_changedoc_checklist_analysis(custom_checklist_items: list[str] | None = None) -> str:
     """Build changedoc-anchored GEPA-style diagnostic analysis for checklist modes.
 
     Replaces the generic _build_checklist_analysis() when changedoc is enabled.
     Combines GEPA diagnostic structure with changedoc-specific sections
     (Decision Audit, Implementation Accuracy).
     """
-    return """## Changedoc-Anchored Diagnostic Analysis
+    return f"""## Changedoc-Anchored Diagnostic Analysis
 
 Complete your full analysis before reading the Decision section below. Do not let
 the decision criteria influence your assessment.
@@ -382,16 +424,7 @@ changedoc, and the alignment between them? Map each failure to the E-criterion
 it violates.
 
 For each answer:
-- **E1 (goal alignment)**: Output failures — what doesn't work? What produces wrong
-  results? What would a demanding user be disappointed by?
-- **E2 (correctness)**: Regression failures — does the deliverable actually work
-  end-to-end? Are features from earlier rounds still functioning? A working output
-  with fewer features beats a broken output with more.
-- **E3 (changedoc quality)**: Which decisions have thin rationale? Which alternatives
-  are strawmen? Which Implementation fields are vague, incorrect, or fabricated?
-- **E3 (alignment)**: Where did the code drift from documented decisions? What was
-  built but never decided? What was decided but poorly implemented?
-- **E4+ (remaining criteria)**: Quality gaps against each remaining criterion?
+{_build_changedoc_failure_bullets(custom_checklist_items)}
 
 If you cannot find meaningful failures, your review is probably too generous.
 
@@ -805,6 +838,16 @@ tells you to iterate, you are expected to implement what you identified.
 
 The tool will evaluate your scores and return a verdict telling you whether
 to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
+
+**Round lifecycle when verdict is `{iterate_action}`:**
+1. Implement the improvements from the plan returned by `submit_checklist`.
+2. Verify your changes landed (screenshots, file checks, tests — this is expected
+   and correct; it is implementation verification, not re-evaluation).
+3. Call the `{iterate_action}` **workflow tool** to submit your completed work.
+
+Do **not** call `submit_checklist` again after receiving a `{iterate_action}` verdict.
+You already have your improvement plan. The next coordination tool call must be
+`{iterate_action}` (or `{terminate_action}` if you decide the work is now sufficient).
 
 **If the verdict is `{iterate_action}`**: your new answer MUST be **obviously and
 substantially better** — not just marginally different. A user should immediately
@@ -2686,6 +2729,7 @@ class EvaluationSection(SystemPromptSection):
         has_changedoc: bool = False,
         custom_checklist_items: list[str] | None = None,
         item_categories: dict[str, str] | None = None,
+        has_existing_answers: bool = True,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -2704,6 +2748,7 @@ class EvaluationSection(SystemPromptSection):
         self.has_changedoc = has_changedoc
         self.custom_checklist_items = custom_checklist_items
         self.item_categories = item_categories
+        self.has_existing_answers = has_existing_answers
 
     def build_content(self) -> str:
         # Vote-only mode: agent has exhausted their answer limit
@@ -2800,7 +2845,7 @@ Your goal is to iteratively refine answers until they meet the quality bar.
             threshold = self.voting_threshold if self.voting_threshold is not None else 5
 
             items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-            analysis = _build_changedoc_checklist_analysis() if self.has_changedoc else _build_checklist_analysis()
+            analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
             if effective_sensitivity == "checklist":
                 decision = _build_checklist_decision(
                     threshold,
@@ -2819,14 +2864,25 @@ Your goal is to iteratively refine answers until they meet the quality bar.
 
 {decision}"""
         elif effective_sensitivity == "checklist_gated":
-            items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-            analysis = _build_changedoc_checklist_analysis() if self.has_changedoc else _build_checklist_analysis()
-            decision = _build_checklist_gated_decision(
-                items,
-                require_gap_report=self.checklist_require_gap_report,
-                gap_report_mode=self.gap_report_mode,
-            )
-            evaluation_section = f"""{analysis}
+            if not self.has_existing_answers:
+                # Round 1 — no prior answers to evaluate against. Skip checklist instructions
+                # entirely; agent should build and submit directly.
+                evaluation_section = (
+                    "## Decision\n\n"
+                    "**Round 1 — First Answer:** Build your best initial version and submit it "
+                    "via the `new_answer` workflow tool. Verify your work before submitting. "
+                    "Checklist-based evaluation begins in round 2 when there are prior answers "
+                    "to compare against."
+                )
+            else:
+                items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
+                analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
+                decision = _build_checklist_gated_decision(
+                    items,
+                    require_gap_report=self.checklist_require_gap_report,
+                    gap_report_mode=self.gap_report_mode,
+                )
+                evaluation_section = f"""{analysis}
 
 {decision}"""
         elif effective_sensitivity == "adversarial":
@@ -3006,7 +3062,7 @@ class DecompositionSection(SystemPromptSection):
 
             if self.voting_sensitivity in ("checklist", "checklist_scored"):
                 items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-                analysis = _build_changedoc_checklist_analysis() if self.has_changedoc else _build_checklist_analysis()
+                analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
                 if self.voting_sensitivity == "checklist":
                     decision = _build_checklist_decision(
                         self.voting_threshold,
@@ -3033,7 +3089,7 @@ Both are terminal actions that end your round.
 {decision}"""
             elif self.voting_sensitivity == "checklist_gated":
                 items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-                analysis = _build_changedoc_checklist_analysis() if self.has_changedoc else _build_checklist_analysis()
+                analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
                 decision = _build_checklist_gated_decision(
                     items,
                     terminate_action="stop",
@@ -3651,11 +3707,10 @@ class SubagentSection(SystemPromptSection):
         if not self.specialized_subagents:
             return ""
 
-        background_by_type = {
-            "explorer": True,
-            "researcher": True,
-            "evaluator": False,
-        }
+        # All subagent types default to background=True — they do substantial work
+        # that should not block the main agent's context. Override only when a type
+        # genuinely must be blocking (e.g., a quick synchronous check).
+        background_by_type: dict[str, bool] = {}
 
         lines = [
             "",
@@ -3666,7 +3721,7 @@ class SubagentSection(SystemPromptSection):
         ]
 
         for t in self.specialized_subagents:
-            background_default = background_by_type.get(t.name.lower(), False)
+            background_default = background_by_type.get(t.name.lower(), True)
             background_str = "True" if background_default else "False"
             lines.append(f"**{t.name}** — {t.description}")
             lines.append(f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}", "context_paths": []}}], background={background_str})`')
@@ -3677,6 +3732,22 @@ class SubagentSection(SystemPromptSection):
             if t.name.lower() == "evaluator":
                 lines.append(
                     "Use this when the task is mostly programmatic execution/reporting (batch tests, Playwright flows, evidence capture sweeps, scripted validation).",
+                )
+            if t.name.lower() == "builder":
+                lines.append(
+                    "**FOR `BUILDER` TASKS — the novelty → builder loop:**\n"
+                    "When a novelty or critic subagent proposes a transformative direction:\n"
+                    "1. Evaluate it — does it address a real gap and would it meaningfully improve the result?\n"
+                    "2. If yes but too complex/risky to implement inline: **do NOT defer it**. "
+                    "List it in the `transformative` array of your next `submit_checklist` call.\n"
+                    "3. The checklist tool will instruct you to spawn a `builder` subagent. "
+                    "Pass builder: the current workspace, a prescriptive spec (what to build AND "
+                    "what patterns are FORBIDDEN as negative constraints), and the evaluation criteria.\n"
+                    "4. Builder implements it in fresh context without exhausting your token budget. "
+                    "When it reports back, you evaluate the result and proceed.\n\n"
+                    "**Deferring a valid novelty proposal with T=0 wastes a full round** — "
+                    "it re-triggers critic+novelty instead of making progress. "
+                    "The right response to 'too big to do inline' is builder, not deferral.",
                 )
             lines.append("")
 

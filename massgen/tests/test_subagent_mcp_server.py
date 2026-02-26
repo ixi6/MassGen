@@ -20,6 +20,8 @@ async def _build_subagent_server(monkeypatch, tmp_path):
     # Ensure clean global state per test.
     server._manager = None
     server._workspace_path = None
+    server._specialized_subagents = {}
+    server._subagent_types_loaded = False
 
     monkeypatch.setattr(
         sys,
@@ -342,55 +344,6 @@ class TestSpecializedTypesFileNotDeleted:
     """Temp config files must survive MCP server startup (no race condition)."""
 
     @pytest.mark.asyncio
-    async def test_specialized_types_file_persists_after_create_server(self, monkeypatch, tmp_path):
-        """The MCP server must NOT delete the specialized subagent types file.
-
-        Regression test for: agent_a gets 'Available subagent types: (none configured)'
-        because the file was deleted before the MCP server process could read it.
-        """
-        import json
-
-        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
-
-        server._manager = None
-        server._workspace_path = None
-
-        # Write a real specialized types file
-        types_file = tmp_path / "specialized_types.json"
-        types_data = [
-            {
-                "name": "novelty",
-                "description": "Novelty direction finder",
-                "system_prompt": "You suggest novel directions.",
-                "skills": [],
-            },
-        ]
-        types_file.write_text(json.dumps(types_data))
-
-        monkeypatch.setattr(
-            sys,
-            "argv",
-            [
-                "subagent-server",
-                "--agent-id",
-                "agent_a",
-                "--orchestrator-id",
-                "orch_1",
-                "--workspace-path",
-                str(tmp_path),
-                "--specialized-subagents-file",
-                str(types_file),
-            ],
-        )
-
-        await server.create_server()
-
-        # File must still exist — no race condition
-        assert types_file.exists(), "MCP server deleted the specialized types file"
-        # And the types should have been loaded
-        assert "novelty" in server._specialized_subagents
-
-    @pytest.mark.asyncio
     async def test_all_config_files_persist_after_create_server(self, monkeypatch, tmp_path):
         """All temp config files (agent_configs, context_paths, coordination_config)
         must survive MCP server startup."""
@@ -437,6 +390,94 @@ class TestSpecializedTypesFileNotDeleted:
         assert agent_configs_file.exists(), "MCP server deleted agent_configs file"
         assert context_paths_file.exists(), "MCP server deleted context_paths file"
         assert coordination_config_file.exists(), "MCP server deleted coordination_config file"
+
+
+class TestLazySubagentTypeLoading:
+    """Lazy loading of specialized subagent types from workspace SUBAGENT.md dirs."""
+
+    def _make_subagent_dir(self, parent: "Path", name: str, description: str, system_prompt: str = "", skills: list | None = None) -> None:  # type: ignore[name-defined]  # noqa: F821
+        type_dir = parent / name
+        type_dir.mkdir(parents=True, exist_ok=True)
+        skills_line = f"skills: {skills!r}\n" if skills else ""
+        content = f"---\nname: {name}\ndescription: {description!r}\n{skills_line}---\n{system_prompt}"
+        (type_dir / "SUBAGENT.md").write_text(content)
+
+    @pytest.mark.asyncio
+    async def test_lazy_loading_populates_types_from_workspace_dirs(self, monkeypatch, tmp_path):
+        """_ensure_specialized_types_loaded() scans workspace/.massgen/subagent_types/ on first call."""
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        # Write SUBAGENT.md dirs into the workspace
+        types_dir = tmp_path / ".massgen" / "subagent_types"
+        self._make_subagent_dir(types_dir, "builder", "Builds things", "You are a builder.", ["file-search"])
+        self._make_subagent_dir(types_dir, "critic", "Critiques output", "You are a critic.")
+
+        # Set up clean state
+        server._specialized_subagents = {}
+        server._subagent_types_loaded = False
+        server._workspace_path = tmp_path
+
+        server._ensure_specialized_types_loaded()
+
+        assert "builder" in server._specialized_subagents
+        assert "critic" in server._specialized_subagents
+        assert server._specialized_subagents["builder"]["system_prompt"] == "You are a builder."
+        assert server._specialized_subagents["builder"]["skills"] == ["file-search"]
+        assert server._specialized_subagents["critic"]["system_prompt"] == "You are a critic."
+
+    @pytest.mark.asyncio
+    async def test_lazy_loading_warns_when_types_dir_missing(self, monkeypatch, tmp_path, caplog):
+        """Missing subagent_types dir logs a warning but does not crash."""
+        import logging
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._specialized_subagents = {}
+        server._subagent_types_loaded = False
+        server._workspace_path = tmp_path  # no .massgen/subagent_types subdir
+
+        with caplog.at_level(logging.WARNING):
+            server._ensure_specialized_types_loaded()
+
+        assert server._specialized_subagents == {}
+        assert server._subagent_types_loaded is True  # flag set even on miss
+
+    @pytest.mark.asyncio
+    async def test_spawn_with_no_types_dir_reports_none_configured(self, monkeypatch, tmp_path):
+        """spawn_subagents returns '(none configured)' when no SUBAGENT.md dirs exist."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Build site", "subagent_type": "builder", "context_paths": []}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is False
+        assert "builder" in result["error"]
+        assert "(none configured)" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_double_scan_prevented_by_flag(self, monkeypatch, tmp_path):
+        """_ensure_specialized_types_loaded() is a no-op when _subagent_types_loaded is True."""
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._specialized_subagents = {"evaluator": {"name": "evaluator"}}
+        server._subagent_types_loaded = True
+        server._workspace_path = tmp_path
+
+        # Even with a types dir present, should not scan again
+        types_dir = tmp_path / ".massgen" / "subagent_types"
+        self._make_subagent_dir(types_dir, "builder", "Builds things")
+
+        server._ensure_specialized_types_loaded()
+
+        # builder should NOT be present — scan was skipped
+        assert "builder" not in server._specialized_subagents
+        assert "evaluator" in server._specialized_subagents
 
 
 class TestSpawnSubagentsSpecializedTypeResolution:

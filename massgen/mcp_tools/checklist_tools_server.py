@@ -490,6 +490,24 @@ def evaluate_checklist_submission(
                     "easier work — deliver exactly what you committed to. "
                 )
 
+            # Builder subagent guidance: when transformative changes are identified,
+            # suggest delegating implementation to a builder subagent rather than
+            # doing the work inline. Transformative = fundamental rethink = substantial
+            # implementation effort, the right trigger for offloading to fresh context.
+            # Complementary to novelty/critic (those fire when transformative_count == 0;
+            # builder fires when transformative_count > 0).
+            _builder_enabled = state.get("builder_subagent_enabled", False)
+            if _builder_enabled and has_existing_answers and transformative_items:
+                explanation += (
+                    "These are transformative changes — delegate implementation to a "
+                    "`builder` subagent (background=True) rather than doing the work "
+                    "inline. Pass the builder: the current workspace, a prescriptive "
+                    "spec with what to build AND what patterns are FORBIDDEN (negative "
+                    "constraints), and the evaluation criteria. The builder runs in "
+                    "fresh context and won't exhaust your token budget. Once it reports "
+                    "back, you evaluate the result and submit the checklist. "
+                )
+
             # Stretch-item guidance: when stretch criteria fail, give concrete direction
             stretch_failures = failed_set & tail_failure_ids
             if stretch_failures and substantiveness_eval.get("valid", False):

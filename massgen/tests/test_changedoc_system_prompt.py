@@ -281,10 +281,11 @@ class TestChangedocChecklist:
         builder = SystemMessageBuilder(config=config, message_templates=mt, agents=agents)
         agent = _make_agent()
 
+        # Pass a prior answer so round-2+ checklist instructions are shown
         msg = builder.build_coordination_message(
             agent=agent,
             agent_id="agent_a",
-            answers=None,
+            answers={"agent_a": "prior answer"},
             planning_mode_enabled=False,
             use_skills=False,
             enable_memory=False,
@@ -304,10 +305,11 @@ class TestChangedocChecklist:
         builder = SystemMessageBuilder(config=config, message_templates=mt, agents=agents)
         agent = _make_agent()
 
+        # Pass a prior answer so round-2+ checklist instructions are shown
         msg = builder.build_coordination_message(
             agent=agent,
             agent_id="agent_a",
-            answers=None,
+            answers={"agent_a": "prior answer"},
             planning_mode_enabled=False,
             use_skills=False,
             enable_memory=False,

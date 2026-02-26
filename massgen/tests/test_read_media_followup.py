@@ -586,3 +586,52 @@ class TestReadMediaContinueFrom:
         mock_ui.assert_called_once()
         call_kwargs = mock_ui.call_args.kwargs
         assert call_kwargs.get("previous_response_id") == "resp_old"
+
+    @pytest.mark.asyncio
+    async def test_continue_from_without_file_path_threads_to_backend(self, tmp_path):
+        """Regression: continue_from-only follow-up should reach backend without new image."""
+        from massgen.tool._multimodal_tools.read_media import (
+            _conversation_store,
+            read_media,
+        )
+
+        context = tmp_path / "CONTEXT.md"
+        context.write_text("Test context")
+
+        conv_id = "conv_chain_followup_no_file"
+        _conversation_store.save(
+            conv_id,
+            {
+                "media_type": "image",
+                "backend_type": "openai",
+                "response_id": "resp_old_chain",
+                "model": "gpt-5.2",
+                "system_prompt": None,
+                "prompt": "Original prompt",
+                "images": [],
+                "messages": [],
+            },
+        )
+
+        with patch(
+            "massgen.tool._multimodal_tools.understand_image.call_openai",
+            new_callable=AsyncMock,
+        ) as mock_call_openai:
+            mock_call_openai.return_value = ("Threaded follow-up analysis", "resp_new_chain")
+
+            result = await read_media(
+                prompt="Please go deeper on this image analysis.",
+                continue_from=conv_id,
+                agent_cwd=str(tmp_path),
+            )
+
+        result_data = json.loads(result.output_blocks[0].data)
+        assert result_data["success"] is True
+        assert result_data["conversation_id"] == conv_id
+        assert result_data["response"] == "Threaded follow-up analysis"
+
+        mock_call_openai.assert_called_once()
+        call_args = mock_call_openai.call_args
+        loaded_images = call_args.args[0]
+        assert loaded_images == []
+        assert call_args.kwargs.get("previous_response_id") == "resp_old_chain"

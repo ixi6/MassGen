@@ -1172,6 +1172,11 @@ class PathPermissionManager:
         if self._is_pure_write_tool(tool_name) and path.exists() and path.is_file():
             # Allow writing to empty files (size == 0)
             if path.stat().st_size > 0:
+                # Allow rewriting files created earlier in this run.
+                # This preserves protection for pre-existing files while avoiding
+                # unnecessary Read/Delete/Write churn for iterative generation.
+                if self.file_operation_tracker.was_created(path):
+                    return (True, None)
                 return (
                     False,
                     f"Cannot overwrite existing file '{path.name}' with write_file. " f"Use edit_file to modify existing files, or delete the file first then recreate it.",

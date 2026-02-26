@@ -145,6 +145,21 @@ class TestFileOverwriteProtection:
         assert allowed is False
         assert "Cannot overwrite" in reason
 
+    def test_write_overwrite_of_agent_created_file_allowed(self):
+        """Test that pure Write can overwrite files created earlier in this run."""
+        manager = self.helper.create_permission_manager()
+        created_file = self.helper.workspace_dir / "generated.txt"
+        created_file.write_text("initial content")
+
+        # Simulate a file created earlier in this run.
+        manager.file_operation_tracker.mark_as_created(created_file)
+
+        tool_args = {"file_path": str(created_file)}
+        allowed, reason = manager._validate_write_tool("Write", tool_args)
+
+        assert allowed is True
+        assert reason is None
+
     def test_edit_existing_file_allowed(self):
         """Test that edit_file on existing file is allowed."""
         manager = self.helper.create_permission_manager()

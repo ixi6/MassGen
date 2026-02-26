@@ -568,3 +568,35 @@ def test_pre_populated_workspaces_unmatched_agents_get_empty(tmp_path):
     # agent_b's old content should be cleared, but no new content
     assert not (ws_b / "old_file.txt").exists()
     assert list(ws_b.iterdir()) == []
+
+
+def test_clear_agent_workspaces_preserves_massgen_subagent_mcp_with_previous_turn_copy(tmp_path):
+    """Workspace clear should keep .massgen/subagent_mcp files while restoring turn n-1 files."""
+    from massgen.agent_config import AgentConfig
+    from massgen.orchestrator import Orchestrator
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    mcp_dir = ws / ".massgen" / "subagent_mcp"
+    mcp_dir.mkdir(parents=True)
+    specialized_types = mcp_dir / "agent_a_specialized_types.json"
+    specialized_types.write_text('[{"name":"critic"}]')
+    (ws / "old_file.txt").write_text("stale")
+
+    prev = tmp_path / "prev_turn"
+    prev.mkdir()
+    (prev / "restored.txt").write_text("from previous turn")
+
+    agents = {"agent_a": _DummyAgent("agent_a", ws)}
+    orchestrator = Orchestrator(
+        agents=agents,
+        config=AgentConfig(),
+        previous_turns=[{"path": str(prev)}],
+    )
+
+    orchestrator._clear_agent_workspaces()
+
+    assert not (ws / "old_file.txt").exists()
+    assert (ws / "restored.txt").read_text() == "from previous turn"
+    assert specialized_types.exists()
+    assert specialized_types.read_text() == '[{"name":"critic"}]'

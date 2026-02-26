@@ -1,7 +1,10 @@
 """Tests for domain-specific checklist criteria presets.
 
-Tests get_criteria_for_preset(), config validation, and orchestrator wiring.
+Tests get_criteria_for_preset(), config validation, orchestrator wiring,
+and inline criteria support.
 """
+
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -229,3 +232,265 @@ class TestPresetContentSanity:
         categories = [c.category for c in criteria]
         assert categories.count("must") == 3
         assert categories.count("should") == 1 and categories.count("could") == 1
+
+
+# ---------------------------------------------------------------------------
+# Inline criteria tests
+# ---------------------------------------------------------------------------
+
+_SAMPLE_INLINE = [
+    {"text": "Visual design is cohesive and polished", "category": "must"},
+    {"text": "Content demonstrates genuine understanding", "category": "should"},
+    {"text": "Interactive elements enhance the experience", "category": "could"},
+]
+
+
+class TestInlineCriteriaConfigField:
+    """Tests for checklist_criteria_inline on CoordinationConfig."""
+
+    def test_default_is_none(self):
+        from massgen.agent_config import CoordinationConfig
+
+        config = CoordinationConfig()
+        assert config.checklist_criteria_inline is None
+
+    def test_accepts_inline_list(self):
+        from massgen.agent_config import CoordinationConfig
+
+        config = CoordinationConfig(checklist_criteria_inline=_SAMPLE_INLINE)
+        assert config.checklist_criteria_inline == _SAMPLE_INLINE
+        assert len(config.checklist_criteria_inline) == 3
+
+    def test_inline_round_trip_text_and_category(self):
+        from massgen.agent_config import CoordinationConfig
+
+        config = CoordinationConfig(checklist_criteria_inline=_SAMPLE_INLINE)
+        assert config.checklist_criteria_inline[0]["text"] == "Visual design is cohesive and polished"
+        assert config.checklist_criteria_inline[0]["category"] == "must"
+        assert config.checklist_criteria_inline[1]["category"] == "should"
+        assert config.checklist_criteria_inline[2]["category"] == "could"
+
+
+class TestCriteriaFromInline:
+    """Tests for the criteria_from_inline helper."""
+
+    def test_converts_to_generated_criterion_list(self):
+        from massgen.evaluation_criteria_generator import criteria_from_inline
+
+        result = criteria_from_inline(_SAMPLE_INLINE)
+        assert isinstance(result, list)
+        assert all(isinstance(c, GeneratedCriterion) for c in result)
+
+    def test_ids_are_sequential(self):
+        from massgen.evaluation_criteria_generator import criteria_from_inline
+
+        result = criteria_from_inline(_SAMPLE_INLINE)
+        assert [c.id for c in result] == ["E1", "E2", "E3"]
+
+    def test_text_and_category_preserved(self):
+        from massgen.evaluation_criteria_generator import criteria_from_inline
+
+        result = criteria_from_inline(_SAMPLE_INLINE)
+        assert result[0].text == "Visual design is cohesive and polished"
+        assert result[0].category == "must"
+        assert result[1].category == "should"
+        assert result[2].category == "could"
+
+    def test_empty_list_returns_empty(self):
+        from massgen.evaluation_criteria_generator import criteria_from_inline
+
+        assert criteria_from_inline([]) == []
+
+
+class TestInlineCriteriaValidation:
+    """Tests for config validation of checklist_criteria_inline."""
+
+    def _make_config(self, inline_value, eval_gen_enabled=False):
+        config = {
+            "agents": [
+                {"id": "a1", "backend": {"type": "openai", "model": "gpt-4o-mini"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "checklist_criteria_inline": inline_value,
+                },
+            },
+        }
+        if eval_gen_enabled:
+            config["orchestrator"]["coordination"]["evaluation_criteria_generator"] = {
+                "enabled": True,
+            }
+        return config
+
+    def test_valid_inline_passes_validation(self):
+        from massgen.config_validator import ConfigValidator
+
+        validator = ConfigValidator()
+        result = validator.validate_config(self._make_config(_SAMPLE_INLINE))
+        errors = [e.message for e in result.errors]
+        assert not any("checklist_criteria_inline" in msg for msg in errors)
+
+    def test_invalid_category_fails_validation(self):
+        from massgen.config_validator import ConfigValidator
+
+        bad_inline = [{"text": "Some criterion", "category": "critical"}]
+        validator = ConfigValidator()
+        result = validator.validate_config(self._make_config(bad_inline))
+        error_messages = [e.message for e in result.errors]
+        assert any("checklist_criteria_inline" in msg for msg in error_messages)
+
+    def test_missing_text_fails_validation(self):
+        from massgen.config_validator import ConfigValidator
+
+        bad_inline = [{"category": "must"}]
+        validator = ConfigValidator()
+        result = validator.validate_config(self._make_config(bad_inline))
+        error_messages = [e.message for e in result.errors]
+        assert any("checklist_criteria_inline" in msg for msg in error_messages)
+
+    def test_inline_and_eval_generator_warns(self):
+        from massgen.config_validator import ConfigValidator
+
+        validator = ConfigValidator()
+        result = validator.validate_config(
+            self._make_config(_SAMPLE_INLINE, eval_gen_enabled=True),
+        )
+        warning_messages = [w.message for w in result.warnings]
+        assert any("checklist_criteria_inline" in msg for msg in warning_messages)
+
+
+class TestPresetWiringThroughParseCoordinationConfig:
+    """Test that checklist_criteria_preset flows from YAML dict -> CoordinationConfig."""
+
+    def test_preset_wired_through_parse(self):
+        from massgen.cli import _parse_coordination_config
+
+        coord_cfg = {"checklist_criteria_preset": "persona"}
+        config = _parse_coordination_config(coord_cfg)
+        assert config.checklist_criteria_preset == "persona"
+
+    def test_inline_wired_through_parse(self):
+        from massgen.cli import _parse_coordination_config
+
+        coord_cfg = {"checklist_criteria_inline": _SAMPLE_INLINE}
+        config = _parse_coordination_config(coord_cfg)
+        assert config.checklist_criteria_inline == _SAMPLE_INLINE
+
+    def test_both_absent_gives_none(self):
+        from massgen.cli import _parse_coordination_config
+
+        config = _parse_coordination_config({})
+        assert config.checklist_criteria_preset is None
+        assert config.checklist_criteria_inline is None
+
+
+class TestInlineCriteriaPriority:
+    """Test that inline criteria take highest priority in _init_checklist_tool."""
+
+    def _make_orch(self, inline=None, preset=None, generated=None):
+        """Create a minimal Orchestrator with mocked config for checklist testing."""
+        from massgen.orchestrator import Orchestrator
+
+        orch = object.__new__(Orchestrator)
+        mock_config = MagicMock()
+        mock_config.voting_sensitivity = "checklist_gated"
+        mock_config.coordination_config.checklist_criteria_inline = inline
+        mock_config.coordination_config.checklist_criteria_preset = preset
+        mock_config.coordination_config.subagent_types = None
+        mock_config.coordination_config.enable_changedoc = True
+        mock_config.voting_threshold = 5
+        mock_config.max_new_answers_per_agent = 5
+        mock_config.checklist_require_gap_report = True
+        orch.config = mock_config
+
+        mock_backend = MagicMock()
+        mock_backend.supports_sdk_mcp = False
+        mock_agent = MagicMock()
+        mock_agent.backend = mock_backend
+        orch.agents = {"a1": mock_agent}
+        orch._generated_evaluation_criteria = generated
+        return orch
+
+    def test_inline_beats_generated(self):
+        """Inline criteria should be used even when generated criteria exist."""
+        generated = [
+            GeneratedCriterion(id="E1", text="Generated criterion", category="must"),
+        ]
+        orch = self._make_orch(inline=_SAMPLE_INLINE, generated=generated)
+        orch._init_checklist_tool()
+
+        backend = orch.agents["a1"].backend
+        items = backend._checklist_items
+        # Inline has 3 items, generated has 1 — if inline wins, we get 3
+        assert len(items) == 3
+        assert items[0] == "Visual design is cohesive and polished"
+
+    def test_inline_beats_preset(self):
+        """Inline criteria should be used even when a preset is configured."""
+        orch = self._make_orch(inline=_SAMPLE_INLINE, preset="persona")
+        orch._init_checklist_tool()
+
+        backend = orch.agents["a1"].backend
+        items = backend._checklist_items
+        # Inline has 3 items, persona preset has 5 — if inline wins, we get 3
+        assert len(items) == 3
+
+
+class TestGetActiveCriteria:
+    """Test _get_active_criteria() returns correct items for system prompt."""
+
+    def _make_orch(self, inline=None, preset=None, generated=None, changedoc=True):
+        """Create a minimal Orchestrator for _get_active_criteria testing."""
+        from massgen.orchestrator import Orchestrator
+
+        orch = object.__new__(Orchestrator)
+        mock_config = MagicMock()
+        mock_config.coordination_config.checklist_criteria_inline = inline
+        mock_config.coordination_config.checklist_criteria_preset = preset
+        mock_config.coordination_config.enable_changedoc = changedoc
+        orch.config = mock_config
+        orch._generated_evaluation_criteria = generated
+        return orch
+
+    def test_inline_criteria_returned(self):
+        """Inline criteria should be returned when set."""
+        orch = self._make_orch(inline=_SAMPLE_INLINE)
+        items, categories = orch._get_active_criteria()
+        assert len(items) == 3
+        assert items[0] == "Visual design is cohesive and polished"
+        assert categories["E1"] == "must"
+        assert categories["E2"] == "should"
+
+    def test_inline_beats_generated_in_active_criteria(self):
+        """Inline should take priority over generated criteria."""
+        generated = [
+            GeneratedCriterion(id="E1", text="Generated criterion", category="must"),
+        ]
+        orch = self._make_orch(inline=_SAMPLE_INLINE, generated=generated)
+        items, _ = orch._get_active_criteria()
+        assert len(items) == 3
+        assert "Generated criterion" not in items
+
+    def test_generated_returned_when_no_inline(self):
+        """Generated criteria returned when no inline."""
+        generated = [
+            GeneratedCriterion(id="E1", text="Generated criterion", category="must"),
+        ]
+        orch = self._make_orch(generated=generated)
+        items, categories = orch._get_active_criteria()
+        assert items == ["Generated criterion"]
+        assert categories == {"E1": "must"}
+
+    def test_preset_returned_when_no_inline_or_generated(self):
+        """Preset criteria returned when no inline or generated."""
+        orch = self._make_orch(preset="persona")
+        items, _ = orch._get_active_criteria()
+        # Persona preset has 5 items
+        assert len(items) == 5
+
+    def test_none_returned_when_nothing_configured(self):
+        """Returns (None, None) when no criteria source is available."""
+        orch = self._make_orch(changedoc=False)
+        items, categories = orch._get_active_criteria()
+        assert items is None
+        assert categories is None

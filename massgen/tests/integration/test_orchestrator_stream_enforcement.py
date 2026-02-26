@@ -190,3 +190,52 @@ async def test_stream_agent_execution_errors_after_three_non_workflow_attempts(m
     assert errors
     assert "failed to use workflow tools" in errors[-1][1].lower()
     assert emitted[-1] == ("done", None)
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_execution_truncates_injected_buffer_on_retry(mock_orchestrator):
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Must call workflow tool."
+    orchestrator.config.disable_injection = True
+
+    agent_id = "agent_a"
+    agent = orchestrator.agents[agent_id]
+
+    _configure_agent_script(
+        agent,
+        scripted_tool_calls=[
+            [],
+            [{"name": "new_answer", "arguments": {"content": "Recovered answer"}}],
+        ],
+        responses=["plain response without workflow tool", "retry response"],
+    )
+
+    oversize_chars = orchestrator._ENFORCEMENT_RETRY_BUFFER_MAX_CHARS * 2
+    large_buffer = "START_SENTINEL\n" + ("A" * oversize_chars) + "\nEND_SENTINEL"
+    agent.backend._get_streaming_buffer = lambda: large_buffer
+
+    captured_messages = []
+    original_stream_with_tools = agent.backend.stream_with_tools
+
+    async def recording_stream_with_tools(messages, tools=None, **kwargs):
+        captured_messages.append(messages)
+        async for chunk in original_stream_with_tools(messages=messages, tools=tools, **kwargs):
+            yield chunk
+
+    agent.backend.stream_with_tools = recording_stream_with_tools
+
+    emitted = await _collect_stream(
+        orchestrator._stream_agent_execution(agent_id, orchestrator.current_task, {}),
+    )
+
+    assert ("result", ("answer", "Recovered answer")) in emitted
+    assert len(captured_messages) >= 2
+
+    second_call_messages = captured_messages[1]
+    enforcement_messages = [msg for msg in second_call_messages if msg.get("role") == "user" and "Your previous response was incomplete." in msg.get("content", "")]
+
+    assert enforcement_messages
+    enforcement_content = enforcement_messages[-1]["content"]
+    assert "END_SENTINEL" in enforcement_content
+    assert "START_SENTINEL" not in enforcement_content
+    assert "truncated" in enforcement_content.lower()

@@ -49,6 +49,67 @@ _subagent_host_launch_prefix: list[str] = []
 _parent_context_paths: list[dict[str, str]] = []
 _parent_coordination_config: dict[str, Any] = {}
 _specialized_subagents: dict[str, dict[str, Any]] = {}  # name -> type config dict
+_subagent_types_loaded: bool = False  # set to True after first lazy scan
+
+
+def _ensure_specialized_types_loaded() -> None:
+    """Lazily scan workspace for SUBAGENT.md dirs on first call to spawn_subagents.
+
+    Parsed using only stdlib + PyYAML to stay independent of the massgen package,
+    since the fastmcp subprocess may run under a Python that can partially import
+    massgen but lacks some of its transitive dependencies (e.g. gitpython).
+    """
+    global _specialized_subagents, _subagent_types_loaded
+    if _subagent_types_loaded:
+        return
+    _subagent_types_loaded = True
+    if _workspace_path is None:
+        return
+    types_dir = _workspace_path / ".massgen" / "subagent_types"
+    if not types_dir.is_dir():
+        logger.warning(f"[SubagentMCP] subagent_types dir not found: {types_dir}")
+        return
+    try:
+        import re
+
+        import yaml
+
+        loaded = 0
+        for type_path in sorted(types_dir.iterdir()):
+            if not type_path.is_dir():
+                continue
+            md_file = type_path / "SUBAGENT.md"
+            if not md_file.exists():
+                continue
+            try:
+                content = md_file.read_text(encoding="utf-8")
+                # Extract YAML frontmatter between --- delimiters
+                fm_match = re.match(r"^---\n(.*?)\n---\n?", content, re.DOTALL)
+                if not fm_match:
+                    logger.warning(f"[SubagentMCP] No frontmatter in {md_file}")
+                    continue
+                metadata = yaml.safe_load(fm_match.group(1)) or {}
+                description = metadata.get("description", "")
+                if not description:
+                    logger.warning(f"[SubagentMCP] No description in {md_file}, skipping")
+                    continue
+                # System prompt is everything after the closing ---
+                sp_match = re.match(r"^---\n.*?\n---\n?(.*)", content, re.DOTALL)
+                system_prompt = sp_match.group(1).strip() if sp_match else ""
+                name = str(metadata.get("name", "")).strip() or type_path.name
+                _specialized_subagents[name.lower()] = {
+                    "name": name,
+                    "description": description,
+                    "system_prompt": system_prompt,
+                    "skills": metadata.get("skills") or [],
+                    "expected_input": metadata.get("expected_input") or [],
+                }
+                loaded += 1
+            except Exception as e:
+                logger.warning(f"[SubagentMCP] Failed to parse {md_file}: {e}")
+        logger.info(f"[SubagentMCP] Lazily loaded {loaded} specialized subagent types")
+    except Exception as e:
+        logger.warning(f"[SubagentMCP] Failed to scan subagent types: {e}")
 
 
 def _get_manager() -> SubagentManager:
@@ -194,13 +255,6 @@ async def create_server() -> fastmcp.FastMCP:
         help="Path to JSON file containing parent coordination config",
     )
     parser.add_argument(
-        "--specialized-subagents-file",
-        type=str,
-        required=False,
-        default="",
-        help="Path to JSON file containing specialized subagent type configs",
-    )
-    parser.add_argument(
         "--runtime-mode",
         type=str,
         required=False,
@@ -289,23 +343,11 @@ async def create_server() -> fastmcp.FastMCP:
             logger.warning(f"Failed to load coordination config from {args.coordination_config_file}: {e}")
             _parent_coordination_config = {}
 
-    # Parse specialized subagent types from file
+    # Specialized subagent types are loaded lazily on first spawn_subagents call
+    # by _ensure_specialized_types_loaded() scanning workspace/.massgen/subagent_types/.
+    global _specialized_subagents, _subagent_types_loaded
     _specialized_subagents = {}
-    if args.specialized_subagents_file:
-        try:
-            from massgen.subagent.models import SpecializedSubagentConfig
-
-            with open(args.specialized_subagents_file) as f:
-                types_data = json.load(f)
-            if isinstance(types_data, list):
-                for td in types_data:
-                    config = SpecializedSubagentConfig.from_dict(td)
-                    _specialized_subagents[config.name.lower()] = config.to_dict()
-            # Do NOT delete — see agent_configs_file comment above.
-            logger.info(f"[SubagentMCP] Loaded {len(_specialized_subagents)} specialized subagent types")
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError, FileNotFoundError, OSError) as e:
-            logger.warning(f"Failed to load specialized subagent types from {args.specialized_subagents_file}: {e}")
-            _specialized_subagents = {}
+    _subagent_types_loaded = False
 
     # Set concurrency and timeout limits
     _max_concurrent = args.max_concurrent
@@ -544,7 +586,8 @@ async def create_server() -> fastmcp.FastMCP:
                     "error": (f"Cannot spawn subagent_id already running: {conflict_text}. " "Use send_message_to_subagent() to steer the existing run, " "or wait/cancel it before spawning again."),
                 }
 
-            # Resolve specialized subagent types
+            # Resolve specialized subagent types (lazy load on first call)
+            _ensure_specialized_types_loaded()
             for t in normalized_tasks:
                 subagent_type = t.get("subagent_type", "")
                 if not subagent_type:

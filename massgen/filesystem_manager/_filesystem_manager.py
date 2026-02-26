@@ -2271,6 +2271,16 @@ class FilesystemManager:
         """
         return self.cwd
 
+    def get_workspace_root(self) -> Path:
+        """
+        Get the persistent workspace root that was created at initialization.
+
+        This is the path that subagent MCP servers and other long-lived
+        metadata should use, even if the active workspace (`cwd`) temporarily
+        switches to a worktree/temporary directory during restarts.
+        """
+        return self._original_cwd
+
     def cleanup(self) -> None:
         """Cleanup temporary resources (not the main workspace) and Docker containers."""
         # Cleanup isolation contexts if manager is active

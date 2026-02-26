@@ -63,6 +63,14 @@ def test_codex_skips_reasoning_effort_when_not_provided(tmp_path: Path):
     assert "model_reasoning_effort" not in config
 
 
+def test_codex_disables_view_image_tool_in_workspace_config(tmp_path: Path):
+    backend = CodexBackend(cwd=str(tmp_path))
+    backend._write_workspace_config()
+
+    config = _read_workspace_codex_config(tmp_path)
+    assert config["tools"]["view_image"] is False
+
+
 def test_codex_writes_instructions_file_under_codex_home(tmp_path: Path):
     backend = CodexBackend(cwd=str(tmp_path))
     backend.system_prompt = "system instructions"

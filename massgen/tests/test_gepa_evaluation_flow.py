@@ -339,3 +339,63 @@ class TestCriteriaCountValidation:
         result = _parse_criteria_response(response, min_criteria=4, max_criteria=10)
         assert result is not None
         assert len(result) == 10
+
+
+class TestAnalysisDynamicCriteriaLabels:
+    """Diagnostic analysis should use custom criteria labels, not hardcoded ones."""
+
+    def test_checklist_analysis_uses_custom_items(self):
+        """When custom items provided, failure patterns should reference them."""
+        from massgen.system_prompt_sections import _build_checklist_analysis
+
+        custom = ["Visual design is cohesive", "Content tells a story", "Site is responsive"]
+        analysis = _build_checklist_analysis(custom_checklist_items=custom)
+        assert "Visual design is cohesive" in analysis
+        assert "Content tells a story" in analysis
+        # Should NOT contain hardcoded generic labels
+        assert "goal alignment" not in analysis
+        assert "correctness" not in analysis.split("E2")[1] if "E2" in analysis else True
+
+    def test_checklist_analysis_default_has_generic_labels(self):
+        """Without custom items, analysis should use hardcoded generic labels."""
+        from massgen.system_prompt_sections import _build_checklist_analysis
+
+        analysis = _build_checklist_analysis()
+        assert "goal alignment" in analysis
+        assert "correctness" in analysis
+
+    def test_changedoc_analysis_uses_custom_items(self):
+        """Changedoc analysis should also use custom criteria labels."""
+        from massgen.system_prompt_sections import _build_changedoc_checklist_analysis
+
+        custom = ["Visual design is cohesive", "Content tells a story"]
+        analysis = _build_changedoc_checklist_analysis(custom_checklist_items=custom)
+        assert "Visual design is cohesive" in analysis
+        # Changedoc-specific sections should still be present
+        assert "Decision Audit" in analysis
+        assert "changedoc" in analysis.lower()
+
+    def test_changedoc_analysis_default_has_generic_labels(self):
+        """Without custom items, changedoc analysis uses hardcoded labels."""
+        from massgen.system_prompt_sections import _build_changedoc_checklist_analysis
+
+        analysis = _build_changedoc_checklist_analysis()
+        assert "goal alignment" in analysis
+        assert "changedoc quality" in analysis
+
+    def test_evaluation_section_threads_custom_items_to_analysis(self):
+        """EvaluationSection should pass custom items to analysis builder."""
+        from massgen.system_prompt_sections import EvaluationSection
+
+        custom = ["Visual design is cohesive", "Content tells a story"]
+        section = EvaluationSection(
+            voting_sensitivity="checklist_gated",
+            voting_threshold=3,
+            answers_used=0,
+            answer_cap=5,
+            custom_checklist_items=custom,
+            item_categories={"E1": "must", "E2": "should"},
+        )
+        content = section.build_content()
+        assert "Visual design is cohesive" in content
+        assert "goal alignment" not in content

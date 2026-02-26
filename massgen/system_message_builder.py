@@ -264,6 +264,7 @@ class SystemMessageBuilder:
                     has_changedoc=changedoc_enabled,
                     custom_checklist_items=custom_checklist_items,
                     item_categories=item_categories,
+                    has_existing_answers=bool(answers),
                 ),
             )
 

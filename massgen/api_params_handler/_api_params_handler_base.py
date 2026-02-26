@@ -142,6 +142,8 @@ class APIParamsHandlerBase(ABC):
             "fairness_enabled",
             "fairness_lead_cap_answers",
             "max_midstream_injections_per_round",
+            "max_checklist_calls_per_round",
+            "checklist_first_answer",
         }
 
     def build_base_api_params(

@@ -110,6 +110,21 @@ def test_get_coordination_result_includes_timeout_metadata(mock_orchestrator):
     assert result["timeout_reason"] == "Time limit exceeded (120.0s/120s)"
 
 
+def test_truncate_enforcement_buffer_content_keeps_recent_tail(mock_orchestrator):
+    """Large enforcement retry buffers should keep only bounded recent context."""
+    orchestrator = mock_orchestrator(num_agents=1)
+
+    oversize_chars = orchestrator._ENFORCEMENT_RETRY_BUFFER_MAX_CHARS * 2
+    buffer_content = "START_SENTINEL\n" + ("A" * oversize_chars) + "\nEND_SENTINEL"
+    truncated = orchestrator._truncate_enforcement_buffer_content(buffer_content)
+
+    assert truncated is not None
+    assert "END_SENTINEL" in truncated
+    assert "START_SENTINEL" not in truncated
+    assert "truncated" in truncated.lower()
+    assert len(truncated) <= orchestrator._ENFORCEMENT_RETRY_BUFFER_MAX_CHARS + 200
+
+
 @pytest.mark.asyncio
 async def test_cancel_running_background_work_for_agent_cancels_active_subagents_and_jobs(
     mock_orchestrator,

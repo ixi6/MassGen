@@ -372,6 +372,14 @@ class CoordinationTracker:
         """Get the current round for a specific agent."""
         return self.agent_rounds.get(agent_id, 0)
 
+    def set_agent_round(self, agent_id: str, round_num: int) -> None:
+        """Set the round counter for an agent directly.
+
+        Used by round resume to fast-forward agents to the target round
+        without replaying the full event-driven round loop.
+        """
+        self.agent_rounds[agent_id] = round_num
+
     @property
     def max_round(self) -> int:
         """Get the highest round number across all agents."""

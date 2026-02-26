@@ -1294,6 +1294,175 @@ class TestNoveltySubagentGuidance:
         assert "novelty" not in result["explanation"].lower()
 
 
+class TestBuilderSubagentGuidance:
+    """Builder subagent guidance in verdict text.
+
+    The builder fires when transformative items are present (T>0) AND builder
+    is enabled — complementary to novelty/critic which fire when T==0.
+    """
+
+    def _make_state(self, **overrides):
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 4,
+            "cutoff": 7,
+            "require_substantiveness": True,
+            "builder_subagent_enabled": True,
+        }
+        state.update(overrides)
+        return state
+
+    def _transformative_substantiveness(self):
+        return {
+            "transformative": ["rebuild layout as era-based chapters", "replace card grids with full-bleed sections"],
+            "structural": [],
+            "incremental": [],
+            "decision_space_exhausted": False,
+            "notes": "Two transformative changes identified",
+        }
+
+    def _incremental_only_substantiveness(self):
+        return {
+            "transformative": [],
+            "structural": ["add timeline connector nodes"],
+            "incremental": ["fix contrast", "increase font size"],
+            "decision_space_exhausted": False,
+            "notes": "Only incremental/structural work",
+        }
+
+    def test_builder_guidance_when_transformative_and_enabled(self):
+        """Builder guidance appears when transformative items present + builder enabled."""
+        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+        result = evaluate_checklist_submission(
+            scores={
+                "E1": {"score": 6, "reasoning": "gaps"},
+                "E2": {"score": 5, "reasoning": "weak"},
+                "E3": {"score": 7, "reasoning": "ok"},
+                "E4": {"score": 5, "reasoning": "shallow"},
+            },
+            improvements="Rebuild layout and replace card grids",
+            report_path="",
+            items=items,
+            state=self._make_state(),
+            substantiveness=self._transformative_substantiveness(),
+        )
+        assert result["verdict"] == "new_answer"
+        explanation_lower = result["explanation"].lower()
+        assert "builder" in explanation_lower
+        assert "subagent" in explanation_lower
+        assert "background" in explanation_lower
+
+    def test_no_builder_guidance_when_disabled(self):
+        """No builder guidance when builder_subagent_enabled=False."""
+        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+        result = evaluate_checklist_submission(
+            scores={
+                "E1": {"score": 6, "reasoning": "gaps"},
+                "E2": {"score": 5, "reasoning": "weak"},
+                "E3": {"score": 7, "reasoning": "ok"},
+                "E4": {"score": 5, "reasoning": "shallow"},
+            },
+            improvements="Rebuild layout",
+            report_path="",
+            items=items,
+            state=self._make_state(builder_subagent_enabled=False),
+            substantiveness=self._transformative_substantiveness(),
+        )
+        assert result["verdict"] == "new_answer"
+        assert "builder" not in result["explanation"].lower()
+
+    def test_no_builder_guidance_when_no_transformative_items(self):
+        """No builder guidance when there are no transformative items (only structural/incremental)."""
+        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+        result = evaluate_checklist_submission(
+            scores={
+                "E1": {"score": 6, "reasoning": "gaps"},
+                "E2": {"score": 5, "reasoning": "weak"},
+                "E3": {"score": 7, "reasoning": "ok"},
+                "E4": {"score": 5, "reasoning": "shallow"},
+            },
+            improvements="Fix some issues",
+            report_path="",
+            items=items,
+            state=self._make_state(),
+            substantiveness=self._incremental_only_substantiveness(),
+        )
+        assert result["verdict"] == "new_answer"
+        assert "builder" not in result["explanation"].lower()
+
+    def test_no_builder_guidance_on_first_answer(self):
+        """No builder guidance on first answer (has_existing_answers=False)."""
+        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+        result = evaluate_checklist_submission(
+            scores={
+                "E1": {"score": 6, "reasoning": "gaps"},
+                "E2": {"score": 5, "reasoning": "weak"},
+                "E3": {"score": 7, "reasoning": "ok"},
+                "E4": {"score": 5, "reasoning": "shallow"},
+            },
+            improvements="Rebuild everything",
+            report_path="",
+            items=items,
+            state=self._make_state(has_existing_answers=False),
+            substantiveness=self._transformative_substantiveness(),
+        )
+        assert result["verdict"] == "new_answer"
+        assert "builder" not in result["explanation"].lower()
+
+    def test_no_builder_guidance_when_key_absent(self):
+        """When builder_subagent_enabled absent from state, default OFF (safe)."""
+        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 4,
+            "cutoff": 7,
+        }
+        result = evaluate_checklist_submission(
+            scores={
+                "E1": {"score": 6, "reasoning": "gaps"},
+                "E2": {"score": 5, "reasoning": "weak"},
+                "E3": {"score": 7, "reasoning": "ok"},
+                "E4": {"score": 5, "reasoning": "shallow"},
+            },
+            improvements="Rebuild layout",
+            report_path="",
+            items=items,
+            state=state,
+            substantiveness=self._transformative_substantiveness(),
+        )
+        assert result["verdict"] == "new_answer"
+        assert "builder" not in result["explanation"].lower()
+
+    def test_builder_and_novelty_are_mutually_exclusive(self):
+        """Builder fires on T>0; novelty fires on T==0 — they don't appear together."""
+        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+        state = self._make_state(novelty_subagent_enabled=True)
+
+        result = evaluate_checklist_submission(
+            scores={
+                "E1": {"score": 6, "reasoning": "gaps"},
+                "E2": {"score": 5, "reasoning": "weak"},
+                "E3": {"score": 7, "reasoning": "ok"},
+                "E4": {"score": 5, "reasoning": "shallow"},
+            },
+            improvements="Rebuild layout",
+            report_path="",
+            items=items,
+            state=state,
+            substantiveness=self._transformative_substantiveness(),
+        )
+        assert result["verdict"] == "new_answer"
+        explanation_lower = result["explanation"].lower()
+        # Builder fires (T>0)
+        assert "builder" in explanation_lower
+        # Novelty does NOT fire (T>0, so no novelty guidance needed)
+        assert "novelty" not in explanation_lower
+
+
 class TestBuildServerConfig:
     """Tests for build_server_config utility."""
 

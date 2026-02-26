@@ -300,6 +300,7 @@ Detailed documentation for specific modules lives in `docs/modules/`. **Always c
 - `docs/modules/interactive_mode.md` - Interactive mode architecture, launch_run MCP, system prompts, project workspace
 - `docs/modules/worktrees.md` - Worktree lifecycle, branch naming, scratch archives, system prompt integration
 - `docs/modules/composition.md` - **Composable primitives, phase architecture, domain-specific checklist gates** — how personas, eval criteria, decomposition, and planning compose for maximum quality
+- `docs/modules/coordination_workflow.md` - **Round lifecycle and checklist workflow** — the implement → evaluate → submit cycle, when to call `submit_checklist` vs `new_answer`, and why agents must not re-evaluate within a round
 
 ## MassGen Skills
 

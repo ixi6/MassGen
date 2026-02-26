@@ -25,6 +25,8 @@ Architecture:
 Tool & Sandbox Design Decisions:
 - Codex has native tools: shell (command exec), apply_patch (file edit),
   web_search, image_view. These are NOT duplicated by MassGen MCP tools.
+- MassGen disables the native view_image tool in generated .codex/config.toml
+  via [tools].view_image = false.
 - MassGen's filesystem/command_line MCPs are SKIPPED for Codex since Codex
   handles file ops and shell natively via its own sandbox.
 - MassGen-specific MCPs (planning, memory, workspace_tools for media gen,
@@ -647,6 +649,9 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
             config["model"] = self.model
         if self.model_reasoning_effort:
             config["model_reasoning_effort"] = self.model_reasoning_effort
+
+        # Disable Codex's native image-reading tool globally for MassGen runs.
+        config["tools"] = {"view_image": False}
 
         # Always write custom tool specs to current workspace (cwd may change between runs).
         # Includes framework background lifecycle tools even when user custom_tools is empty.
@@ -1958,6 +1963,8 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
         Codex keeps all its native tools (shell, file_read, file_write,
         file_edit, web_search) since MassGen skips attaching MCP equivalents
         for categories the backend handles natively (see tool_category_overrides).
+        Native image viewing is disabled directly in generated config.toml
+        via [tools].view_image = false.
 
         Tool filtering for MCP servers is handled separately via
         enabled_tools/disabled_tools in .codex/config.toml per server.
@@ -1965,6 +1972,7 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
         Codex also supports disabling built-in tools via config.toml:
         - [features].shell_tool = false
         - web_search = "disabled"
+        - [tools].view_image = false
 
         Args:
             config: Backend config dict.

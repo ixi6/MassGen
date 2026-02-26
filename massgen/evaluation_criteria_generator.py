@@ -233,6 +233,18 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
 VALID_CRITERIA_PRESETS: frozenset[str] = frozenset(_CRITERIA_PRESETS.keys())
 
 
+def criteria_from_inline(inline_list: list[dict[str, str]]) -> list[GeneratedCriterion]:
+    """Convert inline criteria dicts to GeneratedCriterion objects.
+
+    Args:
+        inline_list: List of dicts with 'text' and 'category' keys.
+
+    Returns:
+        List of GeneratedCriterion with E1..EN IDs.
+    """
+    return [GeneratedCriterion(id=f"E{i + 1}", text=item["text"], category=item["category"]) for i, item in enumerate(inline_list)]
+
+
 def get_criteria_for_preset(preset: str) -> list[GeneratedCriterion]:
     """Return domain-specific criteria for a named preset.
 

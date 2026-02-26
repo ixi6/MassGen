@@ -215,6 +215,56 @@ class TestSubagentTypesConfigParsing:
 
 
 # ---------------------------------------------------------------------------
+# Builder Subagent Discovery Tests
+# ---------------------------------------------------------------------------
+
+
+class TestBuilderSubagentDiscovery:
+    """Tests that the builder subagent type SUBAGENT.md is discoverable."""
+
+    def test_builder_subagent_md_exists(self):
+        """massgen/subagent_types/builder/SUBAGENT.md must exist."""
+        from pathlib import Path
+
+        subagent_md = Path(__file__).parent.parent / "subagent_types" / "builder" / "SUBAGENT.md"
+        assert subagent_md.exists(), f"SUBAGENT.md not found at {subagent_md}"
+
+    def test_scan_discovers_builder_type(self):
+        """scan_subagent_types() must discover the builder type when it is in allowed_types."""
+        from massgen.subagent.type_scanner import scan_subagent_types
+
+        types = scan_subagent_types(allowed_types=["builder"])
+        names = [t.name.lower() for t in types]
+        assert "builder" in names
+
+    def test_builder_type_has_description(self):
+        """Discovered builder type must have a non-empty description."""
+        from massgen.subagent.type_scanner import scan_subagent_types
+
+        types = scan_subagent_types(allowed_types=["builder"])
+        builder = next((t for t in types if t.name.lower() == "builder"), None)
+        assert builder is not None
+        assert builder.description, "builder description must be non-empty"
+
+    def test_builder_type_has_system_prompt(self):
+        """Discovered builder type must have a non-empty system prompt."""
+        from massgen.subagent.type_scanner import scan_subagent_types
+
+        types = scan_subagent_types(allowed_types=["builder"])
+        builder = next((t for t in types if t.name.lower() == "builder"), None)
+        assert builder is not None
+        assert builder.system_prompt, "builder system_prompt must be non-empty"
+
+    def test_builder_not_in_results_when_not_allowed(self):
+        """Builder is not returned when not in allowed_types."""
+        from massgen.subagent.type_scanner import scan_subagent_types
+
+        types = scan_subagent_types(allowed_types=["novelty", "critic"])
+        names = [t.name.lower() for t in types]
+        assert "builder" not in names
+
+
+# ---------------------------------------------------------------------------
 # Convergence Detection Tests
 # ---------------------------------------------------------------------------
 

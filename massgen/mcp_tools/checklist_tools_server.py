@@ -602,38 +602,21 @@ def evaluate_checklist_submission(
             # Novelty subagent guidance: when no transformative work identified,
             # suggest spawning a novelty subagent to break anchoring
             _novelty_enabled = state.get("novelty_subagent_enabled", False)
-            _critic_enabled = state.get("critic_subagent_enabled", False)
             if has_existing_answers and substantiveness_eval.get("valid", False) and substantiveness_eval.get("transformative_count", 0) == 0:
-                if _novelty_enabled and _critic_enabled:
+                if _novelty_enabled:
                     explanation += (
-                        "Before starting your next iteration, spawn two background "
-                        "subagents in parallel: "
-                        "1. A `critic` subagent: pass it the current answer, all "
-                        "previous answers, and the evaluation criteria. It will provide "
-                        "honest external assessment. "
-                        "2. A `novelty` subagent: pass it your diagnostic analysis and "
-                        "current workspace. It will propose fundamentally different "
-                        "directions. "
-                        "Wait for both results before committing to your improvement "
-                        "strategy. "
-                    )
-                elif _novelty_enabled:
-                    explanation += (
-                        "Your evaluation found zero transformative changes. To break through "
-                        "this plateau, spawn a novelty subagent in the background — pass it "
-                        "your diagnostic analysis, the current workspace, and evaluation "
-                        "findings. The novelty subagent will propose fundamentally different "
-                        "directions while you continue working on any structural or "
-                        "incremental improvements already identified. When its results "
-                        "arrive, incorporate at least one transformative suggestion into "
-                        "your work. "
-                    )
-                elif _critic_enabled:
-                    explanation += (
-                        "Before starting your next iteration, spawn a `critic` subagent "
-                        "in the background — pass it the current answer, all previous "
-                        "answers, and the evaluation criteria. The critic will provide "
-                        "honest external assessment to guide your improvements. "
+                        "Your evaluation found zero transformative changes — you are "
+                        "stuck in a plateau. Spawn a novelty subagent in the background "
+                        "(`background=True, refine=False`) — pass it your diagnostic "
+                        "analysis, the current workspace, and evaluation findings. It "
+                        "will propose fundamentally different directions while you "
+                        "continue working on structural or incremental improvements "
+                        "already identified. When its results arrive, you MUST adopt at "
+                        "least one of its directions: list it in the `transformative` "
+                        "array of your next checklist submission. If you genuinely "
+                        "cannot use any suggestion, explain why in "
+                        "`substantiveness.notes`. Ignoring novelty's output silently "
+                        "wastes the round and re-triggers the same plateau. "
                     )
             explanation += "Your new answer MUST make material changes — do NOT simply copy or " "resubmit the same content."
             if improvements_text:

@@ -1941,3 +1941,118 @@ class TestPerAgentScores:
         assert result["verdict"] == "new_answer"
         assert result.get("incomplete_scores") is True
         assert result["verdict"] == "new_answer"
+
+
+# ---------------------------------------------------------------------------
+# Novelty guidance injection (Step 3 of round lifecycle plan)
+# ---------------------------------------------------------------------------
+
+
+def _make_low_score_state(extra=None):
+    """State that triggers T=0 plateau (no transformative changes identified)."""
+    state = {
+        "terminate_action": "vote",
+        "iterate_action": "new_answer",
+        "has_existing_answers": True,
+        "required": 2,
+        "cutoff": 90,  # high cutoff so scores fail → iterate verdict
+    }
+    if extra:
+        state.update(extra)
+    return state
+
+
+def _low_scores():
+    return {
+        "agent1": {"E1": {"score": 40, "reasoning": "poor"}, "E2": {"score": 40, "reasoning": "poor"}},
+        "agent2": {"E1": {"score": 35, "reasoning": "poor"}, "E2": {"score": 38, "reasoning": "poor"}},
+    }
+
+
+def _t0_substantiveness():
+    """Substantiveness with zero transformative changes to trigger novelty guidance."""
+    return {
+        "transformative": [],
+        "structural": [],
+        "incremental": [],
+        "decision_space_exhausted": False,
+        "notes": "",
+    }
+
+
+class TestNoveltyGuidanceInjection:
+    """Novelty guidance: critic removed, adoption language mandatory."""
+
+    def test_critic_not_in_novelty_guidance_when_both_enabled(self):
+        """When both critic+novelty enabled, injected guidance mentions novelty only (not critic)."""
+        state = _make_low_score_state(
+            {
+                "novelty_subagent_enabled": True,
+                "critic_subagent_enabled": True,
+            },
+        )
+        result = evaluate_checklist_submission(
+            scores=_low_scores(),
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+            substantiveness=_t0_substantiveness(),
+        )
+        explanation = result["explanation"]
+        # Novelty should be mentioned
+        assert "novelty" in explanation.lower()
+        # Critic must NOT appear as a spawn instruction in the plateau-breaking block
+        assert "spawn a `critic`" not in explanation
+        assert "spawn two background" not in explanation
+
+    def test_novelty_adoption_language_is_mandatory(self):
+        """Injected novelty guidance must contain strong mandatory adoption language."""
+        state = _make_low_score_state({"novelty_subagent_enabled": True})
+        result = evaluate_checklist_submission(
+            scores=_low_scores(),
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+            substantiveness=_t0_substantiveness(),
+        )
+        explanation = result["explanation"]
+        # Must contain mandatory language (MUST adopt / must adopt)
+        assert "must adopt" in explanation.lower()
+
+    def test_no_novelty_guidance_when_novelty_disabled(self):
+        """No novelty guidance injected when novelty subagent is disabled."""
+        state = _make_low_score_state({"novelty_subagent_enabled": False})
+        result = evaluate_checklist_submission(
+            scores=_low_scores(),
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+            substantiveness=_t0_substantiveness(),
+        )
+        explanation = result["explanation"]
+        assert "novelty subagent" not in explanation.lower()
+
+    def test_novelty_not_injected_when_transformative_count_positive(self):
+        """Novelty guidance only fires when T=0; skip when transformative items exist."""
+        state = _make_low_score_state({"novelty_subagent_enabled": True})
+        substantiveness = {
+            "transformative": ["Full redesign"],
+            "structural": [],
+            "incremental": [],
+            "decision_space_exhausted": False,
+            "notes": "",
+        }
+        result = evaluate_checklist_submission(
+            scores=_low_scores(),
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+            substantiveness=substantiveness,
+        )
+        explanation = result["explanation"]
+        # novelty guidance should not mention the "plateau" spawn instruction
+        assert "plateau" not in explanation.lower()

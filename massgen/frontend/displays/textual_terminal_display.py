@@ -12708,7 +12708,7 @@ Type your question and press Enter to ask the agents.
 
             # Build updated subagent list
             updated_subagents = []
-            for sa_data in spawned:
+            for idx, sa_data in enumerate(spawned):
                 subagent_id = str(sa_data.get("subagent_id") or sa_data.get("id") or "")
                 existing = None
                 if subagent_id:
@@ -12716,6 +12716,13 @@ Type your question and press Enter to ask the agents.
                         if candidate.id == subagent_id:
                             existing = candidate
                             break
+                # Positional fallback: card was created with placeholder IDs
+                # (e.g. "subagent_0") before the MCP server assigned real sequential
+                # IDs (e.g. "subagent_1").  subagent_type now flows directly from
+                # the spawn result, so this mainly preserves any other pre-existing
+                # display state (task text, etc.) when ID lookup fails.
+                if existing is None and idx < len(card.subagents):
+                    existing = card.subagents[idx]
                 updated_subagents.append(_build_subagent_display_data(sa_data, existing))
 
             if updated_subagents:

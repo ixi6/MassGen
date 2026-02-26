@@ -2060,6 +2060,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         system_prompt: str | None = None,
         refine: bool = True,
         skills: list[str] | None = None,
+        subagent_type: str | None = None,
     ) -> dict[str, Any]:
         """
         Spawn a subagent in the background (non-blocking).
@@ -2137,6 +2138,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 "status": "error",
                 "workspace": str(workspace),
                 "error": error_msg,
+                **({"subagent_type": subagent_type} if subagent_type else {}),
             }
 
         # Track state
@@ -2276,7 +2278,20 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             "status": "running",
             "workspace": str(workspace),
             "status_file": status_file,
+            **({"subagent_type": subagent_type} if subagent_type else {}),
         }
+
+    def remove_immediately_failed_subagent(self, subagent_id: str) -> None:
+        """Remove a subagent that failed before doing any real work (pre-flight error).
+
+        Called by the MCP server when a spawn immediately errors (e.g. CONTEXT.md
+        missing) so the auto-generated ID slot can be reclaimed for the next spawn.
+        Only removes subagents with error status — never touches running/completed ones.
+        """
+        state = self._subagents.get(subagent_id)
+        if state is not None and str(getattr(state, "status", "")).lower() in {"error", "failed"}:
+            del self._subagents[subagent_id]
+            logger.info(f"[SubagentManager] Freed immediately-failed subagent slot: {subagent_id}")
 
     def continue_subagent_background(
         self,

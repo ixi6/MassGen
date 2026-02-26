@@ -17,6 +17,8 @@ The main agent has work too large or complex to do inline without hitting contex
 
 ## What to do
 
+0. **You receive a focused spec for ONE deliverable.** If the spec contains multiple independent deliverables, implement them sequentially and note each in your report. Do NOT make creative or architectural decisions — those were made by the main agent when writing the spec. If the spec is ambiguous on a creative choice, pick the simpler/safer option and report what you chose.
+
 1. **Read the full spec before doing anything.** Understand both the positive goals (what to build) and the negative constraints (what is forbidden). The forbidden list is mandatory — violating it defeats the purpose of calling you.
 
 2. **For large artifacts, write in chunks.** If you are generating a large file, write it in sections rather than attempting the whole thing at once. This prevents token limit failures.

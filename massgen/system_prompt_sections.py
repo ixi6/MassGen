@@ -850,59 +850,80 @@ tells you to iterate, you are expected to implement what you identified.
 The tool will evaluate your scores and return a verdict telling you whether
 to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
 
-**Round lifecycle when verdict is `{iterate_action}`:**
+**Round lifecycle — full sequence:**
 
-**Phase 1 — Gather intelligence (before `submit_checklist`).**
+**Phase 1 — Gather evidence. Do this BEFORE calling `submit_checklist`.**
 
-If specialized subagents are available:
-- Spawn critic and novelty subagents with `background=True` so they run in
-  parallel while you do your own gap analysis.
-- While they run: read all agents' answers, identify failures, root causes, and
-  candidate improvements. Enumerate *every* improvement you can see — do not
-  filter yet.
-- Collect subagent findings (they will return automatically when done).
-- Update your task plan with every improvement as a separate task. Split builder
-  work into the smallest independently executable chunks — each chunk that can
-  run without the others gets its own `[builder]` task, enabling parallel execution.
-  Annotate each task's executor: `[main]` (you implement inline), `[builder]`
-  (one focused chunk per task, not "do everything" in one), `[synthesize]` (a
-  specific element from another answer is already excellent — keep it), or `[skip]`
-  (deprioritized). Add `depends_on` links only where output from one task is
-  genuinely required input for another. Be generous with `[builder]` — transformative,
-  multi-file, or structurally complex improvements are good candidates.
+Spawn evaluator subagent(s) in background to gather programmatic evidence while
+you do qualitative analysis in parallel:
 
-If no specialized subagents are available:
-- Do your own gap analysis inline. Enumerate every improvement and log them all
-  to your task plan as `[main]` tasks before submitting the checklist.
+- Evaluators handle: screenshots + visual observations, test runs, completeness
+  checks, feature verification. Assign one evaluator per independent concern
+  (e.g. frontend layout vs backend correctness) if parallelizable. Evaluators
+  observe and report — they do NOT make changes.
+- **CRITICAL — file access**: When the evaluator needs to access files in your
+  workspace, you MUST pass `context_paths: ["./"]`. Without this, the evaluator
+  runs in an isolated container with no access to your workspace. Reference files
+  by their full workspace-absolute paths. Do NOT reference the Shared Reference
+  (temp_workspaces) path for files you created this round — those are only archived
+  there after you submit, not during execution.
+- You handle: read all agents' answers, identify qualitative gaps, assess
+  creative/craft quality. You make the value judgments — evaluator gives you
+  evidence to reason from, not scores.
+- Collect evaluator results when ready. Interpret their observations through
+  your own quality lens to assign per-agent scores per dimension.
 
-**Phase 2 — Submit the checklist.**
-Call `submit_checklist` with scores informed by Phase 1 findings. Classify
-improvements honestly: truly transformative changes (full rewrites, architecture
-shifts, new sections) go in `transformative`; smaller targeted fixes go in
-`structural`. Do not downgrade transformative work to avoid triggering a new round
-— each round exists to make the output genuinely better.
+If no specialized subagents are available: do all evidence gathering and
+qualitative analysis inline.
 
-**Phase 3 — Execute the improvement plan.**
-On `{iterate_action}` verdict, execute your task plan dependency-aware:
+**Phase 2 — Score and submit `submit_checklist`.**
 
-1. Find all tasks with no unresolved `depends_on` (`get_ready_tasks`).
-2. Batch all independent `[builder]` tasks into a **single** `spawn_subagents`
-   call (`background=True, refine=False`) — they run in parallel. Do your own
-   independent `[main]` tasks inline while they run.
-3. Collect subagent results, then re-check `get_ready_tasks` — newly unblocked
-   tasks cascade. Repeat until all tasks are done.
-4. For `[synthesize]` tasks: pull the specific element from the other agent's
-   answer rather than rewriting it.
+Score EACH agent per dimension using the evidence from Phase 1. Submit with
+per-agent scores format. Classify improvements honestly: truly transformative
+changes (full rewrites, architecture shifts, new sections) go in `transformative`;
+smaller targeted fixes go in `structural`. Do not downgrade transformative work
+to avoid triggering a new round — each round exists to make the output genuinely
+better. The `improvements` field = dimensions where even the best agent fell short.
+
+**Phase 3 — Execute improvements (on `{iterate_action}` verdict).**
+
+First encode your full improvement plan as task plan
+items before executing anything. Annotate each task's executor:
+`[main]` (you do it inline), `[builder]` (focused single-deliverable spec),
+`[synthesize]` (pull a specific element from another agent's answer — keep it),
+or `[skip]` (deprioritized). Add `depends_on` links only where the output of
+one task is genuinely required input for another.
+
+Then execute dependency-aware:
+
+1. You own the structural/creative building — you have the context to make
+   good decisions. Do it inline rather than delegating creative judgment.
+2. For well-defined implementation chunks (500+ lines, multi-file rewrite, a
+   clear spec with no ambiguous creative choices), delegate to builder — but
+   give it a FOCUSED spec for ONE deliverable, not everything at once. Batch
+   independent builder tasks into a single `spawn_subagents` call
+   (`background=True, refine=False`).
+3. Collect builder results, integrate, repeat for dependent tasks.
 
 If no specialized subagents are available, execute all tasks inline in
 dependency order.
 
-**Phase 4 — Integrate, verify, submit.**
-After all tasks complete, integrate results into a coherent output, verify that
-prior-round features still work (no regressions), then call `{iterate_action}`.
+**Phase 4 — Novelty (when `{iterate_action}` verdict + zero transformative changes).**
 
-Do **not** call `submit_checklist` again after receiving a `{iterate_action}` verdict.
-You already have your improvement plan. The next coordination tool call must be
+If `submit_checklist` returned zero transformative changes AND
+a novelty subagent is available: spawn novelty (`background=True, refine=False`)
+while you start implementing structural improvements. When novelty returns, you
+MUST adopt at least one of its directions — list it in the `transformative`
+array of your next checklist submission. If you genuinely cannot use any
+suggestion, explain why in `substantiveness.notes`. Do not ignore novelty's
+output silently — ignoring it wastes the round and re-triggers the same plateau.
+
+**Phase 5 — Integrate, verify, submit.**
+
+After all tasks complete, verify no regressions, then call `{iterate_action}`.
+
+Do **not** call `submit_checklist` again after a `{iterate_action}` verdict —
+you already have your improvement plan. The next coordination tool call must be
 `{iterate_action}` (or `{terminate_action}` if you decide the work is now sufficient).
 
 **If the verdict is `{iterate_action}`**: your new answer MUST be **obviously and
@@ -3815,14 +3836,21 @@ class SubagentSection(SystemPromptSection):
             background_default = background_by_type.get(t.name.lower(), True)
             background_str = "True" if background_default else "False"
             lines.append(f"**{t.name}** — {t.description}")
-            lines.append(f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}", "context_paths": []}}], background={background_str}, refine=False)`')
+            # Evaluator almost always needs workspace access; show ["./"] as default
+            ctx_paths_example = '["./"]' if t.name.lower() == "evaluator" else "[]"
+            lines.append(
+                f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}", ' f'"context_paths": {ctx_paths_example}}}], background={background_str}, refine=False)`',
+            )
             if getattr(t, "expected_input", None):
                 lines.append("Expected input for this type:")
                 for item in t.expected_input:
                     lines.append(f"- {item}")
             if t.name.lower() == "evaluator":
                 lines.append(
-                    "Use this when the task is mostly programmatic execution/reporting (batch tests, Playwright flows, evidence capture sweeps, scripted validation).",
+                    "Use this when the task is mostly programmatic execution/reporting "
+                    "(batch tests, Playwright flows, evidence capture sweeps, scripted validation). "
+                    'Use `context_paths: ["./"]` when the evaluator must access files in your '
+                    "workspace; use `[]` only for tasks with no workspace file dependencies.",
                 )
             if t.name.lower() == "builder":
                 lines.append(
@@ -3831,20 +3859,26 @@ class SubagentSection(SystemPromptSection):
                     "work that would exhaust your context or take too long inline — large artifact "
                     "generation, complex multi-file rewrites, big structural implementations, or "
                     "novelty proposals too ambitious to execute yourself.\n\n"
-                    "**The novelty → builder loop** (most common pattern when builder+novelty are both enabled):\n"
-                    "1. A novelty or critic subagent proposes something valuable but too large to do inline.\n"
-                    "2. Do NOT defer it. List it in the `transformative` array of your next "
+                    "**Mental model: main agent owns creative decisions, builder owns execution.**\n"
+                    "You make the structural/architectural choices — you have the full context. "
+                    "Builder executes a spec you write; it does not decide what to build.\n\n"
+                    "**The novelty → build loop** (when novelty fires after T=0):\n"
+                    "1. Novelty returns directions. You evaluate them and decide which to adopt.\n"
+                    "2. List the adopted direction in the `transformative` array of your next "
                     "`submit_checklist` call.\n"
-                    "3. The checklist tool will instruct you to spawn builder. Pass it: the current "
-                    "workspace, a prescriptive spec (what to build AND what patterns are FORBIDDEN "
-                    "as negative constraints), and the evaluation criteria.\n"
-                    "4. Builder implements it in fresh context. You evaluate the result when it returns.\n\n"
-                    "**Direct spawning** (any time the work is simply large/long):\n"
-                    "You can also spawn builder directly without going through the checklist — e.g., "
-                    "generating many images, rewriting a large section, implementing a multi-file "
-                    "refactor. If doing it inline would consume most of your remaining context, delegate it.\n\n"
+                    "3. Build it yourself inline if feasible. If the implementation is too large "
+                    "(500+ lines, multi-file rewrite), write a focused spec for ONE deliverable "
+                    "and delegate to builder.\n"
+                    "4. Builder returns the result. You integrate and verify.\n\n"
+                    "**Incremental tasks** (copy edits, CSS polish, test fixes, accessibility):\n"
+                    "Do these inline — they are quick and benefit from your context. Do NOT "
+                    "delegate incremental tasks to builder (that's context overhead for trivial work).\n\n"
+                    "**Direct builder spawning** (any time the work is simply large/well-defined):\n"
+                    "You can spawn builder directly without going through the checklist — e.g., "
+                    "rewriting a large section, multi-file implementation with a clear spec. "
+                    "Give builder ONE focused deliverable per task, not a catch-all spec.\n\n"
                     "**Deferring a valid proposal with T=0 wastes a full round** — "
-                    "it re-triggers critic+novelty instead of making progress.",
+                    "it re-triggers novelty instead of making progress.",
                 )
             lines.append("")
 

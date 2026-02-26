@@ -283,8 +283,8 @@ class TestNoveltySubagentQualityRevamp:
 class TestCriticChecklistGuidance:
     """Tests for parallel critic + novelty spawning guidance."""
 
-    def test_checklist_mentions_critic_spawn(self):
-        """When critic and novelty are both available, guidance mentions both."""
+    def test_checklist_mentions_novelty_not_critic_when_both_available(self):
+        """When critic and novelty are both available, guidance mentions novelty only (critic removed from plateau loop)."""
         from massgen.mcp_tools.checklist_tools_server import (
             evaluate_checklist_submission,
         )
@@ -322,10 +322,12 @@ class TestCriticChecklistGuidance:
                 "decision_space_exhausted": False,
             },
         )
-        # When scores are below threshold, verdict must be new_answer and mention critic
+        # Verdict must be new_answer; guidance should mention novelty (not critic)
         assert result.get("verdict") == "new_answer", f"Expected 'new_answer' but got {result.get('verdict')!r}; full result: {result}"
         explanation = result.get("explanation", "")
-        assert "critic" in explanation.lower()
+        assert "novelty" in explanation.lower()
+        assert "spawn a `critic`" not in explanation
+        assert "spawn two background" not in explanation
 
 
 # ===========================================================================

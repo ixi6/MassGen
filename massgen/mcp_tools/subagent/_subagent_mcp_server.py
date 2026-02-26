@@ -622,18 +622,23 @@ async def create_server() -> fastmcp.FastMCP:
 
             # Normalize task IDs using a global counter so IDs are unique
             # across multiple spawn_subagents calls (not just within one call).
+            # _auto_id marks tasks whose ID was assigned here (not caller-provided),
+            # so we can reclaim the counter slot if the spawn immediately fails.
             global _next_subagent_index
             normalized_tasks = []
             for t in tasks:
                 if "subagent_id" in t:
                     task_id = t["subagent_id"]
+                    auto_id = False
                 else:
                     task_id = f"subagent_{_next_subagent_index}"
                     _next_subagent_index += 1
+                    auto_id = True
                 normalized_tasks.append(
                     {
                         **t,
                         "subagent_id": task_id,
+                        "_auto_id": auto_id,
                     },
                 )
 
@@ -695,11 +700,17 @@ async def create_server() -> fastmcp.FastMCP:
             logger.info(f"[SubagentMCP] Spawning {len(normalized_tasks)} subagents: {task_ids}")
 
             # Branch based on background mode
+            # Note: background path pops _auto_id per-task; strip from blocking tasks here.
+            if not background:
+                for t in normalized_tasks:
+                    t.pop("_auto_id", None)
+
             if background:
                 # BACKGROUND MODE: Spawn subagents in background and return immediately
                 # Results will be injected via SubagentCompleteHook when they complete
                 spawned = []
                 for task_config in normalized_tasks:
+                    auto_id = task_config.pop("_auto_id", False)
                     # Task is passed as-is; context will be loaded from CONTEXT.md
                     info = manager.spawn_subagent_background(
                         task=task_config["task"],
@@ -710,7 +721,14 @@ async def create_server() -> fastmcp.FastMCP:
                         timeout_seconds=_default_timeout,
                         refine=refine,
                         skills=task_config.get("skills"),
+                        subagent_type=task_config.get("subagent_type") or None,
                     )
+                    # If spawn failed before doing any real work and this was an
+                    # auto-generated ID, free the slot so the retry gets the same ID.
+                    if info.get("status") == "error" and auto_id:
+                        assigned_id = task_config.get("subagent_id", "")
+                        manager.remove_immediately_failed_subagent(assigned_id)
+                        _next_subagent_index -= 1
                     spawned.append(info)
 
                 # Save registry to filesystem

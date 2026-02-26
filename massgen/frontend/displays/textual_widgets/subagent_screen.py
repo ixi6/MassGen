@@ -1008,6 +1008,7 @@ class SubagentView(Container):
         self._current_inner_agent: str | None = None
         self._tool_call_agent_map: dict[str, str] = {}
         self._terminal_status_notes: set[str] = set()
+        self._waiting_placeholder_shown: bool = False
         self._auto_return_on_completion = auto_return_on_completion
         self._auto_return_prompt_delay_seconds = max(0.0, float(auto_return_prompt_delay_seconds))
         self._auto_return_timeout_seconds = max(1, int(auto_return_timeout_seconds))
@@ -1224,6 +1225,11 @@ class SubagentView(Container):
         if self._current_inner_agent:
             self._load_events_for_agent(self._current_inner_agent)
             self._agents_loaded.add(self._current_inner_agent)
+
+        # If we still have no event reader (log file not created yet) and the
+        # subagent is running, show the task text so the screen isn't blank.
+        if self._event_reader is None and self._current_inner_agent and self._subagent.status in ("running", "pending"):
+            self._ensure_waiting_placeholder(self._current_inner_agent)
 
         # Ensure status classes/reason are applied even for terminal states on first paint.
         self._update_status_display()
@@ -1591,6 +1597,30 @@ class SubagentView(Container):
             message = f"{message}: {reason}"
         return message, style
 
+    def _ensure_waiting_placeholder(self, agent_id: str) -> None:
+        """Show the task text as a placeholder while waiting for the log file to appear.
+
+        Called when status=running but no events.jsonl has been found yet (t=0s on
+        fast drilldown open). Adds the task text once so the screen isn't blank.
+        """
+        if self._waiting_placeholder_shown or not self._panel:
+            return
+        task = (self._subagent.task or "").strip()
+        if not task:
+            return
+        try:
+            timeline = self._panel.query_one(
+                f"#subagent-timeline-{agent_id}",
+                TimelineSection,
+            )
+        except Exception:
+            return
+        try:
+            timeline.add_text(task, style="dim", text_class="status", round_number=1)
+            self._waiting_placeholder_shown = True
+        except Exception as e:
+            tui_log(f"[SubagentScreen] Failed to add waiting placeholder: {e}")
+
     def _ensure_terminal_status_note(self, agent_id: str, event_count: int = 0) -> None:
         """Add a one-line terminal status note when no events were rendered."""
         if event_count > 0 or not self._panel:
@@ -1646,7 +1676,11 @@ class SubagentView(Container):
             if self._event_reader:
                 self._load_initial_events()
             elif self._current_inner_agent:
-                self._ensure_terminal_status_note(self._current_inner_agent, event_count=0)
+                status = self._normalize_subagent_status(self._subagent.status)
+                if status in {"running", "pending"}:
+                    self._ensure_waiting_placeholder(self._current_inner_agent)
+                else:
+                    self._ensure_terminal_status_note(self._current_inner_agent, event_count=0)
 
         # Read new events and route to all loaded adapters
         if self._event_reader:

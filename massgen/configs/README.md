@@ -227,7 +227,26 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.56 - Latest
+### v0.1.57 - Latest
+**New Features:** Subagent Delegation Protocol, Builder Subagent, Substantiveness Tracking, Claude Code Reasoning
+
+**Key Features:**
+- **Subagent Delegation Protocol**: Spawn subagents from within Docker containers via secure file-based delegation with atomic JSON exchange and workspace validation
+- **Builder Subagent**: New subagent type for large-scale work (complex rewrites, big documents) with fresh context, auto-triggered when transformative changes are needed
+- **Substantiveness Tracking**: Checklist classifies planned changes as transformative, structural, or incremental for smarter convergence decisions
+- **Claude Code Reasoning**: Updated SDK with unified `reasoning` config supporting adaptive/enabled/disabled modes and effort levels
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.57
+pip install --upgrade massgen
+
+# Builder subagent, substantiveness tracking, and delegation protocol
+# activate automatically during multi-agent coordination
+uv run massgen
+```
+
+### v0.1.56
 **New Features:** Spec Plan Mode, ask_others Targeting, Critic Subagent, Codex OAuth Login Fix
 
 **Key Features:**

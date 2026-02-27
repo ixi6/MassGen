@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.56
+**Current Version:** v0.1.57
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** February 25, 2026
+**Last Updated:** February 27, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,40 +42,33 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.57** | 02/27/26 | Per-Subagent Runtime Isolation in Docker | @ncrispino | True per-subagent isolation when parent runs in Docker ([#910](https://github.com/massgen/MassGen/issues/910)) |
-| | | Improve Iterative Refinement | @ncrispino | Better convergence detection and quality-driven iteration ([#874](https://github.com/massgen/MassGen/issues/874)) |
-| **v0.1.58** | 03/01/26 | ElevenLabs TTS & STT Support | @ncrispino | Add ElevenLabs support for TTS and speech-to-text in generate/read media ([#942](https://github.com/massgen/MassGen/issues/942)) |
-| **v0.1.59** | 03/04/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
+| **v0.1.58** | 03/02/26 | Per-Subagent Runtime Isolation in Docker | @ncrispino | True container-based isolation for subagents spawned from Docker parent ([#910](https://github.com/massgen/MassGen/issues/910), rolled from v0.1.57) |
+| **v0.1.59** | 03/04/26 | ElevenLabs TTS & STT Support | @ncrispino | Add ElevenLabs support for TTS and speech-to-text in generate/read media ([#942](https://github.com/massgen/MassGen/issues/942)) |
+| **v0.1.60** | 03/06/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.57 - Subagent Isolation & Iterative Refinement
+## 📋 v0.1.58 - Subagent Docker Isolation
 
 ### Features
 
 **1. Per-Subagent Runtime Isolation in Docker** (@ncrispino)
-- Issue: [#910](https://github.com/massgen/MassGen/issues/910)
-- True per-subagent runtime isolation when parent runs in Docker
-- Eliminates port collisions, shared server state, and ambiguous timeout behavior between subagents
-- **Use Case**: Subagent evaluators that launch local servers no longer interfere with one another
-
-**2. Improve Iterative Refinement** (@ncrispino)
-- Issue: [#874](https://github.com/massgen/MassGen/issues/874)
-- Better convergence detection: distinguish genuine vs incremental improvement
-- Fix checklist off-ramp so voting threshold actually affects required pass count
-- Categorize improvements as transformative/structural/incremental for smarter convergence
-- **Use Case**: Agents stop iterating when quality is good enough, push harder when there's real room to improve
+- Issue: [#910](https://github.com/massgen/MassGen/issues/910) (rolled from v0.1.57)
+- True container-based isolation for subagents spawned from a Docker parent
+- Each subagent runs in its own Docker container with independent filesystem
+- Builds on the file-based delegation protocol shipped in v0.1.57
+- **Use Case**: Secure, isolated execution for parallel subagent tasks in containerized environments
 
 ### Success Criteria
-- ✅ Subagents run in isolated runtime environments when parent is in Docker
-- ✅ Checklist off-ramp respects voting threshold configuration
-- ✅ Convergence detection distinguishes incremental from structural improvements
+- ✅ Subagents spawn in isolated Docker containers (not host subprocesses)
+- ✅ Workspace isolation enforced per-subagent
+- ✅ Delegation protocol upgraded from host-subprocess to container-based
 
 ---
 
-## 📋 v0.1.58 - ElevenLabs Media
+## 📋 v0.1.59 - ElevenLabs Media
 
 ### Features
 
@@ -91,7 +84,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.59 - Skill Use & Exploration
+## 📋 v0.1.60 - Skill Use & Exploration
 
 ### Features
 
@@ -783,6 +776,23 @@ These features are being actively developed on **separate parallel tracks** and 
 - TUI homescreen and theming improvements
 - **Status:** ✅ Completed in v0.1.50
 
+### Track: Subagent Delegation Protocol (@ncrispino, nickcrispino)
+- PR: [#955](https://github.com/massgen/MassGen/pull/955)
+- File-based delegation protocol for container-to-host subagent spawning
+- SubagentLaunchWatcher with atomic JSON request/response exchange
+- Workspace path validation against allowlist for security
+- **Note:** Partial progress toward [#910](https://github.com/massgen/MassGen/issues/910); full Docker container isolation still pending in v0.1.58
+- **Status:** ✅ Completed in v0.1.57
+
+### Track: Iterative Refinement Improvements (@ncrispino, nickcrispino)
+- PR: [#955](https://github.com/massgen/MassGen/pull/955)
+- Issue: [#874](https://github.com/massgen/MassGen/issues/874)
+- Substantiveness tracking (transformative/structural/incremental) for convergence decisions
+- Builder subagent type for large artifact generation with fresh context
+- Diagnostic report gating and per-agent checklist scoring
+- Claude Code reasoning parameters for updated SDK
+- **Status:** ✅ Completed in v0.1.57
+
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
 - PR: [#251](https://github.com/massgen/MassGen/pull/251)
 - Enhanced file operations and workspace management
@@ -864,5 +874,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** February 25, 2026
+**Last Updated:** February 27, 2026
 **Maintained By:** MassGen Team

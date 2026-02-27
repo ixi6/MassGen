@@ -9,16 +9,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.57 (February 27, 2026)** - Delegated Subagent Protocol & Builder Subagent
+File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Claude Code reasoning parameters for updated SDK. Smarter convergence with substantiveness tracking and diagnostic report gating.
+
 **v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
 Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
 
 **v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
 Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
 
-**v0.1.54 (February 20, 2026)** - Subagent Messaging & Copilot SDK Backend
-Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
-
 ---
+
+## [0.1.57] - 2026-02-27
+
+### Added
+- **Subagent Delegation Protocol** ([#955](https://github.com/massgen/MassGen/pull/955), MAS-325): File-based delegation for container-to-host subagent spawning
+  - `SubagentLaunchWatcher` polls shared delegation directory for request files
+  - Atomic JSON-based `DelegationRequest`/`DelegationResponse` exchange protocol
+  - Workspace path validation against allowlist for security
+  - Cancel sentinel support for graceful subagent termination
+
+- **Builder Subagent Type** ([#955](https://github.com/massgen/MassGen/pull/955)): New subagent for executing substantial pre-specified work with fresh context
+  - Transformative redesigns, large artifact generation, complex multi-file rewrites
+  - Prescriptive spec input with positive goals AND forbidden patterns (negative constraints)
+  - Auto-triggered by checklist when transformative changes identified
+
+- **Claude Code Reasoning Parameters** ([#955](https://github.com/massgen/MassGen/pull/955)): Updated SDK integration with new unified reasoning config
+  - Migrated from deprecated `max_thinking_tokens` to `reasoning` config dict
+  - Supports `type` (adaptive/enabled/disabled), `effort` (low/medium/high/max), `budget_tokens`
+  - Backward compatible with legacy configurations
+
+- **Substantiveness Tracking** ([#955](https://github.com/massgen/MassGen/pull/955)): Checklist captures specific planned changes to prevent satisficing
+  - List format: `transformative`, `structural`, `incremental` items with descriptions
+  - `decision_space_exhausted` flag for convergence signaling
+  - Builder subagent suggestion when transformative changes identified
+  - Novelty subagent injection when transformation count = 0 (plateau detection)
+
+- **Diagnostic Report Gating** ([#955](https://github.com/massgen/MassGen/pull/955)): Optional quality gate requiring structured diagnostic reports
+  - Validates report file existence, minimum length, and markdown format
+  - Required sections: Failure Patterns, Root Causes, Goal Alignment
+
+- **Verification Subdirectory for Scratch** ([#955](https://github.com/massgen/MassGen/pull/955)): Organized scratch work with verification subdirectory support
+
+### Changed
+- **Subagent Workspace Management** ([#955](https://github.com/massgen/MassGen/pull/955)): Auto-mounted parent workspace (read-only) by default via `include_parent_workspace`
+  - Eliminates need for `context_paths: ["./"]` — subagents get parent workspace automatically
+  - `context_paths` now for additional paths only (peer workspaces, external resources)
+- **Evaluation Criteria** ([#955](https://github.com/massgen/MassGen/pull/955)): Cleaned up subagent paths and eval criteria organization
+- **Memory Config Simplified** ([#955](https://github.com/massgen/MassGen/pull/955)): Simplified memory config option to only final presentation
+- **Per-Agent Checklist Scoring** ([#955](https://github.com/massgen/MassGen/pull/955)): Support for evaluating multiple agents separately with format detection
+
+### Fixed
+- **Subagent Launch for Codex** ([#955](https://github.com/massgen/MassGen/pull/955)): Fixed codex backend subagent spawning
+- **Subagent Timing** ([#955](https://github.com/massgen/MassGen/pull/955)): Improved synchronization and timeout handling
+- **Subagent Temp Dir** ([#955](https://github.com/massgen/MassGen/pull/955)): Fixed temporary workspace directory support
+- **Subagent Type Initialization** ([#955](https://github.com/massgen/MassGen/pull/955)): Fixed type definitions and initialization
+- **Test Fixes** ([#955](https://github.com/massgen/MassGen/pull/955)): Various test updates for new features
+
+### Documentation, Configurations and Resources
+- New `massgen/subagent_types/builder/SUBAGENT.md` - Builder subagent type definition
+- Updated `massgen/subagent_types/evaluator/SUBAGENT.md` - Enhanced evaluator guidance
+- New `docs/modules/coordination_workflow.md` - End-to-end coordination lifecycle documentation
+- Updated `docs/modules/subagents.md` - Delegation protocol and workspace management
+- Updated `massgen/configs/BACKEND_CONFIGURATION.md` - Reasoning parameter documentation
+- New `ROADMAP_v0.1.58.md` - Next release roadmap
+
+### Technical Details
+- **Major Focus**: Subagent delegation protocol, builder subagent, convergence improvements
+- **PRs Merged**: [#955](https://github.com/massgen/MassGen/pull/955) (Delegation protocol, builder subagent, reasoning params, eval improvements)
+- **Files Changed**: 68 files, +7348/-503 lines
+- **New Tests**: `test_launch_watcher.py`, `test_launch_watcher_e2e.py`, `test_subagent_delegated_mode.py`, `test_round_resume.py`, `test_checklist_tools_server.py` (substantiveness), `test_write_mode_scratch.py`, `test_claude_code_skills_config.py`, `test_gepa_evaluation_flow.py`, `test_novelty_injection.py`
+- **Contributors**: @MassGen Agent (8 commits), @HenryQi (2 commits)
 
 ## [0.1.56] - 2026-02-25
 

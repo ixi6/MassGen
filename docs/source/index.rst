@@ -190,6 +190,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.57 (February 27, 2026)** - Delegated Subagent Protocol & Builder Subagent
+
+File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Smarter convergence with substantiveness tracking and diagnostic report gating. Claude Code reasoning parameters for updated SDK.
+
 **v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
 
 Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging via `target_agents` parameter. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
@@ -197,10 +201,6 @@ Spec plan mode for formal requirements specification before execution with TUI s
 **v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
 
 Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
-
-**v0.1.54 (February 20, 2026)** - Subagent Messaging & Copilot SDK Backend
-
-Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
 
 :doc:`Full changelog → <changelog>`
 

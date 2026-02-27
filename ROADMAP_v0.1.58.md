@@ -1,108 +1,87 @@
-# MassGen v0.1.57 Roadmap
+# MassGen v0.1.58 Roadmap
 
 ## Overview
 
-Version 0.1.57 focuses on per-subagent runtime isolation in Docker environments and improving the iterative refinement loop for better convergence detection and quality-driven iteration.
+Version 0.1.58 focuses on completing per-subagent runtime isolation in Docker, building on the file-based delegation protocol shipped in v0.1.57.
 
-- **Per-Subagent Runtime Isolation in Docker** (Required): True per-subagent isolation when parent runs in Docker
-- **Improve Iterative Refinement** (Required): Better convergence detection and quality-driven iteration
+- **Per-Subagent Runtime Isolation in Docker** (Required): True container-based isolation for subagents spawned from a Docker parent
 
 ## Key Technical Priorities
 
-1. **Subagent Isolation**: Provide true per-subagent runtime isolation so each subagent has its own execution boundary when MassGen runs inside Docker
-   **Use Case**: Subagent evaluators that launch local servers no longer interfere with one another
-
-2. **Iterative Refinement**: Fix checklist off-ramp and convergence detection to distinguish genuine vs incremental improvement
-   **Use Case**: Agents stop when quality is sufficient, push harder when there's real room to improve
+1. **Docker Container Isolation**: Upgrade the delegation protocol from host-subprocess spawning to per-subagent Docker containers
+   **Use Case**: Secure, isolated execution for parallel subagent tasks in containerized environments
 
 ## Key Milestones
 
-### Milestone 1: Per-Subagent Runtime Isolation in Docker (REQUIRED)
+### Milestone 1: Per-Subagent Docker Container Spawning (REQUIRED)
 
-**Goal**: True per-subagent runtime isolation when parent runs in Docker
+**Goal**: Subagents spawned from a Docker parent run in their own isolated containers instead of as host subprocesses
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
 **Issue**: [#910](https://github.com/massgen/MassGen/issues/910)
 
-#### 1.1 Runtime Architecture
-- [ ] Define runtime architecture where subagents do not share command/process/network namespace by default
-- [ ] Make launch mode explicit (no silent downgrade from docker to local for subagent execution paths)
-- [ ] Eliminate port collisions, shared server state, and ambiguous timeout behavior
+**Foundation**: v0.1.57 shipped the file-based delegation protocol (`launch_watcher.py`) with atomic JSON request/response exchange and workspace allowlist validation. This milestone upgrades the spawning target from host processes to Docker containers.
 
-#### 1.2 Communication Contract
-- [ ] Preserve existing subagent communication contract (answer files, workspace handoff, status/log streaming) across isolation modes
-- [ ] Test containerized parent runs with concurrent subagents that each start local servers
+#### 1.1 Container Spawning Backend
+- [ ] Extend `SubagentLaunchWatcher` to spawn subagents as Docker containers
+- [ ] Container image selection and configuration (reuse parent image or configurable)
+- [ ] Volume mounting for workspace directories and shared state
+- [ ] Container lifecycle management (creation, monitoring, cleanup)
 
-#### 1.3 Testing & Validation
-- [ ] Add tests covering containerized parent with concurrent server-launching subagents
-- [ ] Verify subagent UX preserved (logs, status, streaming, cancellation, workspace/context semantics)
-- [ ] Update documentation
+#### 1.2 Filesystem Isolation
+- [ ] Per-subagent workspace isolation within containers
+- [ ] Secure workspace path mapping between host and container
+- [ ] Result collection from container filesystems back to host
 
-**Success Criteria**:
-- Subagents run in isolated runtime environments when parent is in Docker
-- No port collisions or shared state between concurrent subagents
-- Existing subagent communication contract preserved
+#### 1.3 Networking & Communication
+- [ ] Container-to-host communication for delegation protocol
+- [ ] MCP server access from within containers
+- [ ] API key forwarding to subagent containers
 
----
-
-### Milestone 2: Improve Iterative Refinement (REQUIRED)
-
-**Goal**: Better convergence detection and quality-driven iteration
-
-**Owner**: @ncrispino (nickcrispino on Discord)
-
-**Issue**: [#874](https://github.com/massgen/MassGen/issues/874)
-
-#### 2.1 Fix Checklist Off-Ramp
-- [ ] Make `_checklist_required_true` respect voting threshold (currently hardcoded to all items)
-- [ ] Relax off-ramp so convergence is reachable when only stretch items fail
-- [ ] Fix core/stretch categorization to enable smarter convergence decisions
-
-#### 2.2 Convergence Detection
-- [ ] Implement improvement categorization: transformative, structural, incremental
-- [ ] Add LLM-based comparison between round N and round N-1 answers
-- [ ] Scale back overcorrection from low voting sensitivity when improvements are incremental
-
-#### 2.3 Testing & Documentation
-- [ ] Test convergence detection across different quality scenarios
-- [ ] Verify checklist off-ramp behavior with various voting thresholds
-- [ ] Document new convergence behavior and configuration options
+#### 1.4 Testing & Documentation
+- [ ] Unit tests for container spawning logic
+- [ ] Integration tests: subagent runs in container and returns results
+- [ ] Backend parity tests (at minimum: one `base_with_custom_tool_and_mcp` backend, `claude_code`, `codex`)
+- [ ] Update subagent documentation with Docker isolation configuration
+- [ ] Add example configs in `massgen/configs/`
 
 **Success Criteria**:
-- Checklist off-ramp respects voting threshold configuration
-- Convergence detection distinguishes incremental from structural improvements
-- Agents stop iterating when improvements are merely incremental
+- Subagents spawn in isolated Docker containers (not host subprocesses)
+- Workspace isolation enforced per-subagent container
+- Delegation protocol upgraded from host-subprocess to container-based
+- No regression in non-Docker subagent spawning
 
 ---
 
 ## Timeline
 
-**Target Release**: February 27, 2026
+**Target Release**: March 2, 2026
 
-### Phase 1 (Feb 25-26)
-- Subagent Runtime Isolation (Milestone 1.1, 1.2)
-- Checklist Off-Ramp Fix (Milestone 2.1)
+### Phase 1 (Feb 28 - Mar 1)
+- Container Spawning Backend (Milestone 1.1)
+- Filesystem Isolation (Milestone 1.2)
 
-### Phase 2 (Feb 26-27)
-- Convergence Detection (Milestone 2.2)
-- Testing & Validation (Milestones 1.3, 2.3)
+### Phase 2 (Mar 1-2)
+- Networking & Communication (Milestone 1.3)
+- Testing & Documentation (Milestone 1.4)
 
 ---
 
 ## Success Metrics
 
-- **Isolation Quality**: No port collisions or shared state between concurrent subagents in Docker
-- **Convergence Accuracy**: Agents correctly identify when improvements are incremental vs structural
-- **Off-Ramp Reachability**: Checklist convergence reachable with reasonable voting threshold settings
+- **Isolation**: Each subagent runs in its own Docker container with independent filesystem
+- **Security**: Workspace paths validated and isolated per-container
+- **Compatibility**: Non-Docker subagent spawning continues to work unchanged
+- **Performance**: Container startup overhead acceptable for parallel subagent workflows
 
 ---
 
 ## Resources
 
-- **Issue #910**: [Per-Subagent Runtime Isolation](https://github.com/massgen/MassGen/issues/910)
-- **Issue #874**: [Improve Iterative Refinement](https://github.com/massgen/MassGen/issues/874)
+- **Issue #910**: [Per-Subagent Runtime Isolation in Docker](https://github.com/massgen/MassGen/issues/910)
 - **Owner**: @ncrispino (nickcrispino on Discord)
+- **Foundation**: v0.1.57 delegation protocol (PR [#955](https://github.com/massgen/MassGen/pull/955))
 - **Related PRs**: TBD
 
 ---
@@ -118,7 +97,8 @@ This release builds on previous work:
 - **v0.1.54**: Copilot SDK Backend (#862), Subagent Messaging (#926), Gemini 3.1 Pro
 - **v0.1.55**: Specialized Subagent Types (#938), Dynamic Evaluation Criteria, Native Image Routing
 - **v0.1.56**: Critic Subagent (#945), Spec Plan Mode, Audio Multimodal, ask_others Targeting
+- **v0.1.57**: Delegation Protocol (#955), Builder Subagent, Substantiveness Tracking, Claude Code Reasoning
 
 And sets the foundation for:
-- **v0.1.58**: ElevenLabs TTS & STT (#942)
-- **v0.1.59**: Improve skill use and exploration (#873)
+- **v0.1.59**: ElevenLabs TTS & STT Support (#942)
+- **v0.1.60**: Improve skill use and exploration (#873)

@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.56 Features](#-latest-features-v0156)
+- [v0.1.57 Features](#-latest-features-v0157)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.56)](#recent-achievements-v0156)
-- [Previous Achievements (v0.0.3 - v0.1.55)](#previous-achievements-v003---v0155)
+- [Recent Achievements (v0.1.57)](#recent-achievements-v0157)
+- [Previous Achievements (v0.0.3 - v0.1.56)](#previous-achievements-v003---v0156)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.56 Roadmap](#v0156-roadmap)
+- [v0.1.58 Roadmap](#v0158-roadmap)
 </details>
 
 <details open>
@@ -155,22 +155,23 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.56)
+## 🆕 Latest Features (v0.1.57)
 
-**🎉 Released: February 25, 2026**
+**🎉 Released: February 27, 2026**
 
-**What's New in v0.1.56:**
-- **📋 Spec Plan Mode** - `plan_mode="spec"` for formal requirements specification before execution with TUI spec mode support.
-- **🎯 ask_others Targeting** - `target_agents` parameter for focused agent-to-agent communication instead of broadcast.
-- **🔍 Critic Subagent** - New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement.
-- **🔧 Codex OAuth Login Fix** - Codex backend always available in WebUI regardless of OPENAI_API_KEY.
+**What's New in v0.1.57:**
+- **🔗 Subagent Delegation Protocol** - Spawn subagents from within Docker containers via a secure file-based delegation protocol with workspace validation.
+- **🏗️ Builder Subagent** - New subagent type for tackling large-scale work (complex rewrites, big documents) with fresh context, auto-triggered when transformative changes are needed.
+- **📊 Smarter Convergence** - Substantiveness tracking classifies planned changes (transformative/structural/incremental) to guide better refinement decisions, with diagnostic report gating and per-agent scoring.
+- **🧠 Claude Code Reasoning** - Updated SDK integration with unified `reasoning` config supporting adaptive/enabled/disabled modes and effort levels.
 
-**Try v0.1.56 Features:**
+**Try v0.1.57 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Launch MassGen, then press Shift+Tab twice to enter 'spec' mode
+# Builder subagent, substantiveness tracking, and delegation protocol
+# activate automatically during multi-agent coordination
 uv run massgen
 ```
 
@@ -1233,29 +1234,29 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.56)
+### Recent Achievements (v0.1.57)
 
-**🎉 Released: February 25, 2026**
+**🎉 Released: February 27, 2026**
 
-#### Spec Plan Mode
-- **Formal Requirements**: `plan_mode="spec"` for structured requirements specification before execution
-- **TUI Integration**: Spec creation, approval modal, and dedicated TUI spec mode state
-- **Changedoc Integration**: Spec storage and change document workflow
+#### Subagent Delegation Protocol
+- **Container-to-Host Spawning**: File-based delegation protocol enabling subagents to be spawned from within Docker containers via `SubagentLaunchWatcher` with atomic JSON request/response exchange and workspace path validation
 
-#### ask_others Targeted Messaging
-- **Targeted Communication**: `target_agents` parameter for focused agent-to-agent communication instead of broadcast
-- **Validation**: Per-target response counting and shadow-agent prompt improvements
+#### Builder Subagent
+- **Large Artifact Generation**: New subagent type for executing substantial work (complex rewrites, large documents) with fresh context, auto-triggered when the checklist identifies transformative changes needed
 
-#### Also in this release
-- **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
-- **read_media Conversation Continuity**: Follow-up conversations on supported media (image) via `continue_from` conversation_id
-- **Codex OAuth Login Fix**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
+#### Smarter Convergence
+- **Substantiveness Tracking**: Checklist captures planned changes as transformative, structural, or incremental — with builder subagent auto-triggered for transformative work and novelty injection when progress plateaus
+- **Diagnostic Report Gating & Per-Agent Scoring**: Optional quality gate requiring structured diagnostic reports, plus support for evaluating multiple agents separately
+
+#### Claude Code Reasoning
+- **Updated SDK Integration**: Migrated to unified `reasoning` config with `type` (adaptive/enabled/disabled), `effort` levels, and `budget_tokens`, backward compatible with legacy configurations
 
 #### Bug Fixes
-- Spec reading and test fixes
-- Audio cleanup for future release
+- Fixed Codex backend subagent spawning, subagent synchronization and timeout handling
 
-### Previous Achievements (v0.0.3 - v0.1.55)
+### Previous Achievements (v0.0.3 - v0.1.56)
+
+✅ **Spec Plan Mode & Targeted Messaging (v0.1.56)**: Formal requirements specification with `plan_mode="spec"` and TUI spec mode support. Targeted agent-to-agent messaging via `target_agents` parameter. Critic subagent for quality assessment. Media conversation continuity for follow-up image analysis. Codex OAuth login fix.
 
 ✅ **Specialized Subagent Types & Dynamic Evaluation Criteria (v0.1.55)**: Discovery-based subagent roles (evaluator, explorer, researcher, novelty) via `SUBAGENT.md` frontmatter. GEPA-inspired task-specific evaluation criteria with core/stretch gates. Native backend image routing. Configurable video frame extraction.
 
@@ -1512,13 +1513,12 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.56 Roadmap
+### v0.1.58 Roadmap
 
-Version 0.1.56 focuses on spec support for planning and targeted agent queries:
+Version 0.1.58 focuses on completing per-subagent runtime isolation in Docker:
 
 #### Planned Features
-- **Spec Support for Planning** ([#881](https://github.com/massgen/MassGen/issues/881)): Add spec/proposal support to planning workflows
-- **Targeted Agent Queries** ([#809](https://github.com/massgen/MassGen/issues/809)): Support targeted queries to specific agents via subagent for more efficient coordination
+- **Per-Subagent Runtime Isolation in Docker** ([#910](https://github.com/massgen/MassGen/issues/910)): True container-based isolation for subagents spawned from Docker parent, building on the delegation protocol shipped in v0.1.57
 
 ---
 

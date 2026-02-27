@@ -357,6 +357,56 @@ class TestSpawnSubagentsContextPathsRequirement:
         assert fake_manager.background_calls[0]["context_paths"] == []
 
     @pytest.mark.asyncio
+    async def test_top_level_context_paths_applied_to_all_tasks(self, monkeypatch, tmp_path):
+        """Top-level context_paths are merged into every task's context_paths."""
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {"task": "Evaluate agent1 site", "subagent_id": "eval1"},
+                {"task": "Evaluate agent2 site", "subagent_id": "eval2"},
+            ],
+            context_paths=[str(shared)],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True, result
+        assert len(fake_manager.background_calls) == 2
+        for call in fake_manager.background_calls:
+            assert str(shared) in call["context_paths"]
+
+    @pytest.mark.asyncio
+    async def test_top_level_context_paths_merged_with_per_task_paths(self, monkeypatch, tmp_path):
+        """Top-level context_paths are combined with per-task context_paths."""
+        shared = tmp_path / "shared"
+        extra = tmp_path / "extra"
+        shared.mkdir()
+        extra.mkdir()
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Evaluate", "subagent_id": "eval", "context_paths": [str(extra)]}],
+            context_paths=[str(shared)],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True, result
+        assert len(fake_manager.background_calls) == 1
+        paths = fake_manager.background_calls[0]["context_paths"]
+        assert str(shared) in paths
+        assert str(extra) in paths
+
+    @pytest.mark.asyncio
     async def test_duplicate_subagent_ids_in_single_request_are_rejected(self, monkeypatch, tmp_path):
         """A single spawn request must not contain duplicate subagent_id values."""
         server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)

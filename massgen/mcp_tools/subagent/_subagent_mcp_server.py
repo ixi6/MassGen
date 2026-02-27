@@ -478,6 +478,7 @@ async def create_server() -> fastmcp.FastMCP:
         tasks: list[dict[str, Any]],
         background: bool = False,
         refine: bool = True,
+        context_paths: list[str] | None = None,
         # NOTE: timeout_seconds parameter intentionally removed from MCP interface.
         # Allowing models to set custom timeouts could cause issues:
         # - Models might set very short timeouts and want to retry
@@ -522,6 +523,9 @@ async def create_server() -> fastmcp.FastMCP:
                         Default is False (blocking - waits for all subagents to complete).
             refine: (optional) If True (default), allow multi-round coordination and refinement.
                     If False, return the first answer without iterative refinement (faster).
+            context_paths: (optional) Top-level extra read-only paths applied to ALL tasks.
+                           Merged with any per-task context_paths. Use this when all subagents
+                           need the same peer workspace paths (e.g. temp_workspaces for evaluation).
 
         TIMEOUT HANDLING (for blocking mode, background=False):
         Subagents that timeout will attempt to recover any completed work:
@@ -615,6 +619,23 @@ async def create_server() -> fastmcp.FastMCP:
                     "operation": "spawn_subagents",
                     "error": f"Too many tasks: {len(tasks)} requested but maximum is {_max_concurrent}. " f"Please reduce to {_max_concurrent} or fewer tasks per spawn_subagents call.",
                 }
+
+            # Merge top-level context_paths into every task so callers can share
+            # peer workspace mounts without repeating them per-task.
+            top_level_paths: list[str] = context_paths or []
+            if top_level_paths:
+                merged_tasks = []
+                for t in tasks:
+                    t = dict(t)  # shallow copy — don't mutate caller's dicts
+                    per_task = list(t.get("context_paths") or [])
+                    # Append top-level paths, preserving per-task order and
+                    # avoiding duplicates while keeping list semantics.
+                    for p in top_level_paths:
+                        if p not in per_task:
+                            per_task.append(p)
+                    t["context_paths"] = per_task
+                    merged_tasks.append(t)
+                tasks = merged_tasks
 
             for i, task_config in enumerate(tasks):
                 if "task" not in task_config:

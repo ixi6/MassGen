@@ -4158,6 +4158,15 @@ When using `background=True`, subagents run asynchronously. Here is the full lif
 3. **Steer** (while running): `send_message_to_subagent(subagent_id, message)` — inject guidance mid-execution (e.g., "focus on X", "skip Y"). Delivered at next checkpoint.
 4. **Resume** (after completion): `continue_subagent(subagent_id, message)` — start a new turn with full conversation history preserved
 
+**Patience and steering:**
+Background subagents run a full MassGen process internally and may take a while.
+Check in on them intermittently via `list_subagents()` while you work on other tasks —
+they will complete on their own. If one appears to be going in the wrong direction,
+**prefer `send_message_to_subagent`** to redirect it rather than cancelling. Cancel
+only as a last resort when the subagent is clearly going nowhere and redirecting won't
+help. Finding partial files in the workspace is normal while a subagent runs — that
+alone is not a reason to cancel.
+
 **Monitoring a running subagent's progress:**
 Use `list_subagents()` to get the workspace path, then:
 - **Live output**: Read `{{workspace}}/.massgen/massgen_logs/log_*/turn_*/attempt_*/agent_outputs/*.txt` to see streaming text, tool calls, and thinking from each agent in the subagent process.
@@ -4172,6 +4181,9 @@ Use `list_subagents()` to get the workspace path, then:
 - `send_message_to_subagent(subagent_id, message)` - Send a message to a RUNNING background subagent.
   Use to steer direction mid-execution without waiting for completion.
   Only works for background subagents that are currently running (not completed/failed).
+- `cancel_subagent(subagent_id)` - Cancel a running subagent. **Last resort only.**
+  Prefer `send_message_to_subagent` to redirect. Only cancel if the subagent is clearly
+  going nowhere and cannot be salvaged.
 
 ## Result Format
 

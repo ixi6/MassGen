@@ -1,0 +1,120 @@
+# uv run massgen --config @examples/features/subagent_checklist.yaml "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
+
+agents:
+- id: agent_a
+  backend:
+    type: codex
+    model: gpt-5.3-codex
+    reasoning:
+      effort: xhigh
+    cwd: workspace
+    enable_code_based_tools: true
+    exclude_file_operation_mcps: true
+    enable_mcp_command_line: true
+    command_line_execution_mode: docker
+    command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
+    command_line_docker_network_mode: bridge
+    command_line_docker_enable_sudo: true
+    command_line_docker_credentials:
+      env_file: .env
+      # These must be passed for subagents to work if we are using a backend launched in docker, e.g. codex.
+      env_vars_from_file:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - GOOGLE_API_KEY
+      - GEMINI_API_KEY
+      - OPENROUTER_API_KEY
+      - ELEVENLABS_API_KEY
+      mount:
+      - claude_config
+      - codex_config
+    shared_tools_directory: shared_tools
+    auto_discover_custom_tools: true
+    exclude_custom_tools:
+    - _computer_use
+    - _claude_computer_use
+    - _gemini_computer_use
+    - _browser_automation
+- id: agent_b
+  backend:
+    type: claude_code
+    model: claude-sonnet-4-6
+    cwd: workspace
+    enable_code_based_tools: true
+    exclude_file_operation_mcps: true
+    enable_mcp_command_line: true
+    command_line_execution_mode: docker
+    command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
+    command_line_docker_network_mode: bridge
+    command_line_docker_enable_sudo: true
+    command_line_docker_credentials:
+      env_file: .env
+      env_vars_from_file:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - GOOGLE_API_KEY
+      - GEMINI_API_KEY
+      - ELEVENLABS_API_KEY
+    shared_tools_directory: shared_tools
+    auto_discover_custom_tools: true
+    exclude_custom_tools:
+    - _computer_use
+    - _claude_computer_use
+    - _gemini_computer_use
+    - _browser_automation
+orchestrator:
+  snapshot_storage: snapshots
+  agent_temporary_workspace: temp_workspaces
+  max_new_answers_per_agent: 5
+  fairness_enabled: true
+  fairness_lead_cap_answers: 2
+  max_midstream_injections_per_round: 2
+  enable_multimodal_tools: true
+  image_generation_backend: openai
+  video_generation_backend: openai
+  voting_sensitivity: checklist_gated
+  voting_threshold: 2
+  coordination:
+    evaluation_criteria_generator:
+      enabled: true
+    max_orchestration_restarts: 0
+    use_skills: true
+    skills_directory: .agent/skills
+    enable_agent_task_planning: true
+    task_planning_filesystem_mode: true
+    enable_memory_filesystem_mode: true
+    learning_capture_mode: final_only  # no evolving skill or mem during coord, only in final pres.
+    enable_changedoc: true
+    write_mode: auto
+    subagent_types: [evaluator, explorer, researcher, novelty, critic, builder]
+    enable_subagents: true
+    subagent_default_timeout: 600
+    subagent_max_concurrent: 3
+    subagent_orchestrator:
+      enabled: true
+      agents:
+        - backend:
+            type: claude_code
+            model: claude-sonnet-4-6
+            reasoning:
+              type: "disabled"  # since subagent
+            enable_web_search: true
+            # Other subagent options:
+            # type: gemini
+            # model: gemini-3-flash-preview
+            # type: openrouter
+            # model:  z-ai/glm-5
+            # type: codex
+            # model: gpt-5.3-codex
+            # reasoning:
+            #   effort: medium
+            #   summary: auto
+  context_paths: []
+timeout_settings:
+  orchestrator_timeout_seconds: 5400
+  initial_round_timeout_seconds: 1800
+  subsequent_round_timeout_seconds: 1800
+  round_timeout_grace_seconds: 450
+ui:
+  display_type: textual_terminal
+  logging_enabled: true

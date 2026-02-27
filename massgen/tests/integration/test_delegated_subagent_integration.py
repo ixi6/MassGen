@@ -3,7 +3,7 @@ Integration tests for delegated subagent mode (MAS-325).
 
 These tests verify the end-to-end round-trip between SubagentManager
 (container side) and SubagentLaunchWatcher (host side) using a shared
-delegation directory and mock Docker execution.
+delegation directory and mock subprocess execution.
 
 Marked @pytest.mark.integration (requires --run-integration flag).
 """
@@ -57,11 +57,36 @@ def manager_and_watcher(tmp_path, delegation_dir, workspace_root):
 
     watcher = SubagentLaunchWatcher(
         delegation_dir=delegation_dir,
-        docker_image="massgen:test",
         allowed_workspace_roots=[tmp_path],
     )
 
     return manager, watcher
+
+
+def _stub_yaml_and_prompt(manager):
+    """Return a context manager that stubs YAML config and prompt generation on the manager."""
+    yaml_patch = patch.object(
+        manager,
+        "_generate_subagent_yaml_config",
+        return_value={"agents": [{"id": "a1", "backend": {"type": "openai", "model": "gpt-4o"}}]},
+    )
+    prompt_patch = patch.object(
+        manager,
+        "_build_subagent_system_prompt",
+        return_value=("Test task prompt", None),
+    )
+
+    class _Combined:
+        def __enter__(self):
+            yaml_patch.__enter__()
+            prompt_patch.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            prompt_patch.__exit__(*args)
+            yaml_patch.__exit__(*args)
+
+    return _Combined()
 
 
 @pytest.mark.asyncio
@@ -73,23 +98,26 @@ async def test_delegated_round_trip(manager_and_watcher, tmp_path, delegation_di
 
     the_answer = "The answer to the delegated task."
 
-    async def fake_run_container(request, sanitized_yaml):
+    async def fake_run_subprocess(request, yaml_config):
         # Write the answer file
         answer_path = Path(request.answer_file)
         answer_path.parent.mkdir(parents=True, exist_ok=True)
         answer_path.write_text(the_answer)
-        return 0, "completed", ""
+        return 0, "", ""
 
-    with patch.object(watcher, "_run_container", side_effect=fake_run_container):
+    with (
+        patch.object(watcher, "_run_subprocess", side_effect=fake_run_subprocess),
+        _stub_yaml_and_prompt(manager),
+    ):
         await watcher.start()
 
-        config = SubagentConfig(id="sub-roundtrip", task="Write the answer.")
+        config = SubagentConfig(id="sub-roundtrip", task="Write the answer.", parent_agent_id="parent")
         workspace = manager._create_workspace(config.id)
 
         # Create CONTEXT.md (required by manager)
         (workspace / "CONTEXT.md").write_text("Integration test context.")
 
-        result = await manager.execute(config, refine=False)
+        result = await manager._execute_subagent(config, workspace)
 
         await watcher.stop()
 
@@ -120,16 +148,16 @@ async def test_delegated_live_logs_symlink(manager_and_watcher, tmp_path):
 
     original_to_file = DelegationRequest.to_file
 
-    with patch.object(DelegationRequest, "to_file", tracking_to_file):
+    with patch.object(DelegationRequest, "to_file", tracking_to_file), _stub_yaml_and_prompt(manager):
         # Add a log directory so symlinks are enabled
         manager._subagent_logs_base = tmp_path / "logs" / "subagents"
         manager._subagent_logs_base.mkdir(parents=True, exist_ok=True)
         manager._log_directory = tmp_path / "logs"
 
-        config = SubagentConfig(id="sub-symlink", task="Test symlink order.")
+        config = SubagentConfig(id="sub-symlink", task="Test symlink order.", parent_agent_id="parent")
         workspace = manager._create_workspace(config.id)
 
-        # Write response immediately so execute doesn't hang
+        # Write response immediately so _execute_subagent doesn't hang
         async def respond_quickly():
             await asyncio.sleep(0.2)
             resp = DelegationResponse(
@@ -146,7 +174,7 @@ async def test_delegated_live_logs_symlink(manager_and_watcher, tmp_path):
 
         asyncio.create_task(respond_quickly())
         (workspace / "CONTEXT.md").write_text("Context.")
-        await manager.execute(config, refine=False)
+        await manager._execute_subagent(config, workspace)
 
     # If log base is set, symlink should have been created before request
     if symlink_created_before_request:

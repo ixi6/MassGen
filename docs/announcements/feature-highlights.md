@@ -13,7 +13,7 @@ Update this when major new features ship.
 
 🧠Supports diverse backends — Access open-source and proprietary models (local, Gemini 3.1 Pro, GPT-5.3-Codex, Claude 4.6 Opus/Sonnet, GLM-5, Grok 4.1) and agents (Claude Code, Codex, GitHub Copilot). 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/backends.html
 
-🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Both modes support personas, refinement, specialized subagent roles, and dynamic evaluation criteria. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
+🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Agents can spawn specialized subagents (builder, evaluator, explorer, critic, researcher, novelty) for focused work in the background. Both modes support personas, refinement, and dynamic evaluation criteria. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
 
 📋Task planning & execution— Agents create structured plans with chunked execution, progress checkpoints, iterative review, and verification requirements. Spec mode for formal requirements before execution. Configurable plan depth and persistent storage for re-execution. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/task_planning.html
 
@@ -35,7 +35,7 @@ Update this when major new features ship.
 
 🧠Supports diverse backends — Access open-source and proprietary models (local, Gemini 3.1 Pro, GPT-5.3-Codex, Claude 4.6 Opus/Sonnet, GLM-5, Grok 4.1) and agents (Claude Code, Codex, GitHub Copilot). 👉 More Info: https://lnkd.in/gdXw-ZiN
 
-🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Both modes support personas, refinement, specialized subagent roles, and dynamic evaluation criteria. 👉 More Info: https://lnkd.in/gTH5prec
+🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Agents can spawn specialized subagents (builder, evaluator, explorer, critic, researcher, novelty) for focused work in the background. Both modes support personas, refinement, and dynamic evaluation criteria. 👉 More Info: https://lnkd.in/gTH5prec
 
 📋Task planning & execution — Agents create structured plans with chunked execution, progress checkpoints, iterative review, and verification requirements. Spec mode for formal requirements before execution. Configurable plan depth and persistent storage for re-execution. 👉 More Info: https://lnkd.in/gy5qtbau
 

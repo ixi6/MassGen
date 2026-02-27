@@ -149,7 +149,7 @@ class TestSubstantivenessTest:
         # Must instruct agents to implement all improvements, not cherry-pick
         assert "all" in normalized and "improvements" in normalized
         # Must discourage picking only a subset (any of these phrasings suffice)
-        assert "cherry" in normalized or "single easiest" in normalized or "one and stop" in normalized or "not just one" in normalized
+        assert "cherry" in normalized or "single easiest" in normalized or "one and stop" in normalized or "not just one" in normalized or "not just some" in normalized
 
 
 # ---------------------------------------------------------------------------

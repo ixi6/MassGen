@@ -811,9 +811,22 @@ The **substantiveness** object is required so the system can:
 - Verify your commitments by name — list each specific change, not just a count
 
 Use:
-- `"transformative"`: list of fundamentally different approach/architecture changes planned
-- `"structural"`: list of major capability/experience redesign changes planned
-- `"incremental"`: list of polish-level changes planned
+- `"transformative"`: changes that alter the overall structure, approach, or framing —
+  a user would notice the output is fundamentally reorganized or reconceived. E.g.:
+  switch to a completely different algorithm or architecture; introduce a new central
+  argument or creative direction; redesign the entire output structure (linear → modular,
+  chapters → themes, class-based → functional).
+- `"structural"`: significant improvements to existing components without changing the
+  overall approach — a major part gets materially better. E.g.: rewrite one module or
+  section; fix a broken subsystem; substantially improve one quality dimension within the
+  current structure.
+- `"incremental"`: polish and refinement within existing elements — noticeable only on
+  close inspection. E.g.: clearer variable names; better wording in a paragraph; minor
+  formatting or style adjustments.
+
+Quick test: "Would a user notice the overall approach or structure changed?" → transformative.
+"Would they notice a major part got substantially better?" → structural.
+"Would they only notice if they looked closely?" → incremental.
 - `"decision_space_exhausted"`: `true` only if no meaningful structural/transformative improvements remain
 - `"notes"`: short justification
 
@@ -879,65 +892,94 @@ qualitative analysis inline.
 **Phase 2 — Score and submit `submit_checklist`.**
 
 Score EACH agent per dimension using the evidence from Phase 1. Submit with
-per-agent scores format. Classify improvements honestly: truly transformative
-changes (full rewrites, architecture shifts, new sections) go in `transformative`;
-smaller targeted fixes go in `structural`. Do not downgrade transformative work
-to avoid triggering a new round — each round exists to make the output genuinely
-better. The `improvements` field = dimensions where even the best agent fell short.
+per-agent scores format. Classify improvements honestly using the definitions
+above — do not downgrade transformative work to avoid triggering a new round.
+The `improvements` field = dimensions where even the best agent fell short.
 
-**Phase 3 — Execute improvements (on `{iterate_action}` verdict).**
+`submit_checklist` returns a verdict:
+- **`{iterate_action}`** — improvements needed; continue to Phase 3
+- **`{terminate_action}`** — output is sufficient; skip to Phase 5 to submit
 
-First encode your full improvement plan as task plan
-items before executing anything. Annotate each task's executor:
-`[main]` (you do it inline), `[builder]` (focused single-deliverable spec),
-`[synthesize]` (pull a specific element from another agent's answer — keep it),
-or `[skip]` (deprioritized). Add `depends_on` links only where the output of
-one task is genuinely required input for another.
+Follow the verdict. Do not call `submit_checklist` again after receiving it.
 
-Then execute dependency-aware:
+**Phase 3 — Execute improvements (`{iterate_action}` verdict only).**
 
-1. You own the structural/creative building — you have the context to make
-   good decisions. Do it inline rather than delegating creative judgment.
-2. For well-defined implementation chunks (500+ lines, multi-file rewrite, a
-   clear spec with no ambiguous creative choices), delegate to builder — but
-   give it a FOCUSED spec for ONE deliverable, not everything at once. Batch
-   independent builder tasks into a single `spawn_subagents` call
-   (`background=True, refine=False`).
-3. Collect builder results, integrate, repeat for dependent tasks.
+**Step 3a — Write your task plan first, one task per change.**
 
-If no specialized subagents are available, execute all tasks inline in
-dependency order.
+Before executing anything, enumerate every improvement as individual task plan
+items. Each transformative change, each structural fix, each incremental polish
+item gets its own task entry — do not batch them. Fine-grained tasks make
+parallelism possible: if "rewrite hero" and "fix mobile nav" are one item,
+you can't parallelize them.
 
-**Phase 4 — Novelty (when `{iterate_action}` verdict + zero transformative changes).**
+Annotate each task:
+- `[builder]` — focused single-deliverable spec; can run in parallel
+- `[main]` — judgment-heavy work you do inline (architectural decisions, synthesis)
+- `[synthesize]` — pull a specific element from another agent's answer and keep it
+- `[skip]` — deprioritized for this round
 
-If `submit_checklist` returned zero transformative changes AND
-a novelty subagent is available: spawn novelty (`background=True, refine=False`)
-while you start implementing structural improvements. When novelty returns, you
-MUST adopt at least one of its directions — list it in the `transformative`
-array of your next checklist submission. If you genuinely cannot use any
-suggestion, explain why in `substantiveness.notes`. Do not ignore novelty's
-output silently — ignoring it wastes the round and re-triggers the same plateau.
+Add `depends_on` links only where the output of one task is genuinely required
+input for another. Most improvements are independent — don't add false dependencies.
+
+**Step 3b — Maximize parallelism when executing.**
+
+Look at your task plan. Identify all `[builder]` tasks with no dependencies on
+each other. Spawn them all in a **single** `spawn_subagents` call — they run
+simultaneously:
+
+- `tasks`: one entry per deliverable (not one entry for all of them)
+- `background=True, refine=False`
+- `context_paths`: scoped to what each subagent needs (e.g. `["deliverable/"]`),
+  not always `["./"]` (full workspace)
+
+Do your `[main]` work while builders run. Collect and integrate when all finish.
+Then spawn the next wave for tasks that depended on this batch.
+
+When collecting builder results:
+- **Output doesn't match spec**: Check whether the spec was ambiguous. If the
+  builder's interpretation was reasonable, accept it and note the deviation. If
+  the spec was clear and the builder diverged, re-spawn that one task with an
+  explicit correction — do not re-run all builders.
+- **Builder surfaces a hidden dependency**: It will say so in its output. Spawn
+  the blocking task first, then re-run the dependent builder once it completes.
+- **Multiple builders rewrote the same file**: You arbitrate — pick the better
+  version or merge manually inline. Do not silently discard either output.
+
+If no specialized subagents are available, execute tasks inline in dependency
+order.
+
+**Phase 4 — Novelty break-glass (branch: `{iterate_action}` verdict AND zero transformative changes identified).**
+
+Skip this phase if you have transformative changes to implement — go straight to Phase 3.
+Only enter Phase 4 if `submit_checklist` returned zero transformative changes AND
+a novelty subagent is available. If so: spawn novelty (`background=True, refine=False`)
+while you continue implementing structural improvements. When novelty returns,
+evaluate each direction against your findings: does it genuinely break the
+anchoring pattern? Is it implementable? Does it differ from what's already been
+tried? If at least one direction passes, adopt it and list it in the
+`transformative` array of your next checklist submission. If none pass, explain
+in `substantiveness.notes` which direction failed and why — not just "none
+apply." Engaging seriously with novelty's output, even to reject it, is what
+breaks the plateau. Do not ignore it silently.
 
 **Phase 5 — Integrate, verify, submit.**
 
-After all tasks complete, verify no regressions, then call `{iterate_action}`.
+After all tasks complete:
+1. Verify no regressions — confirm features from prior rounds still work. A working
+   output with fewer features is always better than a broken output with more.
+2. Confirm you implemented the full scope of identified improvements, not just some.
+   Each round is expensive — deliver everything you identified, not just the easiest item.
+3. Call `{iterate_action}` to submit your improved answer and end this round.
 
-Do **not** call `submit_checklist` again after a `{iterate_action}` verdict —
-you already have your improvement plan. The next coordination tool call must be
-`{iterate_action}` (or `{terminate_action}` if you decide the work is now sufficient).
+Your answer MUST be **obviously and substantially better** than the prior round —
+not just marginally different. A user should immediately notice the improvement.
+Do not copy or resubmit the same content with minor tweaks.
 
-**If the verdict is `{iterate_action}`**: your new answer MUST be **obviously and
-substantially better** — not just marginally different. A user should immediately
-notice the improvement. Do NOT simply copy or resubmit the same content with minor
-tweaks. Implement the changes you identified — not just acknowledge them.
-
-**Implement ALL identified improvements, not just one.** Each round is expensive —
-make it count by delivering the full scope of improvements you identified.
-
-**Verify existing features before adding new ones.** After making changes, confirm that
-features from prior rounds still work. Adding a feature that breaks existing functionality
-is regression, not improvement. A working output with fewer features is always better than
-a broken output with more features."""
+**What happens after `{iterate_action}`:** Your improved answer is submitted and this
+round ends. If another coordination round is needed, you will receive a new prompt and
+the lifecycle restarts at Phase 1 with all agents' updated answers. If the output is
+now sufficient, the session terminates. You do not need to do anything to trigger the
+next round — the system handles it."""
 
 
 class Priority(IntEnum):
@@ -3854,29 +3896,38 @@ class SubagentSection(SystemPromptSection):
                 )
             if t.name.lower() == "builder":
                 lines.append(
-                    "**FOR `BUILDER` TASKS — use whenever work is too large to do inline:**\n"
-                    "Builder is not just for checklist-gated transformative changes. Use it for any "
-                    "work that would exhaust your context or take too long inline — large artifact "
-                    "generation, complex multi-file rewrites, big structural implementations, or "
-                    "novelty proposals too ambitious to execute yourself.\n\n"
-                    "**Mental model: main agent owns creative decisions, builder owns execution.**\n"
-                    "You make the structural/architectural choices — you have the full context. "
-                    "Builder executes a spec you write; it does not decide what to build.\n\n"
+                    "**FOR `BUILDER` TASKS — one task per deliverable, run independent ones in parallel:**\n\n"
+                    "**The key rule: one builder task per independent deliverable.** Do NOT write one "
+                    "large spec that covers multiple improvements. Split them into separate tasks and "
+                    "spawn them in a single `spawn_subagents` call — they run simultaneously.\n\n"
+                    "Bad (monolithic — DO NOT DO THIS):\n"
+                    '`tasks=[{"task": "Rewrite member portraits, redesign album section, fix timeline, '
+                    'update CSS, rewrite narrative, fix scroll-reveal", "subagent_type": "builder", ...}]`\n\n'
+                    "Good (parallel — each improvement is its own task):\n"
+                    "`tasks=[\n"
+                    '  {"task": "Rewrite member portraits section...", "subagent_type": "builder", '
+                    '"context_paths": ["deliverable/"]},\n'
+                    '  {"task": "Redesign album section with artwork...", "subagent_type": "builder", '
+                    '"context_paths": ["deliverable/"]},\n'
+                    '  {"task": "Fix alternating timeline layout...", "subagent_type": "builder", '
+                    '"context_paths": ["deliverable/"]},\n'
+                    '  {"task": "Rewrite narrative prose in About + Hero...", "subagent_type": "builder", '
+                    '"context_paths": ["deliverable/"]},\n'
+                    "]`\n\n"
+                    "**You decide what to build — builder executes it.** Make all creative and "
+                    "architectural decisions yourself before writing the spec. Builder does not "
+                    "decide what to change or which direction to take.\n\n"
+                    "**Scope `context_paths` to what each subagent actually needs** "
+                    '(e.g. `["deliverable/"]`, `["src/components/"]`), not always '
+                    '`["./"]` (full workspace). Less context = faster startup.\n\n'
                     "**The novelty → build loop** (when novelty fires after T=0):\n"
-                    "1. Novelty returns directions. You evaluate them and decide which to adopt.\n"
-                    "2. List the adopted direction in the `transformative` array of your next "
-                    "`submit_checklist` call.\n"
-                    "3. Build it yourself inline if feasible. If the implementation is too large "
-                    "(500+ lines, multi-file rewrite), write a focused spec for ONE deliverable "
-                    "and delegate to builder.\n"
-                    "4. Builder returns the result. You integrate and verify.\n\n"
-                    "**Incremental tasks** (copy edits, CSS polish, test fixes, accessibility):\n"
-                    "Do these inline — they are quick and benefit from your context. Do NOT "
-                    "delegate incremental tasks to builder (that's context overhead for trivial work).\n\n"
-                    "**Direct builder spawning** (any time the work is simply large/well-defined):\n"
-                    "You can spawn builder directly without going through the checklist — e.g., "
-                    "rewriting a large section, multi-file implementation with a clear spec. "
-                    "Give builder ONE focused deliverable per task, not a catch-all spec.\n\n"
+                    "1. Novelty returns directions. Evaluate each: does it break the "
+                    "anchoring pattern? Is it implementable? Differs from what's been tried?\n"
+                    "2. If at least one passes, adopt it — list it in the `transformative` "
+                    "array of your next `submit_checklist`. If none pass, explain in "
+                    "`substantiveness.notes` which failed and why.\n"
+                    "3. Write a focused spec for ONE deliverable and spawn a builder task.\n"
+                    "4. Integrate and verify the result.\n\n"
                     "**Deferring a valid proposal with T=0 wastes a full round** — "
                     "it re-triggers novelty instead of making progress.",
                 )
@@ -3992,8 +4043,6 @@ quality and priorities, since you have the full context and the subagent may run
 3. **Explicit Context Paths (REQUIRED)**: Every task must include `context_paths`
    - Use `[]` for clean-slate research (no extra context beyond task text)
    - Use `["./"]` for read-only access to the current parent workspace (CWD)
-   - Use `["./", "./temp_workspaces/<peer_subagent_id>"]` to also include peer Shared Reference
-     artifacts (e.g., `agent_A`); note: relative paths resolve from the parent workspace, not your CWD — prefer absolute paths when available
    - Use specific paths for least-privilege access (recommended when possible)
    - `context_files` remains optional for copying files into subagent workspace
 4. **No Nesting**: Subagents cannot spawn their own subagents
@@ -4071,8 +4120,6 @@ All subagents start at the same time and cannot see each other's output. Design 
 4. **`context_paths` must be explicit**:
    - Use `[]` if you intentionally want no extra context
    - Use `["./"]` for the current parent workspace (CWD)
-   - Use `["./", "./temp_workspaces/<peer_subagent_id>"]` to also include peer Shared Reference
-     artifacts (e.g., `agent_A`); note: relative paths resolve from the parent workspace, not your CWD — prefer absolute paths when available
    - Use specific paths for least-privilege access
 
 ```python
@@ -4739,7 +4786,7 @@ you MUST create a `CONTEXT.md` file in your workspace with task context.
 This ordering is strict even for background jobs: write `CONTEXT.md` first, then start media tools.
 
 ### Why This Matters
-External APIs (like GPT-4.1 for image analysis) have no idea what you're working on.
+External APIs (like in `read_media`) have no idea what you're working on.
 Without context, they will hallucinate - for example, interpreting "MassGen" as
 "Massachusetts General Hospital" instead of "multi-agent AI system".
 

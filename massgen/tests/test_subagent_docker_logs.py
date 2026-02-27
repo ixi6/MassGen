@@ -151,6 +151,8 @@ class TestSubagentMcpConfigEnv:
         orch.orchestrator_id = "test-orch"
         orch._subagent_logs_dir = tmp_path / "logs"
         orch._subagent_logs_dir.mkdir()
+        orch._delegation_dir = None
+        orch._subagent_launch_watcher = None
         # Use spec=[] on config and coordination_config so hasattr() returns
         # False for unset attrs (prevents MagicMock from auto-creating attrs
         # that fail JSON serialization).

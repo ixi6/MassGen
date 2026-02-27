@@ -862,5 +862,7 @@ class TestEvaluationDelegation:
         assert "[]" in content
         assert '["./"]' in content
         assert "current parent workspace (cwd)" in lower
-        assert "temp_workspaces" in lower
         assert "parent workspace" in lower
+        # temp_workspaces example removed from guidance — it confused agents into
+        # hallucinating paths that don't exist. Existence validation in the spawn
+        # tool now catches bad paths immediately instead.

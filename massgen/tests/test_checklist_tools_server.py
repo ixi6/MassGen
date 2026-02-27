@@ -2018,8 +2018,8 @@ class TestNoveltyGuidanceInjection:
             substantiveness=_t0_substantiveness(),
         )
         explanation = result["explanation"]
-        # Must contain mandatory language (MUST adopt / must adopt)
-        assert "must adopt" in explanation.lower()
+        # Must contain gate-based engagement language (anchoring pattern / evaluate each)
+        assert "anchoring" in explanation.lower() or "evaluate each" in explanation.lower()
 
     def test_no_novelty_guidance_when_novelty_disabled(self):
         """No novelty guidance injected when novelty subagent is disabled."""

@@ -13,10 +13,11 @@ Subagent isolation has two dimensions:
 
 Subagent runtime mode is configured under `orchestrator.coordination`.
 
-- `subagent_runtime_mode: isolated` (default)
-- `subagent_runtime_mode: inherited`
-- `subagent_runtime_fallback_mode: inherited` (optional explicit fallback)
-- `subagent_host_launch_prefix: [...]` (optional host-launch bridge for containerized parent runtimes)
+- `subagent_runtime_mode: isolated` (default) — run subagents as independent processes on the host
+- `subagent_runtime_mode: inherited` — run subagents in the same runtime boundary as the parent
+- `subagent_runtime_mode: delegated` — file-based delegation to a host-side watcher that creates isolated containers (see below)
+- `subagent_runtime_fallback_mode: inherited` — optional explicit fallback when isolated prerequisites are unavailable
+- `subagent_host_launch_prefix: [...]` — optional host-launch bridge for containerized parent runtimes
 
 Behavior:
 
@@ -25,7 +26,57 @@ Behavior:
   - with no fallback: launch fails with actionable diagnostics
   - with `subagent_runtime_fallback_mode: inherited`: launch proceeds in inherited mode and emits an explicit warning
 - `inherited` runs subagents in the same runtime boundary as the parent
-- Codex difference: in Docker mode, if fallback is unset and `subagent_runtime_mode` is `isolated`, orchestrator auto-uses `subagent_runtime_fallback_mode: inherited`; other backends keep strict isolated behavior unless fallback is explicitly set
+- `delegated` uses the outbox pattern: the container writes a request file, a trusted host-side `SubagentLaunchWatcher` creates an isolated container per subagent (see [Delegated Mode](#delegated-mode-codex--docker) below)
+- Codex+Docker auto-detection: when the backend is Codex with `command_line_execution_mode: docker` and no explicit fallback/prefix is set, the orchestrator automatically switches to `delegated` mode if a delegation directory is available. This replaces the old `inherited` fallback with secure per-subagent container isolation.
+
+## Delegated Mode (Codex + Docker)
+
+When the parent agent runs inside a Docker container (e.g. the Codex backend), subagents cannot be launched as isolated host processes without mounting the Docker socket — a critical security risk. The **delegated mode** solves this via the outbox pattern:
+
+```
+Container (untrusted)                  Host (trusted)
+┌──────────────────┐                   ┌─────────────────────────┐
+│ SubagentManager   │  request.json    │ SubagentLaunchWatcher   │
+│ (_execute_        │ ──────────────►  │                         │
+│  delegated)       │                  │ - Validates workspace   │
+│                   │  response.json   │   against allowlist     │
+│ polls for result  │ ◄────────────── │ - Hardcodes image,      │
+│                   │                  │   network=none, etc.    │
+│                   │                  │ - Creates container via │
+│                   │                  │   DockerManager         │
+└──────────────────┘                   └─────────────────────────┘
+```
+
+### How It Works
+
+1. `SubagentManager._execute_delegated()` writes a `request_{subagent_id}.json` atomically to the shared delegation directory (mounted rw in both container and host)
+2. `SubagentLaunchWatcher` on the host polls for new request files
+3. For each request, the watcher:
+   - Validates the workspace path against `allowed_workspace_roots`
+   - Sanitizes the YAML config: overrides `command_line_execution_mode=local`, strips all `command_line_docker_*` keys (the container IS the sandbox — no Docker-in-Docker)
+   - Creates an isolated container via `DockerManager` with hardcoded `network_mode="none"` and the image from orchestrator config
+   - Runs `massgen --automation` inside the container
+   - Writes `response_{subagent_id}.json` atomically
+4. `SubagentManager` polls for the response file and reads the answer
+
+### Security Properties
+
+All security-critical parameters are set by the **host-side watcher**, not from the request file:
+- Docker image hardcoded from orchestrator config
+- `network_mode` hardcoded to `"none"`
+- `privileged` always `False`
+- Workspace path validated against allowlist before any container is created
+- Unknown fields in request files are silently ignored (forward compatibility)
+
+### Cancellation
+
+On timeout or `asyncio.CancelledError`, `SubagentManager` writes an empty `cancel_{subagent_id}` sentinel file. The watcher monitors for this and cancels the running container task.
+
+### Key Files
+
+- `massgen/subagent/delegation_protocol.py` — `DelegationRequest`/`DelegationResponse` dataclasses, atomic write helpers, cancel sentinel
+- `massgen/subagent/launch_watcher.py` — `SubagentLaunchWatcher` host-side polling loop
+- `massgen/subagent/manager.py` — `_execute_delegated()` method
 
 ## Context Contract
 
@@ -111,13 +162,15 @@ Reasoning:
 
 ## Launch Flow
 
-1. Parent orchestrator creates subagent MCP config and passes runtime settings
+1. Parent orchestrator creates subagent MCP config and passes runtime settings (including `--delegation-directory`)
 2. Subagent MCP server initializes `SubagentManager` with those settings
 3. `SubagentManager` resolves effective runtime mode:
-   - isolated
-   - inherited
-   - inherited via explicit fallback with warning
-4. Subagent process is launched and log/TUI contracts are preserved
+   - `isolated` — subprocess on host
+   - `inherited` — subprocess in same container
+   - `inherited` via explicit fallback with warning
+   - `delegated` — file-based outbox to host-side `SubagentLaunchWatcher`
+4. For `delegated` mode: request file → watcher → isolated container → response file
+5. Subagent result and log/TUI contracts are preserved across all modes
 
 ## Logging and TUI Contracts
 
@@ -130,8 +183,10 @@ Across runtime modes, contracts remain stable:
 
 ## Key Files
 
-- `massgen/subagent/manager.py`: runtime routing, launch, lifecycle, results
-- `massgen/mcp_tools/subagent/_subagent_mcp_server.py`: tool schema and task validation
-- `massgen/orchestrator.py`: subagent MCP config wiring
-- `massgen/agent_config.py`: runtime config surface on coordination settings
-- `massgen/config_validator.py`: validation of runtime mode/fallback combinations
+- `massgen/subagent/manager.py` — runtime routing, launch, lifecycle, results, `_execute_delegated()`
+- `massgen/subagent/delegation_protocol.py` — request/response protocol dataclasses and file helpers
+- `massgen/subagent/launch_watcher.py` — host-side `SubagentLaunchWatcher` for delegated mode
+- `massgen/mcp_tools/subagent/_subagent_mcp_server.py` — tool schema and task validation
+- `massgen/orchestrator.py` — subagent MCP config wiring, delegation dir setup, watcher lifecycle
+- `massgen/agent_config.py` — runtime config surface on coordination settings
+- `massgen/config_validator.py` — validation of runtime mode/fallback combinations

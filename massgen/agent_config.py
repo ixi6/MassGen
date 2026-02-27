@@ -281,7 +281,7 @@ class CoordinationConfig:
 
     def _validate_subagent_runtime_config(self):
         """Validate subagent runtime mode/fallback configuration."""
-        valid_modes = {"isolated", "inherited"}
+        valid_modes = {"isolated", "inherited", "delegated"}
         if self.subagent_runtime_mode not in valid_modes:
             raise ValueError(
                 f"Invalid subagent_runtime_mode: '{self.subagent_runtime_mode}'. " f"Must be one of: {sorted(valid_modes)}",

@@ -408,6 +408,103 @@ class TestSpawnSubagentsContextPathsRequirement:
         assert fake_manager.background_calls == []
 
     @pytest.mark.asyncio
+    async def test_nonexistent_absolute_context_path_is_rejected(self, monkeypatch, tmp_path):
+        """Absolute path that doesn't exist should fail fast with workspace info."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {
+                    "task": "Screenshot the website",
+                    "context_paths": ["/nonexistent/path/to/nowhere"],
+                },
+            ],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is False
+        assert result["operation"] == "spawn_subagents"
+        assert "/nonexistent/path/to/nowhere" in result["error"]
+        assert str(tmp_path) in result["error"]  # workspace path shown for guidance
+        assert fake_manager.background_calls == []
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_relative_context_path_is_rejected(self, monkeypatch, tmp_path):
+        """Relative path that doesn't exist (e.g. hallucinated temp_workspaces) fails fast."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {
+                    "task": "Evaluate the site",
+                    "context_paths": ["./temp_workspaces/agent_a/agent1"],
+                },
+            ],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is False
+        assert result["operation"] == "spawn_subagents"
+        assert "temp_workspaces/agent_a/agent1" in result["error"]
+        assert str(tmp_path) in result["error"]  # workspace path shown for guidance
+        assert fake_manager.background_calls == []
+
+    @pytest.mark.asyncio
+    async def test_dotslash_context_path_accepted_when_workspace_exists(self, monkeypatch, tmp_path):
+        """'["./"]' resolves to the workspace root which always exists."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {
+                    "task": "Take screenshots of the website",
+                    "context_paths": ["./"],
+                },
+            ],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert fake_manager.background_calls[0]["context_paths"] == ["./"]
+
+    @pytest.mark.asyncio
+    async def test_existing_subdirectory_context_path_is_accepted(self, monkeypatch, tmp_path):
+        """A relative path resolving to an existing subdirectory is valid."""
+        deliverable = tmp_path / "deliverable"
+        deliverable.mkdir()
+
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {
+                    "task": "Review deliverable files",
+                    "context_paths": ["./deliverable"],
+                },
+            ],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert fake_manager.background_calls[0]["context_paths"] == ["./deliverable"]
+
+    @pytest.mark.asyncio
     async def test_reusing_completed_subagent_id_is_allowed(self, monkeypatch, tmp_path):
         """Completed IDs can be reused; only running IDs are blocked."""
         server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)

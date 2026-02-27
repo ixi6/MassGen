@@ -47,6 +47,7 @@ _max_timeout: int = 600
 _subagent_runtime_mode: str = "isolated"
 _subagent_runtime_fallback_mode: str | None = None
 _subagent_host_launch_prefix: list[str] = []
+_delegation_directory: str | None = None
 _parent_context_paths: list[dict[str, str]] = []
 _parent_coordination_config: dict[str, Any] = {}
 _specialized_subagents: dict[str, dict[str, Any]] = {}  # name -> type config dict
@@ -179,6 +180,7 @@ def _get_manager() -> SubagentManager:
             subagent_runtime_mode=_subagent_runtime_mode,
             subagent_runtime_fallback_mode=_subagent_runtime_fallback_mode,
             subagent_host_launch_prefix=_subagent_host_launch_prefix,
+            delegation_directory=_delegation_directory,
         )
     return _manager
 
@@ -219,6 +221,7 @@ async def create_server() -> fastmcp.FastMCP:
     global _subagent_orchestrator_config, _log_directory, _parent_context_paths
     global _max_concurrent, _default_timeout, _min_timeout, _max_timeout
     global _subagent_runtime_mode, _subagent_runtime_fallback_mode, _subagent_host_launch_prefix
+    global _delegation_directory
     global _parent_coordination_config, _specialized_subagents, _agent_temporary_workspace
 
     parser = argparse.ArgumentParser(description="Subagent MCP Server")
@@ -326,6 +329,13 @@ async def create_server() -> fastmcp.FastMCP:
         required=False,
         default="[]",
         help="JSON-encoded command prefix for host-isolated launch in containerized runtimes",
+    )
+    parser.add_argument(
+        "--delegation-directory",
+        type=str,
+        required=False,
+        default="",
+        help="Path to shared delegation directory for file-based container-to-host subagent launch (delegated mode).",
     )
     parser.add_argument(
         "--hook-dir",
@@ -441,6 +451,7 @@ async def create_server() -> fastmcp.FastMCP:
     except json.JSONDecodeError:
         _subagent_host_launch_prefix = []
         logger.warning("[SubagentMCP] Failed to parse --host-launch-prefix JSON; defaulting to empty list")
+    _delegation_directory = args.delegation_directory if args.delegation_directory else None
 
     # Set up signal handlers for graceful shutdown
     try:
@@ -619,6 +630,22 @@ async def create_server() -> fastmcp.FastMCP:
                         "operation": "spawn_subagents",
                         "error": (f"Task at index {i} has invalid 'context_paths' type: expected list, got {actual_type}. " "Use [] for no extra context or a list of path strings."),
                     }
+                if _workspace_path:
+                    workspace_root = Path(_workspace_path)
+                    for path_str in task_config["context_paths"]:
+                        resolved = Path(path_str)
+                        if not resolved.is_absolute():
+                            resolved = workspace_root / path_str
+                        if not resolved.exists():
+                            return {
+                                "success": False,
+                                "operation": "spawn_subagents",
+                                "error": (
+                                    f"Task at index {i} has a non-existent context_path: '{path_str}'. "
+                                    f"Your workspace is at: {_workspace_path}. "
+                                    "Use './' to share your full workspace, or check the path exists first."
+                                ),
+                            }
 
             # Normalize task IDs using a global counter so IDs are unique
             # across multiple spawn_subagents calls (not just within one call).

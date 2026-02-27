@@ -464,6 +464,8 @@ class Orchestrator(ChatAgent):
         # server (which runs inside Docker) can write logs. Using a dedicated
         # directory avoids mounting the entire .massgen/massgen_logs tree.
         self._subagent_logs_dir: Path | None = None
+        self._delegation_dir: Path | None = None
+        self._subagent_launch_watcher = None  # SubagentLaunchWatcher instance (host-side)
         if hasattr(self.config, "coordination_config") and getattr(self.config.coordination_config, "enable_subagents", False):
             try:
                 log_session_dir = get_log_session_dir()
@@ -489,6 +491,13 @@ class Orchestrator(ChatAgent):
                         logger.warning(
                             f"[Orchestrator] Could not create subagent logs symlink: {e}",
                         )
+
+                    # Create delegation directory for file-based container-to-host launch
+                    self._delegation_dir = self._subagent_logs_dir / "_delegation"
+                    self._delegation_dir.mkdir(parents=True, exist_ok=True)
+                    logger.info(
+                        f"[Orchestrator] Created delegation directory: {self._delegation_dir}",
+                    )
             except Exception as e:
                 logger.warning(f"[Orchestrator] Could not create subagent logs directory: {e}")
 
@@ -509,6 +518,16 @@ class Orchestrator(ChatAgent):
                     logger.info(
                         f"[Orchestrator] Added Docker mount for subagent logs: {resolved}",
                     )
+                    # Also mount delegation directory for file-based container-to-host launch
+                    if self._delegation_dir is not None:
+                        del_resolved = str(self._delegation_dir.resolve())
+                        fm.docker_manager.additional_mounts[del_resolved] = {
+                            "bind": del_resolved,
+                            "mode": "rw",
+                        }
+                        logger.info(
+                            f"[Orchestrator] Added Docker mount for delegation dir: {del_resolved}",
+                        )
 
             agent.backend.filesystem_manager.setup_orchestration_paths(
                 agent_id=agent_id,
@@ -2112,8 +2131,9 @@ class Orchestrator(ChatAgent):
                     subagent_host_launch_prefix = host_launch_prefix
 
         # Codex+Docker runs MCP servers in a containerized parent runtime.
-        # Without a host-launch bridge, strict isolated mode cannot launch subagents.
-        # Default to explicit inherited fallback for this backend/mode when unset.
+        # Without a host-launch bridge, use the secure outbox delegation pattern instead.
+        # This creates an isolated container for each subagent via SubagentLaunchWatcher,
+        # avoiding Docker socket mounting (critical security risk).
         backend_cfg = None
         if hasattr(self, "agents") and isinstance(self.agents, dict):
             parent_agent = self.agents.get(agent_id)
@@ -2127,10 +2147,46 @@ class Orchestrator(ChatAgent):
             and str(backend_cfg.get("command_line_execution_mode", "local")).lower() == "docker"
             and subagent_runtime_mode == "isolated"
             and not subagent_runtime_fallback_mode
+            and self._delegation_dir is not None
         ):
+            subagent_runtime_mode = "delegated"
+            logger.info(
+                "[Orchestrator] Enabling delegated subagent mode for Codex Docker backend " f"(delegation_dir={self._delegation_dir})",
+            )
+            # Start the SubagentLaunchWatcher on the host (first time only)
+            if self._subagent_launch_watcher is None:
+                try:
+                    from massgen.subagent.launch_watcher import SubagentLaunchWatcher
+
+                    self._subagent_launch_watcher = SubagentLaunchWatcher(
+                        delegation_dir=self._delegation_dir,
+                        # Use the .massgen dir (parent of both subagent_logs/ and
+                        # workspaces/) so actual subagent workspaces are accepted.
+                        # Using only _subagent_logs_dir blocked all spawns because
+                        # workspaces live under the sibling workspaces/ directory.
+                        allowed_workspace_roots=[self._subagent_logs_dir.parent.parent],
+                    )
+                    import asyncio as _asyncio
+
+                    _asyncio.get_event_loop().create_task(self._subagent_launch_watcher.start())
+                    logger.info("[Orchestrator] Started SubagentLaunchWatcher")
+                except Exception as e:
+                    logger.warning(
+                        f"[Orchestrator] Failed to start SubagentLaunchWatcher: {e}. " "Falling back to inherited mode.",
+                    )
+                    subagent_runtime_mode = "inherited"
+                    subagent_runtime_fallback_mode = "inherited"
+        elif (
+            isinstance(backend_cfg, dict)
+            and str(backend_cfg.get("type", "")).lower() == "codex"
+            and str(backend_cfg.get("command_line_execution_mode", "local")).lower() == "docker"
+            and subagent_runtime_mode == "isolated"
+            and not subagent_runtime_fallback_mode
+        ):
+            # delegation_dir not available — fall back to inherited (legacy behavior)
             subagent_runtime_fallback_mode = "inherited"
             logger.info(
-                "[Orchestrator] Defaulting subagent runtime fallback to 'inherited' for Codex Docker mode",
+                "[Orchestrator] Defaulting subagent runtime fallback to 'inherited' for Codex Docker mode " "(delegation directory not available)",
             )
 
         # Discover specialized subagent types and write SUBAGENT.md dirs to the workspace.
@@ -2190,6 +2246,8 @@ class Orchestrator(ChatAgent):
             subagent_runtime_fallback_mode,
             "--host-launch-prefix",
             json.dumps(subagent_host_launch_prefix),
+            "--delegation-directory",
+            str(self._delegation_dir.resolve()) if self._delegation_dir is not None else "",
         ]
 
         # Pass hook directory for MCP server-level hook injection (Codex)
@@ -8447,6 +8505,14 @@ Your answer:"""
 
     async def _cleanup_active_coordination(self) -> None:
         """Force cleanup of active coordination streams and tasks on timeout."""
+        # Stop the SubagentLaunchWatcher if running
+        if self._subagent_launch_watcher is not None:
+            try:
+                await self._subagent_launch_watcher.stop()
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Error stopping SubagentLaunchWatcher: {e}")
+            self._subagent_launch_watcher = None
+
         # Flush any pending subagent results that weren't delivered
         self._flush_pending_subagent_results()
 

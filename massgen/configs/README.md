@@ -241,9 +241,9 @@ Most configurations use environment variables for API keys:so
 # Install or upgrade to v0.1.57
 pip install --upgrade massgen
 
-# Builder subagent, substantiveness tracking, and delegation protocol
-# activate automatically during multi-agent coordination
-uv run massgen
+# Try builder subagent with checklist-driven refinement
+uv run massgen --config @examples/features/subagent_checklist.yaml \
+  "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
 ```
 
 ### v0.1.56

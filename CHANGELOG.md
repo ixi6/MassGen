@@ -79,7 +79,7 @@ Specialized subagent roles (evaluator, explorer, researcher, novelty) with disco
 - **PRs Merged**: [#955](https://github.com/massgen/MassGen/pull/955) (Delegation protocol, builder subagent, reasoning params, eval improvements)
 - **Files Changed**: 68 files, +7348/-503 lines
 - **New Tests**: `test_launch_watcher.py`, `test_launch_watcher_e2e.py`, `test_subagent_delegated_mode.py`, `test_round_resume.py`, `test_checklist_tools_server.py` (substantiveness), `test_write_mode_scratch.py`, `test_claude_code_skills_config.py`, `test_gepa_evaluation_flow.py`, `test_novelty_injection.py`
-- **Contributors**: @MassGen Agent (8 commits), @HenryQi (2 commits)
+- **Contributors**: @ncrispino (8 commits), @HenryQi (2 commits)
 
 ## [0.1.56] - 2026-02-25
 

@@ -2,55 +2,47 @@
 
 ## Overview
 
-Version 0.1.58 focuses on completing per-subagent runtime isolation in Docker, building on the file-based delegation protocol shipped in v0.1.57.
+Version 0.1.58 focuses on adding ElevenLabs as a provider for text-to-speech and speech-to-text, integrated with MassGen's existing multimodal tools.
 
-- **Per-Subagent Runtime Isolation in Docker** (Required): True container-based isolation for subagents spawned from a Docker parent
+- **ElevenLabs TTS & STT Support** (Required): Add ElevenLabs support for TTS and speech-to-text in generate/read media
 
 ## Key Technical Priorities
 
-1. **Docker Container Isolation**: Upgrade the delegation protocol from host-subprocess spawning to per-subagent Docker containers
-   **Use Case**: Secure, isolated execution for parallel subagent tasks in containerized environments
+1. **ElevenLabs Integration**: Add ElevenLabs as a provider for high-quality voice synthesis and transcription
+   **Use Case**: High-quality voice synthesis and transcription via ElevenLabs API within multi-agent workflows
 
 ## Key Milestones
 
-### Milestone 1: Per-Subagent Docker Container Spawning (REQUIRED)
+### Milestone 1: ElevenLabs TTS & STT Support (REQUIRED)
 
-**Goal**: Subagents spawned from a Docker parent run in their own isolated containers instead of as host subprocesses
+**Goal**: Add ElevenLabs as a provider for text-to-speech and speech-to-text
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
-**Issue**: [#910](https://github.com/massgen/MassGen/issues/910)
+**Issue**: [#942](https://github.com/massgen/MassGen/issues/942)
 
-**Foundation**: v0.1.57 shipped the file-based delegation protocol (`launch_watcher.py`) with atomic JSON request/response exchange and workspace allowlist validation. This milestone upgrades the spawning target from host processes to Docker containers.
+#### 1.1 Text-to-Speech Integration
+- [ ] Add ElevenLabs TTS provider in `massgen/generation/` module
+- [ ] Integrate with existing `generate_media` tool for audio output
+- [ ] Support voice selection and configuration options
+- [ ] Handle API key management and rate limiting
 
-#### 1.1 Container Spawning Backend
-- [ ] Extend `SubagentLaunchWatcher` to spawn subagents as Docker containers
-- [ ] Container image selection and configuration (reuse parent image or configurable)
-- [ ] Volume mounting for workspace directories and shared state
-- [ ] Container lifecycle management (creation, monitoring, cleanup)
+#### 1.2 Speech-to-Text Integration
+- [ ] Add ElevenLabs STT provider for audio transcription
+- [ ] Integrate with existing `read_media` tool for audio input
+- [ ] Support multiple audio formats and languages
 
-#### 1.2 Filesystem Isolation
-- [ ] Per-subagent workspace isolation within containers
-- [ ] Secure workspace path mapping between host and container
-- [ ] Result collection from container filesystems back to host
-
-#### 1.3 Networking & Communication
-- [ ] Container-to-host communication for delegation protocol
-- [ ] MCP server access from within containers
-- [ ] API key forwarding to subagent containers
-
-#### 1.4 Testing & Documentation
-- [ ] Unit tests for container spawning logic
-- [ ] Integration tests: subagent runs in container and returns results
-- [ ] Backend parity tests (at minimum: one `base_with_custom_tool_and_mcp` backend, `claude_code`, `codex`)
-- [ ] Update subagent documentation with Docker isolation configuration
+#### 1.3 Testing & Documentation
+- [ ] Add unit tests for ElevenLabs TTS provider
+- [ ] Add unit tests for ElevenLabs STT provider
+- [ ] Add integration tests with `generate_media` and `read_media`
+- [ ] Update multimodal documentation with ElevenLabs configuration examples
 - [ ] Add example configs in `massgen/configs/`
 
 **Success Criteria**:
-- Subagents spawn in isolated Docker containers (not host subprocesses)
-- Workspace isolation enforced per-subagent container
-- Delegation protocol upgraded from host-subprocess to container-based
-- No regression in non-Docker subagent spawning
+- ElevenLabs TTS working via `generate_media`
+- ElevenLabs STT working via `read_media`
+- Proper error handling for missing API keys and rate limits
 
 ---
 
@@ -59,29 +51,26 @@ Version 0.1.58 focuses on completing per-subagent runtime isolation in Docker, b
 **Target Release**: March 2, 2026
 
 ### Phase 1 (Feb 28 - Mar 1)
-- Container Spawning Backend (Milestone 1.1)
-- Filesystem Isolation (Milestone 1.2)
+- ElevenLabs TTS Integration (Milestone 1.1)
+- ElevenLabs STT Integration (Milestone 1.2)
 
 ### Phase 2 (Mar 1-2)
-- Networking & Communication (Milestone 1.3)
-- Testing & Documentation (Milestone 1.4)
+- Testing & Documentation (Milestone 1.3)
 
 ---
 
 ## Success Metrics
 
-- **Isolation**: Each subagent runs in its own Docker container with independent filesystem
-- **Security**: Workspace paths validated and isolated per-container
-- **Compatibility**: Non-Docker subagent spawning continues to work unchanged
-- **Performance**: Container startup overhead acceptable for parallel subagent workflows
+- **TTS Quality**: ElevenLabs TTS produces correct audio output via `generate_media`
+- **STT Accuracy**: ElevenLabs STT correctly transcribes audio via `read_media`
+- **Integration**: Both tools work within multi-agent coordination workflows
 
 ---
 
 ## Resources
 
-- **Issue #910**: [Per-Subagent Runtime Isolation in Docker](https://github.com/massgen/MassGen/issues/910)
+- **Issue #942**: [ElevenLabs TTS & STT Support](https://github.com/massgen/MassGen/issues/942)
 - **Owner**: @ncrispino (nickcrispino on Discord)
-- **Foundation**: v0.1.57 delegation protocol (PR [#955](https://github.com/massgen/MassGen/pull/955))
 - **Related PRs**: TBD
 
 ---
@@ -100,5 +89,5 @@ This release builds on previous work:
 - **v0.1.57**: Delegation Protocol (#955), Builder Subagent, Substantiveness Tracking, Claude Code Reasoning
 
 And sets the foundation for:
-- **v0.1.59**: ElevenLabs TTS & STT Support (#942)
+- **v0.1.59**: Nano Banana 2 Default Image Generation (#951)
 - **v0.1.60**: Improve skill use and exploration (#873)

@@ -42,33 +42,15 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.58** | 03/02/26 | Per-Subagent Runtime Isolation in Docker | @ncrispino | True container-based isolation for subagents spawned from Docker parent ([#910](https://github.com/massgen/MassGen/issues/910), rolled from v0.1.57) |
-| **v0.1.59** | 03/04/26 | ElevenLabs TTS & STT Support | @ncrispino | Add ElevenLabs support for TTS and speech-to-text in generate/read media ([#942](https://github.com/massgen/MassGen/issues/942)) |
+| **v0.1.58** | 03/02/26 | ElevenLabs TTS & STT Support | @ncrispino | Add ElevenLabs support for TTS and speech-to-text in generate/read media ([#942](https://github.com/massgen/MassGen/issues/942)) |
+| **v0.1.59** | 03/04/26 | Nano Banana 2 Default Image Generation | @ncrispino | Support Nano Banana 2 as default image generation model ([#951](https://github.com/massgen/MassGen/issues/951)) |
 | **v0.1.60** | 03/06/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.58 - Subagent Docker Isolation
-
-### Features
-
-**1. Per-Subagent Runtime Isolation in Docker** (@ncrispino)
-- Issue: [#910](https://github.com/massgen/MassGen/issues/910) (rolled from v0.1.57)
-- True container-based isolation for subagents spawned from a Docker parent
-- Each subagent runs in its own Docker container with independent filesystem
-- Builds on the file-based delegation protocol shipped in v0.1.57
-- **Use Case**: Secure, isolated execution for parallel subagent tasks in containerized environments
-
-### Success Criteria
-- ✅ Subagents spawn in isolated Docker containers (not host subprocesses)
-- ✅ Workspace isolation enforced per-subagent
-- ✅ Delegation protocol upgraded from host-subprocess to container-based
-
----
-
-## 📋 v0.1.59 - ElevenLabs Media
+## 📋 v0.1.58 - ElevenLabs Media
 
 ### Features
 
@@ -81,6 +63,22 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 ### Success Criteria
 - ✅ ElevenLabs TTS working via `generate_media`
 - ✅ ElevenLabs STT working via `read_media`
+
+---
+
+## 📋 v0.1.59 - Nano Banana 2 Image Generation
+
+### Features
+
+**1. Nano Banana 2 Default Image Generation** (@ncrispino)
+- Issue: [#951](https://github.com/massgen/MassGen/issues/951)
+- Support Nano Banana 2 as the default image generation model
+- Integration with existing `generate_media` tool for image output
+- **Use Case**: Higher quality default image generation for multi-agent workflows
+
+### Success Criteria
+- ✅ Nano Banana 2 available as image generation model
+- ✅ Set as default image generation model
 
 ---
 
@@ -781,7 +779,6 @@ These features are being actively developed on **separate parallel tracks** and 
 - File-based delegation protocol for container-to-host subagent spawning
 - SubagentLaunchWatcher with atomic JSON request/response exchange
 - Workspace path validation against allowlist for security
-- **Note:** Partial progress toward [#910](https://github.com/massgen/MassGen/issues/910); full Docker container isolation still pending in v0.1.58
 - **Status:** ✅ Completed in v0.1.57
 
 ### Track: Iterative Refinement Improvements (@ncrispino, nickcrispino)

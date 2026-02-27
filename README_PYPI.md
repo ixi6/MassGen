@@ -169,9 +169,9 @@ This project started with the "threads of thought" and "iterative refinement" id
 # Install or upgrade
 pip install --upgrade massgen
 
-# Builder subagent, substantiveness tracking, and delegation protocol
-# activate automatically during multi-agent coordination
-uv run massgen
+# Try builder subagent with checklist-driven refinement
+uv run massgen --config @examples/features/subagent_checklist.yaml \
+  "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1514,10 +1514,10 @@ We welcome community contributions to achieve these goals.
 
 ### v0.1.58 Roadmap
 
-Version 0.1.58 focuses on completing per-subagent runtime isolation in Docker:
+Version 0.1.58 focuses on adding ElevenLabs support for text-to-speech and speech-to-text:
 
 #### Planned Features
-- **Per-Subagent Runtime Isolation in Docker** ([#910](https://github.com/massgen/MassGen/issues/910)): True container-based isolation for subagents spawned from Docker parent, building on the delegation protocol shipped in v0.1.57
+- **ElevenLabs TTS & STT Support** ([#942](https://github.com/massgen/MassGen/issues/942)): Add ElevenLabs as a provider for high-quality voice synthesis and transcription via generate/read media tools
 
 ---
 

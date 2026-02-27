@@ -1240,6 +1240,11 @@ class Orchestrator(ChatAgent):
                 "critic_subagent_enabled": state.get("critic_subagent_enabled", False),
                 # Preserve builder gating from initial state
                 "builder_subagent_enabled": state.get("builder_subagent_enabled", False),
+                # Update available agent labels so checklist enforces complete coverage.
+                # Includes labels injected mid-stream (updated by update_agent_context_with_new_answers).
+                "available_agent_labels": list(
+                    self.coordination_tracker.get_agent_context_labels(agent_id),
+                ),
             },
         )
         # Re-write specs file for stdio backends so the MCP server sees updated state

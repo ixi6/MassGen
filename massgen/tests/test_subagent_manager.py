@@ -756,7 +756,7 @@ class TestSubagentContextPaths:
         assert resolved[0]["path"] == str(external_src.resolve())
 
     def test_context_paths_allows_within_agent_temporary_workspace(self, tmp_path):
-        """Paths within parent agent temporary workspace are accepted."""
+        """Paths within agent_temporary_workspace are always accepted."""
         parent_ws = tmp_path / "workspace"
         parent_ws.mkdir()
         temp_root = tmp_path / "temp_workspaces" / "agent_a"
@@ -832,6 +832,97 @@ class TestSubagentContextPaths:
         resolved = manager._resolve_context_paths_for_subagent(config)
         assert len(resolved) == 1
         assert resolved[0]["path"] == str(parent_ws.resolve())
+
+    # ------------------------------------------------------------------
+    # include_parent_workspace / temp workspace tests
+    # ------------------------------------------------------------------
+
+    def test_include_parent_workspace_true_is_default(self, tmp_path):
+        """Default include_parent_workspace=True means parent workspace is in YAML."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Do research with workspace access",
+            parent_agent_id="test-agent",
+            subagent_id="default-ws-test",
+            # include_parent_workspace defaults to True
+        )
+
+        workspace = manager._create_workspace(config.id)
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+
+        orch_paths = yaml_config["orchestrator"].get("context_paths", [])
+        parent_ws_str = str(parent_ws.resolve())
+        assert parent_ws_str in [p["path"] for p in orch_paths], "parent workspace should be in YAML by default (include_parent_workspace=True)"
+
+    def test_include_parent_workspace_false_excludes_parent_workspace(self, tmp_path):
+        """When include_parent_workspace=False, parent workspace is NOT auto-mounted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Do clean isolated research",
+            parent_agent_id="test-agent",
+            subagent_id="isolated-test",
+            include_parent_workspace=False,
+        )
+
+        workspace = manager._create_workspace(config.id)
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+
+        orch_paths = yaml_config["orchestrator"].get("context_paths", [])
+        parent_ws_str = str(parent_ws.resolve())
+        assert parent_ws_str not in [p["path"] for p in orch_paths], "parent workspace should NOT be in YAML when include_parent_workspace=False"
+
+    def test_temp_workspace_paths_always_allowed_in_context_paths(self, tmp_path):
+        """Paths under agent_temporary_workspace are always allowed — no flag needed."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        peer_ws = temp_root / "agent1" / "deliverable"
+        peer_ws.mkdir(parents=True)
+        (peer_ws / "index.html").write_text("<html></html>")
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Evaluate peer deliverable",
+            parent_agent_id="test-agent",
+            subagent_id="peer-eval-test",
+            # No include_shared_workspace flag — just context_paths
+            context_paths=[str(peer_ws.resolve())],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(peer_ws.resolve())
+        assert resolved[0]["permission"] == "read"
+
+    def test_temp_workspace_root_not_auto_mounted(self, tmp_path):
+        """The temp workspace root is never auto-mounted in YAML — only explicit paths."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        temp_root.mkdir(parents=True)
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Default spawn — no peer paths",
+            parent_agent_id="test-agent",
+            subagent_id="no-auto-mount-test",
+        )
+
+        workspace = manager._create_workspace(config.id)
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+
+        orch_paths = yaml_config["orchestrator"].get("context_paths", [])
+        temp_str = str(temp_root.resolve())
+        assert temp_str not in [p["path"] for p in orch_paths], "temp workspace root should NOT be auto-mounted in YAML"
 
 
 class TestSubagentConfigInheritance:

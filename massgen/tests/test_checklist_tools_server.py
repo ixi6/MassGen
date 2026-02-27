@@ -2056,3 +2056,113 @@ class TestNoveltyGuidanceInjection:
         explanation = result["explanation"]
         # novelty guidance should not mention the "plateau" spawn instruction
         assert "plateau" not in explanation.lower()
+
+
+# ---------------------------------------------------------------------------
+# Available agent labels enforcement
+# ---------------------------------------------------------------------------
+
+
+class TestAvailableAgentLabelsCoverage:
+    """When available_agent_labels is provided in state, all labels must be scored.
+
+    Regression test: agents were submitting per-agent scores that only covered their
+    own answer (flat or single-agent format), silently omitting peer agents from
+    evaluation.
+    """
+
+    def _base_state(self, **extra):
+        return {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_gap_report": False,
+            **extra,
+        }
+
+    def test_missing_available_agent_triggers_rejection(self):
+        """Scores dict omits an available agent → iterate with clear explanation."""
+        state = self._base_state(available_agent_labels=["agent1", "agent2"])
+        scores = {
+            # Only agent1 scored; agent2 is available but missing
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+        )
+        assert result["verdict"] == "new_answer"
+        assert result.get("incomplete_scores") is True
+        assert "agent2" in result.get("explanation", "").lower()
+
+    def test_all_available_agents_scored_passes(self):
+        """Scoring all available agents succeeds normally."""
+        state = self._base_state(available_agent_labels=["agent1", "agent2"])
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}},
+            "agent2": {"E1": {"score": 6, "reasoning": "ok"}, "E2": {"score": 7, "reasoning": "decent"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+        )
+        assert result["verdict"] == "vote"
+        assert not result.get("incomplete_scores")
+
+    def test_no_available_labels_in_state_no_enforcement(self):
+        """Without available_agent_labels in state, single-agent submission is fine."""
+        state = self._base_state()  # no available_agent_labels key
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+        )
+        assert result["verdict"] == "vote"
+        assert not result.get("incomplete_scores")
+
+    def test_three_agents_two_missing_rejected(self):
+        """Multiple missing agents all named in error message."""
+        state = self._base_state(available_agent_labels=["agent1", "agent2", "agent3"])
+        scores = {
+            "agent1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}},
+        }
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+        )
+        assert result["verdict"] == "new_answer"
+        assert result.get("incomplete_scores") is True
+        explanation = result.get("explanation", "").lower()
+        assert "agent2" in explanation
+        assert "agent3" in explanation
+
+    def test_flat_format_with_available_labels_rejected(self):
+        """Flat (non-per-agent) scores with available_agent_labels present → rejected."""
+        state = self._base_state(available_agent_labels=["agent1", "agent2"])
+        # Flat format only covers one implicit answer, not all available agents
+        scores = {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}}
+        result = evaluate_checklist_submission(
+            scores=scores,
+            improvements="",
+            report_path="",
+            items=["Check 1", "Check 2"],
+            state=state,
+        )
+        assert result["verdict"] == "new_answer"
+        assert result.get("incomplete_scores") is True

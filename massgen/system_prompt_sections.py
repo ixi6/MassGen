@@ -874,12 +874,12 @@ you do qualitative analysis in parallel:
   checks, feature verification. Assign one evaluator per independent concern
   (e.g. frontend layout vs backend correctness) if parallelizable. Evaluators
   observe and report — they do NOT make changes.
-- **CRITICAL — file access**: When the evaluator needs to access files in your
-  workspace, you MUST pass `context_paths: ["./"]`. Without this, the evaluator
-  runs in an isolated container with no access to your workspace. Reference files
-  by their full workspace-absolute paths. Do NOT reference the Shared Reference
-  (temp_workspaces) path for files you created this round — those are only archived
-  there after you submit, not during execution.
+- **File access**: Your workspace is automatically mounted read-only for subagents
+  (include_parent_workspace=True by default). Reference files by their full
+  workspace-absolute paths. Do NOT reference the Shared Reference (temp_workspaces)
+  path for files you created this round — those are only archived there after you
+  submit, not during execution. For fully isolated research subagents that don't
+  need your files, pass `include_parent_workspace: false`.
 - You handle: read all agents' answers, identify qualitative gaps, assess
   creative/craft quality. You make the value judgments — evaluator gives you
   evidence to reason from, not scores.
@@ -929,8 +929,8 @@ simultaneously:
 
 - `tasks`: one entry per deliverable (not one entry for all of them)
 - `background=True, refine=False`
-- `context_paths`: scoped to what each subagent needs (e.g. `["deliverable/"]`),
-  not always `["./"]` (full workspace)
+- Parent workspace is auto-mounted read-only. Use `context_paths` only for
+  additional paths (e.g. peer workspace paths from Available agent workspaces).
 
 Do your `[main]` work while builders run. Collect and integrate when all finish.
 Then spawn the next wave for tasks that depended on this batch.
@@ -3878,10 +3878,8 @@ class SubagentSection(SystemPromptSection):
             background_default = background_by_type.get(t.name.lower(), True)
             background_str = "True" if background_default else "False"
             lines.append(f"**{t.name}** — {t.description}")
-            # Evaluator almost always needs workspace access; show ["./"] as default
-            ctx_paths_example = '["./"]' if t.name.lower() == "evaluator" else "[]"
             lines.append(
-                f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}", ' f'"context_paths": {ctx_paths_example}}}], background={background_str}, refine=False)`',
+                f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}"}}], background={background_str}, refine=False)`',
             )
             if getattr(t, "expected_input", None):
                 lines.append("Expected input for this type:")
@@ -3891,8 +3889,8 @@ class SubagentSection(SystemPromptSection):
                 lines.append(
                     "Use this when the task is mostly programmatic execution/reporting "
                     "(batch tests, Playwright flows, evidence capture sweeps, scripted validation). "
-                    'Use `context_paths: ["./"]` when the evaluator must access files in your '
-                    "workspace; use `[]` only for tasks with no workspace file dependencies.",
+                    "Your workspace is mounted read-only by default. Use `include_parent_workspace: false` "
+                    "only for tasks with no workspace file dependencies.",
                 )
             if t.name.lower() == "builder":
                 lines.append(
@@ -3905,21 +3903,17 @@ class SubagentSection(SystemPromptSection):
                     'update CSS, rewrite narrative, fix scroll-reveal", "subagent_type": "builder", ...}]`\n\n'
                     "Good (parallel — each improvement is its own task):\n"
                     "`tasks=[\n"
-                    '  {"task": "Rewrite member portraits section...", "subagent_type": "builder", '
-                    '"context_paths": ["deliverable/"]},\n'
-                    '  {"task": "Redesign album section with artwork...", "subagent_type": "builder", '
-                    '"context_paths": ["deliverable/"]},\n'
-                    '  {"task": "Fix alternating timeline layout...", "subagent_type": "builder", '
-                    '"context_paths": ["deliverable/"]},\n'
-                    '  {"task": "Rewrite narrative prose in About + Hero...", "subagent_type": "builder", '
-                    '"context_paths": ["deliverable/"]},\n'
+                    '  {"task": "Rewrite member portraits section...", "subagent_type": "builder"},\n'
+                    '  {"task": "Redesign album section with artwork...", "subagent_type": "builder"},\n'
+                    '  {"task": "Fix alternating timeline layout...", "subagent_type": "builder"},\n'
+                    '  {"task": "Rewrite narrative prose in About + Hero...", "subagent_type": "builder"},\n'
                     "]`\n\n"
                     "**You decide what to build — builder executes it.** Make all creative and "
                     "architectural decisions yourself before writing the spec. Builder does not "
                     "decide what to change or which direction to take.\n\n"
-                    "**Scope `context_paths` to what each subagent actually needs** "
-                    '(e.g. `["deliverable/"]`, `["src/components/"]`), not always '
-                    '`["./"]` (full workspace). Less context = faster startup.\n\n'
+                    "**Parent workspace is auto-mounted read-only by default.** "
+                    "Use `context_paths` only for additional paths outside your workspace "
+                    "(e.g. peer workspace paths from Available agent workspaces).\n\n"
                     "**The novelty → build loop** (when novelty fires after T=0):\n"
                     "1. Novelty returns directions. Evaluate each: does it break the "
                     "anchoring pattern? Is it implementable? Differs from what's been tried?\n"
@@ -4040,10 +4034,11 @@ quality and priorities, since you have the full context and the subagent may run
    - You can READ files from subagent workspaces
    - You CANNOT write directly to subagent workspaces
 2. **Fresh Context**: Subagents start with a clean slate (just the task you provide)
-3. **Explicit Context Paths (REQUIRED)**: Every task must include `context_paths`
-   - Use `[]` for clean-slate research (no extra context beyond task text)
-   - Use `["./"]` for read-only access to the current parent workspace (CWD)
-   - Use specific paths for least-privilege access (recommended when possible)
+3. **Workspace Access**: Your workspace is auto-mounted read-only by default
+   - `include_parent_workspace` (default `true`): subagent can read your files
+   - Set `include_parent_workspace: false` for fully isolated research subagents
+   - `context_paths` (optional): additional read-only paths — use for peer workspace
+     paths listed under Available agent workspaces
    - `context_files` remains optional for copying files into subagent workspace
 4. **No Nesting**: Subagents cannot spawn their own subagents
 5. **No Human Broadcast**: Subagents cannot ask the human or request human input,
@@ -4116,19 +4111,20 @@ All subagents start at the same time and cannot see each other's output. Design 
 **REQUIREMENTS:**
 1. **Maximum {self.max_concurrent} tasks per call** - requests for more will error
 2. **`CONTEXT.md` in workspace is REQUIRED** - subagents need to know the project/goal
-3. **Each task dict must have both `"task"` and `"context_paths"` fields**
-4. **`context_paths` must be explicit**:
-   - Use `[]` if you intentionally want no extra context
-   - Use `["./"]` for the current parent workspace (CWD)
-   - Use specific paths for least-privilege access
+3. **Each task dict must have `"task"` field** (other fields are optional)
+4. **Workspace access**:
+   - Your workspace is auto-mounted read-only (include_parent_workspace=true by default)
+   - Set `include_parent_workspace: false` for fully isolated research
+   - Use `context_paths` only for additional paths (e.g. peer workspaces)
 
 ```python
 # CORRECT: Independent parallel tasks (each can complete without the others)
+# Parent workspace is auto-mounted read-only — no context_paths needed
 spawn_subagents(
     tasks=[
-        {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio", "context_paths": []}},
-        {{"task": "Create discography table in discography.md", "subagent_id": "discog", "context_paths": []}},
-        {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs", "context_paths": []}}
+        {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio"}},
+        {{"task": "Create discography table in discography.md", "subagent_id": "discog"}},
+        {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs"}}
     ],
     background=True,  # default: run async, continue working; set False only when you must block
     refine=False,  # default: single-pass, fast/cheap; set True only when quality justifies cost
@@ -4136,8 +4132,8 @@ spawn_subagents(
 
 # WRONG - DO NOT DO THIS (task 2 depends on task 1's output):
 # spawn_subagents(tasks=[
-#     {{"task": "Research all content", "context_paths": []}},
-#     {{"task": "Build website using the researched content", "context_paths": []}}  # CAN'T ACCESS TASK 1!
+#     {{"task": "Research all content"}},
+#     {{"task": "Build website using the researched content"}}  # CAN'T ACCESS TASK 1!
 # ])
 ```
 
@@ -4170,7 +4166,7 @@ Use `list_subagents()` to get the workspace path, then:
 ## Available Tools
 
 - `spawn_subagents(tasks, background?, refine?)` -- Max {self.max_concurrent} parallel tasks.
-  Each task must include `task` and explicit `context_paths` (can be `[]`).
+  Each task must include `task`. Parent workspace auto-mounted read-only.
 - `list_subagents()` - Discovery/index of spawned subagents (status, workspace, session_id)
 - `continue_subagent(subagent_id, message, timeout_seconds?)` - Continue an existing subagent conversation
 - `send_message_to_subagent(subagent_id, message)` - Send a message to a RUNNING background subagent.

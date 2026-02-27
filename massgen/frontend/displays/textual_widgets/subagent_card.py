@@ -210,6 +210,18 @@ class SubagentColumn(Vertical, can_focus=True):
         timeout = self._subagent.timeout_seconds
         status = SubagentCard.normalize_status(self._subagent.status)
 
+        if status in ("running", "pending") and elapsed == 0.0:
+            # Activation/setup phase: subagent not yet producing events
+            bar_width = self._measure_progress_bar_width()
+            pulse_labels = ["setting up·", "setting up··", "setting up···"]
+            label = pulse_labels[self._pulse_frame % len(pulse_labels)]
+            dashes = max(0, bar_width - len(label) - 1)
+            text = Text()
+            if dashes > 0:
+                text.append("─" * dashes + " ", style="dim #30363d")
+            text.append(label, style="dim #6e7681")
+            return text
+
         if status == "completed":
             text = Text()
             bar_width = self._measure_progress_bar_width()
@@ -363,12 +375,16 @@ class SubagentCard(Vertical, can_focus=True):
         self._selected_index = 0
         # Track start times for elapsed computation
         self._start_times: dict[str, float] = {}
+        # Track which subagents have activated (started producing events)
+        self._activated: set[str] = set()
         now = time.monotonic()
         for sa in self._subagents:
-            if sa.status in ("running", "pending"):
+            if sa.elapsed_seconds > 0:
+                # Pre-activate subagents already in progress (resumed/continued)
+                self._activated.add(sa.id)
                 self._start_times[sa.id] = now - sa.elapsed_seconds
             else:
-                self._start_times[sa.id] = now - sa.elapsed_seconds
+                self._start_times[sa.id] = now
 
     def compose(self) -> ComposeResult:
         yield Static(self._build_card_header(), id="subagent-card-title")
@@ -439,6 +455,16 @@ class SubagentCard(Vertical, can_focus=True):
             pass
         self.post_message(self.OpenModal(subagent, all_subagents, card=self))
 
+    def _should_activate(self, sa: SubagentDisplayData) -> bool:
+        """Return True if this subagent has started producing events (setup complete)."""
+        events_path = self._resolve_events_path(sa)
+        if not events_path:
+            return False
+        try:
+            return events_path.exists() and events_path.stat().st_size > 0
+        except OSError:
+            return False
+
     def _start_polling_if_needed(self) -> None:
         if self._poll_timer is not None:
             return
@@ -463,11 +489,22 @@ class SubagentCard(Vertical, can_focus=True):
             if updated:
                 self._subagents = new_subagents
 
-        # Update elapsed_seconds from wall clock for running subagents
+        # Update elapsed_seconds from wall clock for running subagents.
+        # Only start counting once the subagent has activated (events file exists),
+        # so setup time doesn't consume visible progress bar.
         now = time.monotonic()
         for sa in self._subagents:
-            if self.normalize_status(sa.status) in ("running", "pending") and sa.id in self._start_times:
-                sa.elapsed_seconds = now - self._start_times[sa.id]
+            if self.normalize_status(sa.status) in ("running", "pending"):
+                if sa.id not in self._activated:
+                    if self._should_activate(sa):
+                        self._activated.add(sa.id)
+                        self._start_times[sa.id] = now  # Start timer from activation
+                    else:
+                        sa.elapsed_seconds = 0.0
+                        self._start_times[sa.id] = now  # Keep resetting until activated
+                        continue
+                if sa.id in self._start_times:
+                    sa.elapsed_seconds = now - self._start_times[sa.id]
 
         # Advance pulse frames for running columns
         for idx, sa in enumerate(self._subagents):

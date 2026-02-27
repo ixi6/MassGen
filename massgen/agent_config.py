@@ -84,8 +84,8 @@ class CoordinationConfig:
                                        memories auto-inject into all agents' system prompts. Long-term
                                        memories are read on-demand. Inspired by Letta's context hierarchy.
         learning_capture_mode: Controls when evolving-skill + memory capture is produced.
-                              - "round" (default): Existing behavior. Capture can be produced in coordination rounds.
-                              - "final_only": Keep changedoc behavior, but defer evolving-skill + memory production
+                              - "round": Existing behavior. Capture can be produced in coordination rounds.
+                              - "final_only" (default): Keep changedoc behavior, but defer evolving-skill + memory production
                                 to the final presenter stage. Coordination rounds remain read-focused.
         compression_target_ratio: Target ratio for reactive compression when context limit is exceeded.
                                  Value between 0 and 1, where 0.2 means preserve 20% of messages and
@@ -166,7 +166,7 @@ class CoordinationConfig:
     max_broadcasts_per_agent: int = 10
     task_planning_filesystem_mode: bool = False
     enable_memory_filesystem_mode: bool = False
-    learning_capture_mode: str = "round"  # "round" | "final_only"
+    learning_capture_mode: str = "final_only"  # "round" | "final_only"
     compression_target_ratio: float = 0.20  # Preserve 20% of messages on context overflow
     use_skills: bool = False
     massgen_skills: list[str] = field(default_factory=list)

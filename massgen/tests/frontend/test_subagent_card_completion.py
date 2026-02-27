@@ -940,6 +940,74 @@ def test_update_subagent_card_preserves_type_when_server_assigns_different_id() 
     )
 
 
+def test_progress_bar_shows_launching_state_when_elapsed_is_zero_and_running() -> None:
+    """Running subagent with no elapsed time should show a launching indicator, not 0%."""
+    subagent = _make_subagent("sub_launching", status="running", elapsed_seconds=0.0, timeout_seconds=300.0)
+    column = SubagentColumn(
+        subagent=subagent,
+        all_subagents=[subagent],
+        summary="running",
+        tools=[],
+        open_callback=lambda _s, _a: None,
+    )
+    bar = column._build_progress_bar()
+    assert "0%" not in bar.plain
+    assert "setting up" in bar.plain.lower()
+
+
+def test_progress_bar_shows_normal_progress_once_elapsed_is_positive() -> None:
+    """Running subagent with positive elapsed should show normal percentage progress."""
+    subagent = _make_subagent("sub_active", status="running", elapsed_seconds=30.0, timeout_seconds=300.0)
+    column = SubagentColumn(
+        subagent=subagent,
+        all_subagents=[subagent],
+        summary="running",
+        tools=[],
+        open_callback=lambda _s, _a: None,
+    )
+    bar = column._build_progress_bar()
+    assert "10%" in bar.plain
+
+
+def test_subagent_card_should_activate_returns_false_when_log_path_is_none() -> None:
+    """Activation check should return False when log_path is not set."""
+    sa = _make_subagent("sub_no_log", status="running")
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_none")
+    assert not card._should_activate(sa)
+
+
+def test_subagent_card_should_activate_returns_false_when_events_file_missing(tmp_path: Path) -> None:
+    """Activation check should return False when events file does not yet exist."""
+    log_dir = tmp_path / "sub_logs" / "sub_1"
+    log_dir.mkdir(parents=True)
+    sa = _make_subagent("sub_no_events", status="running")
+    sa.log_path = str(log_dir)
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_missing")
+    assert not card._should_activate(sa)
+
+
+def test_subagent_card_should_activate_returns_true_when_events_file_has_content(tmp_path: Path) -> None:
+    """Activation check should return True when events file exists and has content."""
+    log_dir = tmp_path / "sub_logs" / "sub_2"
+    (log_dir / "full_logs").mkdir(parents=True)
+    (log_dir / "full_logs" / "events.jsonl").write_text('{"event_type": "round_start"}\n')
+    sa = _make_subagent("sub_with_events", status="running")
+    sa.log_path = str(log_dir)
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_events")
+    assert card._should_activate(sa)
+
+
+def test_subagent_card_should_activate_returns_false_when_events_file_is_empty(tmp_path: Path) -> None:
+    """Activation check should return False when events file exists but is empty."""
+    log_dir = tmp_path / "sub_logs" / "sub_3"
+    (log_dir / "full_logs").mkdir(parents=True)
+    (log_dir / "full_logs" / "events.jsonl").write_text("")
+    sa = _make_subagent("sub_empty_events", status="running")
+    sa.log_path = str(log_dir)
+    card = SubagentCard(subagents=[sa], tool_call_id="test_call_empty")
+    assert not card._should_activate(sa)
+
+
 def test_subagent_card_variant_a_uses_single_thin_left_rail() -> None:
     """Option A should avoid stacked thick rails on the left edge."""
     css = Path("massgen/frontend/displays/textual_themes/base.tcss").read_text(encoding="utf-8")

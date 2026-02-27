@@ -93,10 +93,10 @@ class TestConfig:
         assert config.enabled is False
 
     def test_default_min_max_criteria(self):
-        """Config should have default min=4 and max=10."""
+        """Config should have default min=4 and max=7."""
         config = EvaluationCriteriaGeneratorConfig()
         assert config.min_criteria == 4
-        assert config.max_criteria == 10
+        assert config.max_criteria == 7
 
     def test_persist_across_turns_default(self):
         """Config should not persist across turns by default."""

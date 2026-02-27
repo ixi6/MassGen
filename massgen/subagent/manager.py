@@ -401,20 +401,23 @@ class SubagentManager:
             List of validated context path dicts with "path" and "permission" keys.
         """
         resolved_paths: list[dict[str, str]] = []
-        if not config.context_paths:
-            return resolved_paths
 
         parent_ws_resolved = self.parent_workspace.resolve()
 
-        # Build set of allowed roots: parent workspace + parent context path roots
-        allowed_roots: list[Path] = [parent_ws_resolved]
+        # Build set of allowed roots based on config flags.
+        # include_parent_workspace (default True): allow explicit context_paths under parent ws.
+        # agent_temporary_workspace: always allowed when configured (contains only peer
+        # snapshots visible to this agent — framework-managed, safe to always allow).
+        # Parent context path roots (from orchestrator config) are always allowed.
+        allowed_roots: list[Path] = []
+        if config.include_parent_workspace:
+            allowed_roots.append(parent_ws_resolved)
         for pcp in self._parent_context_paths:
             root = Path(pcp["path"])
             if root not in allowed_roots:
                 allowed_roots.append(root)
-        # If the parent has a shared temp-workspace root, allow explicit task
-        # context paths under that root. This preserves least-privilege: only
-        # the parent's configured temp workspace is accepted.
+        # Always allow agent_temporary_workspace paths (agent-specific dir containing
+        # only peer snapshots this agent is already allowed to see).
         if self._agent_temporary_workspace:
             temp_root = self._agent_temporary_workspace
             if not temp_root.is_absolute():
@@ -424,16 +427,16 @@ class SubagentManager:
             if temp_root not in allowed_roots:
                 allowed_roots.append(temp_root)
 
+        if not config.context_paths:
+            return resolved_paths
+
         seen: set[str] = set()
         for rel_path in config.context_paths:
-            if rel_path in ("./", "."):
-                resolved = parent_ws_resolved
+            candidate = Path(rel_path)
+            if candidate.is_absolute():
+                resolved = candidate.resolve()
             else:
-                candidate = Path(rel_path)
-                if candidate.is_absolute():
-                    resolved = candidate.resolve()
-                else:
-                    resolved = (self.parent_workspace / rel_path).resolve()
+                resolved = (self.parent_workspace / rel_path).resolve()
 
             # Validate: resolved path must be within an allowed root
             is_allowed = any(resolved == root or resolved.is_relative_to(root) for root in allowed_roots)
@@ -1793,7 +1796,6 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         coordination_settings_to_inherit = [
             "enable_agent_task_planning",
             "task_planning_filesystem_mode",
-            "learning_capture_mode",
             "use_skills",
             "massgen_skills",
             "skills_directory",
@@ -1806,6 +1808,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 logger.info(
                     f"[SubagentManager] Inherited {setting}={self._parent_coordination_config[setting]} from parent",
                 )
+
+        # Subagents always use final_only learning capture: capturing per-round learnings
+        # is wasteful overhead for short-lived tasks.
+        coord_settings["learning_capture_mode"] = "final_only"
 
         orchestrator_config = {
             "snapshot_storage": str(workspace / "snapshots"),
@@ -1833,13 +1839,20 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # Task-specific context paths from context_files are also read-only
         merged_context_paths: list[dict[str, str]] = []
 
-        # Add parent context paths first (always read-only for subagents)
+        # Determine which parent workspace path to exclude when include_parent_workspace=False
+        parent_ws_str = str(self.parent_workspace.resolve())
+
+        # Add parent context paths (always read-only for subagents).
+        # When include_parent_workspace=False, skip the parent workspace entry so the
+        # subagent runs in full isolation without access to the parent's files.
         if self._parent_context_paths:
             for parent_path in self._parent_context_paths:
-                # Force read-only for subagents to prevent uncontrolled writes
+                path_str = parent_path.get("path", "")
+                if not config.include_parent_workspace and path_str == parent_ws_str:
+                    continue
                 merged_context_paths.append(
                     {
-                        "path": parent_path.get("path", ""),
+                        "path": path_str,
                         "permission": "read",  # Always read for subagents
                     },
                 )
@@ -2056,6 +2069,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         timeout_seconds: int | None = None,
         context_files: list[str] | None = None,
         context_paths: list[str] | None = None,
+        include_parent_workspace: bool = True,
         system_prompt: str | None = None,
         refine: bool = True,
         skills: list[str] | None = None,
@@ -2071,7 +2085,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             model: Optional model override
             timeout_seconds: Optional timeout (uses default if not specified)
             context_files: Optional files to copy to subagent workspace
-            context_paths: Optional paths to mount read-only (files/dirs, "./" = parent workspace)
+            context_paths: Extra read-only paths (e.g., peer workspace paths)
+            include_parent_workspace: Mount parent workspace read-only (default True)
             system_prompt: Optional custom system prompt
             refine: If True (default), allow multi-round coordination and refinement.
                     If False, return first answer without iteration (faster).
@@ -2093,6 +2108,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             timeout_seconds=clamped_timeout,
             context_files=context_files or [],
             context_paths=context_paths or [],
+            include_parent_workspace=include_parent_workspace,
             system_prompt=system_prompt,
             metadata=metadata,
         )
@@ -2248,6 +2264,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 timeout_seconds=timeout_seconds or task_config.get("timeout_seconds"),
                 context_files=task_config.get("context_files"),
                 context_paths=task_config.get("context_paths"),
+                include_parent_workspace=task_config.get("include_parent_workspace", True),
                 system_prompt=task_config.get("system_prompt"),
                 refine=refine,
                 skills=task_config.get("skills"),
@@ -2281,6 +2298,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         timeout_seconds: int | None = None,
         context_files: list[str] | None = None,
         context_paths: list[str] | None = None,
+        include_parent_workspace: bool = True,
         system_prompt: str | None = None,
         refine: bool = True,
         skills: list[str] | None = None,
@@ -2299,7 +2317,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             model: Optional model override
             timeout_seconds: Optional timeout (uses default if not specified)
             context_files: Optional files to copy to subagent workspace
-            context_paths: Optional paths to mount read-only (files/dirs, "./" = parent workspace)
+            context_paths: Extra read-only paths (e.g., peer workspace paths)
+            include_parent_workspace: Mount parent workspace read-only (default True)
             system_prompt: Optional custom system prompt
             skills: Optional list of skill names to pre-load for the subagent
 
@@ -2319,6 +2338,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             timeout_seconds=clamped_timeout,
             context_files=context_files or [],
             context_paths=context_paths or [],
+            include_parent_workspace=include_parent_workspace,
             system_prompt=system_prompt,
             metadata=metadata,
         )

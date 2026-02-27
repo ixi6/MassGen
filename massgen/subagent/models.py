@@ -92,7 +92,8 @@ class SubagentConfig:
         model: Optional model override (inherits from parent if None)
         timeout_seconds: Maximum execution time (clamped to configured min/max range)
         context_files: List of file paths the subagent can READ (read-only access enforced)
-        context_paths: Paths to mount read-only (files/dirs, "./" = parent workspace)
+        context_paths: Extra read-only paths beyond the parent workspace (e.g., peer workspaces)
+        include_parent_workspace: Mount parent agent workspace read-only (default True)
         use_docker: Whether to use Docker container (inherits from parent settings)
         system_prompt: Optional custom system prompt for the subagent
     """
@@ -104,6 +105,7 @@ class SubagentConfig:
     timeout_seconds: int = 300
     context_files: list[str] = field(default_factory=list)
     context_paths: list[str] = field(default_factory=list)
+    include_parent_workspace: bool = True
     use_docker: bool = True
     system_prompt: str | None = None
     created_at: datetime = field(default_factory=datetime.now)
@@ -119,6 +121,7 @@ class SubagentConfig:
         timeout_seconds: int = SUBAGENT_DEFAULT_TIMEOUT,
         context_files: list[str] | None = None,
         context_paths: list[str] | None = None,
+        include_parent_workspace: bool = True,
         use_docker: bool = True,
         system_prompt: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -133,7 +136,11 @@ class SubagentConfig:
             model: Optional model override
             timeout_seconds: Execution timeout (clamped at manager level to configured range)
             context_files: File paths subagent can read (read-only, no write access)
-            context_paths: Paths to mount read-only (files/dirs, "./" = parent workspace)
+            context_paths: Extra read-only paths beyond the parent workspace.
+                Use for peer workspace paths (from CURRENT_ANSWERS) or other allowed paths.
+                Parent workspace is always included unless include_parent_workspace=False.
+            include_parent_workspace: If True (default), the parent agent's workspace is
+                automatically mounted read-only. Set False for fully isolated subagents.
             use_docker: Whether to use Docker
             system_prompt: Optional custom system prompt
             metadata: Additional metadata
@@ -150,6 +157,7 @@ class SubagentConfig:
             timeout_seconds=timeout_seconds,
             context_files=context_files or [],
             context_paths=context_paths or [],
+            include_parent_workspace=include_parent_workspace,
             use_docker=use_docker,
             system_prompt=system_prompt,
             metadata=metadata or {},
@@ -165,6 +173,7 @@ class SubagentConfig:
             "timeout_seconds": self.timeout_seconds,
             "context_files": self.context_files.copy(),
             "context_paths": self.context_paths.copy(),
+            "include_parent_workspace": self.include_parent_workspace,
             "use_docker": self.use_docker,
             "system_prompt": self.system_prompt,
             "created_at": self.created_at.isoformat(),
@@ -183,6 +192,7 @@ class SubagentConfig:
             timeout_seconds=data.get("timeout_seconds", SUBAGENT_DEFAULT_TIMEOUT),
             context_files=data.get("context_files", []),
             context_paths=data.get("context_paths", []),
+            include_parent_workspace=data.get("include_parent_workspace", True),
             use_docker=data.get("use_docker", True),
             system_prompt=data.get("system_prompt"),
             created_at=datetime.fromisoformat(data["created_at"]) if "created_at" in data else datetime.now(),

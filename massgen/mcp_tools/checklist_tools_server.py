@@ -391,6 +391,7 @@ def evaluate_checklist_submission(
     # Flat (legacy): {"E1": ..., "E2": ...}
     best_agent: str | None = None
     per_agent_scores: dict[str, dict[str, int]] | None = None
+    available_agent_labels: list[str] = state.get("available_agent_labels") or []
     if _is_per_agent_scores(scores, item_prefix):
         # Validate completeness for ALL agents before selecting best.
         expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}
@@ -417,7 +418,50 @@ def evaluate_checklist_submission(
                 "substantiveness_gate_triggered": False,
                 "convergence_offramp_triggered": False,
             }
+        # Validate all available agents are covered when labels are known.
+        if available_agent_labels and has_existing_answers:
+            missing_agents = sorted(set(available_agent_labels) - set(scores.keys()))
+            if missing_agents:
+                report_eval = _evaluate_gap_report(report_path, state)
+                return {
+                    "verdict": iterate_action,
+                    "explanation": (
+                        f"Missing scores for available agents: {', '.join(missing_agents)}. "
+                        f"You must score ALL agents you have context for: "
+                        f"{', '.join(sorted(available_agent_labels))}. "
+                        f"Resubmit with per-agent scores covering every agent."
+                    ),
+                    "incomplete_scores": True,
+                    "true_count": 0,
+                    "required": required,
+                    "items": [],
+                    "report": report_eval,
+                    "report_gate_triggered": False,
+                    "substantiveness_gate_triggered": False,
+                    "convergence_offramp_triggered": False,
+                }
         best_agent, scores, per_agent_scores = _extract_flat_scores(scores, item_prefix, len(items))
+    elif len(available_agent_labels) >= 2 and has_existing_answers:
+        # Flat format submitted but multiple agents are available — require per-agent format.
+        report_eval = _evaluate_gap_report(report_path, state)
+        return {
+            "verdict": iterate_action,
+            "explanation": (
+                f"You submitted flat scores but you have {len(available_agent_labels)} agents available "
+                f"({', '.join(sorted(available_agent_labels))}). "
+                f"Use per-agent format to score ALL available agents: "
+                f'{{"{available_agent_labels[0]}": {{"E1": {{"score": N, "reasoning": "..."}}, ...}}, '
+                f'"{available_agent_labels[1]}": {{...}}}}.'
+            ),
+            "incomplete_scores": True,
+            "true_count": 0,
+            "required": required,
+            "items": [],
+            "report": report_eval,
+            "report_gate_triggered": False,
+            "substantiveness_gate_triggered": False,
+            "convergence_offramp_triggered": False,
+        }
 
     # Reject incomplete submissions — agent must score ALL criteria
     expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}

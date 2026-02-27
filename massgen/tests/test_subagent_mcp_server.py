@@ -303,10 +303,11 @@ class TestSpawnSubagentsAutoIncrementIds:
 
 
 class TestSpawnSubagentsContextPathsRequirement:
-    """Validation behavior for explicit context_paths requirement."""
+    """Validation behavior for context_paths and workspace access fields."""
 
     @pytest.mark.asyncio
-    async def test_missing_context_paths_field_is_rejected(self, monkeypatch, tmp_path):
+    async def test_missing_context_paths_field_is_accepted(self, monkeypatch, tmp_path):
+        """context_paths is now optional — omitting it is fine (parent workspace is always-on)."""
         server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
         fake_manager = _FakeSubagentManager()
         monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
@@ -318,9 +319,8 @@ class TestSpawnSubagentsContextPathsRequirement:
             refine=False,
         )
 
-        assert result["success"] is False
-        assert "context_paths" in result["error"]
-        assert "[]" in result["error"]
+        assert result["success"] is True
+        assert result["mode"] == "background"
 
     @pytest.mark.asyncio
     async def test_context_paths_must_be_list(self, monkeypatch, tmp_path):
@@ -503,6 +503,43 @@ class TestSpawnSubagentsContextPathsRequirement:
 
         assert result["success"] is True
         assert fake_manager.background_calls[0]["context_paths"] == ["./deliverable"]
+
+    @pytest.mark.asyncio
+    async def test_context_paths_field_is_optional(self, monkeypatch, tmp_path):
+        """context_paths is now optional — parent workspace is always-on."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Research OAuth patterns"}],  # no context_paths
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert result["mode"] == "background"
+        assert len(fake_manager.background_calls) == 1
+        # context_paths defaults to []
+        assert fake_manager.background_calls[0]["context_paths"] == []
+
+    @pytest.mark.asyncio
+    async def test_include_parent_workspace_false_passes_through(self, monkeypatch, tmp_path):
+        """include_parent_workspace=False is accepted and passed to the manager."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Isolated research", "include_parent_workspace": False}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert fake_manager.background_calls[0]["include_parent_workspace"] is False
 
     @pytest.mark.asyncio
     async def test_reusing_completed_subagent_id_is_allowed(self, monkeypatch, tmp_path):
@@ -1268,6 +1305,87 @@ class TestBackgroundSpawning:
         """Test that sync mode blocks until all subagents complete."""
         # This is a behavioral test - sync should wait for all results
         pass  # Will verify against implementation
+
+
+# =============================================================================
+# Cancel Subagent Registry Persistence Tests
+# =============================================================================
+
+
+class TestCancelSubagentRegistryPersistence:
+    """cancel_subagent MCP tool must persist cancelled status to filesystem registry."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_writes_cancelled_status_to_registry(self, monkeypatch, tmp_path):
+        """After cancel_subagent MCP call, _registry.json must show cancelled status.
+
+        Regression test: stale registry (showing 'running') caused delegated builders
+        to appear active in subsequent rounds after being cancelled.
+        """
+        import json
+
+        server, mcp = await _build_subagent_server(monkeypatch, tmp_path)
+
+        cancel_handler = None
+        for tool in mcp._tool_manager._tools.values():
+            if tool.name == "cancel_subagent":
+                cancel_handler = tool.fn
+                break
+        assert cancel_handler is not None, "cancel_subagent tool not found"
+
+        class _FakeCancelManager:
+            async def cancel_subagent(self, subagent_id):  # noqa: ANN001
+                return {"success": True, "subagent_id": subagent_id, "status": "cancelled"}
+
+            def list_subagents(self):
+                return [{"subagent_id": "build_member_architecture", "status": "cancelled"}]
+
+        monkeypatch.setattr(server, "_get_manager", lambda: _FakeCancelManager())
+
+        result = await _invoke_handler(cancel_handler, subagent_id="build_member_architecture")
+        assert result["success"] is True
+
+        # Registry must be written with cancelled status so fresh MCP processes
+        # (new Codex round) don't show cancelled builders as 'running'.
+        registry_file = tmp_path / "subagents" / "_registry.json"
+        assert registry_file.exists(), "Registry file must be written after cancel"
+        registry = json.loads(registry_file.read_text())
+        entries = registry.get("subagents", [])
+        assert len(entries) == 1
+        assert entries[0]["subagent_id"] == "build_member_architecture"
+        assert entries[0]["status"] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_cancel_registry_not_written_on_failure(self, monkeypatch, tmp_path):
+        """Registry should not be written when cancel fails (manager returns success=False)."""
+        import json
+
+        server, mcp = await _build_subagent_server(monkeypatch, tmp_path)
+
+        cancel_handler = None
+        for tool in mcp._tool_manager._tools.values():
+            if tool.name == "cancel_subagent":
+                cancel_handler = tool.fn
+                break
+        assert cancel_handler is not None
+
+        class _FakeFailManager:
+            async def cancel_subagent(self, subagent_id):  # noqa: ANN001
+                return {"success": False, "error": "Subagent not found: no-such-id"}
+
+            def list_subagents(self):
+                return []
+
+        monkeypatch.setattr(server, "_get_manager", lambda: _FakeFailManager())
+
+        result = await _invoke_handler(cancel_handler, subagent_id="no-such-id")
+        assert result["success"] is False
+
+        registry_file = tmp_path / "subagents" / "_registry.json"
+        # Registry should not be written (or if written, should show empty list)
+        if registry_file.exists():
+            registry = json.loads(registry_file.read_text())
+            assert registry.get("subagents", []) == []
 
 
 # =============================================================================

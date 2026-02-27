@@ -40,7 +40,7 @@ class EvaluationCriteriaGeneratorConfig:
     enabled: bool = False
     persist_across_turns: bool = False
     min_criteria: int = 4
-    max_criteria: int = 10
+    max_criteria: int = 7
 
 
 @dataclass
@@ -336,7 +336,7 @@ def get_default_criteria(has_changedoc: bool = False) -> list[GeneratedCriterion
 def _parse_criteria_response(
     response: str,
     min_criteria: int = 4,
-    max_criteria: int = 10,
+    max_criteria: int = 7,
 ) -> list[GeneratedCriterion] | None:
     """Parse LLM response into GeneratedCriterion objects.
 
@@ -460,7 +460,7 @@ class EvaluationCriteriaGenerator:
         task: str,
         has_changedoc: bool,
         min_criteria: int = 4,
-        max_criteria: int = 10,
+        max_criteria: int = 7,
     ) -> str:
         """Build the prompt for criteria generation.
 
@@ -478,7 +478,7 @@ class EvaluationCriteriaGenerator:
             changedoc_instruction = """
 - **One criterion MUST assess changedoc traceability**: whether decisions are
   documented with genuine rationale and implementation references are accurate.
-  Tag this criterion as "core".
+  Tag this criterion as "must".
 """
 
         return f"""You are generating evaluation criteria for a multi-agent AI system.
@@ -488,7 +488,8 @@ class EvaluationCriteriaGenerator:
 
 ## Your Goal
 Generate {min_criteria}-{max_criteria} concrete, verifiable evaluation criteria \
-specific to THIS task. Each criterion describes what to look for and how to score it.
+specific to THIS task. Each criterion names a quality dimension and describes \
+what to look for when assessing it.
 
 Criteria must be **concrete and verifiable** — specific enough that an evaluator \
 can point to evidence in the output.
@@ -498,15 +499,15 @@ can still be mediocre. Include at least one criterion that assesses whether the 
 output shows intentional craft — cohesive choices, not just adequate execution. \
 Tag it as "should".
 
-BAD (abstract): "Rate visual design quality. SCORE: X/10"
-GOOD (concrete): "Typography is legible at mobile resolution (16px+ body text, \
-sufficient contrast). Layout has clear visual hierarchy. Color palette is \
-consistent across all pages. SCORE: X/10"
+BAD (abstract): "Visual design quality."
+GOOD (concrete): "Visual design: typography is legible at mobile resolution \
+(16px+ body text, sufficient contrast), layout has clear visual hierarchy, \
+color palette is consistent across all pages."
 
-BAD (abstract): "Rate code quality. SCORE: X/10"
-GOOD (concrete): "Functions have single responsibility. Error paths are handled \
-(no swallowed exceptions). Public API has type annotations. No hardcoded secrets \
-or credentials. SCORE: X/10"
+BAD (abstract): "Code quality."
+GOOD (concrete): "Code quality: functions have single responsibility, error \
+paths are handled (no swallowed exceptions), public API has type annotations, \
+no hardcoded secrets or credentials."
 
 BAD (only functional): all criteria check correctness, completeness, and requirements
 GOOD (includes craft): at least one criterion asks whether the output shows \
@@ -517,12 +518,19 @@ structure that a domain expert would recognize as crafted, not just assembled.
 
 Organize criteria into three tiers:
 - **MUST**: Hard requirements from the task. Failing these means the answer is wrong. \
+A first-year professional in the domain would not ship output that fails this. \
 (e.g., "Output is a working 30-second video, not a still image or broken render")
-- **SHOULD**: Quality expectations a demanding user would have. Missing these means \
+- **SHOULD**: Quality expectations a demanding user would have. A competent first draft \
+often misses these — they require deliberate effort to satisfy. Missing these means \
 the answer is mediocre. (e.g., "Text is readable without pausing the video")
-- **COULD**: Excellence markers that separate good from outstanding. Missing these is \
-acceptable but achieving them shows real craft. (e.g., "Visual transitions \
+- **COULD**: Excellence markers that separate good from outstanding. A solid submission \
+might reasonably skip these; they represent genuine craft above the bar. Missing these \
+is acceptable but achieving them signals real skill. (e.g., "Visual transitions \
 reinforce the narrative rather than just being decorative")
+
+**Calibration test**: ask yourself — would a competent first attempt satisfy this? \
+If yes, it belongs in MUST. If a good attempt might miss it, SHOULD. \
+If only exceptional work achieves it, COULD.
 
 ## Requirements
 1. Generate between {min_criteria} and {max_criteria} criteria
@@ -534,37 +542,42 @@ reinforce the narrative rather than just being decorative")
 7. **One criterion MUST assess overall quality/craft** — whether the output \
 shows intentional, cohesive choices beyond functional correctness. Tag it \
 as "should". Without this, agents produce correct but mediocre output.
+8. **Criteria must cover distinct dimensions of the task** — do not cluster \
+multiple criteria around the same aspect. Think about what the major \
+independent quality axes are (e.g., correctness, completeness, error handling, \
+usability, performance, style) and ensure each significant dimension gets \
+at least one criterion. An evaluator reading the full set should feel like \
+the entire task space is covered.
 {changedoc_instruction}
 ## Examples
 
 For a task "Create an SVG of a pelican riding a bicycle":
-- "Rate pelican accuracy: beak shape, throat pouch, plumage detail. SCORE: X/10"
-- "Rate bicycle accuracy: wheels, frame, handlebars, pedals. SCORE: X/10"
-- "Rate how convincingly the pelican rides the bicycle. SCORE: X/10"
-- "Rate visual appeal, scenery, and color usage. SCORE: X/10"
+- "Pelican accuracy: beak shape, throat pouch, plumage detail are recognizable and correct."
+- "Bicycle accuracy: wheels, frame, handlebars, and pedals are all present and structurally plausible."
+- "Convincingness of the riding pose: pelican's body position, grip, and balance look physically coherent."
+- "Visual appeal: scenery, color palette, and composition make the image engaging beyond just accurate."
 
 For a task "Write an API client library":
-- "Rate API coverage: proportion of endpoints with correct method signatures. SCORE: X/10"
-- "Rate error handling: resilience to network failures, rate limits, malformed responses. SCORE: X/10"
-- "Rate developer ergonomics: naming clarity, discoverability, documentation. SCORE: X/10"
+- "API coverage: all documented endpoints have working method signatures with correct parameters."
+- "Error handling: client is resilient to network failures, rate limits, and malformed responses."
+- "Developer ergonomics: naming is clear, the public API is discoverable, and usage is self-evident."
 
-Notice: these are short, criterion-focused, and end with SCORE: X/10. They name the \
-quality axis and list what to look for — they do NOT prescribe specific quantities, \
-thresholds, or implementation choices.
+Notice: these name a quality axis and list what to look for — they do NOT prescribe \
+specific quantities, thresholds, or implementation choices.
 
 BAD (prescriptive requirement): "The website contains at least 4 distinct pages covering history, discography, members, and legacy"
-GOOD (evaluation dimension): "Rate breadth and depth of topic coverage across the site. SCORE: X/10"
+GOOD (evaluation dimension): "Breadth and depth of topic coverage: all major aspects of the subject are addressed with meaningful depth."
 
 BAD (implementation plan): "Each of the four Beatles is individually featured with accurate biographical details including birth year, role, and contributions"
-GOOD (evaluation dimension): "Rate individual member coverage: biographical accuracy, distinct contributions, completeness. SCORE: X/10"
+GOOD (evaluation dimension): "Individual member coverage: each member has accurate biographical detail, distinct contributions, and is not reduced to a footnote."
 
 ## Output Format
 Return JSON with this structure:
 {{
     "criteria": [
-        {{"text": "Rate [aspect]: [concrete things to look for]. SCORE: X/10", "category": "must"}},
-        {{"text": "Rate [aspect]: [concrete things to look for]. SCORE: X/10", "category": "should"}},
-        {{"text": "Rate [aspect]: [concrete things to look for]. SCORE: X/10", "category": "could"}}
+        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "must"}},
+        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "should"}},
+        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "could"}}
     ]
 }}
 
@@ -580,7 +593,7 @@ Generate evaluation criteria now for the task above."""
         log_directory: str | None,
         orchestrator_id: str,
         min_criteria: int = 4,
-        max_criteria: int = 10,
+        max_criteria: int = 7,
         on_subagent_started: Callable | None = None,
     ) -> list[GeneratedCriterion]:
         """Generate criteria via a subagent run.

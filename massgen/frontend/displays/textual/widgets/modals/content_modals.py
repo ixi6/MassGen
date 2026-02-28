@@ -523,3 +523,88 @@ class ContextModal(BaseModal):
                 if str(Path(p["path"]).resolve()) == resolved:
                     p["permission"] = new_permission
                     break
+
+
+class SubagentContextModal(BaseModal):
+    """Read-only context paths modal for subagent views."""
+
+    DEFAULT_CSS = """
+    SubagentContextModal #context_container {
+        width: 80;
+        max-height: 35;
+    }
+
+    SubagentContextModal .context-path-row {
+        height: 3;
+        width: 100%;
+    }
+
+    SubagentContextModal .context-path-text {
+        width: 1fr;
+        height: 3;
+        content-align: left middle;
+        padding: 0 1;
+    }
+
+    SubagentContextModal .perm-badge {
+        min-width: 10;
+        max-width: 10;
+        margin: 0 1;
+    }
+
+    SubagentContextModal #context_paths_list {
+        max-height: 15;
+        border: solid $primary-background;
+        margin: 1 0;
+        padding: 1;
+    }
+
+    SubagentContextModal #close_context_button {
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, context_paths_labeled: list[dict[str, str]]):
+        super().__init__()
+        self._paths = context_paths_labeled
+
+    def compose(self) -> ComposeResult:
+        with Container(id="context_container"):
+            yield Label("Subagent Context Paths", id="context_header")
+            yield Label(
+                "All paths are read-only for subagents",
+                id="context_hint",
+            )
+            with ScrollableContainer(id="context_paths_list"):
+                yield from self._build_path_rows()
+            yield Button("Close (ESC)", id="close_context_button", variant="default")
+
+    def _build_path_rows(self) -> list[Widget]:
+        rows: list[Widget] = []
+        for i, entry in enumerate(self._paths):
+            path_str = entry.get("path", "")
+            label = entry.get("label", Path(path_str).name)
+            row = Horizontal(
+                Static(
+                    f"{path_str}\n  [dim]{label}[/]",
+                    markup=True,
+                    classes="context-path-text",
+                ),
+                Button(
+                    "Read",
+                    variant="primary",
+                    classes="perm-badge",
+                    disabled=True,
+                ),
+                classes="context-path-row",
+                id=f"path_row_{i}",
+            )
+            rows.append(row)
+        if not rows:
+            rows.append(
+                Static(
+                    "[dim]No context paths configured.[/]",
+                    markup=True,
+                ),
+            )
+        return rows

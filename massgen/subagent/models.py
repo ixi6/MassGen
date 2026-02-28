@@ -690,6 +690,7 @@ class SubagentDisplayData:
     answer_preview: str | None = None
     log_path: str | None = None  # Path to log directory for log streaming
     context_paths: list[str] = field(default_factory=list)
+    context_paths_labeled: list[dict[str, str]] = field(default_factory=list)
     subagent_type: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -708,5 +709,6 @@ class SubagentDisplayData:
             "answer_preview": self.answer_preview,
             "log_path": self.log_path,
             "context_paths": self.context_paths.copy(),
+            "context_paths_labeled": [e.copy() for e in self.context_paths_labeled],
             "subagent_type": self.subagent_type,
         }

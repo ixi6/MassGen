@@ -434,6 +434,31 @@ def _normalize_subagent_type(raw_type: Any) -> str | None:
     return value.lower()
 
 
+def _build_context_paths_labeled(
+    context_paths: list[str],
+    workspace_path: str,
+    sa_data: dict[str, Any],
+    existing: SubagentDisplayData | None,
+) -> list[dict[str, str]]:
+    """Build labeled context paths for the SubagentContextModal."""
+    if existing and existing.context_paths_labeled and not context_paths:
+        return existing.context_paths_labeled
+    if not context_paths:
+        return []
+
+    labeled: list[dict[str, str]] = []
+    for p in context_paths:
+        # Determine label based on path characteristics
+        if workspace_path and p == workspace_path:
+            label = "Parent CWD"
+        elif "temp_workspace" in p or "temp_ws" in p:
+            label = "Temp Workspace"
+        else:
+            label = Path(p).name or p
+        labeled.append({"path": p, "label": label, "permission": "read"})
+    return labeled
+
+
 def _build_subagent_display_data(
     sa_data: dict[str, Any],
     existing: SubagentDisplayData | None = None,
@@ -502,6 +527,14 @@ def _build_subagent_display_data(
     if workspace_file_count == 0 and existing and existing.workspace_file_count > 0:
         workspace_file_count = existing.workspace_file_count
 
+    # Build labeled context paths for the SubagentContextModal
+    context_paths_labeled = _build_context_paths_labeled(
+        context_paths,
+        workspace_path,
+        sa_data,
+        existing,
+    )
+
     return SubagentDisplayData(
         id=subagent_id,
         task=task,
@@ -516,6 +549,7 @@ def _build_subagent_display_data(
         answer_preview=answer_preview,
         log_path=str(log_path) if log_path else None,
         context_paths=context_paths,
+        context_paths_labeled=context_paths_labeled,
         subagent_type=subagent_type,
     )
 

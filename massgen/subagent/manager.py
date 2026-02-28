@@ -172,7 +172,7 @@ class SubagentManager:
         subagent_id: str,
         content: str,
         target_agents: list[str] | None = None,
-    ) -> bool:
+    ) -> tuple[bool, str | None]:
         """Write a runtime message to a running subagent's inbox.
 
         Messages are written as JSON files to
@@ -186,20 +186,29 @@ class SubagentManager:
                 None broadcasts to all inner agents.
 
         Returns:
-            True if message was written, False if subagent not found or not running
+            Tuple of (success, error_message). error_message is None on success.
         """
         state = self._subagents.get(subagent_id)
         if state is None:
-            logger.warning(f"[SubagentManager] Cannot send message: subagent '{subagent_id}' not found")
-            return False
+            msg = f"Subagent '{subagent_id}' not found"
+            logger.warning(f"[SubagentManager] Cannot send message: {msg}")
+            return (False, msg)
 
         if state.status != "running":
-            logger.warning(
-                f"[SubagentManager] Cannot send message: subagent '{subagent_id}' " f"is {state.status}, not running",
-            )
-            return False
+            msg = f"Subagent '{subagent_id}' is {state.status}, not running"
+            logger.warning(f"[SubagentManager] Cannot send message: {msg}")
+            return (False, msg)
 
         workspace = Path(state.workspace_path)
+
+        # Race condition guard: subprocess may have finished but parent status
+        # hasn't been updated yet. Check for answer.txt as a completion signal.
+        answer_file = workspace / "answer.txt"
+        if answer_file.exists():
+            msg = f"Subagent '{subagent_id}' has already completed" " (answer.txt found in workspace)"
+            logger.warning(f"[SubagentManager] Cannot send message: {msg}")
+            return (False, msg)
+
         inbox_dir = workspace / ".massgen" / "runtime_inbox"
         inbox_dir.mkdir(parents=True, exist_ok=True)
 
@@ -223,7 +232,7 @@ class SubagentManager:
         logger.info(
             f"[SubagentManager] Sent runtime message to {subagent_id}: " f"'{content[:50]}...' -> {final_path}",
         )
-        return True
+        return (True, None)
 
     def get_running_subagent_ids(self) -> list[str]:
         """Return IDs of currently running subagents."""

@@ -1203,8 +1203,9 @@ class TestSendMessageToSubagent:
         sub_workspace.mkdir(parents=True, exist_ok=True)
         self._register_running_subagent(manager, "sub1", sub_workspace)
 
-        result = manager.send_message_to_subagent("sub1", "focus on performance")
-        assert result is True
+        success, error = manager.send_message_to_subagent("sub1", "focus on performance")
+        assert success is True
+        assert error is None
 
         inbox = sub_workspace / ".massgen" / "runtime_inbox"
         assert inbox.exists()
@@ -1217,13 +1218,14 @@ class TestSendMessageToSubagent:
         assert "timestamp" in data
 
     def test_send_message_returns_false_for_unknown_subagent(self, tmp_path):
-        """Nonexistent ID → False."""
+        """Nonexistent ID → (False, error)."""
         manager = self._make_manager(tmp_path)
-        result = manager.send_message_to_subagent("nonexistent", "hello")
-        assert result is False
+        success, error = manager.send_message_to_subagent("nonexistent", "hello")
+        assert success is False
+        assert "not found" in error
 
     def test_send_message_returns_false_for_non_running_subagent(self, tmp_path):
-        """Completed subagent → False."""
+        """Completed subagent → (False, error)."""
         from massgen.subagent.models import SubagentConfig, SubagentState
 
         manager = self._make_manager(tmp_path)
@@ -1235,8 +1237,23 @@ class TestSendMessageToSubagent:
         )
         manager._subagents["done1"] = state
 
-        result = manager.send_message_to_subagent("done1", "hello")
-        assert result is False
+        success, error = manager.send_message_to_subagent("done1", "hello")
+        assert success is False
+        assert "completed" in error
+
+    def test_send_message_rejects_when_answer_file_exists(self, tmp_path):
+        """Running subagent with answer.txt (race condition) → (False, error)."""
+        manager = self._make_manager(tmp_path)
+        sub_workspace = tmp_path / "workspace" / "subagents" / "sub_done" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+        self._register_running_subagent(manager, "sub_done", sub_workspace)
+
+        # Simulate subprocess having written answer.txt
+        (sub_workspace / "answer.txt").write_text("Final answer")
+
+        success, error = manager.send_message_to_subagent("sub_done", "too late")
+        assert success is False
+        assert "already completed" in error
 
     def test_send_message_atomic_write(self, tmp_path):
         """Verify .tmp → rename pattern (no partial reads)."""
@@ -1245,8 +1262,9 @@ class TestSendMessageToSubagent:
         sub_workspace.mkdir(parents=True, exist_ok=True)
         self._register_running_subagent(manager, "sub2", sub_workspace)
 
-        result = manager.send_message_to_subagent("sub2", "test atomic")
-        assert result is True
+        success, error = manager.send_message_to_subagent("sub2", "test atomic")
+        assert success is True
+        assert error is None
 
         inbox = sub_workspace / ".massgen" / "runtime_inbox"
         # No .tmp files should remain

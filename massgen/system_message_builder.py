@@ -184,6 +184,7 @@ class SystemMessageBuilder:
         novelty_pressure_data: dict[str, Any] | None = None,
         custom_checklist_items: list[str] | None = None,
         item_categories: dict[str, str] | None = None,
+        item_verify_by: dict[str, str] | None = None,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -262,6 +263,7 @@ class SystemMessageBuilder:
                     has_changedoc=changedoc_enabled,
                     custom_checklist_items=custom_checklist_items,
                     item_categories=item_categories,
+                    item_verify_by=item_verify_by,
                 ),
             )
         else:
@@ -284,6 +286,7 @@ class SystemMessageBuilder:
                     has_changedoc=changedoc_enabled,
                     custom_checklist_items=custom_checklist_items,
                     item_categories=item_categories,
+                    item_verify_by=item_verify_by,
                     has_existing_answers=bool(answers),
                 ),
             )

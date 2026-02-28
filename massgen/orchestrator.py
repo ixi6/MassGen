@@ -734,15 +734,24 @@ class Orchestrator(ChatAgent):
                 self._plan_session_id,
             )
 
-    def _get_active_criteria(self) -> tuple[list[str] | None, dict[str, str] | None]:
-        """Return (items, categories) using the criteria priority waterfall.
+    def _get_active_criteria(
+        self,
+    ) -> tuple[list[str] | None, dict[str, str] | None, dict[str, str] | None]:
+        """Return (items, categories, verify_by) using the criteria priority waterfall.
 
         Priority: inline > generated > preset > None.
-        Returns (None, None) when no custom criteria source is configured.
+        Returns (None, None, None) when no custom criteria source is configured.
         This is used by both _init_checklist_tool and the system prompt builder
         to ensure criteria are consistent across the checklist MCP tool and
         the system prompt shown to the model.
         """
+
+        def _to_tuple(criteria: list) -> tuple[list[str], dict[str, str], dict[str, str]]:
+            texts = [c.text for c in criteria]
+            cats = {c.id: c.category for c in criteria}
+            vby = {c.id: c.verify_by for c in criteria if c.verify_by}
+            return texts, cats, vby or None
+
         inline = getattr(
             getattr(self.config, "coordination_config", None),
             "checklist_criteria_inline",
@@ -751,14 +760,10 @@ class Orchestrator(ChatAgent):
         if inline:
             from massgen.evaluation_criteria_generator import criteria_from_inline
 
-            criteria = criteria_from_inline(inline)
-            return [c.text for c in criteria], {c.id: c.category for c in criteria}
+            return _to_tuple(criteria_from_inline(inline))
 
         if self._generated_evaluation_criteria is not None:
-            return (
-                [c.text for c in self._generated_evaluation_criteria],
-                {c.id: c.category for c in self._generated_evaluation_criteria},
-            )
+            return _to_tuple(self._generated_evaluation_criteria)
 
         preset = getattr(
             getattr(self.config, "coordination_config", None),
@@ -768,10 +773,9 @@ class Orchestrator(ChatAgent):
         if preset:
             from massgen.evaluation_criteria_generator import get_criteria_for_preset
 
-            criteria = get_criteria_for_preset(preset)
-            return [c.text for c in criteria], {c.id: c.category for c in criteria}
+            return _to_tuple(get_criteria_for_preset(preset))
 
-        return None, None
+        return None, None, None
 
     def _init_checklist_tool(self) -> None:
         """Register submit_checklist MCP tool if voting_sensitivity is checklist_gated.
@@ -798,7 +802,7 @@ class Orchestrator(ChatAgent):
         # Priority waterfall: inline > generated > preset > changedoc > generic.
         # _get_active_criteria handles inline/generated/preset; fall through
         # to changedoc/generic defaults when it returns None.
-        custom_items, item_categories = self._get_active_criteria()
+        custom_items, item_categories, _item_verify_by = self._get_active_criteria()
         if custom_items is not None:
             items = custom_items
             # Determine source label for logging
@@ -2668,7 +2672,7 @@ class Orchestrator(ChatAgent):
 
             log_dir = get_log_session_dir()
             criteria_file = log_dir / "generated_evaluation_criteria.yaml"
-            criteria_data = [{"id": c.id, "text": c.text, "category": c.category} for c in criteria]
+            criteria_data = [{"id": c.id, "text": c.text, "category": c.category, **({"verify_by": c.verify_by} if c.verify_by else {})} for c in criteria]
             with open(criteria_file, "w") as f:
                 yaml.dump(criteria_data, f, default_flow_style=False)
             logger.info(f"[Orchestrator] Saved evaluation criteria to {criteria_file}")
@@ -5460,6 +5464,7 @@ Your answer:"""
                                 id=c.get("id", f"E{i + 1}"),
                                 text=c["text"],
                                 category=c.get("category", "should"),
+                                verify_by=c.get("verify_by") or None,
                             )
                             for i, c in enumerate(criteria_data)
                         ]
@@ -9871,7 +9876,7 @@ Your answer:"""
                     )
 
             # Resolve custom criteria once for both system prompt and checklist tool state
-            _active_items, _active_categories = self._get_active_criteria()
+            _active_items, _active_categories, _active_verify_by = self._get_active_criteria()
 
             system_message = self._get_system_message_builder().build_coordination_message(
                 agent=agent,
@@ -9912,6 +9917,7 @@ Your answer:"""
                 novelty_pressure_data=novelty_data,
                 custom_checklist_items=_active_items,
                 item_categories=_active_categories,
+                item_verify_by=_active_verify_by,
             )
 
             # Update checklist tool state if registered (mutable dict — tool closure reads this)

@@ -225,18 +225,26 @@ def _checklist_confidence_cutoff(effective_threshold: int) -> int:
     return max(4, int(10 - effective_threshold * 0.5))
 
 
-def _build_criteria_failure_bullets(custom_checklist_items: list[str] | None = None) -> str:
+def _build_criteria_failure_bullets(
+    custom_checklist_items: list[str] | None = None,
+    item_verify_by: dict[str, str] | None = None,
+) -> str:
     """Build failure-pattern bullets from criteria list.
 
     When custom items are provided, generates E1/E2/... bullets with short
     labels derived from the first ~60 chars of each criterion text.
+    If item_verify_by is provided, appends a verification hint for criteria
+    that require non-textual evidence.
     Otherwise returns the hardcoded generic labels.
     """
     if custom_checklist_items:
         lines = []
         for i, text in enumerate(custom_checklist_items):
             label = text[:60].rstrip(" .,—-")
-            lines.append(f"- **E{i + 1} ({label})**: Gaps or failures against this criterion?")
+            eid = f"E{i + 1}"
+            vb = (item_verify_by or {}).get(eid)
+            vb_hint = f" [verify: {vb}]" if vb else ""
+            lines.append(f"- **{eid} ({label}{vb_hint})**: Gaps or failures against this criterion?")
         return "\n".join(lines)
     return (
         "- **E1 (goal alignment)**: Requirements missing or only partially met?\n"
@@ -245,7 +253,10 @@ def _build_criteria_failure_bullets(custom_checklist_items: list[str] | None = N
     )
 
 
-def _build_changedoc_failure_bullets(custom_checklist_items: list[str] | None = None) -> str:
+def _build_changedoc_failure_bullets(
+    custom_checklist_items: list[str] | None = None,
+    item_verify_by: dict[str, str] | None = None,
+) -> str:
     """Build changedoc-specific failure-pattern bullets.
 
     When custom items are provided, uses dynamic labels. Otherwise uses the
@@ -253,7 +264,7 @@ def _build_changedoc_failure_bullets(custom_checklist_items: list[str] | None = 
     alignment, remaining criteria).
     """
     if custom_checklist_items:
-        return _build_criteria_failure_bullets(custom_checklist_items)
+        return _build_criteria_failure_bullets(custom_checklist_items, item_verify_by)
     return (
         "- **E1 (goal alignment)**: Output failures — what doesn't work? What produces wrong\n"
         "  results? What would a demanding user be disappointed by?\n"
@@ -268,7 +279,10 @@ def _build_changedoc_failure_bullets(custom_checklist_items: list[str] | None = 
     )
 
 
-def _build_checklist_analysis(custom_checklist_items: list[str] | None = None) -> str:
+def _build_checklist_analysis(
+    custom_checklist_items: list[str] | None = None,
+    item_verify_by: dict[str, str] | None = None,
+) -> str:
     """Build GEPA-style diagnostic analysis section for checklist modes.
 
     Uses structured diagnostic feedback (failure patterns, success patterns,
@@ -278,7 +292,7 @@ def _build_checklist_analysis(custom_checklist_items: list[str] | None = None) -
 
     The analysis handles both N=1 and N>1 in a single template.
     """
-    failure_bullets = _build_criteria_failure_bullets(custom_checklist_items)
+    failure_bullets = _build_criteria_failure_bullets(custom_checklist_items, item_verify_by)
     return f"""## Diagnostic Analysis
 
 Complete your full analysis before reading the Decision section below. Do not let
@@ -387,7 +401,10 @@ A score that contradicts your own Failure Patterns section is dishonest — fix
 either the analysis or the score.\""""
 
 
-def _build_changedoc_checklist_analysis(custom_checklist_items: list[str] | None = None) -> str:
+def _build_changedoc_checklist_analysis(
+    custom_checklist_items: list[str] | None = None,
+    item_verify_by: dict[str, str] | None = None,
+) -> str:
     """Build changedoc-anchored GEPA-style diagnostic analysis for checklist modes.
 
     Replaces the generic _build_checklist_analysis() when changedoc is enabled.
@@ -428,7 +445,7 @@ changedoc, and the alignment between them? Map each failure to the E-criterion
 it violates.
 
 For each answer:
-{_build_changedoc_failure_bullets(custom_checklist_items)}
+{_build_changedoc_failure_bullets(custom_checklist_items, item_verify_by)}
 
 If you cannot find meaningful failures, your review is probably too generous.
 
@@ -866,13 +883,19 @@ to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
 
 **Phase 1 — Gather evidence. Do this BEFORE calling `submit_checklist`.**
 
-Spawn evaluator subagent(s) in background to gather programmatic evidence while
-you do qualitative analysis in parallel:
+Spawn **one evaluator** in background that sees **all candidate answers together**,
+while you do qualitative analysis in parallel:
 
-- Evaluators handle: screenshots + visual observations, test runs, completeness
-  checks, feature verification. Assign one evaluator per independent concern
-  (e.g. frontend layout vs backend correctness) if parallelizable. Evaluators
-  observe and report — they do NOT make changes.
+- Give the evaluator paths to all agents' answers. Instruct it to compare
+  cross-agent: what does each answer have that the others lack? What gaps appear
+  in all of them? Cross-agent comparison surfaces gaps that per-answer evaluation
+  misses entirely.
+- Evaluators handle: screenshots + visual observations (for visual artifacts:
+  render to images or video first, then view), test runs, completeness checks,
+  feature verification. Evaluators observe and report — they do NOT make changes.
+- Split into parallel evaluators only when concerns are truly independent and
+  span all answers equally (e.g. "visual quality" vs "link integrity") — never
+  split by agent.
 - **File access**: Your workspace is automatically mounted read-only for subagents
   (include_parent_workspace=True by default). Reference files by their full
   workspace-absolute paths. Do NOT reference the Shared Reference (temp_workspaces)
@@ -2870,6 +2893,7 @@ class EvaluationSection(SystemPromptSection):
         has_changedoc: bool = False,
         custom_checklist_items: list[str] | None = None,
         item_categories: dict[str, str] | None = None,
+        item_verify_by: dict[str, str] | None = None,
         has_existing_answers: bool = True,
     ):
         super().__init__(
@@ -2889,6 +2913,7 @@ class EvaluationSection(SystemPromptSection):
         self.has_changedoc = has_changedoc
         self.custom_checklist_items = custom_checklist_items
         self.item_categories = item_categories
+        self.item_verify_by = item_verify_by
         self.has_existing_answers = has_existing_answers
 
     def build_content(self) -> str:
@@ -2986,7 +3011,11 @@ Your goal is to iteratively refine answers until they meet the quality bar.
             threshold = self.voting_threshold if self.voting_threshold is not None else 5
 
             items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-            analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
+            analysis = (
+                _build_changedoc_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+                if self.has_changedoc
+                else _build_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+            )
             if effective_sensitivity == "checklist":
                 decision = _build_checklist_decision(
                     threshold,
@@ -3017,7 +3046,11 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                 )
             else:
                 items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-                analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
+                analysis = (
+                    _build_changedoc_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+                    if self.has_changedoc
+                    else _build_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+                )
                 decision = _build_checklist_gated_decision(
                     items,
                     require_gap_report=self.checklist_require_gap_report,
@@ -3178,6 +3211,7 @@ class DecompositionSection(SystemPromptSection):
         has_changedoc: bool = False,
         custom_checklist_items: list[str] | None = None,
         item_categories: dict[str, str] | None = None,
+        item_verify_by: dict[str, str] | None = None,
     ):
         super().__init__(
             title="MassGen Decomposition Coordination",
@@ -3194,6 +3228,7 @@ class DecompositionSection(SystemPromptSection):
         self.has_changedoc = has_changedoc
         self.custom_checklist_items = custom_checklist_items
         self.item_categories = item_categories
+        self.item_verify_by = item_verify_by
 
     def _build_decision_block(self) -> str:
         """Build the new_answer vs stop decision block, threshold-aware if set."""
@@ -3203,7 +3238,11 @@ class DecompositionSection(SystemPromptSection):
 
             if self.voting_sensitivity in ("checklist", "checklist_scored"):
                 items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-                analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
+                analysis = (
+                    _build_changedoc_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+                    if self.has_changedoc
+                    else _build_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+                )
                 if self.voting_sensitivity == "checklist":
                     decision = _build_checklist_decision(
                         self.voting_threshold,
@@ -3230,7 +3269,11 @@ Both are terminal actions that end your round.
 {decision}"""
             elif self.voting_sensitivity == "checklist_gated":
                 items = self.custom_checklist_items if self.custom_checklist_items is not None else (_CHECKLIST_ITEMS_CHANGEDOC if self.has_changedoc else _CHECKLIST_ITEMS)
-                analysis = _build_changedoc_checklist_analysis(self.custom_checklist_items) if self.has_changedoc else _build_checklist_analysis(self.custom_checklist_items)
+                analysis = (
+                    _build_changedoc_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+                    if self.has_changedoc
+                    else _build_checklist_analysis(self.custom_checklist_items, self.item_verify_by)
+                )
                 decision = _build_checklist_gated_decision(
                     items,
                     terminate_action="stop",
@@ -4641,7 +4684,7 @@ class OutputFirstVerificationSection(SystemPromptSection):
     def __init__(self, decomposition_mode: bool = False):
         super().__init__(
             title="Output-First Iteration",
-            priority=Priority.HIGH,
+            priority=Priority.CRITICAL,  # TODO: Change back to 'HIGH' ?
             xml_tag="output_first_iteration",
         )
         self.decomposition_mode = decomposition_mode
@@ -4666,14 +4709,20 @@ A single static observation (screenshot, one test run) is often not sufficient. 
 | Interactive tool | Interface renders | Use every feature, test edge cases, verify all interactions |
 | Script/Code | No errors on run | Test with various inputs, edge cases, invalid data |
 | API | Single call works | Test all endpoints, error states, authentication flows |
-| Audio output | File exists | Listen/analyze the actual audio content |
+| Audio output | File exists | Listen/analyze the actual audio content — play it, don't just check the file exists |
 | Data pipeline | Output exists | Validate accuracy, test with edge case inputs |
+| Visual document / static artifact | File generates without error | Render to image(s) and **view each page/slide** — does layout, imagery, colors, and content actually look right? \
+Render to images using available tools, then read_media each one. |
 
-**For any artifact not listed above:** Apply the same principle - ask "How will a user actually USE this?" and test that way.
-The goal is always to verify the complete user experience, not just surface appearance.
-**Choose evidence that matches the artifact.** A screenshot proves static layout; a \
-video recording proves animation and interaction flow; audio analysis proves sound output. \
-Use `read_media` with the evidence format that actually demonstrates correctness.
+**Match evidence to how the output is experienced:**
+- **Static visual** (documents, images, layouts) → render to images and view them; \
+  generating a file without error says nothing about what it looks like
+- **Dynamic / motion** (animations, transitions, interactive flows) → capture video; \
+  a screenshot cannot verify movement or interaction sequences
+- **Audio** → listen to the actual output, not just confirm the file exists
+
+When in doubt: *does this move?* → video. *Does it stay still?* → screenshot. \
+`read_media` accepts images, video, and audio — use whichever matches what you are proving.
 
 ### The User Experience Test
 

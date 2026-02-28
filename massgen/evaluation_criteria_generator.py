@@ -50,12 +50,20 @@ class GeneratedCriterion:
     Attributes:
         id: Criterion identifier (e.g., "E1", "E2")
         text: The criterion description text
-        category: "core" or "stretch"
+        category: "must", "should", or "could" (legacy: "core"→"must", "stretch"→"could")
+        verify_by: Optional free-form instruction for how to gather evidence for this
+            criterion. Set when reading the output text is insufficient — e.g.
+            "render each slide to PNG and view visually with read_media",
+            "record a video of the full animation and review the motion",
+            "listen to the audio output from start to finish",
+            "open in browser and test: click all links, submit forms, check states".
+            None when textual inspection of the output is sufficient.
     """
 
     id: str
     text: str
     category: str  # "must", "should", or "could" (legacy: "core"→"must", "stretch"→"could")
+    verify_by: str | None = None
 
 
 # Static defaults inspired by GEPA's diagnostic structure.
@@ -414,11 +422,15 @@ def _parse_criteria_response(
             category = _CATEGORY_MAP.get(raw_category, raw_category)
             if category not in _VALID_CATEGORIES:
                 category = "must"
+            verify_by = item.get("verify_by") or None
+            if verify_by and not isinstance(verify_by, str):
+                verify_by = None
             criteria.append(
                 GeneratedCriterion(
                     id=f"E{i + 1}",
                     text=text,
                     category=category,
+                    verify_by=verify_by,
                 ),
             )
 
@@ -576,10 +588,19 @@ Return JSON with this structure:
 {{
     "criteria": [
         {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "must"}},
-        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "should"}},
+        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "should", "verify_by": "render the output and view it visually"}},
         {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "could"}}
     ]
 }}
+
+**Optional `verify_by` field**: Add when reading the output text is not sufficient to \
+evaluate the criterion — i.e. the evaluator must render, run, or interact with the \
+artifact. Write a short action instruction the evaluator will follow literally:
+- Static visual quality → describe rendering to images and viewing
+- Motion/animation/interaction → describe capturing video and reviewing it
+- Audio → describe listening to the actual output
+- Functional behavior → describe executing and testing it
+Omit when the criterion can be assessed by reading the output or its source.
 
 Write the JSON to a file called `criteria.json` in your workspace.
 Generate evaluation criteria now for the task above."""

@@ -792,8 +792,9 @@ class TestSubagentManagerTargetAgents:
         sub_workspace.mkdir(parents=True, exist_ok=True)
         self._register_running_subagent(manager, "sub1", sub_workspace)
 
-        result = manager.send_message_to_subagent("sub1", "focus", target_agents=["agent_a"])
-        assert result is True
+        success, error = manager.send_message_to_subagent("sub1", "focus", target_agents=["agent_a"])
+        assert success is True
+        assert error is None
 
         inbox = sub_workspace / ".massgen" / "runtime_inbox"
         msg_files = list(inbox.glob("msg_*.json"))

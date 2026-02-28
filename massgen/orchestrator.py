@@ -47,6 +47,7 @@ if TYPE_CHECKING:
     from .mcp_tools.hooks import RuntimeInboxPoller
     from .subagent.models import SubagentResult
 
+from .filesystem_manager import has_meaningful_content
 from .logger_config import get_log_session_dir  # Import to get log directory
 from .logger_config import logger  # Import logger directly for INFO logging
 from .logger_config import (
@@ -5831,14 +5832,8 @@ Your answer:"""
 
     @staticmethod
     def _has_meaningful_workspace_content(path: Path | None) -> bool:
-        """Return True when path includes deliverable files/directories.
-
-        Excludes symlinks, `.git`, and `memory` when determining whether new
-        workspace content is meaningful enough to replace existing snapshots.
-        """
-        if not path or not path.exists() or not path.is_dir():
-            return False
-        return any(not item.is_symlink() and item.name not in (".git", "memory") for item in path.iterdir())
+        """Return True when path includes deliverable files/directories."""
+        return has_meaningful_content(path)
 
     @staticmethod
     def _copy_workspace_contents(
@@ -6041,38 +6036,6 @@ Your answer:"""
                     f"[Orchestrator] Failed to clear task plan for {agent_id}: {e}",
                 )
 
-    async def _save_partial_work_on_restart(self, agent_id: str) -> str | None:
-        """
-        Save partial work snapshot when agent is restarting due to new answers from others.
-        This ensures that any work done before the restart is preserved and shared with other agents.
-
-        Args:
-            agent_id: ID of the agent being restarted
-
-        Returns:
-            The timestamp of the saved snapshot, or None if no snapshot was saved
-        """
-        agent = self.agents.get(agent_id)
-        if not agent or not agent.backend.filesystem_manager:
-            return None
-
-        logger.info(
-            f"[Orchestrator._save_partial_work_on_restart] Saving partial work for {agent_id} before restart",
-        )
-
-        # Save the partial work snapshot with context
-        timestamp = await self._save_agent_snapshot(
-            agent_id,
-            answer_content=None,  # No complete answer yet
-            context_data=self.get_last_context(agent_id),
-            is_final=False,
-        )
-
-        agent.backend.filesystem_manager.log_current_state(
-            "after saving partial work on restart",
-        )
-        return timestamp
-
     def _compute_plan_progress_stats(self, workspace_path: str) -> dict[str, Any] | None:
         """Compute task/requirement progress stats for an agent's workspace.
 
@@ -6135,7 +6098,7 @@ Your answer:"""
 
         This creates a lighter-weight update message designed to be embedded
         in tool result content rather than sent as a separate user message.
-        Used for mid-stream injection after the first traditional injection.
+        Used for mid-stream injection of peer updates during agent execution.
 
         Args:
             agent_id: The agent receiving the injection
@@ -6575,11 +6538,6 @@ Your answer:"""
                     self.agent_states[agent_id].restart_pending = False
                 return None
 
-            # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
-            # This prevents premature convergence where agents immediately adopt the first answer
-            if self.agent_states[agent_id].injection_count == 0:
-                return None  # Use traditional approach for first injection
-
             # TIMING CONSTRAINT: Skip injection if too close to soft timeout
             if self._should_skip_injection_due_to_timeout(agent_id):
                 return None  # Let restart happen instead
@@ -6917,50 +6875,48 @@ Your answer:"""
                     )
 
                     if selected_answers:
-                        # Only inject after first traditional injection
-                        if self.agent_states[agent_id].injection_count > 0:
-                            if not self._should_skip_injection_due_to_timeout(agent_id):
-                                await self._copy_all_snapshots_to_temp_workspace(agent_id)
+                        if not self._should_skip_injection_due_to_timeout(agent_id):
+                            await self._copy_all_snapshots_to_temp_workspace(agent_id)
 
-                                answer_injection = self._build_tool_result_injection(
-                                    agent_id,
-                                    selected_answers,
-                                    existing_answers=answers,
+                            answer_injection = self._build_tool_result_injection(
+                                agent_id,
+                                selected_answers,
+                                existing_answers=answers,
+                            )
+                            injection_parts.append(answer_injection)
+
+                            # Track the injection
+                            self.agent_states[agent_id].injection_count += 1
+                            self.agent_states[agent_id].midstream_injections_this_round += len(selected_answers)
+                            answers.update(selected_answers)
+                            self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
+                            self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
+                            self._refresh_checklist_state_for_agent(agent_id)
+                            self.agent_states[agent_id].restart_pending = self._has_unseen_answer_updates(agent_id)
+
+                            logger.info(
+                                "[Orchestrator] MCP hook: injecting %d peer answer(s) for %s",
+                                len(selected_answers),
+                                agent_id,
+                            )
+
+                            _inj_emitter = get_event_emitter()
+                            if _inj_emitter:
+                                _inj_emitter.emit_injection_received(
+                                    agent_id=agent_id,
+                                    source_agents=list(selected_answers.keys()),
+                                    injection_type="mid_stream",
                                 )
-                                injection_parts.append(answer_injection)
 
-                                # Track the injection
-                                self.agent_states[agent_id].injection_count += 1
-                                self.agent_states[agent_id].midstream_injections_this_round += len(selected_answers)
-                                answers.update(selected_answers)
-                                self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
-                                self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
-                                self._refresh_checklist_state_for_agent(agent_id)
-                                self.agent_states[agent_id].restart_pending = self._has_unseen_answer_updates(agent_id)
-
-                                logger.info(
-                                    "[Orchestrator] MCP hook: injecting %d peer answer(s) for %s",
-                                    len(selected_answers),
-                                    agent_id,
-                                )
-
-                                _inj_emitter = get_event_emitter()
-                                if _inj_emitter:
-                                    _inj_emitter.emit_injection_received(
-                                        agent_id=agent_id,
-                                        source_agents=list(selected_answers.keys()),
-                                        injection_type="mid_stream",
-                                    )
-
-                                self.coordination_tracker.track_agent_action(
-                                    agent_id,
-                                    ActionType.UPDATE_INJECTED,
-                                    f"Mid-stream (MCP hook): {len(selected_answers)} answer(s)",
-                                )
-                                self.coordination_tracker.update_agent_context_with_new_answers(
-                                    agent_id,
-                                    list(selected_answers.keys()),
-                                )
+                            self.coordination_tracker.track_agent_action(
+                                agent_id,
+                                ActionType.UPDATE_INJECTED,
+                                f"Mid-stream (MCP hook): {len(selected_answers)} answer(s)",
+                            )
+                            self.coordination_tracker.update_agent_context_with_new_answers(
+                                agent_id,
+                                list(selected_answers.keys()),
+                            )
 
         # Write combined content to hook file
         if injection_parts:
@@ -8233,10 +8189,6 @@ Your answer:"""
                     )
                 else:
                     self.agent_states[agent_id].restart_pending = False
-                return None
-
-            # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
-            if self.agent_states[agent_id].injection_count == 0:
                 return None
 
             # TIMING CONSTRAINT: Skip injection if too close to soft timeout
@@ -10323,7 +10275,7 @@ Your answer:"""
                             return
 
                         if not has_hook_delivery:
-                            # No hook callback path (e.g., Codex): if a stream is already in progress
+                            # No hook callback path (defensive fallback — all current backends have hooks): if a stream is already in progress
                             # for this execution, convert the update into an enforcement message so
                             # reset_chat=False preserves buffer/session state.
                             if not is_first_real_attempt:
@@ -10355,26 +10307,11 @@ Your answer:"""
                                 yield ("done", None)
                                 return
                         else:
-                            # Check if this is the first time agent sees a new answer
-                            if self.agent_states[agent_id].injection_count == 0:
-                                # First time seeing a new answer - restart normally
-                                # The mid-stream callback will handle subsequent answers via tool results
-                                logger.info(
-                                    f"[Orchestrator] Agent {agent_id} restarting normally (first new answer)",
-                                )
-                                self.agent_states[agent_id].restart_pending = False
-                                self.agent_states[agent_id].injection_count += 1
-                                # Signal completion so coordination loop restarts agent with updated context
-                                # Note: agent_restart notification is yielded at the top of _stream_agent_execution
-                                yield ("done", None)
-                                return
-                            else:
-                                # injection_count >= 1, mid-stream callback will handle via tool results
-                                # Do NOT clear restart_pending here - the callback checks this flag
-                                # and will clear it after injecting content (see get_injection_content)
-                                # Only suppress the round banner once streaming has already started.
-                                if not is_first_real_attempt:
-                                    _mid_stream_injection = True
+                            # Mid-stream callback will handle via tool results.
+                            # Do NOT clear restart_pending — the callback checks and
+                            # clears it after injecting content.
+                            if not is_first_real_attempt:
+                                _mid_stream_injection = True
 
                 # Track restarts for TUI round display - only when agent is about to do real work
                 # (not if it's exiting immediately due to restart_pending)

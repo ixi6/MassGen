@@ -381,48 +381,11 @@ Snapshots are workspace copies saved at specific coordination points:
 - Full write access
 - Cleared after saving snapshot (to prepare for restart)
 
-### Restart and Partial Work Preservation
+### Peer Update Delivery
 
-When an agent is restarted due to new answers from other agents:
+When a peer submits `new_answer`, the current agent receives the update via mid-stream injection (hook callback) without restarting. The only protection against premature injection is first-answer diversity: agents that have not yet produced an answer are never interrupted.
 
-```python
-# orchestrator.py: Agent restart sequence
-1. Detect restart_pending flag is True
-2. Call _save_partial_work_on_restart(agent_id)
-   - Saves current workspace state to snapshots/
-   - Logs workspace contents for debugging
-   - Preserves any files created during partial execution
-3. Clear workspace (prepare for fresh start)
-4. Agent restarts with access to:
-   - All other agents' snapshots in temp_workspaces/
-   - Including the partial work from interrupted agents
-```
-
-**Example Coordination Flow:**
-
-```
-Round 1:
-- Agent A starts → writes files to workspace1/
-- Agent B starts → writes files to workspace2/
-- Agent A completes answer → snapshot saved to snapshots/agentA/
-- Agent B gets restart_pending=True (new answer detected)
-- Agent B's partial work saved → snapshot saved to snapshots/agentB/
-- Agent B's workspace cleared
-
-Round 2:
-- Agent A restarts
-  - temp_workspaces/agentA/ now contains agentB's partial work
-  - Can see what Agent B was working on
-- Agent B restarts
-  - temp_workspaces/agentB/ contains agentA's complete answer
-  - Can build upon Agent A's completed work
-```
-
-**Key Design Decision:** Partial work is ALWAYS saved before restart. This ensures:
-- No work is lost during agent restarts
-- All agents can see each other's progress (complete or partial)
-- Better collaboration through incremental visibility
-- Debugging is easier with complete workspace history
+Backends without hook support (theoretical — all current backends have hooks) fall back to enforcement message injection or a clean restart.
 
 ### Implementation Details
 
@@ -430,18 +393,6 @@ Round 2:
 1. Copies workspace contents to `snapshot_storage/{agent_id}/` (overwrites existing)
 2. Also saves to log directories: `log_session/agent_id/timestamp/workspace/`
 3. Does NOT clear workspace (clearing happens separately)
-
-**Partial Work Save** (`orchestrator.py:_save_partial_work_on_restart()`):
-```python
-async def _save_partial_work_on_restart(self, agent_id: str) -> None:
-    """Save partial work before restarting due to new answers from others."""
-    await self._save_agent_snapshot(
-        agent_id,
-        answer_content=None,  # No complete answer yet
-        context_data=self.get_last_context(agent_id),
-        is_final=False,
-    )
-```
 
 **Temp Workspace Population** (`orchestrator.py:_copy_all_snapshots_to_temp_workspace()`):
 1. Collects all snapshots from `snapshot_storage/{agent_id}/` directories

@@ -131,17 +131,29 @@ This is the recommended tool for all media generation. It automatically selects 
   ElevenLabs names are auto-resolved to UUIDs.
 - `instructions`: For audio, speaking style/tone guidance (e.g., `"warm, reflective tone"`).
   Only supported by OpenAI gpt-4o-mini-tts. Do NOT put style instructions in `prompt`.
-- `aspect_ratio`: For image/video (e.g., `"16:9"`, `"1:1"`)
+- `aspect_ratio`: For image/video (e.g., `"16:9"`, `"1:1"`). Works for both Gemini and Imagen paths.
+- `size`: Image dimensions. OpenAI: `"1024x1024"`, `"1024x1536"`, `"1536x1024"`.
+  Gemini: `"512px"`, `"1K"`, `"2K"`, `"4K"`.
+- `quality`: Image quality. OpenAI: `"low"`, `"medium"`, `"high"`, `"auto"`.
+- `continue_from`: Continuation ID from a previous `generate_media` result for multi-turn
+  image editing. Pass `result["continuation_id"]` from the previous call. Only valid for
+  single image generation (not batch, not video/audio).
 - `storage_path`: Directory to save generated media
 
 **Supported Backends:**
-| Mode | Backends | Models |
-|------|----------|--------|
-| image | google, openai, openrouter | Imagen 3, GPT-4.1, Nano Banana |
-| video | google, openai | Veo 2, Sora-2 |
+| Mode | Backends | Default Models |
+|------|----------|----------------|
+| image | google, openai, openrouter | Nano Banana 2 (`gemini-3.1-flash-image-preview`), GPT-5.2, Nano Banana 2 (via OR) |
+| video | google, openai | Veo 3.1, Sora-2 |
 | audio (speech) | elevenlabs, openai | eleven_multilingual_v2, gpt-4o-mini-tts |
 | audio (music) | elevenlabs | elevenlabs-music |
 | audio (sfx) | elevenlabs | elevenlabs-sfx |
+
+Google image generation supports two API paths:
+- **Gemini models** (`gemini-*`): Uses `generate_content()` — supports text-to-image and image editing via `input_images`
+- **Imagen models** (`imagen-*`): Uses `generate_images()` — text-to-image only
+
+For studio-quality precision and text rendering, set `model: "gemini-3-pro-image-preview"` (Pro-tier, same Gemini API path).
 
 **Audio note:** Prefer `generate_media` with `mode="audio"` over installing packages like `edge-tts`. Backend selection is automatic based on available API keys. If no keys are available, falling back to free packages is fine.
 
@@ -174,6 +186,18 @@ result = await generate_media(
 result = await generate_media(
     "A cat in space",
     mode="image"
+)
+
+# Iterative image editing (multi-turn continuation)
+result = await generate_media(
+    "A logo for a coffee shop",
+    mode="image"
+)
+# Refine using continuation_id from previous result
+result2 = await generate_media(
+    "Make the text larger and add a cup icon",
+    mode="image",
+    continue_from=result["continuation_id"]
 )
 
 # Generate video with Google Veo
@@ -317,8 +341,8 @@ agents:
 **Available Backends:**
 | Mode  | Backends                        | Default Models |
 |-------|--------------------------------|----------------|
-| image | google, openai, openrouter     | imagen-3.0-generate-002, gpt-5.2, gemini-2.5-flash-image-preview |
-| video | google, openai                 | veo-2.0-generate-001, sora-2 |
+| image | google, openai, openrouter     | gemini-3.1-flash-image-preview (Nano Banana 2), gpt-5.2, google/gemini-3.1-flash-image-preview |
+| video | google, openai                 | veo-3.1-generate-preview, sora-2 |
 | audio (speech) | elevenlabs, openai     | eleven_multilingual_v2, gpt-4o-mini-tts |
 | audio (music) | elevenlabs              | elevenlabs-music |
 | audio (sfx) | elevenlabs                | elevenlabs-sfx |

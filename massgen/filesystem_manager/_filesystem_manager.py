@@ -123,6 +123,20 @@ def git_commit_if_changed(workspace: Path, message: str) -> bool:
         return False
 
 
+_WORKSPACE_METADATA_DIRS = frozenset({".git", ".codex", ".massgen", "memory"})
+
+
+def has_meaningful_content(path: Path | None) -> bool:
+    """Check if a directory contains meaningful deliverable content.
+
+    Excludes symlinks and workspace/backend metadata directories
+    that are not agent-produced deliverables.
+    """
+    if not path or not path.exists() or not path.is_dir():
+        return False
+    return any(not item.is_symlink() and item.name not in _WORKSPACE_METADATA_DIRS for item in path.iterdir())
+
+
 class FilesystemManager:
     """
     Manages filesystem operations for backends with MCP filesystem support.
@@ -1898,24 +1912,6 @@ class FilesystemManager:
         if self.use_two_tier_workspace:
             commit_prefix = "[FINAL]" if is_final else "[SNAPSHOT]"
             self._git_commit_if_changed(self.cwd, f"{commit_prefix} Auto-commit before snapshot")
-
-        def has_meaningful_content(path: Path | None) -> bool:
-            """Check if a directory contains meaningful deliverable content.
-
-            Excludes directories that are workspace/backend metadata rather
-            than agent-produced deliverables:
-            - .git (version control metadata)
-            - .codex (Codex backend config, re-created on each run)
-            - .massgen (subagent MCP config, preserved across clears)
-            - memory (workspace metadata, not deliverables)
-            - symlinks (references to other locations)
-
-            Returns True only if there are actual deliverable files/directories.
-            """
-            if not path or not path.exists() or not path.is_dir():
-                return False
-            _metadata_dirs = {".git", ".codex", ".massgen", "memory"}
-            return any(not item.is_symlink() and item.name not in _metadata_dirs for item in path.iterdir())
 
         # Use current workspace as source
         source_path = Path(self.cwd)

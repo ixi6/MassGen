@@ -159,6 +159,8 @@ async def _generate_single_with_input_images(
     duration: int | None,
     voice: str | None,
     aspect_ratio: str | None,
+    size: str | None,
+    continue_from: str | None,
     extra_params: dict[str, Any] | None,
     instructions: str | None,
     timestamp: str,
@@ -171,15 +173,19 @@ async def _generate_single_with_input_images(
     input image validation and loading, and only works with OpenAI backend.
     """
     try:
-        backend_forced_to_openai = False
+        backend_forced = False
 
-        if selected_backend != "openai":
-            if has_api_key("openai"):
-                backend_forced_to_openai = True
+        if selected_backend not in ("openai", "google"):
+            # Try Google first (Gemini supports editing), then OpenAI
+            if has_api_key("google"):
+                backend_forced = True
+                selected_backend = "google"
+            elif has_api_key("openai"):
+                backend_forced = True
                 selected_backend = "openai"
             else:
                 return _error_result(
-                    "Input images currently require the OpenAI backend (Responses API). " "Please set OPENAI_API_KEY to enable image-to-image generation.",
+                    "Image editing requires the OpenAI or Google backend. " "Please set OPENAI_API_KEY or GOOGLE_API_KEY to enable " "image-to-image generation.",
                 )
 
         input_image_content, input_image_paths = _prepare_input_images(
@@ -188,10 +194,10 @@ async def _generate_single_with_input_images(
             allowed_paths_list,
         )
 
-        if backend_forced_to_openai:
-            selected_model = get_default_model("openai", media_type)
-        elif selected_backend == "openai":
-            selected_model = selected_model or get_default_model("openai", media_type)
+        if backend_forced:
+            selected_model = get_default_model(selected_backend, media_type)
+        elif selected_backend in ("openai", "google"):
+            selected_model = selected_model or get_default_model(selected_backend, media_type)
 
         # Generate filename
         clean_prompt = _clean_for_filename(prompt)
@@ -214,9 +220,11 @@ async def _generate_single_with_input_images(
             duration=duration,
             voice=voice,
             aspect_ratio=aspect_ratio,
+            size=size,
             extra_params=extra_params or {},
             input_images=input_image_content,
             input_image_paths=input_image_paths,
+            continue_from=continue_from,
         )
 
         # Execute generation
@@ -228,24 +236,25 @@ async def _generate_single_with_input_images(
             if input_image_paths:
                 metadata["input_image_paths"] = input_image_paths
 
+            response_data = {
+                "success": True,
+                "operation": "generate_media",
+                "mode": mode,
+                "file_path": str(result.output_path),
+                "filename": result.output_path.name if result.output_path else None,
+                "backend": result.backend_name,
+                "model": result.model_used,
+                "file_size": result.file_size_bytes,
+                "duration_seconds": result.duration_seconds,
+                "metadata": metadata,
+            }
+            if metadata.get("continuation_id"):
+                response_data["continuation_id"] = metadata["continuation_id"]
+
             return ExecutionResult(
                 output_blocks=[
                     TextContent(
-                        data=json.dumps(
-                            {
-                                "success": True,
-                                "operation": "generate_media",
-                                "mode": mode,
-                                "file_path": str(result.output_path),
-                                "filename": result.output_path.name if result.output_path else None,
-                                "backend": result.backend_name,
-                                "model": result.model_used,
-                                "file_size": result.file_size_bytes,
-                                "duration_seconds": result.duration_seconds,
-                                "metadata": metadata,
-                            },
-                            indent=2,
-                        ),
+                        data=json.dumps(response_data, indent=2),
                     ),
                 ],
             )
@@ -272,6 +281,8 @@ async def generate_media(
     duration: int | None = None,
     voice: str | None = None,
     aspect_ratio: str | None = None,
+    size: str | None = None,
+    continue_from: str | None = None,
     audio_format: str | None = None,
     audio_type: Literal["speech", "music", "sound_effect"] = "speech",
     instructions: str | None = None,
@@ -301,7 +312,7 @@ async def generate_media(
         mode: Type of media to generate - "image", "video", or "audio"
         prompts: List of text descriptions for batch generation (parallel mode).
                  Use this instead of `prompt` to generate multiple items at once.
-        input_images: Optional list of image paths for image-to-image (OpenAI only, single mode)
+        input_images: Optional list of image paths for image-to-image (OpenAI or Google, single mode)
         storage_path: Directory to save generated media (optional)
                      - Relative paths resolved from agent workspace
                      - Absolute paths must be in allowed directories
@@ -315,6 +326,12 @@ async def generate_media(
                 "nova", "shimmer". ElevenLabs voices: "Rachel", "Sarah",
                 "Josh", etc. (names are auto-resolved to UUIDs).
         aspect_ratio: For image/video: aspect ratio (e.g., "16:9", "1:1")
+        size: Image dimensions. OpenAI: "1024x1024", "1024x1536", "1536x1024".
+              Gemini: "512px", "1K", "2K", "4K".
+        continue_from: Continuation ID from a previous generate_media result.
+                       Enables multi-turn image editing. Pass the ``continuation_id``
+                       from the previous result's metadata. Only valid for single
+                       image generation (not batch, not video/audio).
         audio_format: For audio: output format (mp3, wav, opus, etc.)
         audio_type: For audio: type of audio to generate - "speech" (default),
                     "music" (ElevenLabs only), or "sound_effect" (ElevenLabs only)
@@ -359,7 +376,7 @@ async def generate_media(
         )
 
     Supported Backends:
-        Image: openai (GPT-4.1), google (Imagen), openrouter
+        Image: google (Nano Banana 2 / Gemini + Imagen), openai (GPT-5.2), openrouter
         Video: google (Veo), openai (Sora-2)
         Audio (speech): elevenlabs (eleven_multilingual_v2), openai (gpt-4o-mini-tts)
         Audio (music): elevenlabs only
@@ -398,6 +415,12 @@ async def generate_media(
         # Normalize to list for unified processing
         prompt_list = prompts if prompts else [prompt]
         is_batch = len(prompt_list) > 1
+
+        # Validate continue_from constraints
+        if continue_from and (is_batch or media_type != MediaType.IMAGE):
+            return _error_result(
+                "continue_from is only supported for single image generation",
+            )
 
         base_dir = Path(agent_cwd) if agent_cwd else Path.cwd()
         allowed_paths_list = [Path(p) for p in allowed_paths] if allowed_paths else None
@@ -447,6 +470,8 @@ async def generate_media(
                 duration=duration,
                 voice=voice,
                 aspect_ratio=aspect_ratio,
+                size=size,
+                continue_from=continue_from,
                 extra_params=extra_params,
                 instructions=instructions,
                 timestamp=timestamp,
@@ -487,9 +512,11 @@ async def generate_media(
                         duration=duration,
                         voice=voice,
                         aspect_ratio=aspect_ratio,
+                        size=size,
                         extra_params=extra_params or {},
                         input_images=[],
                         input_image_paths=[],
+                        continue_from=continue_from,
                     )
 
                     # Add audio-specific params to extra_params
@@ -587,6 +614,7 @@ async def generate_media(
             # Single prompt - return original format for backwards compatibility
             result = final_results[0]
             if result.get("success"):
+                metadata = result.get("metadata", {})
                 response_data = {
                     "success": True,
                     "operation": "generate_media",
@@ -597,8 +625,10 @@ async def generate_media(
                     "model": result.get("model"),
                     "file_size": result.get("file_size"),
                     "duration_seconds": result.get("duration_seconds"),
-                    "metadata": result.get("metadata", {}),
+                    "metadata": metadata,
                 }
+                if metadata.get("continuation_id"):
+                    response_data["continuation_id"] = metadata["continuation_id"]
                 if context_warning:
                     response_data["warning"] = context_warning
                 return ExecutionResult(

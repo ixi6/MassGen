@@ -38,9 +38,12 @@ class GenerationConfig:
         voice: For audio - voice name or UUID. ElevenLabs names are resolved
             to UUIDs automatically.
         aspect_ratio: For image/video - aspect ratio string
+        size: Image dimensions (OpenAI: "1024x1024" etc; Gemini: "512px"/"1K"/"2K"/"4K")
         extra_params: Backend-specific parameters (e.g., instructions, audio_type)
         input_images: Optional input images (image-to-image)
         input_image_paths: Resolved input image paths (for metadata)
+        continue_from: Continuation ID from a previous generation result for
+            multi-turn editing. OpenAI: response ID; Gemini: chat store ID.
     """
 
     prompt: str
@@ -52,9 +55,11 @@ class GenerationConfig:
     duration: int | None = None
     voice: str | None = None
     aspect_ratio: str | None = None
+    size: str | None = None
     extra_params: dict[str, Any] = field(default_factory=dict)
     input_images: list[dict[str, str]] = field(default_factory=list)
     input_image_paths: list[str] = field(default_factory=list)
+    continue_from: str | None = None
 
 
 @dataclass
@@ -95,16 +100,16 @@ BACKEND_API_KEYS: dict[str, list[str]] = {
 # Default models for each backend and media type
 DEFAULT_MODELS: dict[str, dict[MediaType, str]] = {
     "openai": {
-        MediaType.IMAGE: "gpt-5",
+        MediaType.IMAGE: "gpt-5.2",
         MediaType.VIDEO: "sora-2",
         MediaType.AUDIO: "gpt-4o-mini-tts",
     },
     "google": {
-        MediaType.IMAGE: "imagen-4.0-fast-generate-001",  # gemini-3-pro-image-preview
+        MediaType.IMAGE: "gemini-3.1-flash-image-preview",  # Nano Banana 2
         MediaType.VIDEO: "veo-3.1-generate-preview",
     },
     "openrouter": {
-        MediaType.IMAGE: "google/gemini-2.5-flash-image-preview",
+        MediaType.IMAGE: "google/gemini-3.1-flash-image-preview",  # Nano Banana 2
     },
     "elevenlabs": {
         MediaType.AUDIO: "eleven_multilingual_v2",
@@ -113,7 +118,7 @@ DEFAULT_MODELS: dict[str, dict[MediaType, str]] = {
 
 # Priority order for auto-selection per media type
 BACKEND_PRIORITY: dict[MediaType, list[str]] = {
-    MediaType.IMAGE: ["openai", "google", "openrouter"],
+    MediaType.IMAGE: ["google", "openai", "openrouter"],
     MediaType.VIDEO: ["openai", "google"],
     MediaType.AUDIO: ["elevenlabs", "openai"],
 }

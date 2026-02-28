@@ -506,10 +506,28 @@ what to look for when assessing it.
 Criteria must be **concrete and verifiable** — specific enough that an evaluator \
 can point to evidence in the output.
 
-Important: do NOT only generate functional/correctness criteria. A correct output \
-can still be mediocre. Include at least one criterion that assesses whether the \
-output shows intentional craft — cohesive choices, not just adequate execution. \
-Tag it as "should".
+## What Correctness Means
+
+Correctness is not just "the file exists and opens." A correct output is one that \
+works as the user actually experiences it across all relevant dimensions:
+
+- **Structural correctness**: the output has the right form and can be used at all \
+  (file opens, code runs, API responds)
+- **Content correctness**: the output says or computes the right things — accurate, \
+  complete, no factual errors or wrong results
+- **Experiential correctness**: the output behaves correctly in its actual environment \
+  — text renders without overflow or clipped characters, visuals display as intended, \
+  interactions work, audio/video plays back properly
+
+An output that passes structural checks but fails experiential ones (e.g., text that \
+renders with a single letter orphaned on its own line, a chart that displays blank, a \
+button that does nothing) is a *wrong* output, not a mediocre one. Correctness criteria \
+must cover all three dimensions, not just structural validity.
+
+Correctness is separate from **craft**: a correct output can still be mediocre. Craft \
+criteria ask whether the output shows intentional quality — cohesive choices, thoughtful \
+structure, elegance — beyond what is merely correct. Include at least one craft criterion \
+tagged "should".
 
 BAD (abstract): "Visual design quality."
 GOOD (concrete): "Visual design: typography is legible at mobile resolution \
@@ -521,16 +539,16 @@ GOOD (concrete): "Code quality: functions have single responsibility, error \
 paths are handled (no swallowed exceptions), public API has type annotations, \
 no hardcoded secrets or credentials."
 
-BAD (only functional): all criteria check correctness, completeness, and requirements
-GOOD (includes craft): at least one criterion asks whether the output shows \
-intentional quality — cohesive design choices, consistent style, or elegant \
-structure that a domain expert would recognize as crafted, not just assembled.
+BAD (only structural): all criteria check whether the output exists and has the right form
+GOOD (covers all dimensions): criteria cover what it says/computes, how it behaves \
+when actually used, and whether it shows intentional craft beyond correctness.
 
 ## Tier System
 
 Organize criteria into three tiers:
-- **MUST**: Hard requirements from the task. Failing these means the answer is wrong. \
-A first-year professional in the domain would not ship output that fails this. \
+- **MUST**: Hard requirements from the task. Failing these means the answer is wrong — \
+across all dimensions of correctness (structural, content, and experiential). A first-year \
+professional in the domain would not ship output that fails this. \
 (e.g., "Output is a working 30-second video, not a still image or broken render")
 - **SHOULD**: Quality expectations a demanding user would have. A competent first draft \
 often misses these — they require deliberate effort to satisfy. Missing these means \
@@ -551,15 +569,15 @@ If only exceptional work achieves it, COULD.
 4. 1-3 criteria may be "could" (what separates good from exceptional)
 5. Each criterion must be specific to THIS task, not generic
 6. Each criterion should be scoreable — an evaluator rates it on a 1-10 scale
-7. **One criterion MUST assess overall quality/craft** — whether the output \
-shows intentional, cohesive choices beyond functional correctness. Tag it \
-as "should". Without this, agents produce correct but mediocre output.
+7. **One criterion MUST assess craft** — whether the output shows intentional, \
+cohesive choices beyond correctness. Tag it as "should". Without this, agents \
+produce correct but mediocre output.
 8. **Criteria must cover distinct dimensions of the task** — do not cluster \
 multiple criteria around the same aspect. Think about what the major \
-independent quality axes are (e.g., correctness, completeness, error handling, \
-usability, performance, style) and ensure each significant dimension gets \
-at least one criterion. An evaluator reading the full set should feel like \
-the entire task space is covered.
+independent quality axes are for this specific task (e.g., content correctness, \
+experiential correctness, completeness, error handling, usability, craft) and \
+ensure each significant dimension gets at least one criterion. An evaluator \
+reading the full set should feel like the entire task space is covered.
 {changedoc_instruction}
 ## Examples
 
@@ -593,14 +611,23 @@ Return JSON with this structure:
     ]
 }}
 
-**Optional `verify_by` field**: Add when reading the output text is not sufficient to \
-evaluate the criterion — i.e. the evaluator must render, run, or interact with the \
-artifact. Write a short action instruction the evaluator will follow literally:
-- Static visual quality → describe rendering to images and viewing
-- Motion/animation/interaction → describe capturing video and reviewing it
-- Audio → describe listening to the actual output
-- Functional behavior → describe executing and testing it
-Omit when the criterion can be assessed by reading the output or its source.
+**`verify_by` field**: Required whenever the criterion involves experiential correctness \
+or craft that cannot be assessed by reading the source — i.e. the evaluator must render, \
+run, play, or interact with the output to judge it. Write a specific action sequence the \
+evaluator will follow literally: name the tool, state the scope (all pages, all slides, \
+full playback — not a sample), and list the specific things to check.
+
+- Rendered output (slides, pages, images): name the rendering tool, require all \
+  pages/slides, list defects to check for (e.g. text overflow, clipped elements, \
+  unreadable font sizes, element collisions)
+- Interactive output (web apps, forms): describe opening in a browser and testing \
+  each interaction — clicks, submissions, state changes
+- Motion/animation: describe capturing and reviewing full playback
+- Audio/video: describe listening or watching the complete output
+- Executable code: describe running it with representative inputs and checking outputs
+
+Omit only when the criterion can be fully assessed by reading the output text or \
+inspecting the source file structure.
 
 Write the JSON to a file called `criteria.json` in your workspace.
 Generate evaluation criteria now for the task above."""

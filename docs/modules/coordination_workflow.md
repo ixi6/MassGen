@@ -268,7 +268,7 @@ Agent calls new_answer
 
 ### Peer Update Delivery (Injection vs Restart)
 
-When a peer submits a `new_answer`, the current agent needs to see it. Delivery depends on timing, injection history, and backend capabilities:
+When a peer submits a `new_answer`, the current agent needs to see it. Delivery depends on backend capabilities and first-answer protection:
 
 ```text
 Peer submits new_answer → restart_pending=True set on current agent
@@ -277,31 +277,34 @@ Peer submits new_answer → restart_pending=True set on current agent
   │   └─ DEFER — first-answer diversity protection, clear restart_pending
   │       (handled by _should_defer_restart_for_first_answer)
   │
-  ├─ First peer update ever for this agent (injection_count == 0)?
-  │   └─ RESTART — always do a full restart regardless of hook support
-  │      Agent yields ("done", None), coordination loop respawns with
-  │      updated context (peer snapshots available via temp_workspace)
-  │      NOTE: injection_count is incremented, subsequent updates can
-  │      use mid-stream injection instead of full restart
+  ├─ Backend has hook delivery?
+  │   │  (GeneralHookManager, native hooks, or MCP server hooks)
+  │   │
+  │   │  Hook delivery mechanisms:
+  │   │  - Standard backends → GeneralHookManager + MidStreamInjectionHook
+  │   │  - Claude Code → supports_native_hooks() (SDK-level)
+  │   │  - Codex → supports_mcp_server_hooks() + file IPC
+  │   │    (_setup_codex_mcp_hooks / _flush_codex_hook_payloads)
+  │   │
+  │   ├─ Not too close to soft timeout?
+  │   │   └─ MID-STREAM INJECTION — content injected via hook callback
+  │   │      (no restart, agent continues working with injected context)
+  │   │
+  │   └─ Too close to timeout?
+  │       └─ SKIP — restart_pending stays set; agent finishes current round,
+  │          and the next round starts with the new answer already in context
   │
-  └─ Subsequent peer updates (injection_count >= 1)?
-      │
-      ├─ Backend has hook delivery?
-      │   │  (GeneralHookManager, native hooks, or MCP server hooks)
-      │   │
-      │   │  Hook delivery mechanisms:
-      │   │  - Standard backends → GeneralHookManager + MidStreamInjectionHook
-      │   │  - Claude Code → supports_native_hooks() (SDK-level)
-      │   │  - Codex → supports_mcp_server_hooks() + file IPC
-      │   │    (_setup_codex_mcp_hooks / _flush_codex_hook_payloads)
-      │   │
-      │   └─ MID-STREAM INJECTION — content injected via hook callback
-      │      (no restart, agent continues working with injected context)
-      │
-      └─ No hook delivery? (theoretical — all current backends have hooks)
-          ├─ Stream already started → enforcement message injection
-          └─ No in-flight buffer → clean restart
+  └─ No hook delivery? (defensive fallback — all current backends have hooks)
+      ├─ Stream already started → enforcement message injection
+      └─ No in-flight buffer → clean restart
 ```
+
+Non-peer payloads can also inject during rounds:
+
+- runtime human input
+- background subagent completions
+- background tool completions
+- timeout warnings
 
 On restart, the agent's workspace carries forward (it is NOT cleared between rounds). The new round starts with the same workspace, but updated system context and peer snapshots in `temp_workspace`.
 
@@ -355,21 +358,6 @@ Presenter selected (vote winner or configured)
   ├─ Final presentation runs
   └─ clear_workspace() (after presentation complete)
 ```
-
-## Injection And Restart Behavior
-
-Peer update delivery is timing-aware:
-
-1. First peer update usually triggers restart-style refresh.
-2. Subsequent updates use mid-stream injection where backend path supports it.
-3. Hookless or unconsumed cases fall back to between-turn delivery.
-
-Non-peer payloads can also inject during rounds:
-
-- runtime human input
-- background subagent completions
-- background tool completions
-- timeout warnings
 
 ## Fairness And Pacing
 

@@ -393,3 +393,98 @@ class TestFinalSnapshotFallsBackToSnapshotStorage:
         final_workspace = self.log_dir / "final" / "agent_a" / "workspace"
         # Must use workspace (fresh), not snapshot_storage (stale)
         assert (final_workspace / "deliverable.mp3").read_text() == "fresh-audio"
+
+
+# ---------------------------------------------------------------------------
+# TestHasMeaningfulContent
+# ---------------------------------------------------------------------------
+
+
+class TestHasMeaningfulContent:
+    """Direct unit tests for the consolidated has_meaningful_content helper."""
+
+    def test_none_path_returns_false(self):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        assert has_meaningful_content(None) is False
+
+    def test_nonexistent_path_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        assert has_meaningful_content(tmp_path / "nope") is False
+
+    def test_empty_directory_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        empty = tmp_path / "empty"
+        empty.mkdir()
+        assert has_meaningful_content(empty) is False
+
+    def test_git_only_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        (d / ".git").mkdir()
+        assert has_meaningful_content(d) is False
+
+    def test_codex_only_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        (d / ".codex").mkdir()
+        assert has_meaningful_content(d) is False
+
+    def test_massgen_only_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        (d / ".massgen").mkdir()
+        assert has_meaningful_content(d) is False
+
+    def test_memory_only_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        (d / "memory").mkdir()
+        assert has_meaningful_content(d) is False
+
+    def test_all_metadata_dirs_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        for name in (".git", ".codex", ".massgen", "memory"):
+            (d / name).mkdir()
+        assert has_meaningful_content(d) is False
+
+    def test_real_file_returns_true(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        (d / "deliverable.txt").write_text("content")
+        assert has_meaningful_content(d) is True
+
+    def test_real_file_alongside_metadata_returns_true(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        (d / ".git").mkdir()
+        (d / ".codex").mkdir()
+        (d / "deliverable.txt").write_text("content")
+        assert has_meaningful_content(d) is True
+
+    def test_symlink_only_returns_false(self, tmp_path: Path):
+        from massgen.filesystem_manager import has_meaningful_content
+
+        d = tmp_path / "ws"
+        d.mkdir()
+        target = tmp_path / "target"
+        target.write_text("data")
+        (d / "link").symlink_to(target)
+        assert has_meaningful_content(d) is False

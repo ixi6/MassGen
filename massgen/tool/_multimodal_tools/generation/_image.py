@@ -1,13 +1,23 @@
 """
-Image generation backends: OpenAI, Google Imagen, OpenRouter.
+Image generation backends: OpenAI, Google (Gemini + Imagen), OpenRouter.
 
 This module contains all image generation implementations that are
 routed through by generate_media when mode="image".
+
+Google backend supports two API paths:
+- **Gemini** (``gemini-*`` models): Uses ``generate_content()`` with
+  ``response_modalities=['IMAGE']``. Supports text-to-image and image editing.
+- **Imagen** (``imagen-*`` models): Uses ``generate_images()``. Text-to-image only.
 """
 
 import base64
+import uuid
+from collections import OrderedDict
+from typing import Any
 
 import requests
+from google import genai
+from google.genai import types as genai_types
 from openai import AsyncOpenAI
 
 from massgen.logger_config import logger
@@ -18,6 +28,27 @@ from massgen.tool._multimodal_tools.generation._base import (
     get_api_key,
     get_default_model,
 )
+
+
+class _GeminiChatStore:
+    """In-memory store for Gemini chat objects used in multi-turn image editing."""
+
+    def __init__(self, max_chats: int = 50):
+        self._store: OrderedDict[str, Any] = OrderedDict()
+        self._max = max_chats
+
+    def save(self, chat_obj: Any) -> str:
+        chat_id = f"gemini_chat_{uuid.uuid4().hex[:12]}"
+        if len(self._store) >= self._max:
+            self._store.popitem(last=False)
+        self._store[chat_id] = chat_obj
+        return chat_id
+
+    def get(self, chat_id: str) -> Any | None:
+        return self._store.get(chat_id)
+
+
+_gemini_chat_store = _GeminiChatStore()
 
 
 async def generate_image(config: GenerationConfig) -> GenerationResult:
@@ -77,12 +108,24 @@ async def _generate_image_openai(config: GenerationConfig) -> GenerationResult:
         else:
             input_content = config.prompt
 
+        # Build image tool config with optional quality and size
+        image_tool: dict[str, Any] = {"type": "image_generation"}
+        if config.quality:
+            image_tool["quality"] = config.quality
+        if config.size:
+            image_tool["size"] = config.size
+
+        # Build create kwargs with optional continuation
+        create_kwargs: dict[str, Any] = {
+            "model": model,
+            "input": input_content,
+            "tools": [image_tool],
+        }
+        if config.continue_from:
+            create_kwargs["previous_response_id"] = config.continue_from
+
         # Generate image using OpenAI Responses API (async)
-        response = await client.responses.create(
-            model=model,
-            input=input_content,
-            tools=[{"type": "image_generation"}],
-        )
+        response = await client.responses.create(**create_kwargs)
 
         # Extract image data from response
         image_data = [output.result for output in response.output if output.type == "image_generation_call"]
@@ -106,7 +149,10 @@ async def _generate_image_openai(config: GenerationConfig) -> GenerationResult:
             backend_name="openai",
             model_used=model,
             file_size_bytes=len(image_bytes),
-            metadata={"total_images": len(image_data)},
+            metadata={
+                "total_images": len(image_data),
+                "continuation_id": response.id,
+            },
         )
 
     except Exception as e:
@@ -119,9 +165,10 @@ async def _generate_image_openai(config: GenerationConfig) -> GenerationResult:
 
 
 async def _generate_image_google(config: GenerationConfig) -> GenerationResult:
-    """Generate image using Google Imagen API.
+    """Route Google image generation to Gemini or Imagen based on model name.
 
-    Uses the google-genai SDK to generate images via Imagen 3.
+    - ``gemini-*`` models use ``generate_content()`` (Gemini API).
+    - ``imagen-*`` models use ``generate_images()`` (Imagen API).
 
     Args:
         config: GenerationConfig with prompt and output path
@@ -137,15 +184,156 @@ async def _generate_image_google(config: GenerationConfig) -> GenerationResult:
             error="Google API key not found. Set GOOGLE_API_KEY or GEMINI_API_KEY environment variable.",
         )
 
-    try:
-        from google import genai
-        from google.genai import types
+    model = config.model or get_default_model("google", MediaType.IMAGE)
 
+    if model.startswith("gemini-"):
+        return await _generate_image_google_gemini(config, model)
+    return await _generate_image_google_imagen(config, model)
+
+
+def _build_gemini_contents(config: GenerationConfig) -> str | list:
+    """Build contents list from config (input_images + prompt text).
+
+    Args:
+        config: GenerationConfig with prompt and optional input_images
+
+    Returns:
+        A string (prompt only) or list of Parts + prompt text
+    """
+    if config.input_images:
+        contents: list = []
+        for img_block in config.input_images:
+            image_url = img_block.get("image_url", "")
+            if image_url.startswith("data:"):
+                header, b64_data = image_url.split(",", 1)
+                mime = header.split(":")[1].split(";")[0]
+                img_bytes = base64.b64decode(b64_data)
+                contents.append(
+                    genai_types.Part.from_bytes(data=img_bytes, mime_type=mime),
+                )
+        contents.append(config.prompt)
+        return contents
+    return config.prompt
+
+
+async def _generate_image_google_gemini(
+    config: GenerationConfig,
+    model: str,
+) -> GenerationResult:
+    """Generate image using Gemini with chat-based multi-turn support.
+
+    Uses ``client.chats.create()`` + ``chat.send_message()`` for all calls,
+    enabling multi-turn editing via ``config.continue_from``.
+
+    Supports both text-to-image and image editing (when ``config.input_images``
+    contains base64-encoded image blocks).
+
+    Args:
+        config: GenerationConfig with prompt and output path
+        model: Gemini model name (e.g. ``gemini-3.1-flash-image-preview``)
+
+    Returns:
+        GenerationResult with generated image info
+    """
+    api_key = get_api_key("google")
+
+    try:
         client = genai.Client(api_key=api_key)
-        model = config.model or get_default_model("google", MediaType.IMAGE)
+
+        # Build GenerateContentConfig with optional ImageConfig
+        image_config_kwargs: dict[str, Any] = {}
+        if config.aspect_ratio:
+            image_config_kwargs["aspect_ratio"] = config.aspect_ratio
+        if config.size:
+            image_config_kwargs["image_size"] = config.size
+
+        gen_config_kwargs: dict[str, Any] = {"response_modalities": ["IMAGE"]}
+        if image_config_kwargs:
+            gen_config_kwargs["image_config"] = genai_types.ImageConfig(
+                **image_config_kwargs,
+            )
+
+        gen_config = genai_types.GenerateContentConfig(**gen_config_kwargs)
+
+        # Build message contents
+        msg_contents = _build_gemini_contents(config)
+
+        if config.continue_from:
+            # Retrieve existing chat from store
+            chat = _gemini_chat_store.get(config.continue_from)
+            if not chat:
+                return GenerationResult(
+                    success=False,
+                    backend_name="google",
+                    model_used=model,
+                    error=("Continuation chat not found. The continuation_id " f"'{config.continue_from}' may have expired or is invalid."),
+                )
+            response = chat.send_message(msg_contents, config=gen_config)
+        else:
+            # First call — create chat and send initial message
+            chat = client.chats.create(model=model, config=gen_config)
+            response = chat.send_message(msg_contents, config=gen_config)
+
+        # Store chat for future continuation
+        chat_id = _gemini_chat_store.save(chat)
+
+        # Extract image from response parts
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                image = part.as_image()
+                image.save(str(config.output_path))
+
+                file_size = config.output_path.stat().st_size
+                return GenerationResult(
+                    success=True,
+                    output_path=config.output_path,
+                    media_type=MediaType.IMAGE,
+                    backend_name="google",
+                    model_used=model,
+                    file_size_bytes=file_size,
+                    metadata={
+                        "api_path": "gemini_generate_content",
+                        "continuation_id": chat_id,
+                    },
+                )
+
+        return GenerationResult(
+            success=False,
+            backend_name="google",
+            model_used=model,
+            error="No image data in Gemini response",
+        )
+
+    except Exception as e:
+        logger.exception(f"Google Gemini image generation failed: {e}")
+        return GenerationResult(
+            success=False,
+            backend_name="google",
+            model_used=model,
+            error=f"Google Gemini error: {str(e)}",
+        )
+
+
+async def _generate_image_google_imagen(
+    config: GenerationConfig,
+    model: str,
+) -> GenerationResult:
+    """Generate image using Google Imagen ``generate_images()`` API.
+
+    Args:
+        config: GenerationConfig with prompt and output path
+        model: Imagen model name (e.g. ``imagen-4.0-fast-generate-001``)
+
+    Returns:
+        GenerationResult with generated image info
+    """
+    api_key = get_api_key("google")
+
+    try:
+        client = genai.Client(api_key=api_key)
 
         # Prepare config
-        gen_config = types.GenerateImagesConfig(
+        gen_config = genai_types.GenerateImagesConfig(
             number_of_images=1,
             output_mime_type="image/png",
         )

@@ -773,7 +773,9 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         "Submit your checklist evaluation. "
         "Score each agent's answer separately per criterion, then submit all "
         "agent scores in 'scores' as a nested object: "
-        '{"agent1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2": {...}}. '
+        '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2.1": {...}}. '
+        "Use the exact agent labels from the 'Available answers' section of your context "
+        "(e.g. agent1.1, agent2.1). "
         "The verdict is determined by the strongest agent's scores — the agent "
         "with the highest aggregate across all criteria. Include all agents so "
         "the evaluation is transparent and auditable. "

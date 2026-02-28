@@ -955,6 +955,7 @@ class SubagentView(Container):
         auto_return_timeout_seconds: int = 8,
         send_message_callback: Callable[..., bool] | None = None,
         continue_subagent_callback: Callable[..., bool] | None = None,
+        subagent_index: int | None = None,
         id: str | None = None,
     ) -> None:
         """Initialize the subagent screen.
@@ -973,11 +974,14 @@ class SubagentView(Container):
         self._all_subagents = all_subagents or [subagent]
         self._current_index = 0
 
-        # Find current index
-        for i, sa in enumerate(self._all_subagents):
-            if sa.id == subagent.id:
-                self._current_index = i
-                break
+        # Find current index: prefer explicit index, fall back to identity match
+        if subagent_index is not None and 0 <= subagent_index < len(self._all_subagents):
+            self._current_index = subagent_index
+        else:
+            for i, sa in enumerate(self._all_subagents):
+                if sa is subagent:
+                    self._current_index = i
+                    break
 
         self._status_callback = status_callback
         self._send_message_callback = send_message_callback
@@ -2904,6 +2908,7 @@ class SubagentScreen(Screen):
         auto_return_on_completion: bool = False,
         send_message_callback: Callable[..., bool] | None = None,
         continue_subagent_callback: Callable[..., bool] | None = None,
+        subagent_index: int | None = None,
     ) -> None:
         super().__init__()
         self._subagent = subagent
@@ -2912,6 +2917,7 @@ class SubagentScreen(Screen):
         self._auto_return_on_completion = auto_return_on_completion
         self._send_message_callback = send_message_callback
         self._continue_subagent_callback = continue_subagent_callback
+        self._subagent_index = subagent_index
 
     def compose(self) -> ComposeResult:
         yield SubagentView(
@@ -2921,6 +2927,7 @@ class SubagentScreen(Screen):
             auto_return_on_completion=self._auto_return_on_completion,
             send_message_callback=self._send_message_callback,
             continue_subagent_callback=self._continue_subagent_callback,
+            subagent_index=self._subagent_index,
             id="subagent-view",
         )
 

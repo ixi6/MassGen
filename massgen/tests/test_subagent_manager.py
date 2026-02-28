@@ -2038,3 +2038,98 @@ class TestContinueSubagentSessionFallback:
         assert result.answer == "recovered without session subprocess"
         assert recovery_called["subagent_id"] == "sub1"
         assert recovery_called["reuse_subagent_id"] is True
+
+
+# =============================================================================
+# list_subagents timeout/elapsed fields
+# =============================================================================
+
+
+class TestListSubagentsTimeoutFields:
+    """list_subagents() should expose elapsed/timeout/remaining for running subagents."""
+
+    def _make_manager(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        return SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+    def test_running_subagent_includes_timeout_fields(self, tmp_path):
+        """A running in-memory subagent should expose elapsed_seconds, timeout_seconds, seconds_remaining."""
+        manager = self._make_manager(tmp_path)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent", timeout_seconds=300)
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(tmp_path / "sub1"),
+            started_at=datetime.now(),
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub1"]
+
+        assert "elapsed_seconds" in entry, "running subagent must expose elapsed_seconds"
+        assert "timeout_seconds" in entry, "running subagent must expose timeout_seconds"
+        assert "seconds_remaining" in entry, "running subagent must expose seconds_remaining"
+        assert entry["timeout_seconds"] == 300.0
+        assert 0.0 <= entry["elapsed_seconds"] < 5.0  # started just now
+        assert entry["seconds_remaining"] <= 300.0
+        assert entry["seconds_remaining"] >= 295.0  # should be close to max
+
+    def test_completed_subagent_does_not_include_timeout_fields(self, tmp_path):
+        """A completed subagent should NOT have elapsed_seconds/timeout_seconds/seconds_remaining injected."""
+        manager = self._make_manager(tmp_path)
+
+        config = SubagentConfig(id="sub2", task="done task", parent_agent_id="test-agent", timeout_seconds=300)
+        result = SubagentResult.create_success(
+            subagent_id="sub2",
+            answer="done",
+            workspace_path=str(tmp_path / "sub2"),
+            execution_time_seconds=42.0,
+        )
+        manager._subagents["sub2"] = SubagentState(
+            config=config,
+            status="completed",
+            workspace_path=str(tmp_path / "sub2"),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+            result=result,
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub2"]
+
+        assert "elapsed_seconds" not in entry, "completed subagent should not have elapsed_seconds injected"
+        assert "seconds_remaining" not in entry, "completed subagent should not have seconds_remaining injected"
+
+    def test_running_subagent_seconds_remaining_decreases_with_time(self, tmp_path):
+        """seconds_remaining should reflect time actually elapsed since started_at."""
+        from datetime import timedelta
+
+        manager = self._make_manager(tmp_path)
+
+        # Simulate a subagent that started 100 seconds ago
+        started = datetime.now() - timedelta(seconds=100)
+        config = SubagentConfig(id="sub3", task="slow task", parent_agent_id="test-agent", timeout_seconds=300)
+        manager._subagents["sub3"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(tmp_path / "sub3"),
+            started_at=started,
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub3"]
+
+        # elapsed should be ~100s
+        assert entry["elapsed_seconds"] >= 99.0
+        assert entry["elapsed_seconds"] < 110.0
+        # remaining should be ~200s
+        assert entry["seconds_remaining"] <= 201.0
+        assert entry["seconds_remaining"] >= 190.0

@@ -412,12 +412,11 @@ For each decision (DEC-*) in the changedoc:
 - **Alternative depth**: Are rejected alternatives genuinely different approaches, or
   strawmen set up to lose? Would a thoughtful colleague have considered these same
   alternatives?
-- **Implementation accuracy**: Do the Implementation fields reference actual code
-  locations that exist and match what was decided? **Verify this literally** — open
-  the referenced files and confirm the described content is there. Documenting
-  features, quoted text, or line numbers that do not actually exist in the output
-  is fabrication, not aspiration. Flag any fabricated Implementation fields as
-  critical failures.
+- **Implementation accuracy**: Do the Implementation fields reference actual files
+  and sections that exist and match what was decided? Verify that the referenced
+  files and code locations (functions, classes, section names) are real. Documenting
+  features or symbols that do not actually exist in the output is fabrication, not
+  aspiration. Flag any fabricated Implementation fields as critical failures.
 
 Then ask: **What decisions are MISSING?** What important choices were made implicitly
 in code but never recorded? What trade-offs were navigated without being articulated?
@@ -929,8 +928,15 @@ simultaneously:
 
 - `tasks`: one entry per deliverable (not one entry for all of them)
 - `background=True, refine=False`
-- Parent workspace is auto-mounted read-only. Use `context_paths` only for
-  additional paths (e.g. peer workspace paths from Available agent workspaces).
+- Parent workspace is auto-mounted read-only. The shared peer snapshot directory
+  (temp_workspaces) is also auto-mounted read-only so subagents can access peer
+  context without explicit `context_paths`. Use `context_paths` only for
+  additional paths beyond these defaults.
+- **Subagent file artifacts**: Subagents write to their OWN workspace (not yours —
+  yours is read-only to them). In blocking mode, access artifacts via
+  `result["workspace"] + "/filename"`. In background mode the workspace path is
+  in the running status. Tell subagents to save files with relative paths and
+  report what they saved. Do NOT direct subagents to write into your workspace.
 
 Do your `[main]` work while builders run. Collect and integrate when all finish.
 Then spawn the next wave for tasks that depended on this batch.
@@ -3450,11 +3456,11 @@ For each significant choice:
 
 ### Code references
 
-Use relative paths within the workspace. Include both symbol names (functions, classes) and
-line numbers — your code is frozen once submitted, so line numbers are stable references for
-anyone reading your changedoc.
+Use relative paths within the workspace. Reference files and sections — the filename plus
+the function/class name, section heading, or brief area description is enough for anyone
+to locate the code.
 
-Format: `relative/path/file.py:L10-25` → `ClassName.method()` — brief description
+Format: `relative/path/file.py` → `ClassName.method()` or `section name` — brief description
 
 ### Decision provenance
 
@@ -3482,8 +3488,8 @@ existing ideas.
 **Alternatives considered:**
 - [Alternative A]: [Why rejected]
 **Implementation:**
-- `src/handler.py:L15-42` → `RequestHandler.process()` — validates input then dispatches to worker pool
-- `src/config.py:L8-12` → `WORKER_COUNT` — set to 4 based on benchmark results
+- `src/handler.py` → `RequestHandler.process()` — validates input then dispatches to worker pool
+- `src/config.py` → `WORKER_COUNT` constant — set to 4 based on benchmark results
 
 ### DEC-002: [Next decision]
 ...
@@ -3606,9 +3612,10 @@ Keep domain reasoning in `"Why:"` and process reasoning in `"Synthesis Note:"`.
 
 ### Code references
 
-Use relative paths within the workspace. Include symbol names and line numbers — your code is frozen once submitted.
+Use relative paths within the workspace. Reference files and sections — filename plus
+the function/class name, section heading, or brief area description.
 
-Format: `relative/path/file.py:L10-25` → `ClassName.method()` — brief description
+Format: `relative/path/file.py` → `ClassName.method()` or `section name` — brief description
 
 ### Answer labels
 
@@ -3646,7 +3653,7 @@ List specific components, design choices, or approaches that are strong and shou
 **Alternatives considered:**
 - agent1.1's approach: [Why agent2.1's was better]
 **Implementation:**
-- `path/to/file.py:L10-42` → `ClassName.method()` — [brief mechanism description]
+- `path/to/file.py` → `ClassName.method()` — [brief mechanism description]
 
 ### DEC-002: [Decision combining ideas from multiple answers]
 **Origin:** agent1.1 → [SELF] (modified)
@@ -3657,14 +3664,14 @@ List specific components, design choices, or approaches that are strong and shou
 - agent1.1's original: [trade-off]
 - agent2.1's original: [trade-off]
 **Implementation:**
-- `path/to/file.py:L50-75` → `new_function()` — [mechanism]
+- `path/to/file.py` → `new_function()` or `relevant section` — [mechanism]
 
 ### DEC-003: [Your new idea]
 **Origin:** [SELF] — NEW
 **Choice:** [What you introduced — not in any prior answer]
 **Why:** [Rationale — this wasn't in any prior answer]
 **Implementation:**
-- `path/to/new_file.py:L1-30` → `NovelClass` — [mechanism]
+- `path/to/new_file.py` → `NovelClass` or `section name` — [mechanism]
 
 ## Deliberation Trail
 
@@ -3694,8 +3701,8 @@ internal decision journal) that:
 2. **Consolidates Decisions** into the definitive list. Remove superseded decisions. Keep the final version of each with full rationale.
 3. **Preserves Origin fields** on every decision — these track which agent first introduced each idea. Keep `NEW` markers to highlight genuinely novel contributions.
 4. **Updates all Implementation fields** to reference YOUR final code — file paths, symbol
-names, and line numbers pointing to the delivered files. The agents' code references point
-to their frozen snapshots; yours must point to the final deliverable.
+names, and section descriptions pointing to the delivered files. The agents' code references
+point to their frozen snapshots; yours must point to the final deliverable.
 5. **Preserves the Deliberation Trail** showing how key decisions evolved. Clean up for readability but keep the substance, attribution, and `NEW` markers.
 6. **Removes the Key Output Changes section** (not needed in the final document).
 
@@ -3844,9 +3851,16 @@ class SubagentSection(SystemPromptSection):
         workspace_path: Path to the agent's workspace (for subagent workspace location)
         max_concurrent: Maximum concurrent subagents allowed
         specialized_subagents: List of discovered specialized subagent types
+        default_timeout: Configured timeout for subagents in seconds (default 300)
     """
 
-    def __init__(self, workspace_path: str, max_concurrent: int = 3, specialized_subagents=None):
+    def __init__(
+        self,
+        workspace_path: str,
+        max_concurrent: int = 3,
+        specialized_subagents=None,
+        default_timeout: int = 300,
+    ):
         super().__init__(
             title="Subagent Delegation",
             priority=Priority.MEDIUM,
@@ -3855,6 +3869,7 @@ class SubagentSection(SystemPromptSection):
         self.workspace_path = workspace_path
         self.max_concurrent = max_concurrent
         self.specialized_subagents = specialized_subagents or []
+        self.default_timeout = default_timeout
 
     def _build_attached_subagents_section(self) -> str:
         """Build the ATTACHED SUBAGENTS section listing discovered types."""
@@ -4159,7 +4174,11 @@ When using `background=True`, subagents run asynchronously. Here is the full lif
 4. **Resume** (after completion): `continue_subagent(subagent_id, message)` — start a new turn with full conversation history preserved
 
 **Patience and steering:**
-Background subagents run a full MassGen process internally and may take a while.
+Background subagents run a full MassGen process internally. They have up to \
+{self.default_timeout} seconds ({self.default_timeout // 60} minutes) to complete \
+before timing out automatically. `list_subagents()` reports `elapsed_seconds`, \
+`timeout_seconds`, and `seconds_remaining` for each running subagent — use these \
+to calibrate your patience before considering a cancel.
 Check in on them intermittently via `list_subagents()` while you work on other tasks —
 they will complete on their own. If one appears to be going in the wrong direction,
 **prefer `send_message_to_subagent`** to redirect it rather than cancelling. Cancel
@@ -4176,7 +4195,8 @@ Use `list_subagents()` to get the workspace path, then:
 
 - `spawn_subagents(tasks, background?, refine?)` -- Max {self.max_concurrent} parallel tasks.
   Each task must include `task`. Parent workspace auto-mounted read-only.
-- `list_subagents()` - Discovery/index of spawned subagents (status, workspace, session_id)
+- `list_subagents()` - Discovery/index of spawned subagents (status, workspace, session_id); \
+  for running subagents also includes `elapsed_seconds`, `timeout_seconds`, and `seconds_remaining`
 - `continue_subagent(subagent_id, message, timeout_seconds?)` - Continue an existing subagent conversation
 - `send_message_to_subagent(subagent_id, message)` - Send a message to a RUNNING background subagent.
   Use to steer direction mid-execution without waiting for completion.

@@ -9713,6 +9713,7 @@ Type your question and press Enter to ask the agents.
                 status_callback=status_callback,
                 send_message_callback=self._subagent_message_callback,
                 continue_subagent_callback=getattr(self, "_subagent_continue_callback", None),
+                subagent_index=getattr(event, "subagent_index", None),
             )
             self.push_screen(screen, _on_screen_dismiss)
             event.stop()

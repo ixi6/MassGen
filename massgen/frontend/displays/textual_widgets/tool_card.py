@@ -714,6 +714,10 @@ class ToolCallCard(Static):
         elif self._status == "running":
             text.append(" ...", style="dim italic")
 
+        # Compact mode: utility tools with no tasks/workspace stay on one line.
+        # Spawn tools with tasks or workspace use multi-line layout.
+        is_compact = not self._subagent_tasks and not self._workspace_content
+
         # Render bullet list of subagent tasks
         if self._subagent_tasks:
             for i, task in enumerate(self._subagent_tasks):
@@ -739,9 +743,12 @@ class ToolCallCard(Static):
                 if len(task_desc) > 60:
                     task_desc = task_desc[:57] + "..."
                 text.append(task_desc, style="dim" if task_status == "pending" else style)
-        elif self._params:
-            # Fallback: show params if no parsed tasks
-            text.append("\n  ")
+        elif self._params and self._params.strip() not in ("{}", "{ }"):
+            # Fallback: show params if non-trivial and no parsed tasks
+            if is_compact:
+                text.append("  ")
+            else:
+                text.append("\n  ")
             args_display = self._truncate_params_display(self._params, 67)
             text.append(args_display, style="dim")
 
@@ -757,19 +764,23 @@ class ToolCallCard(Static):
                     text.append(f"  {line}\n", style="dim")
                 if len(content.split("\n")) > 15:
                     text.append("  ...(more)...\n", style="dim italic")
-        elif not self._expanded and (self._workspace_content or self._result):
+        elif not self._expanded and not is_compact and (self._workspace_content or self._result):
+            # Multi-line tools: expand hint on its own line
             text.append("\n  ", style="dim")
             text.append("[click to expand]", style="dim italic #9070c0")
 
         # Result/error summary (when completed and not expanded)
         if self._result and not self._expanded:
-            text.append("\n  → ")
+            # Compact tools: result preview inline on header line
+            # Multi-line tools: result preview on its own line
+            text.append("  → " if is_compact else "\n  → ")
             result_preview = self._result.replace("\n", " ")
-            if len(result_preview) > 55:
-                result_preview = result_preview[:52] + "..."
+            max_len = 80 if is_compact else 55
+            if len(result_preview) > max_len:
+                result_preview = result_preview[: max_len - 3] + "..."
             text.append(result_preview, style="dim green")
         elif self._error:
-            text.append("\n  ✗ ")
+            text.append("  ✗ " if is_compact else "\n  ✗ ")
             error_preview = self._error.replace("\n", " ")
             if len(error_preview) > 55:
                 error_preview = error_preview[:52] + "..."
@@ -956,12 +967,19 @@ class ToolCallCard(Static):
         - Click when collapsed: expand
         - Click when expanded (not on left edge): open detail modal
         - Terminal tools (new_answer, vote) cannot be collapsed
+        - Subagent tools: same as above (expand → modal on second click)
 
         Note: Injection content expansion is handled by the InjectionToggle widget,
         which intercepts clicks on the injection area.
         """
         if self._is_subagent:
-            self.toggle_expanded()
+            click_x = event.x if hasattr(event, "x") else 0
+            on_left_edge = click_x < 3
+            if not self._expanded or on_left_edge:
+                self.toggle_expanded()
+            else:
+                # Expanded + click elsewhere -> open detail modal (like regular tools)
+                self.post_message(self.ToolCardClicked(self))
             return
 
         # Terminal tools always stay expanded - clicking opens detail modal

@@ -84,6 +84,7 @@ class TestSubagentViewMessageCallback:
         screen._auto_return_on_completion = False
         screen._send_message_callback = callback
         screen._continue_subagent_callback = None
+        screen._subagent_index = None
 
         list(screen.compose())
 
@@ -108,6 +109,7 @@ class TestSubagentViewMessageCallback:
         screen._auto_return_on_completion = False
         screen._send_message_callback = None
         screen._continue_subagent_callback = None
+        screen._subagent_index = None
 
         list(screen.compose())
 
@@ -145,6 +147,7 @@ class TestSubagentViewMessageCallback:
         screen._auto_return_on_completion = False
         screen._send_message_callback = None
         screen._continue_subagent_callback = callback
+        screen._subagent_index = None
 
         list(screen.compose())
 

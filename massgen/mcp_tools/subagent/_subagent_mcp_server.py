@@ -513,6 +513,10 @@ async def create_server() -> fastmcp.FastMCP:
                    - "task": (REQUIRED) string describing what to do
                    - "include_parent_workspace": (optional bool, default True) mount parent
                      workspace read-only. Set False for fully isolated research.
+                   - "include_temp_workspace": (optional bool, default True) auto-mount the
+                     shared reference directory (temp_workspaces) read-only. Contains
+                     snapshots from all peer agents. Set False for fully isolated subagents
+                     that don't need peer context.
                    - "context_paths": (optional) extra read-only paths beyond the parent
                      workspace. Use for peer workspace paths (from Available agent
                      workspaces section) or other allowed paths. Defaults to [].
@@ -526,6 +530,22 @@ async def create_server() -> fastmcp.FastMCP:
             context_paths: (optional) Top-level extra read-only paths applied to ALL tasks.
                            Merged with any per-task context_paths. Use this when all subagents
                            need the same peer workspace paths (e.g. temp_workspaces for evaluation).
+
+        FILE ARTIFACTS:
+        Subagents can ONLY write to their OWN workspace. Do NOT tell a subagent to save
+        files into your workspace — it is mounted read-only to them.
+
+        Correct pattern:
+        1. Tell the subagent to save artifacts to its own workspace (no path prefix needed —
+           relative paths work from the subagent's cwd).
+        2. The spawn result always includes "workspace": "/abs/path/to/subagent/workspace".
+        3. After the subagent completes, read artifacts from that path.
+
+        Example task wording:
+          WRONG: "Save screenshots to /parent/workspace/.massgen_scratch/verification/"
+          RIGHT: "Save screenshots to verification/ in your workspace and list them in your answer."
+
+        Then access: result["workspace"] + "/verification/"
 
         TIMEOUT HANDLING (for blocking mode, background=False):
         Subagents that timeout will attempt to recover any completed work:
@@ -581,11 +601,12 @@ async def create_server() -> fastmcp.FastMCP:
                 ]
             )
 
-            # BACKGROUND: Fully isolated research (no parent workspace access)
+            # BACKGROUND: Fully isolated research (no parent workspace, no peer snapshots)
             # FIRST: write_file("CONTEXT.md", "Building secure authentication system")
             spawn_subagents(
                 tasks=[{{"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research",
-                         "include_parent_workspace": False}}],
+                         "include_parent_workspace": False,
+                         "include_temp_workspace": False}}],
                 background=True  # Returns immediately, result injected later
             )
 
@@ -634,6 +655,22 @@ async def create_server() -> fastmcp.FastMCP:
                         if p not in per_task:
                             per_task.append(p)
                     t["context_paths"] = per_task
+                    merged_tasks.append(t)
+                tasks = merged_tasks
+
+            # Auto-mount temp_workspace (shared reference dir) for all tasks unless
+            # opted out via include_temp_workspace=False. Prepended so it's always
+            # first, giving subagents immediate access to peer agent snapshots.
+            if _agent_temporary_workspace:
+                tw_str = str(_agent_temporary_workspace)
+                merged_tasks = []
+                for t in tasks:
+                    if t.get("include_temp_workspace", True):
+                        t = dict(t)
+                        per_task = list(t.get("context_paths") or [])
+                        if tw_str not in per_task:
+                            per_task.insert(0, tw_str)
+                        t["context_paths"] = per_task
                     merged_tasks.append(t)
                 tasks = merged_tasks
 

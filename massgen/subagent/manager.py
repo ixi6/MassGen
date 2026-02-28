@@ -3430,6 +3430,19 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 },
             )
 
+            # For running subagents expose elapsed/timeout so the parent agent can
+            # calibrate patience and avoid premature cancellation.
+            if state.status == "running" and state.started_at:
+                elapsed = max(0.0, (datetime.now() - state.started_at).total_seconds())
+                timeout = float(state.config.timeout_seconds)
+                current_entry.update(
+                    {
+                        "elapsed_seconds": round(elapsed, 1),
+                        "timeout_seconds": timeout,
+                        "seconds_remaining": round(max(0.0, timeout - elapsed), 1),
+                    },
+                )
+
             # Include full result payload for completed in-memory subagents so callers
             # can retrieve answers from list_subagents without a second fetch tool.
             if state.result:

@@ -616,6 +616,67 @@ class TestSpawnSubagentsContextPathsRequirement:
         assert result["mode"] == "background"
         assert len(fake_manager.background_calls) == 1
 
+    @pytest.mark.asyncio
+    async def test_temp_workspace_auto_mounted_by_default(self, monkeypatch, tmp_path):
+        """When _agent_temporary_workspace is set, it is prepended to every task's context_paths."""
+        tw = tmp_path / "temp_ws"
+        tw.mkdir()
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        monkeypatch.setattr(server, "_agent_temporary_workspace", str(tw))
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Eval site", "subagent_id": "eval1"}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert str(tw) in fake_manager.background_calls[0]["context_paths"]
+        # temp_workspace is prepended (appears first)
+        assert fake_manager.background_calls[0]["context_paths"][0] == str(tw)
+
+    @pytest.mark.asyncio
+    async def test_temp_workspace_opt_out(self, monkeypatch, tmp_path):
+        """include_temp_workspace=False skips the auto-mount."""
+        tw = tmp_path / "temp_ws"
+        tw.mkdir()
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        monkeypatch.setattr(server, "_agent_temporary_workspace", str(tw))
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Isolated research", "include_temp_workspace": False}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert str(tw) not in fake_manager.background_calls[0]["context_paths"]
+
+    @pytest.mark.asyncio
+    async def test_temp_workspace_not_added_when_unset(self, monkeypatch, tmp_path):
+        """When _agent_temporary_workspace is None, no path is added."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        monkeypatch.setattr(server, "_agent_temporary_workspace", None)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Task"}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        # No unexpected paths injected
+        assert fake_manager.background_calls[0]["context_paths"] == []
+
 
 class TestSpecializedTypesFileNotDeleted:
     """Temp config files must survive MCP server startup (no race condition)."""

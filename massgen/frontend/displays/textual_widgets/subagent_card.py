@@ -53,7 +53,8 @@ class SubagentColumn(Vertical, can_focus=True):
         all_subagents: list[SubagentDisplayData],
         summary: str,
         tools: list[str],
-        open_callback: Callable[[SubagentDisplayData, list[SubagentDisplayData]], None],
+        open_callback: Callable[[SubagentDisplayData, list[SubagentDisplayData], int], None],
+        index: int = 0,
         id: str | None = None,
     ) -> None:
         super().__init__(id=id)
@@ -62,6 +63,7 @@ class SubagentColumn(Vertical, can_focus=True):
         self._summary = summary
         self._tools = tools
         self._open_callback = open_callback
+        self._index = index
         self._pulse_frame = 0
 
     def compose(self) -> ComposeResult:
@@ -81,7 +83,7 @@ class SubagentColumn(Vertical, can_focus=True):
         self._update_display()
 
     def on_click(self) -> None:
-        self._open_callback(self._subagent, self._all_subagents)
+        self._open_callback(self._subagent, self._all_subagents, self._index)
 
     def update_content(self, subagent: SubagentDisplayData, summary: str, tools: list[str]) -> None:
         self._subagent = subagent
@@ -321,10 +323,12 @@ class SubagentCard(Vertical, can_focus=True):
             subagent: SubagentDisplayData,
             all_subagents: list[SubagentDisplayData],
             card: SubagentCard | None = None,
+            subagent_index: int | None = None,
         ) -> None:
             self.subagent = subagent
             self.all_subagents = all_subagents
             self.card = card
+            self.subagent_index = subagent_index
             super().__init__()
 
     # CSS moved to base.tcss for theme support
@@ -403,6 +407,7 @@ class SubagentCard(Vertical, can_focus=True):
                         summary=summary,
                         tools=tools,
                         open_callback=self._request_open,
+                        index=idx,
                         id=f"subagent_col_{col_key}",
                     )
                     self._columns[col_key] = column
@@ -448,12 +453,12 @@ class SubagentCard(Vertical, can_focus=True):
             self._poll_timer.stop()
             self._poll_timer = None
 
-    def _request_open(self, subagent: SubagentDisplayData, all_subagents: list[SubagentDisplayData]) -> None:
+    def _request_open(self, subagent: SubagentDisplayData, all_subagents: list[SubagentDisplayData], index: int = 0) -> None:
         try:
             self._selected_index = self._subagents.index(subagent)
         except ValueError:
             pass
-        self.post_message(self.OpenModal(subagent, all_subagents, card=self))
+        self.post_message(self.OpenModal(subagent, all_subagents, card=self, subagent_index=index))
 
     def _should_activate(self, sa: SubagentDisplayData) -> bool:
         """Return True if this subagent has started producing events (setup complete)."""

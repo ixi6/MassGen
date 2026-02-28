@@ -1,6 +1,6 @@
 datasets==3.2.0
 openai==2.2.0
-xai-sdk==1.0.0
+xai-sdk==1.6.1
 anthropic>=0.61.0
 nest-asyncio==1.6.0
 wcwidth>=0.2.5

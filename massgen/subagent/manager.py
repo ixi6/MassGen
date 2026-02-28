@@ -328,6 +328,10 @@ class SubagentManager:
         runtime_mode: str,
     ) -> list[str]:
         """Build the subprocess command for a subagent launch."""
+        parse_at_references = True
+        if self._subagent_orchestrator_config is not None:
+            parse_at_references = self._subagent_orchestrator_config.parse_at_references
+
         base_cmd = [
             "uv",
             "run",
@@ -337,8 +341,10 @@ class SubagentManager:
             "--automation",
             "--output-file",
             str(answer_file),
-            full_task,
         ]
+        if not parse_at_references:
+            base_cmd.append("--no-parse-at-references")
+        base_cmd.append(full_task)
 
         if runtime_mode == "isolated" and self._running_inside_container and self._subagent_host_launch_prefix:
             return [*self._subagent_host_launch_prefix, *base_cmd]

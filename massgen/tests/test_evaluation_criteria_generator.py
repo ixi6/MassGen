@@ -251,41 +251,67 @@ class TestCriteriaValidation:
 class TestGenerationPrompt:
     """Tests for generation prompt construction."""
 
-    def test_prompt_includes_task(self):
-        """Generation prompt must include the user's task."""
+    def _make_prompt(self, task="Build a website", has_changedoc=False, min_criteria=4, max_criteria=10):
         from massgen.evaluation_criteria_generator import EvaluationCriteriaGenerator
 
         gen = EvaluationCriteriaGenerator()
-        prompt = gen._build_generation_prompt(
-            task="Build a snake game with mobile support",
-            has_changedoc=False,
-            min_criteria=4,
-            max_criteria=10,
+        return gen._build_generation_prompt(
+            task=task,
+            has_changedoc=has_changedoc,
+            min_criteria=min_criteria,
+            max_criteria=max_criteria,
         )
+
+    def test_prompt_includes_task(self):
+        """Generation prompt must include the user's task."""
+        prompt = self._make_prompt(task="Build a snake game with mobile support")
         assert "snake game" in prompt
 
     def test_prompt_changedoc_adds_traceability(self):
         """When changedoc is enabled, prompt should mention traceability."""
-        from massgen.evaluation_criteria_generator import EvaluationCriteriaGenerator
-
-        gen = EvaluationCriteriaGenerator()
-        prompt = gen._build_generation_prompt(
-            task="Build a website",
-            has_changedoc=True,
-            min_criteria=4,
-            max_criteria=10,
-        )
+        prompt = self._make_prompt(has_changedoc=True)
         assert "changedoc" in prompt.lower() or "traceability" in prompt.lower()
 
     def test_prompt_specifies_criteria_range(self):
         """Generation prompt should specify the min-max range."""
-        from massgen.evaluation_criteria_generator import EvaluationCriteriaGenerator
-
-        gen = EvaluationCriteriaGenerator()
-        prompt = gen._build_generation_prompt(
-            task="Build a website",
-            has_changedoc=False,
-            min_criteria=4,
-            max_criteria=10,
-        )
+        prompt = self._make_prompt(min_criteria=4, max_criteria=10)
         assert "4" in prompt and "10" in prompt
+
+    def test_prompt_defines_correctness_dimensions(self):
+        """Prompt must define correctness as structural, content, and experiential."""
+        prompt = self._make_prompt()
+        assert "structural" in prompt.lower()
+        assert "content" in prompt.lower()
+        assert "experiential" in prompt.lower()
+
+    def test_prompt_separates_correctness_from_craft(self):
+        """Prompt must distinguish correctness from craft as separate concepts."""
+        prompt = self._make_prompt()
+        # Both concepts must be named distinctly
+        assert "craft" in prompt.lower()
+        assert "correctness" in prompt.lower()
+        # The separation must be explicit — craft is beyond correctness
+        assert "beyond correctness" in prompt.lower() or "beyond what is merely correct" in prompt.lower()
+
+    def test_prompt_verify_by_required_for_experiential(self):
+        """Prompt must make verify_by required (not optional) for experiential criteria."""
+        prompt = self._make_prompt()
+        assert "verify_by" in prompt
+        # Should not describe it as merely optional
+        assert "optional" not in prompt.lower()
+
+    def test_prompt_verify_by_requires_full_scope(self):
+        """Prompt must instruct verify_by to cover all pages/slides, not a sample."""
+        prompt = self._make_prompt()
+        assert "all" in prompt.lower()
+        assert "sample" in prompt.lower() or "not a sample" in prompt.lower()
+
+    def test_prompt_requires_dedicated_rendering_correctness_criterion(self):
+        """Prompt must explicitly require a dedicated must criterion for rendering correctness."""
+        prompt = self._make_prompt()
+        # Must be a numbered requirement, not just guidance
+        assert "rendering" in prompt.lower() or "rendered" in prompt.lower()
+        # Must say it is always must, not should
+        assert "do not make this criterion" in prompt.lower() or "always `must`" in prompt.lower()
+        # Must say not to merge with craft
+        assert "craft" in prompt.lower() and ("separate" in prompt.lower() or "not merge" in prompt.lower())

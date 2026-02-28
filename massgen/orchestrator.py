@@ -1094,8 +1094,15 @@ class Orchestrator(ChatAgent):
                 substantiveness=args.get("substantiveness"),
             )
 
-            # Store checklist result for convergence detection and increment call counter
-            if agent_state is not None:
+            # Only accepted checklist submissions should consume this round's quota.
+            # Validation failures (incomplete/malformed payloads or gated rejections)
+            # must allow the agent to resubmit within the same round.
+            submission_has_validation_error = bool(
+                result.get("error") or result.get("incomplete_scores") or result.get("report_gate_triggered") or result.get("substantiveness_gate_triggered"),
+            )
+
+            # Store accepted checklist results for convergence detection and increment call counter.
+            if agent_state is not None and not submission_has_validation_error:
                 agent_state.checklist_history.append(
                     {
                         "verdict": result.get("verdict"),
@@ -2735,10 +2742,15 @@ class Orchestrator(ChatAgent):
             return None
 
         if has_peer_answers:
-            # Eased phase - use softened perspective
-            return persona.get_softened_text()
+            mode = self.config.coordination_config.persona_generator.after_first_answer
+            if mode == "drop":
+                return None
+            elif mode == "keep":
+                return persona.persona_text
+            else:  # "soften"
+                return persona.get_softened_text()
         else:
-            # Exploration phase - use strong perspective
+            # Exploration phase - always use strong perspective
             return persona.persona_text
 
     def get_generated_personas(self) -> dict[str, Any]:
@@ -9971,6 +9983,10 @@ Your answer:"""
                     phase = "eased" if has_peer_answers else "exploration"
                     logger.info(f"[Orchestrator] Injecting {phase} persona for {agent_id}")
                     system_message = f"{persona_text}\n\n{system_message}"
+                elif has_peer_answers:
+                    logger.info(
+                        f"[Orchestrator] Persona dropped for {agent_id} " f"(after_first_answer={self.config.coordination_config.persona_generator.after_first_answer})",
+                    )
 
             logger.info(
                 f"[Orchestrator] Structured system message built for {agent_id} (length: {len(system_message)} chars)",

@@ -60,6 +60,7 @@ def test_image_auto_selection_openrouter_only(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-openrouter-key")
 
     backend, model = select_backend_and_model(
@@ -79,6 +80,7 @@ def test_image_auto_selection_none_without_keys(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("XAI_API_KEY", raising=False)
 
     backend, model = select_backend_and_model(
         media_type=MediaType.IMAGE,
@@ -113,7 +115,7 @@ def test_openai_default_model_is_gpt_5_2():
 
 def test_image_backend_priority_google_first():
     """IMAGE backend priority should list Google first."""
-    assert BACKEND_PRIORITY[MediaType.IMAGE] == ["google", "openai", "openrouter"]
+    assert BACKEND_PRIORITY[MediaType.IMAGE] == ["google", "openai", "grok", "openrouter"]
 
 
 # ---------------------------------------------------------------------------

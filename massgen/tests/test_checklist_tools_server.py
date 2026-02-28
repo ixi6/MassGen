@@ -14,6 +14,7 @@ Tests cover:
 import json
 import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -1605,6 +1606,119 @@ class TestChecklistStdioRegistration:
         from massgen.mcp_tools.checklist_tools_server import SERVER_NAME
 
         assert SERVER_NAME in FRAMEWORK_MCPS, f"{SERVER_NAME!r} missing from FRAMEWORK_MCPS — " f"checklist tool will be filtered out of direct model tools"
+
+
+class TestChecklistSdkSubmissionCounting:
+    """Tests for SDK checklist call quota accounting."""
+
+    @staticmethod
+    def _install_fake_claude_agent_sdk(monkeypatch) -> None:
+        """Install a minimal claude_agent_sdk stub for orchestrator SDK tool tests."""
+        fake_sdk = ModuleType("claude_agent_sdk")
+
+        def tool(**_kwargs):
+            def decorator(fn):
+                return fn
+
+            return decorator
+
+        def create_sdk_mcp_server(*, name, version, tools):
+            return {
+                "name": name,
+                "version": version,
+                "tools": tools,
+            }
+
+        fake_sdk.tool = tool
+        fake_sdk.create_sdk_mcp_server = create_sdk_mcp_server
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_sdk)
+
+    @pytest.mark.asyncio
+    async def test_incomplete_submission_does_not_consume_round_quota(self, monkeypatch):
+        """Flat scores (invalid with multiple agents) should not spend the per-round call budget."""
+        from massgen.orchestrator import AgentState, Orchestrator
+
+        self._install_fake_claude_agent_sdk(monkeypatch)
+
+        class _MockBackend:
+            def __init__(self):
+                self.config = {}
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.config = SimpleNamespace(
+            max_checklist_calls_per_round=1,
+            checklist_first_answer=False,
+        )
+        orchestrator.agent_states = {"agent_0": AgentState(answer_count=1)}
+
+        backend = _MockBackend()
+        checklist_state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "require_substantiveness": True,
+            "available_agent_labels": ["agent1.1", "agent2.1"],
+        }
+        items = ["Check 1", "Check 2"]
+
+        orchestrator._init_checklist_tool_sdk(
+            "agent_0",
+            backend,
+            checklist_state,
+            items,
+        )
+        submit_checklist = backend.config["mcp_servers"]["massgen_checklist"]["tools"][0]
+
+        invalid_args = {
+            "scores": {
+                "E1": {"score": 8, "reasoning": "solid"},
+                "E2": {"score": 8, "reasoning": "solid"},
+            },
+            "improvements": "",
+            "substantiveness": {
+                "transformative": [],
+                "structural": [],
+                "incremental": [],
+                "decision_space_exhausted": True,
+                "notes": "No substantive path left.",
+            },
+        }
+        invalid_result = await submit_checklist(invalid_args)
+        invalid_payload = json.loads(invalid_result["content"][0]["text"])
+        assert invalid_payload.get("incomplete_scores") is True
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 0
+
+        valid_args = {
+            "scores": {
+                "agent1.1": {
+                    "E1": {"score": 8, "reasoning": "solid"},
+                    "E2": {"score": 9, "reasoning": "solid"},
+                },
+                "agent2.1": {
+                    "E1": {"score": 7, "reasoning": "solid"},
+                    "E2": {"score": 8, "reasoning": "solid"},
+                },
+            },
+            "improvements": "",
+            "substantiveness": {
+                "transformative": [],
+                "structural": [],
+                "incremental": [],
+                "decision_space_exhausted": True,
+                "notes": "No substantive path left.",
+            },
+        }
+        valid_result = await submit_checklist(valid_args)
+        valid_payload = json.loads(valid_result["content"][0]["text"])
+        assert valid_payload.get("incomplete_scores") is not True
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 1
+
+        blocked_result = await submit_checklist(valid_args)
+        assert blocked_result["isError"] is True
+        assert "already called 1 time(s)" in blocked_result["content"][0]["text"]
 
 
 @pytest.mark.asyncio

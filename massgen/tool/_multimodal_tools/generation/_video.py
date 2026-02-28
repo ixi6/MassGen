@@ -1,5 +1,5 @@
 """
-Video generation backends: OpenAI Sora, Google Veo.
+Video generation backends: OpenAI Sora, Google Veo, Grok (xAI).
 
 This module contains all video generation implementations that are
 routed through by generate_media when mode="video".
@@ -7,7 +7,11 @@ routed through by generate_media when mode="video".
 
 import asyncio
 import time
+from datetime import timedelta
+from typing import Any
 
+import requests
+import xai_sdk
 from openai import AsyncOpenAI
 
 from massgen.logger_config import logger
@@ -35,6 +39,8 @@ async def generate_video(config: GenerationConfig) -> GenerationResult:
 
     if backend == "google":
         return await _generate_video_google(config)
+    elif backend == "grok":
+        return await _generate_video_grok(config)
     else:  # openai (default)
         return await _generate_video_openai(config)
 
@@ -253,4 +259,114 @@ async def _generate_video_google(config: GenerationConfig) -> GenerationResult:
             success=False,
             backend_name="google",
             error=f"Google Veo error: {str(e)}",
+        )
+
+
+def _map_size_to_grok_video_resolution(size: str | None) -> str:
+    """Map a size string to Grok video resolution parameter.
+
+    Args:
+        size: Size string from config (e.g., "480", "480p", "720p")
+
+    Returns:
+        "480p" for low-res requests, "720p" otherwise
+    """
+    if not size:
+        return "720p"
+    normalized = size.lower().strip()
+    if normalized in ("480", "480p"):
+        return "480p"
+    return "720p"
+
+
+async def _generate_video_grok(config: GenerationConfig) -> GenerationResult:
+    """Generate video using xAI Grok's video API.
+
+    Uses ``client.video.generate()`` which handles polling internally
+    and returns a URL to the generated video.
+
+    Args:
+        config: GenerationConfig with prompt, output path, and duration
+
+    Returns:
+        GenerationResult with generated video info
+    """
+    api_key = get_api_key("grok")
+    if not api_key:
+        return GenerationResult(
+            success=False,
+            backend_name="grok",
+            error="xAI API key not found. Set XAI_API_KEY environment variable.",
+        )
+
+    try:
+        client = xai_sdk.AsyncClient(api_key=api_key)
+        model = config.model or get_default_model("grok", MediaType.VIDEO)
+
+        # Clamp duration to 1-15 seconds
+        GROK_MIN_DURATION = 1
+        GROK_MAX_DURATION = 15
+        requested_duration = config.duration if config.duration is not None else 5
+        duration = max(GROK_MIN_DURATION, min(GROK_MAX_DURATION, requested_duration))
+
+        if requested_duration != duration:
+            logger.warning(
+                f"Grok video duration clamped from {requested_duration}s to " f"{duration}s (valid range: {GROK_MIN_DURATION}-{GROK_MAX_DURATION}s)",
+            )
+
+        start_time = time.time()
+
+        generate_kwargs: dict[str, Any] = {
+            "prompt": config.prompt,
+            "model": model,
+            "duration": duration,
+            "timeout": timedelta(minutes=10),
+        }
+
+        if config.aspect_ratio:
+            generate_kwargs["aspect_ratio"] = config.aspect_ratio
+
+        generate_kwargs["resolution"] = _map_size_to_grok_video_resolution(
+            config.size,
+        )
+
+        # Handle image-to-video via input_images
+        if config.input_images:
+            first_image = config.input_images[0]
+            image_url = first_image.get("image_url", "")
+            if image_url:
+                generate_kwargs["image_url"] = image_url
+
+        # SDK handles polling internally
+        response = await client.video.generate(**generate_kwargs)
+
+        # Download video from URL
+        video_response = requests.get(response.url, timeout=120)
+        video_response.raise_for_status()
+        video_bytes = video_response.content
+
+        config.output_path.write_bytes(video_bytes)
+
+        generation_time = time.time() - start_time
+        file_size = config.output_path.stat().st_size
+
+        return GenerationResult(
+            success=True,
+            output_path=config.output_path,
+            media_type=MediaType.VIDEO,
+            backend_name="grok",
+            model_used=model,
+            file_size_bytes=file_size,
+            duration_seconds=duration,
+            metadata={
+                "generation_time": generation_time,
+            },
+        )
+
+    except Exception as e:
+        logger.exception(f"Grok video generation failed: {e}")
+        return GenerationResult(
+            success=False,
+            backend_name="grok",
+            error=f"Grok API error: {str(e)}",
         )

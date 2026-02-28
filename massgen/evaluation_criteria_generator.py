@@ -515,14 +515,21 @@ works as the user actually experiences it across all relevant dimensions:
   (file opens, code runs, API responds)
 - **Content correctness**: the output says or computes the right things — accurate, \
   complete, no factual errors or wrong results
-- **Experiential correctness**: the output behaves correctly in its actual environment \
-  — text renders without overflow or clipped characters, visuals display as intended, \
-  interactions work, audio/video plays back properly
+- **Experiential correctness**: the output behaves correctly in its primary use \
+  environment — text renders without overflow or clipped characters, visuals display \
+  as intended, interactions work, audio/video plays back properly, no obvious visual \
+  glitches or broken elements at the normal viewing context
 
 An output that passes structural checks but fails experiential ones (e.g., text that \
 renders with a single letter orphaned on its own line, a chart that displays blank, a \
-button that does nothing) is a *wrong* output, not a mediocre one. Correctness criteria \
-must cover all three dimensions, not just structural validity.
+button that does nothing, a layout that is visually broken at the default viewport) is \
+a *wrong* output, not a mediocre one. Correctness criteria must cover all three \
+dimensions, not just structural validity.
+
+Experiential correctness at the **primary use context** is always MUST — the output \
+must work correctly where and how it will normally be used. Extended contexts (e.g., \
+multiple screen sizes, edge-case inputs, non-default settings) may be SHOULD or COULD \
+depending on whether the task explicitly requires them.
 
 Correctness is separate from **craft**: a correct output can still be mediocre. Craft \
 criteria ask whether the output shows intentional quality — cohesive choices, thoughtful \
@@ -558,8 +565,11 @@ might reasonably skip these; they represent genuine craft above the bar. Missing
 is acceptable but achieving them signals real skill. (e.g., "Visual transitions \
 reinforce the narrative rather than just being decorative")
 
-**Calibration test**: ask yourself — would a competent first attempt satisfy this? \
-If yes, it belongs in MUST. If a good attempt might miss it, SHOULD. \
+**Calibration test**: first ask whether this is a correctness criterion — does failing \
+it mean the output is *wrong* (broken, inaccurate, or misbehaving in its actual \
+environment)? If yes, it is MUST regardless of how difficult it is to achieve. \
+Only after ruling that out, ask: would a competent first attempt satisfy this? \
+If yes and it is a correctness criterion, MUST. If a good attempt might miss it, SHOULD. \
 If only exceptional work achieves it, COULD.
 
 ## Requirements
@@ -578,6 +588,13 @@ independent quality axes are for this specific task (e.g., content correctness, 
 experiential correctness, completeness, error handling, usability, craft) and \
 ensure each significant dimension gets at least one criterion. An evaluator \
 reading the full set should feel like the entire task space is covered.
+9. **For tasks that produce a rendered or experienced artifact** (website, slides, \
+document, video, audio, interactive app): you MUST include a dedicated `must` \
+criterion whose sole focus is rendering/playback correctness in the primary use \
+context — no defects when the output is opened and experienced normally. This means: \
+no text overflow or clipping, no element collisions, no invisible or blank content, \
+no broken playback. Do NOT merge this into a craft or polish criterion — those are \
+separate. Do NOT make this criterion `should`. It is always `must`.
 {changedoc_instruction}
 ## Examples
 
@@ -591,6 +608,16 @@ For a task "Write an API client library":
 - "API coverage: all documented endpoints have working method signatures with correct parameters."
 - "Error handling: client is resilient to network failures, rate limits, and malformed responses."
 - "Developer ergonomics: naming is clear, the public API is discoverable, and usage is self-evident."
+
+For tasks producing an artifact that is experienced rather than just read (rendered \
+visuals, video, audio, interactive output): always include a MUST criterion covering \
+correctness in the primary use context — for rendered output this means no visual \
+defects when viewed normally; for video/audio this means plays back correctly without \
+distortion, sync errors, or gaps; for interactive output this means all interactions \
+work as expected without errors. This is separate from extended-context correctness \
+(other viewports, edge devices, alternative players), which is typically SHOULD. \
+The verify_by must require actually experiencing the full artifact, not just checking \
+its source or structure.
 
 Notice: these name a quality axis and list what to look for — they do NOT prescribe \
 specific quantities, thresholds, or implementation choices.

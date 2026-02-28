@@ -4402,6 +4402,7 @@ async def run_coordination_with_history(
                     diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
                     persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                    after_first_answer=pg_cfg.get("after_first_answer", "drop"),
                 )
 
             orchestrator_config.coordination_config = CoordinationConfig(
@@ -4810,6 +4811,7 @@ async def run_coordination(
                     diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
                     persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                    after_first_answer=pg_cfg.get("after_first_answer", "drop"),
                 )
 
             orchestrator_config.coordination_config = CoordinationConfig(

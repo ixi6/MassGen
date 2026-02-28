@@ -2,19 +2,19 @@
 name: multimodal-tools
 description: Analyze visual, audio, and video evidence — screenshots, recordings, charts, transcriptions, PDFs
 category: multimodal
-requires_api_keys: [OPENAI_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY, ELEVENLABS_API_KEY]
+requires_api_keys: [OPENAI_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY, ELEVENLABS_API_KEY, XAI_API_KEY]
 tasks:
   - "Analyze and understand images with vision models"
   - "Understand and transcribe audio files"
   - "Analyze video recordings and video content"
   - "Process and understand various file formats (PDF, DOCX, etc.)"
-  - "Generate images from text descriptions (OpenAI, Google Imagen, OpenRouter)"
-  - "Generate videos from text prompts (OpenAI Sora, Google Veo)"
+  - "Generate images from text descriptions (OpenAI, Google Imagen, Grok, OpenRouter)"
+  - "Generate videos from text prompts (Grok, Google Veo, OpenAI Sora)"
   - "Convert text to speech with natural voices (ElevenLabs, OpenAI TTS)"
   - "Generate music from text prompts (ElevenLabs)"
   - "Generate sound effects from text descriptions (ElevenLabs)"
   - "Transform images to new variations"
-keywords: [vision, audio, video, multimodal, image-analysis, speech, transcription, generation, pdf, file-processing, imagen, veo, sora, tts, elevenlabs, music, sfx, sound-effects]
+keywords: [vision, audio, video, multimodal, image-analysis, speech, transcription, generation, pdf, file-processing, imagen, veo, sora, tts, elevenlabs, music, sfx, sound-effects, grok, xai, grok-imagine]
 ---
 
 # Multimodal Tools
@@ -124,7 +124,7 @@ This is the recommended tool for all media generation. It automatically selects 
 - `prompt`: Text description of what to generate. For audio/speech, this is the
   **literal text to speak** — do NOT include speaking instructions here.
 - `mode`: Type of media - `"image"`, `"video"`, or `"audio"`
-- `backend_type`: Preferred backend - `"auto"`, `"openai"`, `"google"`, `"openrouter"`, or `"elevenlabs"`
+- `backend_type`: Preferred backend - `"auto"`, `"openai"`, `"google"`, `"grok"`, `"openrouter"`, or `"elevenlabs"`
 - `model`: Override default model
 - `duration`: For video/audio, length in seconds
 - `voice`: For audio, voice name or ID (e.g., `"Rachel"`, `"alloy"`, `"nova"`).
@@ -143,8 +143,8 @@ This is the recommended tool for all media generation. It automatically selects 
 **Supported Backends:**
 | Mode | Backends | Default Models |
 |------|----------|----------------|
-| image | google, openai, openrouter | Nano Banana 2 (`gemini-3.1-flash-image-preview`), GPT-5.2, Nano Banana 2 (via OR) |
-| video | google, openai | Veo 3.1, Sora-2 |
+| image | google, openai, grok, openrouter | Nano Banana 2 (`gemini-3.1-flash-image-preview`), GPT-5.2, `grok-imagine-image`, Nano Banana 2 (via OR) |
+| video | grok, google, openai | `grok-imagine-video`, Veo 3.1, Sora-2 |
 | audio (speech) | elevenlabs, openai | eleven_multilingual_v2, gpt-4o-mini-tts |
 | audio (music) | elevenlabs | elevenlabs-music |
 | audio (sfx) | elevenlabs | elevenlabs-sfx |
@@ -267,6 +267,9 @@ export GEMINI_API_KEY="your-api-key"
 # Optional - for OpenRouter image generation
 export OPENROUTER_API_KEY="your-api-key"
 
+# Optional - for Grok/xAI backends (image, video)
+export XAI_API_KEY="your-api-key"
+
 # Optional - for ElevenLabs audio (TTS, music, sound effects)
 export ELEVENLABS_API_KEY="your-api-key"
 ```
@@ -339,13 +342,13 @@ agents:
 4. Auto-selection based on available API keys
 
 **Available Backends:**
-| Mode  | Backends                        | Default Models |
-|-------|--------------------------------|----------------|
-| image | google, openai, openrouter     | gemini-3.1-flash-image-preview (Nano Banana 2), gpt-5.2, google/gemini-3.1-flash-image-preview |
-| video | google, openai                 | veo-3.1-generate-preview, sora-2 |
-| audio (speech) | elevenlabs, openai     | eleven_multilingual_v2, gpt-4o-mini-tts |
-| audio (music) | elevenlabs              | elevenlabs-music |
-| audio (sfx) | elevenlabs                | elevenlabs-sfx |
+| Mode  | Backends                              | Default Models |
+|-------|--------------------------------------|----------------|
+| image | google, openai, grok, openrouter     | gemini-3.1-flash-image-preview (Nano Banana 2), gpt-5.2, grok-imagine-image, google/gemini-3.1-flash-image-preview |
+| video | grok, google, openai                 | grok-imagine-video, veo-3.1-generate-preview, sora-2 |
+| audio (speech) | elevenlabs, openai             | eleven_multilingual_v2, gpt-4o-mini-tts |
+| audio (music) | elevenlabs                      | elevenlabs-music |
+| audio (sfx) | elevenlabs                        | elevenlabs-sfx |
 
 ## Path Handling
 

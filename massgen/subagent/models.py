@@ -219,6 +219,10 @@ class SubagentOrchestratorConfig:
                         Default 3 for subagents to prevent runaway iterations.
         enable_web_search: Whether to enable web search for subagents (None = inherit from parent).
                           This is set in YAML config, not by agents at runtime.
+        parse_at_references: Whether subagent subprocess CLI should parse @path/@path:w
+            references from task text into context paths. Default True preserves
+            existing behavior. Set False when literal '@' text (for example CSS
+            '@import') should be passed through unchanged.
     """
 
     enabled: bool = False
@@ -226,6 +230,7 @@ class SubagentOrchestratorConfig:
     coordination: dict[str, Any] = field(default_factory=dict)
     max_new_answers: int = 3  # Conservative default for subagents
     enable_web_search: bool | None = None  # None = inherit from parent
+    parse_at_references: bool = True
 
     @property
     def num_agents(self) -> int:
@@ -266,6 +271,7 @@ class SubagentOrchestratorConfig:
             coordination=data.get("coordination", {}),
             max_new_answers=data.get("max_new_answers", 3),
             enable_web_search=data.get("enable_web_search"),
+            parse_at_references=data.get("parse_at_references", True),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -275,6 +281,7 @@ class SubagentOrchestratorConfig:
             "agents": [a.copy() for a in self.agents] if self.agents else [],
             "coordination": self.coordination.copy() if self.coordination else {},
             "max_new_answers": self.max_new_answers,
+            "parse_at_references": self.parse_at_references,
         }
         if self.enable_web_search is not None:
             result["enable_web_search"] = self.enable_web_search

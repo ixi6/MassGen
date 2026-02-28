@@ -2936,6 +2936,7 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
             diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
             persona_guidelines=pg_cfg.get("persona_guidelines"),
             persist_across_turns=pg_cfg.get("persist_across_turns", False),
+            after_first_answer=pg_cfg.get("after_first_answer", "drop"),
         )
 
     # Parse evaluation_criteria_generator config if present
@@ -3015,17 +3016,19 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
 def inject_prompt_context_paths(
     prompt: str,
     config: dict[str, Any],
+    parse_at_references: bool = True,
 ) -> tuple[str, dict[str, Any]]:
     """Parse @references from prompt and inject into config.
 
     Extracts @path and @path:w references from the prompt, validates that
     the paths exist, and injects them into config["orchestrator"]["context_paths"].
 
-    This always displays extracted paths to the user for transparency.
+    This displays extracted paths to the user for transparency when parsing is enabled.
 
     Args:
         prompt: User's raw prompt potentially containing @references.
         config: MassGen configuration dict (modified in-place).
+        parse_at_references: Whether to parse @path references from prompt text.
 
     Returns:
         Tuple of (cleaned_prompt, modified_config).
@@ -3033,6 +3036,9 @@ def inject_prompt_context_paths(
     Raises:
         ConfigurationError: If any referenced paths don't exist.
     """
+    if not parse_at_references:
+        return prompt, config
+
     from .path_handling import PromptParserError, parse_prompt_for_context
 
     try:
@@ -5868,6 +5874,8 @@ async def run_textual_interactive_mode(
     )
     from massgen.orchestrator import Orchestrator
 
+    parse_at_references = kwargs.get("parse_at_references", True)
+
     if not TEXTUAL_AVAILABLE:
         print("⚠️ Textual library not available. Install with: pip install textual")
         print("   Falling back to Rich terminal mode...")
@@ -6143,9 +6151,6 @@ async def run_textual_interactive_mode(
                 logger.info("[Textual] Creating agents on first prompt...")
                 adapter.update_loading_status("🚀 Creating agents...")
 
-                # Parse @references from question and inject into config
-                from .path_handling import PromptParserError, parse_prompt_for_context
-
                 modified_config = original_config.copy()
                 if analysis_context_path:
                     _merge_readonly_context_path(
@@ -6153,18 +6158,25 @@ async def run_textual_interactive_mode(
                         analysis_context_path,
                         "Analysis target log session",
                     )
-                try:
-                    parsed = parse_prompt_for_context(question)
-                    if parsed.context_paths:
-                        # Inject context paths into orchestrator config
-                        orch_cfg = modified_config.get("orchestrator", {})
-                        existing_paths = orch_cfg.get("context_paths", [])
-                        orch_cfg["context_paths"] = existing_paths + parsed.context_paths
-                        modified_config["orchestrator"] = orch_cfg
-                        # Update the question to remove @references
-                        question = parsed.cleaned_prompt
-                except PromptParserError as e:
-                    logger.warning(f"[Textual] Path parsing error: {e}")
+                if parse_at_references:
+                    # Parse @references from question and inject into config
+                    from .path_handling import (
+                        PromptParserError,
+                        parse_prompt_for_context,
+                    )
+
+                    try:
+                        parsed = parse_prompt_for_context(question)
+                        if parsed.context_paths:
+                            # Inject context paths into orchestrator config
+                            orch_cfg = modified_config.get("orchestrator", {})
+                            existing_paths = orch_cfg.get("context_paths", [])
+                            orch_cfg["context_paths"] = existing_paths + parsed.context_paths
+                            modified_config["orchestrator"] = orch_cfg
+                            # Update the question to remove @references
+                            question = parsed.cleaned_prompt
+                    except PromptParserError as e:
+                        logger.warning(f"[Textual] Path parsing error: {e}")
 
                 # Get orchestrator config for agent creation
                 orch_cfg = modified_config.get("orchestrator", {})
@@ -7114,6 +7126,7 @@ async def run_interactive_mode(
     # Textual-first mode: Launch TUI immediately without Rich terminal output
     # The TUI will handle ASCII art, session config, input, and multi-turn loop
     display_type = ui_config.get("display_type", "textual_terminal")
+    parse_at_references = kwargs.get("parse_at_references", True)
     if display_type == "textual_terminal":
         return await run_textual_interactive_mode(
             agents=agents,
@@ -7731,108 +7744,114 @@ async def run_interactive_mode(
                     )
                     continue
 
-                # Parse @references from question and inject as context paths
-                from .path_handling import PromptParserError, parse_prompt_for_context
-
                 new_paths = []  # Track new paths for later use
-                try:
-                    parsed = parse_prompt_for_context(question)
-                    if parsed.context_paths:
-                        # Display extracted paths
-                        print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
-                        for ctx in parsed.context_paths:
-                            perm_icon = "📝" if ctx["permission"] == "write" else "📖"
-                            print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
-                        for suggestion in parsed.suggestions:
-                            print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
+                parsed_context_paths: list[dict[str, str]] = []
+                if parse_at_references:
+                    # Parse @references from question and inject as context paths
+                    from .path_handling import (
+                        PromptParserError,
+                        parse_prompt_for_context,
+                    )
 
-                        # Use cleaned question
-                        question = parsed.cleaned_prompt
+                    try:
+                        parsed = parse_prompt_for_context(question)
+                        parsed_context_paths = parsed.context_paths
+                        if parsed_context_paths:
+                            # Display extracted paths
+                            print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
+                            for ctx in parsed_context_paths:
+                                perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+                                print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+                            for suggestion in parsed.suggestions:
+                                print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
 
-                        # Check for new paths that need agent recreation
-                        existing_paths = set()
-                        if orchestrator_cfg:
-                            for p in orchestrator_cfg.get("context_paths", []):
-                                if isinstance(p, dict):
-                                    existing_paths.add(p.get("path"))
-                                else:
-                                    existing_paths.add(p)
+                            # Use cleaned question
+                            question = parsed.cleaned_prompt
 
-                        new_paths = [ctx for ctx in parsed.context_paths if ctx["path"] not in existing_paths]
+                            # Check for new paths that need agent recreation
+                            existing_paths = set()
+                            if orchestrator_cfg:
+                                for p in orchestrator_cfg.get("context_paths", []):
+                                    if isinstance(p, dict):
+                                        existing_paths.add(p.get("path"))
+                                    else:
+                                        existing_paths.add(p)
 
-                        if new_paths:
-                            # Update original_config with new paths
-                            if "orchestrator" not in original_config:
-                                original_config["orchestrator"] = {}
-                            if "context_paths" not in original_config["orchestrator"]:
-                                original_config["orchestrator"]["context_paths"] = []
+                            new_paths = [ctx for ctx in parsed_context_paths if ctx["path"] not in existing_paths]
 
-                            for ctx in new_paths:
-                                original_config["orchestrator"]["context_paths"].append(
-                                    ctx,
-                                )
-                                existing_paths.add(ctx["path"])
+                            if new_paths:
+                                # Update original_config with new paths
+                                if "orchestrator" not in original_config:
+                                    original_config["orchestrator"] = {}
+                                if "context_paths" not in original_config["orchestrator"]:
+                                    original_config["orchestrator"]["context_paths"] = []
 
-                            # Update orchestrator_cfg reference
-                            orchestrator_cfg = original_config.get("orchestrator", {})
+                                for ctx in new_paths:
+                                    original_config["orchestrator"]["context_paths"].append(
+                                        ctx,
+                                    )
+                                    existing_paths.add(ctx["path"])
 
-                    # If agents haven't been created yet (deferred creation), create them now
-                    if agents is None:
-                        print(f"{BRIGHT_YELLOW}🚀 Creating agents...{RESET}")
-                        agents = create_agents_from_config(
-                            original_config,
-                            orchestrator_cfg,
-                            enable_rate_limit=enable_rate_limit,
-                            config_path=config_path,
-                            memory_session_id=memory_session_id,
-                            debug=debug,
-                            filesystem_session_id=memory_session_id,
-                            session_storage_base=session_storage_base or SESSION_STORAGE,
-                        )
-                        if not agents:
-                            print(
-                                f"{BRIGHT_RED}❌ Failed to create agents{RESET}",
-                                flush=True,
-                            )
-                            continue
-                        print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
-                    elif new_paths:
-                        # Agents exist but we have new paths - need to recreate
+                                # Update orchestrator_cfg reference
+                                orchestrator_cfg = original_config.get("orchestrator", {})
+                    except PromptParserError as e:
+                        print(f"\n{BRIGHT_RED}❌ {e}{RESET}", flush=True)
+                        continue
+
+                # If agents haven't been created yet (deferred creation), create them now
+                if agents is None:
+                    print(f"{BRIGHT_YELLOW}🚀 Creating agents...{RESET}")
+                    agents = create_agents_from_config(
+                        original_config,
+                        orchestrator_cfg,
+                        enable_rate_limit=enable_rate_limit,
+                        config_path=config_path,
+                        memory_session_id=memory_session_id,
+                        debug=debug,
+                        filesystem_session_id=memory_session_id,
+                        session_storage_base=session_storage_base or SESSION_STORAGE,
+                    )
+                    if not agents:
                         print(
-                            f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}",
+                            f"{BRIGHT_RED}❌ Failed to create agents{RESET}",
+                            flush=True,
                         )
+                        continue
+                    print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
+                elif new_paths:
+                    # Agents exist but we have new paths - need to recreate
+                    print(
+                        f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}",
+                    )
 
-                        # Clean up existing agents before recreating to avoid resource leaks
-                        for agent_id, agent in agents.items():
-                            if hasattr(agent, "backend"):
-                                if hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
-                                    try:
-                                        agent.backend.filesystem_manager.cleanup()
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"[CLI] Cleanup failed for agent {agent_id}: {e}",
-                                        )
-                                if hasattr(agent.backend, "__aexit__"):
-                                    await agent.backend.__aexit__(None, None, None)
+                    # Clean up existing agents before recreating to avoid resource leaks
+                    for agent_id, agent in agents.items():
+                        if hasattr(agent, "backend"):
+                            if hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
+                                try:
+                                    agent.backend.filesystem_manager.cleanup()
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                    )
+                            if hasattr(agent.backend, "__aexit__"):
+                                await agent.backend.__aexit__(None, None, None)
 
-                        agents = create_agents_from_config(
-                            original_config,
-                            orchestrator_cfg,
-                            enable_rate_limit=enable_rate_limit,
-                            config_path=config_path,
-                            memory_session_id=memory_session_id,
-                            debug=debug,
-                            filesystem_session_id=memory_session_id,
-                            session_storage_base=session_storage_base or SESSION_STORAGE,
-                        )
-                        print(
-                            f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}",
-                        )
-                    if parsed.context_paths:
-                        print()  # Add spacing after context path info
-                except PromptParserError as e:
-                    print(f"\n{BRIGHT_RED}❌ {e}{RESET}", flush=True)
-                    continue
+                    agents = create_agents_from_config(
+                        original_config,
+                        orchestrator_cfg,
+                        enable_rate_limit=enable_rate_limit,
+                        config_path=config_path,
+                        memory_session_id=memory_session_id,
+                        debug=debug,
+                        filesystem_session_id=memory_session_id,
+                        session_storage_base=session_storage_base or SESSION_STORAGE,
+                    )
+                    print(
+                        f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}",
+                    )
+                if parsed_context_paths:
+                    print()  # Add spacing after context path info
 
                 print(f"\n🔄 {BRIGHT_YELLOW}Processing...{RESET}", flush=True)
 
@@ -9230,7 +9249,11 @@ async def main(args):
         # Parse @references from prompt BEFORE creating agents
         # This allows context_paths to be set up before FilesystemManager initialization
         if args.question:
-            args.question, config = inject_prompt_context_paths(args.question, config)
+            args.question, config = inject_prompt_context_paths(
+                args.question,
+                config,
+                parse_at_references=getattr(args, "parse_at_references", True),
+            )
             # Update orchestrator_cfg with any new context_paths
             orchestrator_cfg = config.get("orchestrator", {})
 
@@ -9365,6 +9388,7 @@ async def main(args):
 
         # Add rate limit flag to kwargs for interactive mode
         kwargs["enable_rate_limit"] = enable_rate_limit
+        kwargs["parse_at_references"] = getattr(args, "parse_at_references", True)
 
         # Add output file if specified
         if args.output_file:
@@ -10271,6 +10295,12 @@ Environment Variables:
         "--no-session-registry",
         action="store_true",
         help="Don't register this session in the global session registry. Used for internal subagent runs.",
+    )
+    parser.add_argument(
+        "--no-parse-at-references",
+        action="store_false",
+        dest="parse_at_references",
+        help="Treat @tokens in prompt text as plain text instead of extracting @path/@path:w context references.",
     )
     parser.add_argument(
         "--output-file",

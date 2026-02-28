@@ -36,6 +36,7 @@ class TestPersonaGeneratorConfig:
         assert config.diversity_mode == "perspective"
         assert config.persona_guidelines is None
         assert config.persist_across_turns is False
+        assert config.after_first_answer == "drop"
 
     def test_invalid_diversity_mode_falls_back(self):
         config = PersonaGeneratorConfig(diversity_mode="invalid")
@@ -48,6 +49,15 @@ class TestPersonaGeneratorConfig:
     def test_valid_methodology_mode(self):
         config = PersonaGeneratorConfig(diversity_mode="methodology")
         assert config.diversity_mode == DiversityMode.METHODOLOGY
+
+    def test_after_first_answer_valid_values(self):
+        for value in ("drop", "soften", "keep"):
+            config = PersonaGeneratorConfig(after_first_answer=value)
+            assert config.after_first_answer == value
+
+    def test_after_first_answer_invalid_falls_back_to_drop(self):
+        config = PersonaGeneratorConfig(after_first_answer="invalid")
+        assert config.after_first_answer == "drop"
 
 
 # ---------------------------------------------------------------------------

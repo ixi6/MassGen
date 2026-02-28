@@ -175,17 +175,20 @@ async def _generate_single_with_input_images(
     try:
         backend_forced = False
 
-        if selected_backend not in ("openai", "google"):
-            # Try Google first (Gemini supports editing), then OpenAI
+        if selected_backend not in ("openai", "google", "grok"):
+            # Try Google first (Gemini supports editing), then OpenAI, then Grok
             if has_api_key("google"):
                 backend_forced = True
                 selected_backend = "google"
             elif has_api_key("openai"):
                 backend_forced = True
                 selected_backend = "openai"
+            elif has_api_key("grok"):
+                backend_forced = True
+                selected_backend = "grok"
             else:
                 return _error_result(
-                    "Image editing requires the OpenAI or Google backend. " "Please set OPENAI_API_KEY or GOOGLE_API_KEY to enable " "image-to-image generation.",
+                    "Image editing requires the OpenAI, Google, or Grok backend. " "Please set OPENAI_API_KEY, GOOGLE_API_KEY, or XAI_API_KEY " "to enable image-to-image generation.",
                 )
 
         input_image_content, input_image_paths = _prepare_input_images(
@@ -317,7 +320,7 @@ async def generate_media(
                      - Relative paths resolved from agent workspace
                      - Absolute paths must be in allowed directories
                      - Defaults to agent workspace root
-        backend_type: Preferred backend ("openai", "google", "openrouter", "elevenlabs", or "auto")
+        backend_type: Preferred backend ("openai", "google", "grok", "openrouter", "elevenlabs", or "auto")
                       Falls back to others if unavailable
         model: Override the default model for the selected backend
         quality: Quality setting ("standard", "hd") - backend-specific
@@ -376,8 +379,8 @@ async def generate_media(
         )
 
     Supported Backends:
-        Image: google (Nano Banana 2 / Gemini + Imagen), openai (GPT-5.2), openrouter
-        Video: google (Veo), openai (Sora-2)
+        Image: google (Nano Banana 2 / Gemini + Imagen), openai (GPT-5.2), grok (Grok Imagine), openrouter
+        Video: grok (Grok Imagine Video), google (Veo), openai (Sora-2)
         Audio (speech): elevenlabs (eleven_multilingual_v2), openai (gpt-4o-mini-tts)
         Audio (music): elevenlabs only
         Audio (sound_effect): elevenlabs only

@@ -66,18 +66,27 @@ class PersonaGeneratorConfig:
         persona_guidelines: Optional custom guidelines for persona generation
         persist_across_turns: If True, reuse personas across turns in multi-turn sessions.
             If False (default), generate fresh personas each turn.
+        after_first_answer: What happens to the persona after the agent submits its first answer:
+            - "drop": Persona is completely removed (default). Agents synthesize freely.
+            - "soften": Persona is softened to a preference, not a position to defend.
+            - "keep": Persona stays at full strength for all answers.
     """
 
     enabled: bool = False
     diversity_mode: str = "perspective"  # "perspective" or "implementation"
     persona_guidelines: str | None = None
     persist_across_turns: bool = False  # Default: generate new personas each turn
+    after_first_answer: str = "drop"  # "drop" | "soften" | "keep"
 
     def __post_init__(self):
         # Validate diversity_mode
         valid_modes = (DiversityMode.PERSPECTIVE, DiversityMode.IMPLEMENTATION, DiversityMode.METHODOLOGY)
         if self.diversity_mode not in valid_modes:
             self.diversity_mode = DiversityMode.PERSPECTIVE
+        # Validate after_first_answer
+        valid_lifecycle = ("drop", "soften", "keep")
+        if self.after_first_answer not in valid_lifecycle:
+            self.after_first_answer = "drop"
 
 
 class PersonaGenerator:

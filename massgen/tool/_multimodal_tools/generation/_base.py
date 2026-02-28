@@ -95,6 +95,7 @@ BACKEND_API_KEYS: dict[str, list[str]] = {
     "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
     "elevenlabs": ["ELEVENLABS_API_KEY"],
+    "grok": ["XAI_API_KEY"],
 }
 
 # Default models for each backend and media type
@@ -114,12 +115,16 @@ DEFAULT_MODELS: dict[str, dict[MediaType, str]] = {
     "elevenlabs": {
         MediaType.AUDIO: "eleven_multilingual_v2",
     },
+    "grok": {
+        MediaType.IMAGE: "grok-imagine-image",
+        MediaType.VIDEO: "grok-imagine-video",
+    },
 }
 
 # Priority order for auto-selection per media type
 BACKEND_PRIORITY: dict[MediaType, list[str]] = {
-    MediaType.IMAGE: ["google", "openai", "openrouter"],
-    MediaType.VIDEO: ["openai", "google"],
+    MediaType.IMAGE: ["google", "openai", "grok", "openrouter"],
+    MediaType.VIDEO: ["grok", "google", "openai"],
     MediaType.AUDIO: ["elevenlabs", "openai"],
 }
 

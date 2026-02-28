@@ -1,5 +1,5 @@
 """
-Image generation backends: OpenAI, Google (Gemini + Imagen), OpenRouter.
+Image generation backends: OpenAI, Google (Gemini + Imagen), OpenRouter, Grok (xAI).
 
 This module contains all image generation implementations that are
 routed through by generate_media when mode="image".
@@ -8,6 +8,10 @@ Google backend supports two API paths:
 - **Gemini** (``gemini-*`` models): Uses ``generate_content()`` with
   ``response_modalities=['IMAGE']``. Supports text-to-image and image editing.
 - **Imagen** (``imagen-*`` models): Uses ``generate_images()``. Text-to-image only.
+
+Grok backend uses the xAI SDK:
+- ``client.image.sample()`` returns base64 data.
+- Continuation via ``image_url`` data URI with stored base64.
 """
 
 import base64
@@ -16,6 +20,7 @@ from collections import OrderedDict
 from typing import Any
 
 import requests
+import xai_sdk
 from google import genai
 from google.genai import types as genai_types
 from openai import AsyncOpenAI
@@ -51,6 +56,44 @@ class _GeminiChatStore:
 _gemini_chat_store = _GeminiChatStore()
 
 
+class _GrokImageStore:
+    """In-memory store for Grok image base64 data used in continuation editing."""
+
+    def __init__(self, max_items: int = 50):
+        self._store: OrderedDict[str, str] = OrderedDict()
+        self._max = max_items
+
+    def save(self, base64_data: str) -> str:
+        store_id = f"grok_img_{uuid.uuid4().hex[:12]}"
+        if len(self._store) >= self._max:
+            self._store.popitem(last=False)
+        self._store[store_id] = base64_data
+        return store_id
+
+    def get(self, store_id: str) -> str | None:
+        return self._store.get(store_id)
+
+
+_grok_image_store = _GrokImageStore()
+
+
+def _map_size_to_grok_resolution(size: str | None) -> str:
+    """Map a size string to Grok resolution parameter.
+
+    Args:
+        size: Size string from config (e.g., "2k", "2K", "2048x2048")
+
+    Returns:
+        "2k" for high-res requests, "1k" otherwise
+    """
+    if not size:
+        return "1k"
+    normalized = size.lower().strip()
+    if normalized in ("2k", "2048x2048"):
+        return "2k"
+    return "1k"
+
+
 async def generate_image(config: GenerationConfig) -> GenerationResult:
     """Generate an image using the selected backend.
 
@@ -68,6 +111,8 @@ async def generate_image(config: GenerationConfig) -> GenerationResult:
         return await _generate_image_google(config)
     elif backend == "openrouter":
         return await _generate_image_openrouter(config)
+    elif backend == "grok":
+        return await _generate_image_grok(config)
     else:  # openai (default)
         return await _generate_image_openai(config)
 
@@ -379,6 +424,83 @@ async def _generate_image_google_imagen(
             success=False,
             backend_name="google",
             error=f"Google Imagen error: {str(e)}",
+        )
+
+
+async def _generate_image_grok(config: GenerationConfig) -> GenerationResult:
+    """Generate image using xAI Grok's image API.
+
+    Uses ``client.image.sample()`` which returns base64 data directly.
+    Supports continuation via stored base64 passed as ``image_url`` data URI.
+
+    Args:
+        config: GenerationConfig with prompt and output path
+
+    Returns:
+        GenerationResult with generated image info
+    """
+    api_key = get_api_key("grok")
+    if not api_key:
+        return GenerationResult(
+            success=False,
+            backend_name="grok",
+            error="xAI API key not found. Set XAI_API_KEY environment variable.",
+        )
+
+    try:
+        client = xai_sdk.AsyncClient(api_key=api_key)
+        model = config.model or get_default_model("grok", MediaType.IMAGE)
+
+        sample_kwargs: dict[str, Any] = {
+            "prompt": config.prompt,
+            "model": model,
+            "image_format": "base64",
+        }
+
+        if config.aspect_ratio:
+            sample_kwargs["aspect_ratio"] = config.aspect_ratio
+
+        sample_kwargs["resolution"] = _map_size_to_grok_resolution(config.size)
+
+        # Handle continuation — retrieve stored base64 and pass as data URI
+        if config.continue_from:
+            stored_b64 = _grok_image_store.get(config.continue_from)
+            if not stored_b64:
+                return GenerationResult(
+                    success=False,
+                    backend_name="grok",
+                    model_used=model,
+                    error=("Continuation image not found. The continuation_id " f"'{config.continue_from}' may have expired or is invalid."),
+                )
+            sample_kwargs["image_url"] = f"data:image/png;base64,{stored_b64}"
+
+        response = await client.image.sample(**sample_kwargs)
+
+        # Decode and save image
+        image_bytes = base64.b64decode(response.base64)
+        config.output_path.write_bytes(image_bytes)
+
+        # Store base64 for future continuation
+        continuation_id = _grok_image_store.save(response.base64)
+
+        return GenerationResult(
+            success=True,
+            output_path=config.output_path,
+            media_type=MediaType.IMAGE,
+            backend_name="grok",
+            model_used=model,
+            file_size_bytes=len(image_bytes),
+            metadata={
+                "continuation_id": continuation_id,
+            },
+        )
+
+    except Exception as e:
+        logger.exception(f"Grok image generation failed: {e}")
+        return GenerationResult(
+            success=False,
+            backend_name="grok",
+            error=f"Grok API error: {str(e)}",
         )
 
 

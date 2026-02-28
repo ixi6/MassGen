@@ -130,6 +130,7 @@ By default, subagents inherit all parent agent configurations. To customize:
        enable_subagents: true
        subagent_orchestrator:
          enabled: true
+         parse_at_references: false  # Optional: treat @tokens in task text as literals
          agents:
            - id: "subagent_worker"
              backend:

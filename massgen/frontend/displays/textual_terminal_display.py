@@ -60,6 +60,7 @@ try:
         CostBreakdownModal,
         DecompositionGenerationModal,
         DecompositionSubtasksModal,
+        EvaluationCriteriaModal,
         FileInspectionModal,
         KeyboardShortcutsModal,
         MCPStatusModal,
@@ -671,6 +672,13 @@ class TextualTerminalDisplay(TerminalDisplay):
             self.default_cwd_context_mode = "read"
         else:
             self.default_cwd_context_mode = "off"
+        # CLI mode defaults (set by --single-agent, --quick, --personas, --coordination-mode)
+        self.default_agent_mode = kwargs.get("default_agent_mode", "multi")
+        self.default_selected_agent = kwargs.get("default_selected_agent", None)
+        self.default_refinement_enabled = kwargs.get("default_refinement_enabled", True)
+        self.default_personas_enabled = kwargs.get("default_personas_enabled", False)
+        self.default_persona_diversity_mode = kwargs.get("default_persona_diversity_mode", "perspective")
+
         # Runtime toggle to ignore hotkeys/key handling when enabled
         self.safe_keyboard_mode = kwargs.get("safe_keyboard_mode", False)
         self.max_buffer_batch = kwargs.get("max_buffer_batch", 50)
@@ -1677,6 +1685,20 @@ class TextualTerminalDisplay(TerminalDisplay):
         """
         if self._app:
             self._call_app_method("set_agent_personas", personas)
+
+    def set_evaluation_criteria(
+        self,
+        criteria: list[dict],
+        source: str = "default",
+    ) -> None:
+        """Pass active evaluation criteria to the TUI for display via Ctrl+E.
+
+        Args:
+            criteria: List of dicts with keys: id, text, category, verify_by.
+            source: Where the criteria came from (generated, inline, preset name, default).
+        """
+        if self._app:
+            self._call_app_method("set_evaluation_criteria", criteria, source)
 
     def begin_restart(
         self,
@@ -3522,6 +3544,8 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+shift+i", "toggle_human_input_target", "Inject Target", priority=True, show=False),
             # Theme toggle
             Binding("ctrl+shift+t", "toggle_theme", "Theme", priority=True, show=False),
+            # Evaluation criteria viewer
+            Binding("ctrl+e", "show_evaluation_criteria", "Criteria", priority=True, show=False),
         ]
 
         def __init__(
@@ -3658,12 +3682,28 @@ if TEXTUAL_AVAILABLE:
             self._mode_state.analysis_config.skill_lifecycle_mode = lifecycle_mode
             if self.coordination_display.default_coordination_mode == "decomposition":
                 self._mode_state.coordination_mode = "decomposition"
+
+            # Apply CLI mode defaults (--single-agent, --quick, --personas, --coordination-mode)
+            if self.coordination_display.default_agent_mode == "single":
+                self._mode_state.agent_mode = "single"
+                if self.coordination_display.default_selected_agent:
+                    self._mode_state.selected_single_agent = self.coordination_display.default_selected_agent
+                elif self.coordination_display.agent_ids:
+                    self._mode_state.selected_single_agent = self.coordination_display.agent_ids[0]
+            if not self.coordination_display.default_refinement_enabled:
+                self._mode_state.refinement_enabled = False
+            if self.coordination_display.default_personas_enabled:
+                self._mode_state.parallel_personas_enabled = True
+                self._mode_state.persona_diversity_mode = self.coordination_display.default_persona_diversity_mode
+
             self._mode_bar: ModeBar | None = None
 
             # Runtime decomposition generation UI state
             self._decomposition_generation_modal: DecompositionGenerationModal | None = None
             self._runtime_decomposition_subtasks: dict[str, str] = {}
             self._runtime_parallel_personas: dict[str, str] = {}
+            self._runtime_evaluation_criteria: list[dict] | None = None
+            self._runtime_evaluation_criteria_source: str = "default"
             self._decomposition_completion_source: str = "subagent"
             self._precollab_subagents: dict[str, _PrecollabSubagentState] = {}
             # Workspace browser open-guard to prevent duplicate modal pushes from
@@ -4106,6 +4146,8 @@ if TEXTUAL_AVAILABLE:
             self._set_cwd_context_mode(self._cwd_context_mode, notify=False)
             self._refresh_welcome_context_hint()
             if self._mode_bar:
+                self._mode_bar.set_agent_mode(self._mode_state.agent_mode)
+                self._mode_bar.set_refinement_mode(self._mode_state.refinement_enabled)
                 self._mode_bar.set_coordination_mode(self._mode_state.coordination_mode)
                 self._mode_bar.set_coordination_enabled(self._mode_state.agent_mode != "single")
                 self._mode_bar.set_parallel_personas_enabled(self._mode_state.parallel_personas_enabled, self._mode_state.persona_diversity_mode)
@@ -7629,6 +7671,15 @@ Type your question and press Enter to ask the agents.
             if self._tab_bar and self._mode_state.coordination_mode == "parallel" and self._mode_state.parallel_personas_enabled:
                 self._tab_bar.set_agent_personas(self._runtime_parallel_personas)
 
+        def set_evaluation_criteria(
+            self,
+            criteria: list[dict],
+            source: str = "default",
+        ) -> None:
+            """Store the active evaluation criteria for display via Ctrl+E."""
+            self._runtime_evaluation_criteria = list(criteria) if criteria else []
+            self._runtime_evaluation_criteria_source = source
+
         def set_input_enabled(self, enabled: bool):
             """Enable or disable mode controls during execution.
 
@@ -10061,6 +10112,14 @@ Type your question and press Enter to ask the agents.
         def action_show_help(self) -> None:
             """Show help modal (Ctrl+/ binding)."""
             self._show_help_modal()
+
+        def action_show_evaluation_criteria(self) -> None:
+            """Show the active evaluation criteria modal (Ctrl+E binding)."""
+            criteria = getattr(self, "_runtime_evaluation_criteria", None) or []
+            source = getattr(self, "_runtime_evaluation_criteria_source", "default")
+            self._show_modal_async(
+                EvaluationCriteriaModal(criteria=criteria, source=source),
+            )
 
         def action_open_vote_results(self):
             """Open vote results modal."""

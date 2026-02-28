@@ -27,16 +27,18 @@ class GenerationConfig:
     """Configuration passed to generation backends.
 
     Attributes:
-        prompt: Text description of what to generate
+        prompt: Text description of what to generate. For audio/speech this is
+            the literal text to speak (not speaking instructions).
         output_path: Where to save the generated media
         media_type: Type of media being generated
         backend: Preferred backend (None for auto-selection)
         model: Override default model for the backend
         quality: Quality setting ("standard", "hd", etc.)
         duration: For video/audio - length in seconds
-        voice: For audio - voice ID
+        voice: For audio - voice name or UUID. ElevenLabs names are resolved
+            to UUIDs automatically.
         aspect_ratio: For image/video - aspect ratio string
-        extra_params: Backend-specific parameters
+        extra_params: Backend-specific parameters (e.g., instructions, audio_type)
         input_images: Optional input images (image-to-image)
         input_image_paths: Resolved input image paths (for metadata)
     """
@@ -87,6 +89,7 @@ BACKEND_API_KEYS: dict[str, list[str]] = {
     "openai": ["OPENAI_API_KEY"],
     "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
+    "elevenlabs": ["ELEVENLABS_API_KEY"],
 }
 
 # Default models for each backend and media type
@@ -103,13 +106,16 @@ DEFAULT_MODELS: dict[str, dict[MediaType, str]] = {
     "openrouter": {
         MediaType.IMAGE: "google/gemini-2.5-flash-image-preview",
     },
+    "elevenlabs": {
+        MediaType.AUDIO: "eleven_multilingual_v2",
+    },
 }
 
 # Priority order for auto-selection per media type
 BACKEND_PRIORITY: dict[MediaType, list[str]] = {
     MediaType.IMAGE: ["openai", "google", "openrouter"],
     MediaType.VIDEO: ["openai", "google"],
-    MediaType.AUDIO: ["openai"],
+    MediaType.AUDIO: ["elevenlabs", "openai"],
 }
 
 

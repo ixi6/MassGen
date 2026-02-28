@@ -4830,6 +4830,17 @@ give you better direction.
 
 A beautiful screenshot means nothing if buttons don't work. A single frame cannot prove an animation is smooth. Test functionality, then verify with evidence that matches what you're proving.
 
+### Audio Generation
+For text-to-speech, music, or sound effects, prefer `generate_media` with \
+`mode="audio"` over installing third-party packages (e.g., `edge-tts`, `pyttsx3`). \
+It handles backend selection and file management automatically. \
+If no API keys are available, falling back to free packages like `edge-tts` is fine.
+
+**Important for TTS:** The `prompt` parameter is the **literal text to speak** — \
+do NOT include speaking instructions in it (the TTS will read them aloud). \
+Use the `instructions` parameter for tone/style guidance instead. \
+Voice names like "Rachel" or "Sarah" are auto-resolved to ElevenLabs UUIDs.
+
 ### Image Sourcing Fallback
 If you encounter legal restrictions when trying to use or reference existing photographs
 (e.g., celebrity photos, copyrighted images), **generate original images** using

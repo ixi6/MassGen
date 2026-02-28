@@ -295,7 +295,9 @@ async def generate_media(
     to generate multiple media items in parallel.
 
     Args:
-        prompt: Text description of what to generate (single item mode)
+        prompt: Text description of what to generate (single item mode).
+                For audio/speech: the literal text to speak (NOT instructions
+                about how to speak — use `instructions` for tone/style).
         mode: Type of media to generate - "image", "video", or "audio"
         prompts: List of text descriptions for batch generation (parallel mode).
                  Use this instead of `prompt` to generate multiple items at once.
@@ -304,18 +306,22 @@ async def generate_media(
                      - Relative paths resolved from agent workspace
                      - Absolute paths must be in allowed directories
                      - Defaults to agent workspace root
-        backend_type: Preferred backend ("openai", "google", "openrouter", or "auto")
+        backend_type: Preferred backend ("openai", "google", "openrouter", "elevenlabs", or "auto")
                       Falls back to others if unavailable
         model: Override the default model for the selected backend
         quality: Quality setting ("standard", "hd") - backend-specific
         duration: For video/audio: length in seconds
-        voice: For audio: voice ID (e.g., "alloy", "echo", "nova", "shimmer")
+        voice: For audio: voice name or ID. OpenAI voices: "alloy", "echo",
+                "nova", "shimmer". ElevenLabs voices: "Rachel", "Sarah",
+                "Josh", etc. (names are auto-resolved to UUIDs).
         aspect_ratio: For image/video: aspect ratio (e.g., "16:9", "1:1")
         audio_format: For audio: output format (mp3, wav, opus, etc.)
-        audio_type: For audio: type of audio to generate.
-                    Currently only "speech" is supported. "music" and
-                    "sound_effect" are reserved and return an unsupported error.
-        instructions: For audio: speaking instructions (tone, style)
+        audio_type: For audio: type of audio to generate - "speech" (default),
+                    "music" (ElevenLabs only), or "sound_effect" (ElevenLabs only)
+        instructions: For audio: speaking style/tone guidance (e.g., "warm,
+                      reflective tone"). Only supported by OpenAI gpt-4o-mini-tts.
+                      Do NOT put style instructions in `prompt` — TTS will
+                      speak the prompt text literally.
         extra_params: Backend-specific parameters
         max_concurrent: Maximum concurrent generations for batch mode (default: 4)
         agent_cwd: Agent's working directory (auto-injected)
@@ -355,7 +361,9 @@ async def generate_media(
     Supported Backends:
         Image: openai (GPT-4.1), google (Imagen), openrouter
         Video: google (Veo), openai (Sora-2)
-        Audio (speech): openai (gpt-4o-mini-tts)
+        Audio (speech): elevenlabs (eleven_multilingual_v2), openai (gpt-4o-mini-tts)
+        Audio (music): elevenlabs only
+        Audio (sound_effect): elevenlabs only
     """
     try:
         # Parse mode to MediaType

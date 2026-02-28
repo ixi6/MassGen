@@ -2,7 +2,7 @@
 name: multimodal-tools
 description: Analyze visual, audio, and video evidence — screenshots, recordings, charts, transcriptions, PDFs
 category: multimodal
-requires_api_keys: [OPENAI_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY]
+requires_api_keys: [OPENAI_API_KEY, GOOGLE_API_KEY, OPENROUTER_API_KEY, ELEVENLABS_API_KEY]
 tasks:
   - "Analyze and understand images with vision models"
   - "Understand and transcribe audio files"
@@ -10,9 +10,11 @@ tasks:
   - "Process and understand various file formats (PDF, DOCX, etc.)"
   - "Generate images from text descriptions (OpenAI, Google Imagen, OpenRouter)"
   - "Generate videos from text prompts (OpenAI Sora, Google Veo)"
-  - "Convert text to speech with natural voices (OpenAI TTS)"
+  - "Convert text to speech with natural voices (ElevenLabs, OpenAI TTS)"
+  - "Generate music from text prompts (ElevenLabs)"
+  - "Generate sound effects from text descriptions (ElevenLabs)"
   - "Transform images to new variations"
-keywords: [vision, audio, video, multimodal, image-analysis, speech, transcription, generation, pdf, file-processing, imagen, veo, sora, tts]
+keywords: [vision, audio, video, multimodal, image-analysis, speech, transcription, generation, pdf, file-processing, imagen, veo, sora, tts, elevenlabs, music, sfx, sound-effects]
 ---
 
 # Multimodal Tools
@@ -119,12 +121,16 @@ This is the recommended tool for all media generation. It automatically selects 
 3. Modality-specific priority order
 
 **Parameters:**
-- `prompt`: Text description of what to generate (or text to speak for audio)
+- `prompt`: Text description of what to generate. For audio/speech, this is the
+  **literal text to speak** — do NOT include speaking instructions here.
 - `mode`: Type of media - `"image"`, `"video"`, or `"audio"`
-- `backend_type`: Preferred backend - `"auto"`, `"openai"`, `"google"`, or `"openrouter"`
+- `backend_type`: Preferred backend - `"auto"`, `"openai"`, `"google"`, `"openrouter"`, or `"elevenlabs"`
 - `model`: Override default model
 - `duration`: For video/audio, length in seconds
-- `voice`: For audio, voice ID (e.g., `"alloy"`, `"nova"`, `"shimmer"`)
+- `voice`: For audio, voice name or ID (e.g., `"Rachel"`, `"alloy"`, `"nova"`).
+  ElevenLabs names are auto-resolved to UUIDs.
+- `instructions`: For audio, speaking style/tone guidance (e.g., `"warm, reflective tone"`).
+  Only supported by OpenAI gpt-4o-mini-tts. Do NOT put style instructions in `prompt`.
 - `aspect_ratio`: For image/video (e.g., `"16:9"`, `"1:1"`)
 - `storage_path`: Directory to save generated media
 
@@ -133,10 +139,37 @@ This is the recommended tool for all media generation. It automatically selects 
 |------|----------|--------|
 | image | google, openai, openrouter | Imagen 3, GPT-4.1, Nano Banana |
 | video | google, openai | Veo 2, Sora-2 |
-| audio | openai | gpt-4o-mini-tts |
+| audio (speech) | elevenlabs, openai | eleven_multilingual_v2, gpt-4o-mini-tts |
+| audio (music) | elevenlabs | elevenlabs-music |
+| audio (sfx) | elevenlabs | elevenlabs-sfx |
+
+**Audio note:** Prefer `generate_media` with `mode="audio"` over installing packages like `edge-tts`. Backend selection is automatic based on available API keys. If no keys are available, falling back to free packages is fine.
 
 **Examples:**
 ```python
+# Generate speech (ElevenLabs preferred when key available)
+result = await generate_media(
+    "Hello world!",
+    mode="audio",
+    voice="Rachel"
+)
+
+# Generate music (ElevenLabs only)
+result = await generate_media(
+    "Upbeat jazz piano with soft drums",
+    mode="audio",
+    audio_type="music",
+    duration=30
+)
+
+# Generate sound effects (ElevenLabs only)
+result = await generate_media(
+    "Thunder rolling across a mountain valley",
+    mode="audio",
+    audio_type="sound_effect",
+    duration=5
+)
+
 # Generate an image with auto-selection
 result = await generate_media(
     "A cat in space",
@@ -149,13 +182,6 @@ result = await generate_media(
     mode="video",
     backend_type="google",
     duration=8
-)
-
-# Generate audio with specific voice
-result = await generate_media(
-    "Hello world!",
-    mode="audio",
-    voice="nova"
 )
 ```
 
@@ -216,6 +242,9 @@ export GEMINI_API_KEY="your-api-key"
 
 # Optional - for OpenRouter image generation
 export OPENROUTER_API_KEY="your-api-key"
+
+# Optional - for ElevenLabs audio (TTS, music, sound effects)
+export ELEVENLABS_API_KEY="your-api-key"
 ```
 
 **Optional dependencies:**
@@ -248,7 +277,7 @@ orchestrator:
   # Set default backends for all agents
   image_generation_backend: "openai"
   video_generation_backend: "openai"
-  audio_generation_backend: "openai"
+  audio_generation_backend: "elevenlabs"
 
   # Optionally set default models
   image_generation_model: "imagen-3.0-generate-002"
@@ -290,7 +319,9 @@ agents:
 |-------|--------------------------------|----------------|
 | image | google, openai, openrouter     | imagen-3.0-generate-002, gpt-5.2, gemini-2.5-flash-image-preview |
 | video | google, openai                 | veo-2.0-generate-001, sora-2 |
-| audio | openai                         | gpt-4o-mini-tts |
+| audio (speech) | elevenlabs, openai     | eleven_multilingual_v2, gpt-4o-mini-tts |
+| audio (music) | elevenlabs              | elevenlabs-music |
+| audio (sfx) | elevenlabs                | elevenlabs-sfx |
 
 ## Path Handling
 

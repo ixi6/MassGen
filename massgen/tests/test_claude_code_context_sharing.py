@@ -47,7 +47,7 @@ class MockFilesystemManager:
     def get_current_workspace(self) -> str:
         return str(self.cwd)
 
-    async def save_snapshot(self, timestamp=None, is_final=False) -> None:
+    async def save_snapshot(self, timestamp=None, is_final=False, preserve_existing_snapshot=False) -> None:
         self.save_snapshot_calls.append((timestamp, is_final))
         if not self.snapshot_storage or not self.agent_id:
             return

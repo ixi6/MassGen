@@ -2741,6 +2741,180 @@ def validate_context_paths(config: dict[str, Any]) -> None:
         raise ConfigurationError("\n".join(errors))
 
 
+def add_mode_flags_to_parser(parser: argparse.ArgumentParser) -> None:
+    """Add mode bar toggle flags to an argparse parser.
+
+    These flags mirror the TUI mode bar toggles, allowing CLI control
+    of agent mode, coordination mode, refinement, and persona generation.
+    """
+    mode_group = parser.add_argument_group(
+        "mode settings",
+        "Override execution mode (mirrors TUI mode bar toggles)",
+    )
+    mode_group.add_argument(
+        "--single-agent",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="AGENT_ID",
+        help="Single-agent mode. Optionally specify agent ID (default: first agent). " "Overrides multi-agent config to use only one agent.",
+    )
+    mode_group.add_argument(
+        "--coordination-mode",
+        choices=["parallel", "decomposition"],
+        default=None,
+        help="Coordination mode: parallel (voting) or decomposition (subtask-based). " "Overrides coordination_mode from config file.",
+    )
+    mode_group.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick mode: disable refinement. Agents produce one answer with no " "voting loop. Equivalent to TUI 'Refine OFF' toggle.",
+    )
+    mode_group.add_argument(
+        "--personas",
+        choices=["off", "perspective", "implementation", "methodology"],
+        default=None,
+        help="Enable parallel persona generation with specified diversity mode. " "'off' disables persona generation. Requires parallel coordination mode.",
+    )
+
+
+def validate_mode_flag_combinations(args: argparse.Namespace) -> list[str]:
+    """Validate that CLI mode flag combinations are compatible.
+
+    Returns a list of error messages (empty if valid).
+    """
+    errors: list[str] = []
+
+    if getattr(args, "single_agent", None) is not None and getattr(args, "coordination_mode", None) == "decomposition":
+        errors.append(
+            "--single-agent and --coordination-mode decomposition are incompatible. " "Decomposition requires multiple agents.",
+        )
+
+    personas = getattr(args, "personas", None)
+    if personas is not None and personas != "off" and getattr(args, "coordination_mode", None) == "decomposition":
+        errors.append(
+            "--personas requires parallel coordination mode, not decomposition.",
+        )
+
+    return errors
+
+
+def apply_mode_flags_to_config(
+    config: dict[str, Any],
+    args: argparse.Namespace,
+) -> None:
+    """Apply CLI mode flags to the config dict.
+
+    Mirrors the logic in TuiModeState.get_orchestrator_overrides() from
+    tui_modes.py, but applies overrides to the raw config dict before
+    the orchestrator is constructed.
+    """
+    coordination_mode = getattr(args, "coordination_mode", None)
+    quick = getattr(args, "quick", False)
+    personas = getattr(args, "personas", None)
+    single_agent = getattr(args, "single_agent", None)
+
+    # Nothing to do if no mode flags set
+    if coordination_mode is None and not quick and personas is None:
+        return
+
+    if "orchestrator" not in config:
+        config["orchestrator"] = {}
+    orch = config["orchestrator"]
+
+    # Coordination mode
+    if coordination_mode is not None:
+        orch["coordination_mode"] = "decomposition" if coordination_mode == "decomposition" else "voting"
+
+    # Quick mode (refinement OFF)
+    if quick:
+        orch["max_new_answers_per_agent"] = 1
+        orch["skip_final_presentation"] = True
+
+        if single_agent is not None:
+            # Single agent + quick = skip voting too
+            orch["skip_voting"] = True
+        else:
+            # Multi-agent + quick = independent work, deferred single vote
+            orch["disable_injection"] = True
+            orch["defer_voting_until_all_answered"] = True
+
+    # Personas
+    if personas is not None:
+        if "coordination" not in orch:
+            orch["coordination"] = {}
+        if personas == "off":
+            if "persona_generator" in orch["coordination"]:
+                orch["coordination"]["persona_generator"]["enabled"] = False
+        else:
+            orch["coordination"]["persona_generator"] = {
+                "enabled": True,
+                "diversity_mode": personas,
+            }
+
+
+def filter_agents_for_single_mode(
+    agents: dict[str, Any],
+    single_agent_arg: Any,
+) -> dict[str, Any]:
+    """Filter agents dict for --single-agent mode.
+
+    Args:
+        agents: Dict mapping agent IDs to agent objects.
+        single_agent_arg: The parsed --single-agent value.
+            None = no filtering, True = pick first, str = pick by ID.
+
+    Returns:
+        Filtered agents dict (single entry or unchanged).
+
+    Raises:
+        ValueError: If specified agent ID not found.
+    """
+    if single_agent_arg is None:
+        return agents
+
+    if single_agent_arg is True:
+        # Pick first agent
+        first_id = next(iter(agents.keys()))
+        return {first_id: agents[first_id]}
+
+    # Pick by ID
+    agent_id = str(single_agent_arg)
+    if agent_id not in agents:
+        available = ", ".join(agents.keys())
+        raise ValueError(
+            f"Agent '{agent_id}' not found in config. " f"Available agents: {available}",
+        )
+    return {agent_id: agents[agent_id]}
+
+
+def build_cli_mode_defaults(args: argparse.Namespace) -> dict[str, Any]:
+    """Build a dict of CLI mode defaults for passing to the TUI.
+
+    Returns an empty dict if no mode flags were set.
+    """
+    defaults: dict[str, Any] = {}
+
+    single_agent = getattr(args, "single_agent", None)
+    if single_agent is not None:
+        defaults["agent_mode"] = "single"
+        if single_agent is not True:
+            defaults["selected_agent"] = str(single_agent)
+
+    coordination_mode = getattr(args, "coordination_mode", None)
+    if coordination_mode is not None:
+        defaults["coordination_mode"] = coordination_mode
+
+    personas = getattr(args, "personas", None)
+    if personas is not None:
+        defaults["personas"] = personas
+
+    if getattr(args, "quick", False):
+        defaults["refinement_enabled"] = False
+
+    return defaults
+
+
 def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig":
     """Parse a coordination config dict into a CoordinationConfig object.
 
@@ -5802,6 +5976,25 @@ async def run_textual_interactive_mode(
     display_kwargs["default_skill_lifecycle_mode"] = str(
         coordination_settings.get("skill_lifecycle_mode", "create_or_update"),
     )
+
+    # Apply CLI mode defaults (override config-derived defaults)
+    cli_mode_defaults = kwargs.pop("cli_mode_defaults", {})
+    if cli_mode_defaults.get("agent_mode") == "single":
+        display_kwargs["default_agent_mode"] = "single"
+        if "selected_agent" in cli_mode_defaults:
+            display_kwargs["default_selected_agent"] = cli_mode_defaults["selected_agent"]
+    if "coordination_mode" in cli_mode_defaults:
+        display_kwargs["default_coordination_mode"] = cli_mode_defaults["coordination_mode"]
+    if "refinement_enabled" in cli_mode_defaults:
+        display_kwargs["default_refinement_enabled"] = cli_mode_defaults["refinement_enabled"]
+    if "personas" in cli_mode_defaults:
+        p = cli_mode_defaults["personas"]
+        if p == "off":
+            display_kwargs["default_personas_enabled"] = False
+        else:
+            display_kwargs["default_personas_enabled"] = True
+            display_kwargs["default_persona_diversity_mode"] = p
+
     display = TextualTerminalDisplay(agent_ids, **display_kwargs)
 
     # Start background MCP registry cache warmup (non-blocking)
@@ -8908,6 +9101,9 @@ async def main(args):
                 orchestrator_cfg_plan["coordination"].get("broadcast"),
             )
 
+        # Apply CLI mode flags (--quick, --coordination-mode, --personas, --single-agent)
+        apply_mode_flags_to_config(config, args)
+
         # Check for prompt in config if not provided via CLI
         if not args.question and "prompt" in config:
             args.question = config["prompt"]
@@ -9135,6 +9331,15 @@ async def main(args):
             if not agents:
                 raise ConfigurationError("No agents configured")
 
+            # Apply --single-agent filtering
+            if getattr(args, "single_agent", None) is not None:
+                try:
+                    agents = filter_agents_for_single_mode(agents, args.single_agent)
+                    logger.info(f"[CLI] Single-agent mode: using agent '{next(iter(agents.keys()))}'")
+                except ValueError as e:
+                    print(f"❌ {e}")
+                    sys.exit(EXIT_CONFIG_ERROR)
+
         if args.debug and agents:
             logger.debug(f"Created {len(agents)} agent(s): {list(agents.keys())}")
 
@@ -9168,6 +9373,11 @@ async def main(args):
         # Seed Textual Ctrl+P CWD mode when explicitly requested via CLI.
         if args.cwd_context:
             kwargs["cwd_context_mode"] = args.cwd_context
+
+        # Pass CLI mode defaults to TUI for initial mode bar state
+        cli_mode_defaults = build_cli_mode_defaults(args)
+        if cli_mode_defaults:
+            kwargs["cli_mode_defaults"] = cli_mode_defaults
 
         # Optionally enable DSPy paraphrasing
         dspy_paraphraser = create_dspy_paraphraser_from_config(
@@ -10229,6 +10439,9 @@ Environment Variables:
         help="Enable rate limiting (uses limits from rate_limits.yaml config)",
     )
 
+    # Mode settings (mirror TUI mode bar toggles)
+    add_mode_flags_to_parser(parser)
+
     args = parser.parse_args()
 
     if args.plan_steps is not None and args.plan_steps <= 0:
@@ -10236,6 +10449,13 @@ Environment Variables:
         sys.exit(2)
     if args.plan_chunks is not None and args.plan_chunks <= 0:
         print("❌ --plan-chunks must be a positive integer")
+        sys.exit(2)
+
+    # Validate mode flag combinations
+    mode_errors = validate_mode_flag_combinations(args)
+    if mode_errors:
+        for err in mode_errors:
+            print(f"❌ {err}")
         sys.exit(2)
 
     # Handle --continue flag BEFORE setup_logging so we can reuse log directory

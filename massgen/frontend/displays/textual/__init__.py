@@ -26,6 +26,7 @@ from .widgets import (  # Base classes; Browser modals; Status modals; Coordinat
     CostBreakdownModal,
     DecompositionGenerationModal,
     DecompositionSubtasksModal,
+    EvaluationCriteriaModal,
     FileInspectionModal,
     GitDiffReviewModal,
     KeyboardShortcutsModal,
@@ -65,6 +66,7 @@ __all__ = [
     # Content modals
     "ContextModal",
     "ConversationHistoryModal",
+    "EvaluationCriteriaModal",
     "TextContentModal",
     "TurnDetailModal",
     # Input modals

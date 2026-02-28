@@ -404,6 +404,9 @@ class Orchestrator(ChatAgent):
         # If criteria are passed in (from previous turn), use them and mark as already generated
         self._generated_evaluation_criteria: list | None = generated_evaluation_criteria
         self._evaluation_criteria_generated: bool = bool(generated_evaluation_criteria)
+        # Guard to push criteria to TUI display at most once (checklist_gated does it in
+        # _init_checklist_tool; non-checklist modes do it on first round).
+        self._criteria_pushed_to_display: bool = False
         if self._evaluation_criteria_generated:
             logger.info(
                 f"📝 Restored {len(self._generated_evaluation_criteria)} evaluation criteria from previous turn",
@@ -832,6 +835,26 @@ class Orchestrator(ChatAgent):
         for i, item_text in enumerate(items):
             cat = item_categories.get(f"E{i + 1}", "unknown")
             logger.info(f"[Orchestrator._init_checklist_tool]   E{i + 1} ({cat}): {item_text[:120]}")
+
+        # Push resolved criteria to TUI so users can view them via Ctrl+E.
+        # _item_verify_by is only populated when custom_items came from _get_active_criteria.
+        _display_verify_by = _item_verify_by if custom_items is not None else {}
+        try:
+            display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+            if display and hasattr(display, "set_evaluation_criteria"):
+                criteria_dicts = [
+                    {
+                        "id": f"E{i + 1}",
+                        "text": text,
+                        "category": item_categories.get(f"E{i + 1}", "should"),
+                        "verify_by": (_display_verify_by or {}).get(f"E{i + 1}"),
+                    }
+                    for i, text in enumerate(items)
+                ]
+                display.set_evaluation_criteria(criteria_dicts, source=criteria_source)
+                self._criteria_pushed_to_display = True
+        except Exception:
+            pass  # TUI notification is non-critical
 
         for agent_id, agent in self.agents.items():
             backend = agent.backend
@@ -5692,6 +5715,7 @@ Your answer:"""
                 await agent.backend.filesystem_manager.save_snapshot(
                     timestamp=timestamp if not is_final else None,
                     is_final=is_final,
+                    preserve_existing_snapshot=(answer_content is None and not is_final),
                 )
 
                 # Clear workspace after saving snapshot (but not for final snapshots).
@@ -5880,11 +5904,12 @@ Your answer:"""
             return
 
         if snapshot_storage:
-            if not workspace_has_content and snapshot_storage_has_content:
+            if snapshot_storage_has_content:
+                # Never overwrite a submitted answer's snapshot during interrupted turn
                 logger.info(
-                    f"[Orchestrator] Preserving existing interrupted-turn snapshot for {agent_id}: " f"{snapshot_storage}",
+                    f"[Orchestrator] Preserving existing snapshot for {agent_id} during interrupted turn: " f"{snapshot_storage}",
                 )
-            else:
+            elif workspace_has_content:
                 copied = self._copy_workspace_contents(
                     workspace_path,
                     snapshot_storage,
@@ -9877,6 +9902,37 @@ Your answer:"""
 
             # Resolve custom criteria once for both system prompt and checklist tool state
             _active_items, _active_categories, _active_verify_by = self._get_active_criteria()
+
+            # Push criteria to TUI display on first round (non-checklist modes;
+            # checklist_gated mode already pushes from _init_checklist_tool).
+            if not self._criteria_pushed_to_display and _active_items:
+                try:
+                    _ui_display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+                    if _ui_display and hasattr(_ui_display, "set_evaluation_criteria"):
+                        _inline = getattr(
+                            getattr(self.config, "coordination_config", None),
+                            "checklist_criteria_inline",
+                            None,
+                        )
+                        _preset = getattr(
+                            getattr(self.config, "coordination_config", None),
+                            "checklist_criteria_preset",
+                            None,
+                        )
+                        _src = "inline" if _inline else "generated" if self._generated_evaluation_criteria else (_preset or "default")
+                        _crit_dicts = [
+                            {
+                                "id": f"E{_i + 1}",
+                                "text": _t,
+                                "category": (_active_categories or {}).get(f"E{_i + 1}", "should"),
+                                "verify_by": (_active_verify_by or {}).get(f"E{_i + 1}"),
+                            }
+                            for _i, _t in enumerate(_active_items)
+                        ]
+                        _ui_display.set_evaluation_criteria(_crit_dicts, source=_src)
+                        self._criteria_pushed_to_display = True
+                except Exception:
+                    pass  # TUI notification is non-critical
 
             system_message = self._get_system_message_builder().build_coordination_message(
                 agent=agent,

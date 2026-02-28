@@ -1880,7 +1880,7 @@ class FilesystemManager:
         self.path_permission_manager.context_write_access_enabled = True
         logger.info("[FilesystemManager] Context write access enabled - agent can now modify files with write permissions")
 
-    async def save_snapshot(self, timestamp: str | None = None, is_final: bool = False) -> None:
+    async def save_snapshot(self, timestamp: str | None = None, is_final: bool = False, preserve_existing_snapshot: bool = False) -> None:
         """
         Save a snapshot of the workspace. Always saves to snapshot_storage if available (keeping only most recent).
         Additionally saves to log directories if logging is enabled.
@@ -1902,16 +1902,20 @@ class FilesystemManager:
         def has_meaningful_content(path: Path | None) -> bool:
             """Check if a directory contains meaningful deliverable content.
 
-            Excludes:
-            - .git directory (version control metadata)
-            - memory directory (workspace metadata, not deliverables)
-            - symlinks (reference to other locations)
+            Excludes directories that are workspace/backend metadata rather
+            than agent-produced deliverables:
+            - .git (version control metadata)
+            - .codex (Codex backend config, re-created on each run)
+            - .massgen (subagent MCP config, preserved across clears)
+            - memory (workspace metadata, not deliverables)
+            - symlinks (references to other locations)
 
             Returns True only if there are actual deliverable files/directories.
             """
             if not path or not path.exists() or not path.is_dir():
                 return False
-            return any(not item.is_symlink() and item.name not in (".git", "memory") for item in path.iterdir())
+            _metadata_dirs = {".git", ".codex", ".massgen", "memory"}
+            return any(not item.is_symlink() and item.name not in _metadata_dirs for item in path.iterdir())
 
         # Use current workspace as source
         source_path = Path(self.cwd)
@@ -1938,8 +1942,10 @@ class FilesystemManager:
         try:
             # --- 1. Save to snapshot_storage ---
             if self.snapshot_storage:
-                # Don't overwrite a non-empty snapshot with an empty workspace
-                if not workspace_has_content and snapshot_storage_has_content:
+                if preserve_existing_snapshot and snapshot_storage_has_content:
+                    # Interrupted save: never overwrite a submitted answer's snapshot
+                    logger.info(f"[FilesystemManager] Preserving existing snapshot during interrupted save ({self.snapshot_storage})")
+                elif not workspace_has_content and snapshot_storage_has_content:
                     logger.info(f"[FilesystemManager] Skipping snapshot_storage update - workspace is empty but snapshot_storage has content ({self.snapshot_storage})")
                 else:
                     # Normal case: overwrite with current workspace

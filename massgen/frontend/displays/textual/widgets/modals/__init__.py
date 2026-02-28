@@ -23,6 +23,7 @@ from .browser_modals import (
 from .content_modals import (
     ContextModal,
     ConversationHistoryModal,
+    EvaluationCriteriaModal,
     TextContentModal,
     TurnDetailModal,
 )
@@ -71,6 +72,7 @@ __all__ = [
     # Content modals
     "ContextModal",
     "ConversationHistoryModal",
+    "EvaluationCriteriaModal",
     "TextContentModal",
     "TurnDetailModal",
     # Input modals

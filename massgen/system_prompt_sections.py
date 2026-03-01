@@ -2906,13 +2906,18 @@ CRITICAL: New answers must be SUBSTANTIALLY different from existing answers.
         return f"""You are evaluating answers from multiple agents for final response to a message.
 Different agents may have different builtin tools and capabilities.
 {phase_context}{evaluation_section}
-Otherwise, use the `new_answer` tool to record a better answer to the ORIGINAL MESSAGE. You have two strategies:
+Otherwise, use the `new_answer` tool to record a better answer to the ORIGINAL MESSAGE. You have three strategies:
+- **Selective Adopt**: Keep YOUR existing answer as the primary base. Identify SPECIFIC elements \
+(a component, design decision, visual pattern, algorithm) that are demonstrably better in peer \
+answers and integrate only those targeted improvements into YOUR implementation. Preserve your \
+own strengths; borrow only the specific peer strengths. Do not replace your entire solution.
 - **Improve**: Digest existing answers, combine their strengths, and address their weaknesses.
 - **Vary**: Keep what works but try a different approach for key parts — a different structure,
   a different method for the hard sections, or a different creative direction for part of the solution.
-Both are valid. You don't have to start from scratch to vary — changing how you tackle the most
-important parts can produce meaningfully different results. If all existing answers are converging
-on the same approach, varying is especially valuable.
+All three are valid. Choose based on the scope of the gap: isolated component → Selective Adopt; \
+broad quality gaps → Improve; architectural misfit → Vary. You don't have to start from scratch \
+to vary — changing how you tackle the most important parts can produce meaningfully different results. \
+If all existing answers are converging on the same approach, varying is especially valuable.
 Each iteration costs time and resources. When you produce a `new_answer`, the result must be
 **obviously and substantially better** — a user should immediately see the improvement.
 Identify concrete improvements, then actually implement them — do not just acknowledge gaps.{novelty_section}
@@ -3348,15 +3353,22 @@ Before building anything, form an honest opinion: **are the existing answers goo
 or just present?** Prior work is evidence of what has been tried, not a foundation
 you must build on. Your job is to produce the best possible answer, which may mean:
 
+- Selectively adopting specific superior elements from a peer into YOUR existing solution
 - Adopting the best elements from multiple answers (synthesis)
 - Taking a completely different approach because current ones are mediocre
 - Keeping most of one answer but replacing its weakest component with something novel
 
 **Warning: the copy-as-base trap.** You may see prior deliverables already in your
-workspace. Do NOT default to patching them. Adding features to a mediocre base
-produces a feature-rich mediocre result. Ask honestly: if you were starting fresh
-with everything you now know, would you build it the same way? If the answer is no,
-rebuilding the weak parts is higher-value work than adding new parts on top.
+workspace. Do NOT default to patching them IF the foundation is weak. Adding features
+to a mediocre base produces a feature-rich mediocre result. Ask honestly: if you were
+starting fresh with everything you now know, would you build it the same way? If the
+answer is no, rebuilding the weak parts is higher-value work than adding new parts on top.
+
+However, if YOUR existing solution is strong in key areas and a peer's work offers
+improvements only in specific components, **selectively integrating those specific
+improvements is the right strategy** — not rebuilding. Distinguish:
+- "My base is weak → rebuild the weak parts"
+- "My base is strong; peer has a better X → extract just X and integrate it"
 
 Default to "what would the best answer look like?" then decide whether existing
 work gets you there. The DEC Origin fields track per-decision lineage.
@@ -3423,6 +3435,15 @@ when your answer is submitted.
 
 ## Summary
 [1-2 sentences describing your approach]
+
+## Preservation Commitments
+What from YOUR OWN current solution must be explicitly preserved before deciding what to adopt?
+List specific components, design choices, or approaches that are strong and should not be overwritten.
+(These are your "do not replace" anchors — fill this in before reviewing peer work.)
+
+- [e.g., "My responsive layout structure — peer's animations are better but their grid is weaker"]
+- [e.g., "My state management approach — cleaner than the peer's implementation"]
+- [e.g., "My API integration in api.py — peer has no equivalent"]
 
 ## Decisions
 

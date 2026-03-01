@@ -338,6 +338,59 @@ MASSGEN_QUESTIONARY_STYLE = Style(
 )
 
 
+def _is_single_agent_config(config: Dict[str, Any]) -> bool:
+    """Return True when config defines exactly one agent."""
+    if "agent" in config:
+        return True
+    agents = config.get("agents", [])
+    return isinstance(agents, list) and len(agents) == 1
+
+
+def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path_label: Optional[str]) -> None:
+    """Launch a MassGen run in Modal cloud and materialize results locally."""
+    if not args.question:
+        raise ConfigurationError("--cloud requires a question argument")
+    if not _is_single_agent_config(config):
+        raise ConfigurationError("--cloud MVP currently supports single-agent configs only")
+
+    import yaml
+
+    from .cloud.cloud_job import CloudJobRequest
+    from .cloud.modal_launcher import ModalCloudJobLauncher
+
+    launcher = ModalCloudJobLauncher()
+    request = CloudJobRequest(
+        prompt=args.question,
+        config_yaml=yaml.safe_dump(config, sort_keys=False),
+        timeout_seconds=args.cloud_timeout,
+        env=ModalCloudJobLauncher.collect_cloud_env(),
+    )
+    result = launcher.launch(request)
+
+    final_answer = result.final_answer
+    output_path: Optional[Path] = None
+    if args.output_file:
+        output_path = Path(args.output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(final_answer, encoding="utf-8")
+    else:
+        output_path = result.artifacts_dir / "final_answer.txt"
+        output_path.write_text(final_answer, encoding="utf-8")
+
+    # Always print location in automation mode for machine parsing.
+    if args.automation:
+        _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
+        _automation_print(f"CLOUD_ARTIFACTS_DIR: {result.artifacts_dir.resolve()}")
+        if result.local_log_dir:
+            _automation_print(f"LOG_DIR: {result.local_log_dir.resolve()}")
+        if result.local_events_path:
+            _automation_print(f"EVENTS_FILE: {result.local_events_path.resolve()}")
+        if config_path_label:
+            _automation_print(f"CLOUD_CONFIG_SOURCE: {config_path_label}")
+    else:
+        print(final_answer)
+
+
 def _build_coordination_ui(ui_config: Dict[str, Any]) -> CoordinationUI:
     """Create a CoordinationUI with display_kwargs passthrough (incl. theme)."""
     display_kwargs = dict(ui_config.get("display_kwargs", {}) or {})
@@ -8428,6 +8481,18 @@ async def main(args):
         # Apply CLI override for CWD context path before validating paths.
         apply_cli_cwd_context_path(config, args.cwd_context)
 
+        # Cloud execution path (Modal MVP)
+        if getattr(args, "cloud", False):
+            if not args.automation:
+                logger.info("Cloud mode requires automation output; enabling --automation")
+                args.automation = True
+            _run_cloud_job(
+                args=args,
+                config=config,
+                config_path_label=str(resolved_path) if resolved_path else None,
+            )
+            return
+
         # Validate that all context paths exist before proceeding
         validate_context_paths(config)
 
@@ -9074,6 +9139,12 @@ async def main(args):
         print(f"❌ Timeout error: {e}", flush=True)
         sys.exit(EXIT_TIMEOUT)
     except Exception as e:
+        # Keep cloud-specific timeout mapping distinct from generic execution failures.
+        from .cloud.modal_launcher import CloudJobError
+
+        if isinstance(e, CloudJobError) and "timeout" in str(e).lower():
+            print(f"❌ Timeout error: {e}", flush=True)
+            sys.exit(EXIT_TIMEOUT)
         print(f"❌ Error: {e}", flush=True)
         sys.exit(EXIT_EXECUTION_ERROR)
 
@@ -9547,6 +9618,17 @@ Environment Variables:
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
     )
     parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="Run the job in Modal cloud (MVP: single-agent automation).",
+    )
+    parser.add_argument(
+        "--cloud-timeout",
+        type=int,
+        default=3600,
+        help="Cloud job timeout in seconds (default: 3600).",
+    )
+    parser.add_argument(
         "--stream-events",
         action="store_true",
         help="Stream events to stdout as JSON lines. Used by parent processes (e.g., TUI subagent modal) " "to receive real-time updates. Implies --automation.",
@@ -9780,6 +9862,9 @@ Environment Variables:
         sys.exit(2)
     if args.plan_chunks is not None and args.plan_chunks <= 0:
         print("❌ --plan-chunks must be a positive integer")
+        sys.exit(2)
+    if args.cloud_timeout <= 0:
+        print("❌ --cloud-timeout must be a positive integer")
         sys.exit(2)
 
     # Handle --continue flag BEFORE setup_logging so we can reuse log directory

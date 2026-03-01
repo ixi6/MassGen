@@ -6,8 +6,9 @@ import base64
 import json
 import secrets
 import subprocess
+import threading
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from .cloud_job import CloudJobError, CloudJobLauncher, CloudJobRequest, CloudJobResult
 from .utils import extract_artifacts
@@ -37,13 +38,50 @@ class ModalCloudJobLauncher(CloudJobLauncher):
             "--payload-b64",
             payload_b64,
         ]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        marker_payload = self._extract_marker_payload(proc.stdout)
+
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+
+        # Drain stderr in a background thread to avoid pipe deadlock.
+        stderr_lines: List[str] = []
+
+        def _drain_stderr():
+            assert proc.stderr is not None
+            for line in proc.stderr:
+                stderr_lines.append(line)
+
+        stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+        stderr_thread.start()
+
+        # Stream stdout
+        stdout_lines: List[str] = []
+        marker_payload = None
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            stdout_lines.append(line)
+            stripped = line.strip()
+            if stripped.startswith(self.RESULT_MARKER):
+                raw = stripped[len(self.RESULT_MARKER) :]
+                try:
+                    marker_payload = json.loads(raw)
+                except json.JSONDecodeError:
+                    raise CloudJobError(f"Failed to parse cloud job result JSON: {raw}")
+            else:
+                print(f"[cloud] {line}", end="")
+
+        proc.wait()
+        stderr_thread.join(timeout=5)
 
         if marker_payload is None:
             if proc.returncode != 0:
+                full_stderr = "".join(stderr_lines)
                 raise CloudJobError(
-                    f"Cloud job startup failure: modal exited with code {proc.returncode}. stderr={proc.stderr.strip()}",
+                    f"Cloud job startup failure: modal exited with code {proc.returncode}. " f"stderr={full_stderr.strip()}",
                 )
             raise CloudJobError("Cloud job failed: no result marker returned from Modal job")
 
@@ -75,6 +113,4 @@ class ModalCloudJobLauncher(CloudJobLauncher):
             local_log_dir=local_log_dir,
             local_events_path=local_events,
             remote_log_dir=marker_payload.get("remote_log_dir"),
-            raw_stdout=proc.stdout,
-            raw_stderr=proc.stderr,
         )

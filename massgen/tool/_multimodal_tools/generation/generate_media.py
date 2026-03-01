@@ -230,8 +230,11 @@ async def _generate_single_with_input_images(
             continue_from=continue_from,
         )
 
-        # Execute generation
-        result = await generate_image(config)
+        # Execute generation based on media type
+        if media_type == MediaType.VIDEO:
+            result = await generate_video(config)
+        else:
+            result = await generate_image(config)
 
         # Return result
         if result.success:
@@ -287,7 +290,24 @@ async def generate_media(
     size: str | None = None,
     continue_from: str | None = None,
     audio_format: str | None = None,
-    audio_type: Literal["speech", "music", "sound_effect"] = "speech",
+    audio_type: Literal["speech", "music", "sound_effect", "voice_conversion", "audio_isolation", "voice_design", "voice_clone", "dubbing"] = "speech",
+    input_audio: str | None = None,
+    voice_samples: list[str] | None = None,
+    mask_path: str | None = None,
+    target_language: str | None = None,
+    source_language: str | None = None,
+    speed: float | None = None,
+    voice_stability: float | None = None,
+    voice_similarity: float | None = None,
+    style_image: str | None = None,
+    control_image: str | None = None,
+    subject_image: str | None = None,
+    output_format: str | None = None,
+    background: str | None = None,
+    negative_prompt: str | None = None,
+    seed: int | None = None,
+    guidance_scale: float | None = None,
+    video_reference_images: list[str] | None = None,
     instructions: str | None = None,
     extra_params: dict[str, Any] | None = None,
     max_concurrent: int = 4,
@@ -295,6 +315,7 @@ async def generate_media(
     allowed_paths: list[str] | None = None,
     multimodal_config: dict[str, Any] | None = None,
     task_context: str | None = None,
+    use_context: bool = False,
 ) -> ExecutionResult:
     """
     Generate media (image, video, or audio) from text prompt(s).
@@ -332,12 +353,40 @@ async def generate_media(
         size: Image dimensions. OpenAI: "1024x1024", "1024x1536", "1536x1024".
               Gemini: "512px", "1K", "2K", "4K".
         continue_from: Continuation ID from a previous generate_media result.
-                       Enables multi-turn image editing. Pass the ``continuation_id``
-                       from the previous result's metadata. Only valid for single
-                       image generation (not batch, not video/audio).
+                       Enables multi-turn editing. Pass the ``continuation_id``
+                       from the previous result's metadata. Works for image
+                       (Google Gemini, OpenAI, Grok) and video (Sora remix,
+                       Veo extension, Grok re-edit). Not valid for batch mode.
         audio_format: For audio: output format (mp3, wav, opus, etc.)
         audio_type: For audio: type of audio to generate - "speech" (default),
-                    "music" (ElevenLabs only), or "sound_effect" (ElevenLabs only)
+                    "music" (ElevenLabs only), "sound_effect" (ElevenLabs only),
+                    "voice_conversion" (ElevenLabs, requires input_audio),
+                    "audio_isolation" (ElevenLabs, requires input_audio),
+                    "voice_design" (ElevenLabs, prompt describes voice),
+                    "voice_clone" (ElevenLabs, requires voice_samples),
+                    or "dubbing" (ElevenLabs, requires input_audio + target_language)
+        input_audio: Path to input audio file for voice conversion or audio
+                     isolation. Resolved relative to agent workspace.
+        voice_samples: List of audio file paths for voice cloning. Each path
+                       resolved relative to agent workspace.
+        mask_path: Path to mask image (PNG) for inpainting. Transparent regions
+                   indicate where to generate new content. OpenAI only.
+        target_language: Target language code for dubbing (e.g., "es", "fr").
+        source_language: Source language code for dubbing (optional, auto-detected).
+        speed: For audio: playback speed multiplier (OpenAI: 0.25-4.0).
+        voice_stability: For audio: ElevenLabs voice stability (0.0-1.0).
+        voice_similarity: For audio: ElevenLabs similarity boost (0.0-1.0).
+        style_image: Path to style reference image for Google Imagen editing.
+        control_image: Path to structural control image for Google Imagen editing.
+        subject_image: Path to subject reference for Google Imagen consistency.
+        output_format: Override output format ("png", "jpeg", "webp").
+        background: Background handling for OpenAI ("transparent", "opaque", "auto").
+        negative_prompt: What to exclude from generation (Google Imagen only).
+        seed: Reproducibility seed for deterministic output (Google Imagen, ElevenLabs).
+        guidance_scale: Prompt adherence strength (Google Imagen only).
+        video_reference_images: List of image paths (up to 3) for style/content
+                                guidance in Google Veo video generation. Distinct
+                                from `input_images` (which sets the first frame).
         instructions: For audio: speaking style/tone guidance (e.g., "warm,
                       reflective tone"). Only supported by OpenAI gpt-4o-mini-tts.
                       Do NOT put style instructions in `prompt` — TTS will
@@ -398,16 +447,20 @@ async def generate_media(
         # This allows agents to create CONTEXT.md after the backend starts streaming
         from massgen.context.task_context import load_task_context_with_warning
 
-        task_context, context_warning = load_task_context_with_warning(agent_cwd, task_context)
+        context_warning = None
+        if use_context:
+            task_context, context_warning = load_task_context_with_warning(agent_cwd, task_context)
 
-        # For external generation APIs, context is mandatory for image/video but optional for pure TTS.
-        if not task_context and media_type != MediaType.AUDIO:
-            return _error_result(
-                "CONTEXT.md not found in workspace. "
-                "Before using generate_media, create a CONTEXT.md file with task context. "
-                "This helps external APIs understand what you're working on. "
-                "See system prompt for instructions and examples.",
-            )
+            # For external generation APIs, context is mandatory for image/video but optional for pure TTS.
+            if not task_context and media_type != MediaType.AUDIO:
+                return _error_result(
+                    "CONTEXT.md not found in workspace. "
+                    "Before using generate_media, create a CONTEXT.md file with task context. "
+                    "This helps external APIs understand what you're working on. "
+                    "See system prompt for instructions and examples.",
+                )
+        else:
+            task_context = None
 
         # Validate prompt/prompts - exactly one must be provided
         if prompt and prompts:
@@ -420,9 +473,9 @@ async def generate_media(
         is_batch = len(prompt_list) > 1
 
         # Validate continue_from constraints
-        if continue_from and (is_batch or media_type != MediaType.IMAGE):
+        if continue_from and (is_batch or media_type == MediaType.AUDIO):
             return _error_result(
-                "continue_from is only supported for single image generation",
+                "continue_from is only supported for single image or video generation",
             )
 
         base_dir = Path(agent_cwd) if agent_cwd else Path.cwd()
@@ -458,7 +511,7 @@ async def generate_media(
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # For single prompt with input_images (image-to-image), handle specially
-        if not is_batch and input_images and media_type == MediaType.IMAGE:
+        if not is_batch and input_images and media_type in (MediaType.IMAGE, MediaType.VIDEO):
             return await _generate_single_with_input_images(
                 prompt=prompt_list[0],
                 input_images=input_images,
@@ -504,6 +557,60 @@ async def generate_media(
                     else:
                         augmented_prompt = format_prompt_with_context(single_prompt, task_context)
 
+                    # Resolve input_audio path if provided
+                    resolved_input_audio = None
+                    if input_audio and media_type == MediaType.AUDIO:
+                        if Path(input_audio).is_absolute():
+                            resolved_input_audio = Path(input_audio).resolve()
+                        else:
+                            resolved_input_audio = (base_dir / input_audio).resolve()
+                        _validate_path_access(resolved_input_audio, allowed_paths_list)
+
+                    # Resolve editing image paths if provided
+                    def _resolve_opt_path(p: str | None) -> Path | None:
+                        if not p:
+                            return None
+                        if Path(p).is_absolute():
+                            rp = Path(p).resolve()
+                        else:
+                            rp = (base_dir / p).resolve()
+                        _validate_path_access(rp, allowed_paths_list)
+                        return rp
+
+                    resolved_style_image = _resolve_opt_path(style_image) if media_type == MediaType.IMAGE else None
+                    resolved_control_image = _resolve_opt_path(control_image) if media_type == MediaType.IMAGE else None
+                    resolved_subject_image = _resolve_opt_path(subject_image) if media_type == MediaType.IMAGE else None
+
+                    # Resolve mask_path if provided
+                    resolved_mask_path = None
+                    if mask_path and media_type == MediaType.IMAGE:
+                        if Path(mask_path).is_absolute():
+                            resolved_mask_path = Path(mask_path).resolve()
+                        else:
+                            resolved_mask_path = (base_dir / mask_path).resolve()
+                        _validate_path_access(resolved_mask_path, allowed_paths_list)
+
+                    # Resolve video_reference_images if provided
+                    resolved_video_ref_images: list[dict[str, str]] = []
+                    if video_reference_images and media_type == MediaType.VIDEO:
+                        ref_content, _ = _prepare_input_images(
+                            video_reference_images[:3],
+                            base_dir,
+                            allowed_paths_list,
+                        )
+                        resolved_video_ref_images = ref_content
+
+                    # Resolve voice_samples paths if provided
+                    resolved_voice_samples: list[Path] = []
+                    if voice_samples and media_type == MediaType.AUDIO:
+                        for vs_path in voice_samples:
+                            if Path(vs_path).is_absolute():
+                                resolved = Path(vs_path).resolve()
+                            else:
+                                resolved = (base_dir / vs_path).resolve()
+                            _validate_path_access(resolved, allowed_paths_list)
+                            resolved_voice_samples.append(resolved)
+
                     # Build config
                     config = GenerationConfig(
                         prompt=augmented_prompt,
@@ -520,6 +627,23 @@ async def generate_media(
                         input_images=[],
                         input_image_paths=[],
                         continue_from=continue_from,
+                        input_audio_path=resolved_input_audio,
+                        voice_samples=resolved_voice_samples,
+                        mask_path=resolved_mask_path,
+                        target_language=target_language,
+                        source_language=source_language,
+                        speed=speed,
+                        voice_stability=voice_stability,
+                        voice_similarity=voice_similarity,
+                        style_image_path=resolved_style_image,
+                        control_image_path=resolved_control_image,
+                        subject_image_path=resolved_subject_image,
+                        output_format=output_format,
+                        background=background,
+                        negative_prompt=negative_prompt,
+                        seed=seed,
+                        guidance_scale=guidance_scale,
+                        video_reference_images=resolved_video_ref_images,
                     )
 
                     # Add audio-specific params to extra_params

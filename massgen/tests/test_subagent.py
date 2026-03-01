@@ -360,7 +360,7 @@ class TestSubagentOrchestratorConfig:
         assert config.num_agents == 1  # Defaults to 1 when agents list is empty
         assert config.agents == []
         assert config.coordination == {}
-        assert config.parse_at_references is True
+        assert config.parse_at_references is False
 
     def test_enabled_with_custom_agents(self):
         """Test creating config with custom agent configs."""

@@ -7,13 +7,12 @@ are used instead.
 
 Each criterion is tagged with a tier:
 - "must": Hard requirements — failing these means the answer is wrong.
-- "should": Quality expectations — missing these means the answer is mediocre.
-- "could": Excellence markers — missing these is acceptable but achieving them
-  shows real craft.
+- "should": Quality expectations that demand deliberate craft — not just
+  functional completeness, but thoughtful execution a user would notice.
+- "could": Excellence markers — genuine creative ambition or distinctive
+  quality that makes the output stand out.
 
 For backward compatibility, old "core" maps to "must" and "stretch" maps to "could".
-The convergence off-ramp fires when only "could" items fail and "must"/"should"
-items all pass.
 """
 
 import json
@@ -531,7 +530,7 @@ must work correctly where and how it will normally be used. Extended contexts (e
 multiple screen sizes, edge-case inputs, non-default settings) may be SHOULD or COULD \
 depending on whether the task explicitly requires them.
 
-Correctness is separate from **craft**: a correct output can still be mediocre. Craft \
+Correctness is separate from **quality/craft**: a correct output can still be mediocre. Craft \
 criteria ask whether the output shows intentional quality — cohesive choices, thoughtful \
 structure, elegance — beyond what is merely correct. Include at least one craft criterion \
 tagged "should".
@@ -557,20 +556,31 @@ Organize criteria into three tiers:
 across all dimensions of correctness (structural, content, and experiential). A first-year \
 professional in the domain would not ship output that fails this. \
 (e.g., "Output is a working 30-second video, not a still image or broken render")
-- **SHOULD**: Quality expectations a demanding user would have. A competent first draft \
-often misses these — they require deliberate effort to satisfy. Missing these means \
-the answer is mediocre. (e.g., "Text is readable without pausing the video")
-- **COULD**: Excellence markers that separate good from outstanding. A solid submission \
-might reasonably skip these; they represent genuine craft above the bar. Missing these \
-is acceptable but achieving them signals real skill. (e.g., "Visual transitions \
-reinforce the narrative rather than just being decorative")
+- **SHOULD**: Quality dimensions where the output must demonstrate deliberate, \
+thoughtful execution — not just functional completeness. A SHOULD criterion \
+asks "did the creator make intentional choices here, or just do the obvious \
+thing?" Functional baselines (e.g., "has mobile support", "images load") \
+belong in MUST if they're requirements, not SHOULD. SHOULD criteria target \
+the quality of execution: how well something is done, not whether it exists. \
+(e.g., "Typography creates clear visual hierarchy with intentional size, \
+weight, and spacing choices — not just default browser styles")
+- **COULD**: Creative ambition and distinctive quality that makes the output \
+memorable. COULD criteria ask "does this show a point of view?" — not just \
+competent execution but something a viewer would specifically remember or \
+comment on. These matter; they are what separates \
+forgettable-but-correct output from work someone would show to a colleague. \
+(e.g., "The site has a distinctive interactive moment that reinforces the \
+brand identity — not a generic animation library demo but something that \
+feels designed for this specific product")
 
 **Calibration test**: first ask whether this is a correctness criterion — does failing \
 it mean the output is *wrong* (broken, inaccurate, or misbehaving in its actual \
 environment)? If yes, it is MUST regardless of how difficult it is to achieve. \
-Only after ruling that out, ask: would a competent first attempt satisfy this? \
-If yes and it is a correctness criterion, MUST. If a good attempt might miss it, SHOULD. \
-If only exceptional work achieves it, COULD.
+Only after ruling that out, ask: is this about the *quality of execution* — how \
+thoughtfully something is done? Then it is SHOULD. Is this about *distinctive \
+creative ambition* — would someone specifically notice or remember this? Then \
+it is COULD. If a criterion can be satisfied by a simple checkbox action \
+(add X, include Y, support Z), it belongs in MUST, not SHOULD.
 
 ## Requirements
 1. Generate between {min_criteria} and {max_criteria} criteria
@@ -579,9 +589,10 @@ If only exceptional work achieves it, COULD.
 4. 1-3 criteria may be "could" (what separates good from exceptional)
 5. Each criterion must be specific to THIS task, not generic
 6. Each criterion should be scoreable — an evaluator rates it on a 1-10 scale
-7. **One criterion MUST assess craft** — whether the output shows intentional, \
-cohesive choices beyond correctness. Tag it as "should". Without this, agents \
-produce correct but mediocre output.
+7. **One criterion MUST assess quality/craft** — whether the output shows intentional, \
+cohesive choices that a viewer would notice and appreciate. This criterion should \
+demand evidence of a point of view, not just absence of defects. Tag it as "should". \
+Without this, agents produce correct but forgettable output.
 8. **Criteria must cover distinct dimensions of the task** — do not cluster \
 multiple criteria around the same aspect. Think about what the major \
 independent quality axes are for this specific task (e.g., content correctness, \
@@ -595,6 +606,13 @@ context — no defects when the output is opened and experienced normally. This 
 no text overflow or clipping, no element collisions, no invisible or blank content, \
 no broken playback. Do NOT merge this into a craft or polish criterion — those are \
 separate. Do NOT make this criterion `should`. It is always `must`.
+10. **Per-part quality**: When the output has multiple distinct parts (sections of a \
+page, chapters of a document, modules of a codebase, scenes of a video), include at \
+least one criterion that assesses whether EACH significant part independently meets a \
+quality bar. Whole-output criteria like "visual craft is intentional" allow one strong \
+area to mask mediocrity elsewhere — an impressive hero section can pull up the score \
+while feature cards, testimonials, and CTAs remain template-tier. A per-part criterion \
+forces evaluation of the weakest component, not the average. Tag this "should".
 {changedoc_instruction}
 ## Examples
 
@@ -628,30 +646,45 @@ GOOD (evaluation dimension): "Breadth and depth of topic coverage: all major asp
 BAD (implementation plan): "Each of the four Beatles is individually featured with accurate biographical details including birth year, role, and contributions"
 GOOD (evaluation dimension): "Individual member coverage: each member has accurate biographical detail, distinct contributions, and is not reduced to a footnote."
 
+BAD (whole-output only): "The output shows intentional design choices"
+GOOD (per-part): "Per-section quality: each significant section of the output independently \
+demonstrates craft and purpose — no section is carried by the strength of others. \
+Evaluate the weakest section, not the average."
+
 ## Output Format
 Return JSON with this structure:
 {{
     "criteria": [
         {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "must"}},
-        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "should", "verify_by": "render the output and view it visually"}},
+        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "should", "verify_by": "render output to images and inspect for [specific defects to check]"}},
         {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "could"}}
     ]
 }}
 
 **`verify_by` field**: Required whenever the criterion involves experiential correctness \
-or craft that cannot be assessed by reading the source — i.e. the evaluator must render, \
-run, play, or interact with the output to judge it. Write a specific action sequence the \
-evaluator will follow literally: name the tool, state the scope (all pages, all slides, \
-full playback — not a sample), and list the specific things to check.
+or craft that cannot be assessed by reading the source alone. Describe WHAT EVIDENCE to \
+gather and WHAT TO CHECK — not which specific application or GUI to use. The evaluator \
+will choose the best available tool (rendering, screenshots, browser automation, code \
+execution, computer use, etc.) based on their capabilities.
 
-- Rendered output (slides, pages, images): name the rendering tool, require all \
-  pages/slides, list defects to check for (e.g. text overflow, clipped elements, \
-  unreadable font sizes, element collisions)
-- Interactive output (web apps, forms): describe opening in a browser and testing \
-  each interaction — clicks, submissions, state changes
-- Motion/animation: describe capturing and reviewing full playback
-- Audio/video: describe listening or watching the complete output
-- Executable code: describe running it with representative inputs and checking outputs
+State the full scope (all pages, all slides, full playback — not a sample) and list \
+the specific defects or properties to look for.
+
+- Rendered output (slides, pages, images): render ALL pages/slides to images and inspect \
+  each for specific defects (e.g. text overflow, clipped elements, unreadable font sizes \
+  below Npt, element collisions, blank content areas)
+- Interactive output (web apps, forms): test all navigation links, form submissions, \
+  button actions, and interactive state changes — list what each interaction should do
+- Motion/animation: capture and review full animation playback — list expected motion \
+  behavior and timing
+- Audio/video: listen to or watch the complete output — list what to assess (clarity, \
+  pacing, content accuracy)
+- Executable code: run with representative inputs and check outputs against expected results
+
+Do NOT name specific desktop applications (e.g. "open in PowerPoint", "view in Finder"). \
+Do NOT describe GUI-specific actions (e.g. "hover to see cursor change", "right-click and \
+select"). Instead describe the observable property to verify and let the evaluator choose \
+the method.
 
 Omit only when the criterion can be fully assessed by reading the output text or \
 inspecting the source file structure.

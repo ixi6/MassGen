@@ -50,6 +50,51 @@ def _get_provider_capabilities(provider_id: str) -> dict[str, bool]:
     }
 
 
+DEFAULT_QUICKSTART_CONFIG_FILENAME = "config.yaml"
+
+
+def normalize_quickstart_config_filename(
+    filename: str | None,
+    default: str = DEFAULT_QUICKSTART_CONFIG_FILENAME,
+) -> str:
+    """Normalize a quickstart config filename.
+
+    - Keeps only the basename so quickstart controls the target directory.
+    - Falls back to ``default`` when value is empty/invalid.
+    - Appends ``.yaml`` when no extension is provided.
+    """
+    fallback = Path((default or DEFAULT_QUICKSTART_CONFIG_FILENAME).strip() or DEFAULT_QUICKSTART_CONFIG_FILENAME).name
+    if fallback in {"", ".", ".."}:
+        fallback = DEFAULT_QUICKSTART_CONFIG_FILENAME
+
+    candidate = Path((filename or "").strip()).name
+    if candidate in {"", ".", ".."}:
+        candidate = fallback
+
+    if not Path(candidate).suffix:
+        candidate = f"{candidate}.yaml"
+
+    return candidate
+
+
+def build_quickstart_config_path(
+    *,
+    location: str = "project",
+    filename: str | None = None,
+    cwd: Path | None = None,
+    home_dir: Path | None = None,
+) -> Path:
+    """Build a quickstart config output path from location + filename."""
+    normalized_filename = normalize_quickstart_config_filename(filename)
+
+    if location == "global":
+        base_dir = (home_dir or Path.home()) / ".config" / "massgen"
+    else:
+        base_dir = (cwd or Path.cwd()) / ".massgen"
+
+    return base_dir / normalized_filename
+
+
 # Load environment variables
 load_dotenv()
 
@@ -3958,7 +4003,7 @@ class ConfigBuilder:
 
         return True
 
-    def run_quickstart(self) -> tuple | None:
+    def run_quickstart(self, quickstart_config_filename: str | None = None) -> tuple | None:
         """Run simplified quickstart flow - just agents count and backend/model for each.
 
         This creates a full-featured config with code-based tools, Docker execution,
@@ -4861,10 +4906,18 @@ class ConfigBuilder:
             )
 
             # Step 4: Save the config
-            # Save to default config location so users can run `massgen` without flags
-            config_dir = Path.home() / ".config" / "massgen"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            filepath = config_dir / "config.yaml"
+            # When a quickstart filename is provided via CLI, save under .massgen/.
+            if quickstart_config_filename:
+                filepath = build_quickstart_config_path(
+                    location="project",
+                    filename=quickstart_config_filename,
+                )
+            else:
+                filepath = build_quickstart_config_path(
+                    location="global",
+                    filename=DEFAULT_QUICKSTART_CONFIG_FILENAME,
+                )
+            filepath.parent.mkdir(parents=True, exist_ok=True)
 
             with open(filepath, "w") as f:
                 yaml.dump(

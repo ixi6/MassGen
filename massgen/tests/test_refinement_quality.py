@@ -284,7 +284,7 @@ class TestCriticChecklistGuidance:
     """Tests for parallel critic + novelty spawning guidance."""
 
     def test_checklist_mentions_novelty_not_critic_when_both_available(self):
-        """When critic and novelty are both available, guidance mentions novelty only (critic removed from plateau loop)."""
+        """When critic and novelty are both available and criteria have plateaued, guidance mentions novelty only (critic removed from plateau loop)."""
         from massgen.mcp_tools.checklist_tools_server import (
             evaluate_checklist_submission,
         )
@@ -309,22 +309,33 @@ class TestCriticChecklistGuidance:
             "E1": {"score": 4, "reasoning": "needs work"},
             "E2": {"score": 4, "reasoning": "needs work"},
         }
+        # Build checklist_history with 2 rounds of flat scores to trigger
+        # per-criterion plateau detection
+        checklist_history = [
+            {
+                "items_detail": [
+                    {"id": "E1", "score": 4, "passed": False},
+                    {"id": "E2", "score": 4, "passed": False},
+                ],
+            },
+            {
+                "items_detail": [
+                    {"id": "E1", "score": 4, "passed": False},
+                    {"id": "E2", "score": 4, "passed": False},
+                ],
+            },
+        ]
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="fix everything",
             report_path="",
             items=items,
             state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": ["redesign layout"],
-                "incremental": [],
-                "decision_space_exhausted": False,
-            },
+            checklist_history=checklist_history,
         )
         # Verdict must be new_answer; guidance should mention novelty (not critic)
         assert result.get("verdict") == "new_answer", f"Expected 'new_answer' but got {result.get('verdict')!r}; full result: {result}"
         explanation = result.get("explanation", "")
+        assert "plateaued" in explanation.lower(), f"Expected 'plateaued' in explanation: {explanation}"
         assert "novelty" in explanation.lower()
         assert "spawn a `critic`" not in explanation
         assert "spawn two background" not in explanation
@@ -455,92 +466,6 @@ class TestPresetsTiers:
         assert "core" not in categories
 
 
-class TestConvergenceOffRampBackwardCompat:
-    """Tests for convergence off-ramp with new and old category names."""
-
-    def test_must_should_treated_as_core_in_offramp(self):
-        """must and should items are treated as core for off-ramp."""
-        from massgen.mcp_tools.checklist_tools_server import (
-            evaluate_checklist_submission,
-        )
-
-        items = ["criterion 1", "criterion 2", "criterion 3"]
-        state = {
-            "threshold": 5,
-            "items": items,
-            "remaining_rounds": 1,
-            "total_rounds": 5,
-            "item_prefix": "E",
-            "item_categories": {"E1": "must", "E2": "should", "E3": "could"},
-            "mode": "checklist_gated",
-            "cutoff": 7,
-            "required": 3,
-            "novelty_subagent_enabled": False,
-            "has_existing_answers": True,
-        }
-        scores = {
-            "E1": {"score": 9, "reasoning": "great"},
-            "E2": {"score": 8, "reasoning": "good"},
-            "E3": {"score": 3, "reasoning": "mediocre"},
-        }
-        result = evaluate_checklist_submission(
-            scores=scores,
-            improvements="",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": [],
-                "incremental": ["minor polish"],
-                "decision_space_exhausted": True,
-            },
-        )
-        # With core quality (must+should) strong, only 'could' failing,
-        # near-converged, and no substantive path, should trigger off-ramp
-        assert result.get("verdict") == "vote"
-
-    def test_old_core_stretch_still_works(self):
-        """Old core/stretch categories still work correctly."""
-        from massgen.mcp_tools.checklist_tools_server import (
-            evaluate_checklist_submission,
-        )
-
-        items = ["criterion 1", "criterion 2", "criterion 3"]
-        state = {
-            "threshold": 5,
-            "items": items,
-            "remaining_rounds": 1,
-            "total_rounds": 5,
-            "item_prefix": "E",
-            "item_categories": {"E1": "core", "E2": "core", "E3": "stretch"},
-            "mode": "checklist_gated",
-            "cutoff": 7,
-            "required": 3,
-            "novelty_subagent_enabled": False,
-            "has_existing_answers": True,
-        }
-        scores = {
-            "E1": {"score": 9, "reasoning": "great"},
-            "E2": {"score": 8, "reasoning": "good"},
-            "E3": {"score": 3, "reasoning": "mediocre"},
-        }
-        result = evaluate_checklist_submission(
-            scores=scores,
-            improvements="",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": [],
-                "incremental": ["minor polish"],
-                "decision_space_exhausted": True,
-            },
-        )
-        assert result.get("verdict") == "vote"
-
-
 class TestGenerationPromptTiers:
     """Tests for the updated generation prompt."""
 
@@ -571,3 +496,39 @@ class TestGenerationPromptTiers:
         prompt = gen._build_generation_prompt("test task", has_changedoc=False)
         assert "quality/craft" in prompt.lower() or "overall quality" in prompt.lower()
         assert "mediocre" in prompt.lower()
+
+    def test_generation_prompt_requires_per_part_quality(self):
+        """Generation prompt requires per-part quality evaluation."""
+        from massgen.evaluation_criteria_generator import EvaluationCriteriaGenerator
+
+        gen = EvaluationCriteriaGenerator()
+        prompt = gen._build_generation_prompt("test task", has_changedoc=False)
+        lower = prompt.lower()
+        # Must mention per-part or per-section quality concept
+        assert "per-part" in lower or "each significant part" in lower
+        # Must mention evaluating the weakest component, not the average
+        assert "weakest" in lower
+
+    def test_generation_prompt_per_part_bad_good_example(self):
+        """Generation prompt has BAD/GOOD example for whole-output vs per-part."""
+        from massgen.evaluation_criteria_generator import EvaluationCriteriaGenerator
+
+        gen = EvaluationCriteriaGenerator()
+        prompt = gen._build_generation_prompt("test task", has_changedoc=False)
+        lower = prompt.lower()
+        # Must have a BAD example about whole-output criteria
+        assert "whole-output" in lower or "whole output" in lower
+        # Must have a GOOD example about per-part/per-section criteria
+        assert "per-part" in lower or "per-section" in lower
+
+    def test_propose_improvements_example_not_incremental(self):
+        """System prompt propose_improvements example shows substantial improvements."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
+        )
+        # The example should NOT contain trivially incremental fixes
+        assert "fix font sizes" not in prompt.lower()
+        # The example should show rethinking, not pixel tweaks
+        assert "propose_improvements" in prompt

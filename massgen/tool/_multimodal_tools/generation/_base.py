@@ -44,6 +44,13 @@ class GenerationConfig:
         input_image_paths: Resolved input image paths (for metadata)
         continue_from: Continuation ID from a previous generation result for
             multi-turn editing. OpenAI: response ID; Gemini: chat store ID.
+        mask_path: Path to mask image for inpainting operations.
+        edit_mode: Editing operation type (e.g., "inpaint", "style_transfer").
+        output_format: Override output format ("png", "jpeg", "webp").
+        background: Background handling ("transparent", color hex).
+        negative_prompt: What to exclude from generation.
+        seed: Reproducibility seed for deterministic output.
+        guidance_scale: Prompt adherence strength (higher = more literal).
     """
 
     prompt: str
@@ -60,6 +67,35 @@ class GenerationConfig:
     input_images: list[dict[str, str]] = field(default_factory=list)
     input_image_paths: list[str] = field(default_factory=list)
     continue_from: str | None = None
+    # Editing fields (MAS-333: multimedia editing capabilities)
+    mask_path: Path | None = None
+    edit_mode: str | None = None
+    output_format: str | None = None
+    background: str | None = None
+    negative_prompt: str | None = None
+    seed: int | None = None
+    guidance_scale: float | None = None
+    # Audio editing fields (MAS-334: audio understanding and editing)
+    input_audio_path: Path | None = None
+    voice_samples: list[Path] = field(default_factory=list)
+    target_language: str | None = None
+    source_language: str | None = None
+    # Google advanced editing fields (MAS-333 Phase 5)
+    style_image_path: Path | None = None
+    style_description: str | None = None
+    control_image_path: Path | None = None
+    control_type: str | None = None
+    subject_image_path: Path | None = None
+    subject_type: str | None = None
+    subject_description: str | None = None
+    mask_mode: str | None = None
+    segmentation_classes: list[int] | None = None
+    # Advanced TTS fields (MAS-334 Phase 5)
+    speed: float | None = None
+    voice_stability: float | None = None
+    voice_similarity: float | None = None
+    # Veo 3.1 video reference images (up to 3 for style/content guidance)
+    video_reference_images: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass

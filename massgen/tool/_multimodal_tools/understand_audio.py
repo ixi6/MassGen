@@ -154,11 +154,93 @@ async def _process_with_openai(
     return transcription
 
 
+async def _process_with_openai_native(
+    audio_path: Path,
+    prompt: str | None = None,
+    model: str = "gpt-4o-audio-preview",
+) -> str:
+    """Process audio using OpenAI's native audio understanding via Chat Completions.
+
+    Unlike Whisper (transcription-only), this sends audio as input_audio content
+    to a chat model that natively understands audio, preserving tone, emotion,
+    pacing, emphasis, and speaker characteristics.
+
+    Args:
+        audio_path: Path to the audio file
+        prompt: Analysis prompt (what to extract from the audio)
+        model: OpenAI model with native audio support
+
+    Returns:
+        Rich analysis text from the model
+    """
+    import base64
+
+    from openai import AsyncOpenAI
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY not found in environment")
+
+    client = AsyncOpenAI(api_key=api_key)
+
+    logger.info(
+        f"[understand_audio] Using OpenAI native audio {model} for: {audio_path.name}",
+    )
+
+    # Read and base64-encode the audio
+    with open(audio_path, "rb") as f:
+        audio_data = base64.b64encode(f.read()).decode("utf-8")
+
+    # Determine format from extension
+    ext = audio_path.suffix.lstrip(".").lower()
+    format_map = {
+        "mp3": "mp3",
+        "wav": "wav",
+        "m4a": "mp4",
+        "ogg": "ogg",
+        "flac": "flac",
+        "aac": "aac",
+        "opus": "opus",
+    }
+    audio_format = format_map.get(ext, "mp3")
+
+    analysis_prompt = prompt or (
+        "Analyze this audio comprehensively. Include: "
+        "1) Full transcription of speech, "
+        "2) Speaker characteristics (tone, emotion, energy, pacing), "
+        "3) Notable emphasis or inflection patterns, "
+        "4) Background sounds or music if present, "
+        "5) Overall mood and atmosphere."
+    )
+
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": analysis_prompt},
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_data,
+                            "format": audio_format,
+                        },
+                    },
+                ],
+            },
+        ],
+    )
+
+    return response.choices[0].message.content or ""
+
+
 async def understand_audio(
     audio_paths: list[str],
     prompt: str | None = None,
     model: str | None = None,
     backend_type: str | None = None,
+    analysis_mode: str = "rich",
     allowed_paths: list[str] | None = None,
     agent_cwd: str | None = None,
     task_context: str | None = None,
@@ -170,22 +252,28 @@ async def understand_audio(
     1. Same backend as the calling agent (if backend_type specified and has API key)
     2. Default priority list: Gemini → OpenAI (first with available API key)
 
-    Supports multiple backends:
+    Supports multiple backends and analysis modes:
     - Gemini: Uses native audio understanding with inline_data (preferred)
-    - OpenAI: Uses Whisper transcription API
+    - OpenAI (rich mode): Uses gpt-4o-audio-preview for full audio understanding
+      including tone, emotion, pacing, and speaker characteristics
+    - OpenAI (transcription mode): Uses Whisper for fast, cheap transcription
 
     Args:
         audio_paths: List of paths to input audio files (WAV, MP3, M4A, etc.)
                     - Relative path: Resolved relative to workspace
                     - Absolute path: Must be within allowed directories
-        prompt: Optional prompt for audio analysis (used with Gemini for
-                richer analysis; ignored for OpenAI Whisper)
+        prompt: Optional prompt for audio analysis. For rich mode, guides what
+                aspects to analyze. For transcription mode, used as context hint.
         model: Model to use. If not specified, uses default from backend selector:
                - Gemini: "gemini-3-flash-preview"
-               - OpenAI: "gpt-4o-transcribe"
+               - OpenAI (rich): "gpt-4o-audio-preview"
+               - OpenAI (transcription): "gpt-4o-transcribe"
         backend_type: Preferred backend ("gemini" or "openai"). If specified and
                       has API key, this backend is used. Otherwise falls through
                       to priority list.
+        analysis_mode: Analysis depth - "rich" (default) for full audio
+                       understanding with tone/emotion/pacing, or "transcription"
+                       for fast text-only transcription.
         allowed_paths: List of allowed base paths for validation (optional)
         agent_cwd: Current working directory of the agent (optional)
 
@@ -193,20 +281,21 @@ async def understand_audio(
         ExecutionResult containing:
         - success: Whether operation succeeded
         - operation: "understand_audio"
-        - transcriptions: List of transcription results for each file
+        - transcriptions: List of transcription/analysis results for each file
         - audio_files: List of paths to the input audio files
         - model: Model used
         - backend: Backend used ("gemini" or "openai")
+        - analysis_mode: The analysis mode used
 
     Examples:
         understand_audio(["recording.wav"])
-        → Returns transcription using best available backend
+        → Rich analysis with tone, emotion, pacing (default)
 
-        understand_audio(["interview.mp3"], backend_type="gemini")
-        → Prefers Gemini if available, otherwise falls back to OpenAI
+        understand_audio(["recording.wav"], analysis_mode="transcription")
+        → Fast text-only transcription via Whisper
 
-        understand_audio(["podcast.mp3"], prompt="Summarize the key points")
-        → Gemini will analyze with prompt; OpenAI will just transcribe
+        understand_audio(["interview.mp3"], prompt="Summarize the key points")
+        → Rich analysis focused on key points
 
     Security:
         - Requires valid API key for the chosen backend
@@ -301,9 +390,28 @@ async def understand_audio(
 
             validated_audio_paths.append(audio_path)
 
+        # Determine effective analysis mode and model
+        use_rich = analysis_mode == "rich"
+
+        # For OpenAI rich mode, override to native audio model unless user
+        # specified a model explicitly.
+        if selected_backend == "openai" and use_rich and not model:
+            selected_model = "gpt-4o-audio-preview"
+
         # Process each audio file with the selected backend
         transcriptions = []
-        default_prompt = prompt or "Transcribe this audio file. Include speaker identification if multiple speakers are present."
+
+        if use_rich:
+            default_prompt = prompt or (
+                "Analyze this audio comprehensively. Include: "
+                "1) Full transcription of speech, "
+                "2) Speaker characteristics (tone, emotion, energy, pacing), "
+                "3) Notable emphasis or inflection patterns, "
+                "4) Background sounds or music if present, "
+                "5) Overall mood and atmosphere."
+            )
+        else:
+            default_prompt = prompt or ("Transcribe this audio file. Include speaker " "identification if multiple speakers are present.")
 
         # Inject task context into prompt if available
         from massgen.context.task_context import format_prompt_with_context
@@ -318,7 +426,13 @@ async def understand_audio(
                         prompt=augmented_prompt,
                         model=selected_model,
                     )
-                else:  # openai
+                elif selected_backend == "openai" and use_rich:
+                    transcription = await _process_with_openai_native(
+                        audio_path=audio_path,
+                        prompt=augmented_prompt,
+                        model=selected_model,
+                    )
+                else:  # openai transcription mode
                     transcription = await _process_with_openai(
                         audio_path=audio_path,
                         prompt=augmented_prompt,
@@ -333,6 +447,29 @@ async def understand_audio(
                 )
 
             except Exception as api_error:
+                # If rich mode fails, try falling back to transcription
+                if use_rich and selected_backend == "openai":
+                    logger.warning(
+                        "Native audio analysis failed (%s), " "falling back to Whisper transcription.",
+                        api_error,
+                    )
+                    try:
+                        transcription = await _process_with_openai(
+                            audio_path=audio_path,
+                            prompt=augmented_prompt,
+                            model="gpt-4o-transcribe",
+                        )
+                        transcriptions.append(
+                            {
+                                "file": str(audio_path),
+                                "transcription": transcription,
+                                "fallback": True,
+                            },
+                        )
+                        continue
+                    except Exception:
+                        pass  # Fall through to error below
+
                 result = {
                     "success": False,
                     "operation": "understand_audio",
@@ -349,6 +486,7 @@ async def understand_audio(
             "audio_files": [str(p) for p in validated_audio_paths],
             "model": selected_model,
             "backend": selected_backend,
+            "analysis_mode": analysis_mode,
         }
         return ExecutionResult(
             output_blocks=[TextContent(data=json.dumps(result, indent=2))],

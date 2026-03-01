@@ -65,6 +65,73 @@ def test_start_final_round_sets_winner_and_advances_round_from_max():
     assert tracker.get_agent_round("agent_a") == 3
 
 
+def test_update_context_replaces_old_label_from_same_agent():
+    """When a new answer is injected, the old label from the same agent should be replaced."""
+    tracker = _init_tracker(["agent_a", "agent_b"])
+
+    # Both agents produce initial answers
+    tracker.add_agent_answer("agent_a", "answer a1")
+    tracker.add_agent_answer("agent_b", "answer b1")
+
+    # Agent_b is given context with both answers at round start
+    tracker.track_agent_context("agent_b", {"agent_a": "a1", "agent_b": "b1"})
+    assert sorted(tracker.get_agent_context_labels("agent_b")) == ["agent1.1", "agent2.1"]
+
+    # Agent_a produces a new answer (agent1.2)
+    tracker.add_agent_answer("agent_a", "answer a2")
+
+    # Inject agent_a's new answer into agent_b
+    tracker.update_agent_context_with_new_answers("agent_b", ["agent_a"])
+
+    # agent1.1 should be REPLACED by agent1.2, not both present
+    labels = tracker.get_agent_context_labels("agent_b")
+    assert "agent1.2" in labels, f"Expected agent1.2 in {labels}"
+    assert "agent1.1" not in labels, f"agent1.1 should be replaced, got {labels}"
+    assert sorted(labels) == ["agent1.2", "agent2.1"]
+
+
+def test_update_context_replaces_own_label_after_new_answer():
+    """When an agent produces a new answer, its own label in its context should be updated."""
+    tracker = _init_tracker(["agent_a", "agent_b"])
+
+    # Both agents produce initial answers
+    tracker.add_agent_answer("agent_a", "answer a1")
+    tracker.add_agent_answer("agent_b", "answer b1")
+
+    # Agent_b is given context with both answers at round start
+    tracker.track_agent_context("agent_b", {"agent_a": "a1", "agent_b": "b1"})
+    assert sorted(tracker.get_agent_context_labels("agent_b")) == ["agent1.1", "agent2.1"]
+
+    # Agent_b produces a new answer (agent2.2)
+    tracker.add_agent_answer("agent_b", "answer b2")
+
+    # Inject agent_b's OWN new answer into its context
+    tracker.update_agent_context_with_new_answers("agent_b", ["agent_b"])
+
+    # agent2.1 should be REPLACED by agent2.2
+    labels = tracker.get_agent_context_labels("agent_b")
+    assert "agent2.2" in labels, f"Expected agent2.2 in {labels}"
+    assert "agent2.1" not in labels, f"agent2.1 should be replaced, got {labels}"
+    assert sorted(labels) == ["agent1.1", "agent2.2"]
+
+
+def test_update_context_no_duplicate_on_same_label():
+    """Injecting the same version again should not create duplicates."""
+    tracker = _init_tracker(["agent_a", "agent_b"])
+
+    tracker.add_agent_answer("agent_a", "answer a1")
+    tracker.add_agent_answer("agent_b", "answer b1")
+
+    tracker.track_agent_context("agent_b", {"agent_a": "a1", "agent_b": "b1"})
+
+    # Inject agent_a's same answer (no new version) — should be no-op
+    tracker.update_agent_context_with_new_answers("agent_b", ["agent_a"])
+
+    labels = tracker.get_agent_context_labels("agent_b")
+    assert labels.count("agent1.1") == 1, f"Duplicate labels: {labels}"
+    assert sorted(labels) == ["agent1.1", "agent2.1"]
+
+
 def test_anonymous_mapping_uses_sorted_agent_ids():
     tracker = _init_tracker(["agent_c", "agent_a", "agent_b"])
 

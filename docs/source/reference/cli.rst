@@ -50,7 +50,9 @@ CLI Parameters
    * - Parameter
      - Description
    * - ``--config PATH``
-     - Path to YAML configuration file with agent definitions, model parameters, backend parameters and UI settings
+     - Path to YAML configuration file with agent definitions, model parameters, backend parameters and UI settings.
+       With ``--quickstart``, this value is treated as the output filename under ``.massgen/`` (for example,
+       ``--quickstart --config team-config`` saves ``.massgen/team-config.yaml``)
    * - ``--select``
      - Interactively select from available configurations (user configs, project configs, current directory, package examples). Uses hierarchical navigation: category → config
    * - ``--backend TYPE``

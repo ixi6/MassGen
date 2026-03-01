@@ -710,6 +710,7 @@ def _build_checklist_gated_decision(
     iterate_action: str = "new_answer",
     require_gap_report: bool = True,
     gap_report_mode: str = "changedoc",
+    builder_enabled: bool = True,
 ) -> str:
     """Build checklist_gated decision section (tool-gated, hidden threshold).
 
@@ -755,6 +756,98 @@ def _build_checklist_gated_decision(
     else:
         # "none" — no report instructions
         report_requirement = ""
+
+    # Phase 3 execution guidance — conditional on builder availability
+    if builder_enabled:
+        _phase3_execution = (
+            "Annotate each task:\n"
+            "- `[builder]` — focused single-deliverable spec; can run in parallel\n"
+            "- `[main]` — judgment-heavy work you do inline "
+            "(architectural decisions, synthesis)\n"
+            "- `[synthesize]` — pull a specific element from another agent's "
+            "answer and keep it\n"
+            "- `[skip]` — deprioritized for this round\n"
+            "\n"
+            "Add `depends_on` links only where the output of one task is genuinely "
+            "required\n"
+            "input for another. Most improvements are independent — don't add "
+            "false dependencies.\n"
+            "\n"
+            "**Step 3b — Maximize parallelism when executing.**\n"
+            "\n"
+            "Look at your task plan. Identify all `[builder]` tasks with no "
+            "dependencies on\n"
+            "each other. Spawn them all in a **single** `spawn_subagents` call "
+            "— they run\n"
+            "simultaneously:\n"
+            "\n"
+            "- `tasks`: one entry per deliverable (not one entry for all of them)\n"
+            "- `background=True, refine=False`\n"
+            "- Parent workspace is auto-mounted read-only. The shared peer snapshot "
+            "directory\n"
+            "  (temp_workspaces) is also auto-mounted read-only so subagents can "
+            "access peer\n"
+            "  context without explicit `context_paths`. Use `context_paths` only "
+            "for\n"
+            "  additional paths beyond these defaults.\n"
+            "- **Subagent file artifacts**: Subagents write to their OWN workspace "
+            "(not yours —\n"
+            "  yours is read-only to them). In blocking mode, access artifacts via\n"
+            '  `result["workspace"] + "/filename"`. In background mode the '
+            "workspace path is\n"
+            "  in the running status. Tell subagents to save files with relative "
+            "paths and\n"
+            "  report what they saved. Do NOT direct subagents to write into your "
+            "workspace.\n"
+            "\n"
+            "Do your `[main]` work while builders run. Collect and integrate when "
+            "all finish.\n"
+            "Then spawn the next wave for tasks that depended on this batch.\n"
+            "\n"
+            "When collecting builder results:\n"
+            "- **Output doesn't match spec**: Check whether the spec was ambiguous. "
+            "If the\n"
+            "  builder's interpretation was reasonable, accept it and note the "
+            "deviation. If\n"
+            "  the spec was clear and the builder diverged, re-spawn that one task "
+            "with an\n"
+            "  explicit correction — do not re-run all builders.\n"
+            "- **Builder surfaces a hidden dependency**: It will say so in its "
+            "output. Spawn\n"
+            "  the blocking task first, then re-run the dependent builder once it "
+            "completes.\n"
+            "- **Multiple builders rewrote the same file**: You arbitrate — pick "
+            "the better\n"
+            "  version or merge manually inline. Do not silently discard either "
+            "output.\n"
+            "\n"
+            "If no specialized subagents are available, execute tasks inline in "
+            "dependency\n"
+            "order.\n"
+            "\n"
+            f"**CHECKPOINT**: Before calling `{iterate_action}`, confirm ALL "
+            "builder subagents\n"
+            "have returned. Use `list_subagents()` — if any are still running, "
+            "continue\n"
+            "working on `[main]` tasks or wait. Submitting before builders finish "
+            "wastes\n"
+            "their work and budget."
+        )
+    else:
+        _phase3_execution = (
+            "Annotate each task:\n"
+            "- `[main]` — judgment-heavy work you do inline "
+            "(architectural decisions, synthesis)\n"
+            "- `[synthesize]` — pull a specific element from another agent's "
+            "answer and keep it\n"
+            "- `[skip]` — deprioritized for this round\n"
+            "\n"
+            "Execute all tasks inline in dependency order. Focus on the "
+            "highest-impact\n"
+            "improvements first. Most improvements are independent — complete "
+            "each fully\n"
+            "before starting the next."
+        )
 
     return f"""---
 
@@ -818,62 +911,22 @@ gaps but your scores are 8+, your scores are inflated — lower them to match.
 
 ### Submit Your Scores
 
-Call `submit_checklist` with per-item reasoning, an improvements summary, a report path,
-and a **substantiveness** object.
-
-The **substantiveness** object is required so the system can:
-- Continue iteration only when there is meaningful (transformative/structural) work left
-- Naturally terminate when decision space is exhausted and remaining ideas are incremental-only
-- Verify your commitments by name — list each specific change, not just a count
-
-Use:
-- `"transformative"`: changes that alter the overall structure, approach, or framing —
-  a user would notice the output is fundamentally reorganized or reconceived. E.g.:
-  switch to a completely different algorithm or architecture; introduce a new central
-  argument or creative direction; redesign the entire output structure (linear → modular,
-  chapters → themes, class-based → functional).
-- `"structural"`: significant improvements to existing components without changing the
-  overall approach — a major part gets materially better. E.g.: rewrite one module or
-  section; fix a broken subsystem; substantially improve one quality dimension within the
-  current structure.
-- `"incremental"`: polish and refinement within existing elements — noticeable only on
-  close inspection. E.g.: clearer variable names; better wording in a paragraph; minor
-  formatting or style adjustments.
-
-Quick test: "Would a user notice the overall approach or structure changed?" → transformative.
-"Would they notice a major part got substantially better?" → structural.
-"Would they only notice if they looked closely?" → incremental.
-- `"decision_space_exhausted"`: `true` only if no meaningful structural/transformative improvements remain
-- `"notes"`: short justification
-
-Set `decision_space_exhausted` to `true` ONLY if you have genuinely considered
-at least 3 fundamentally different approaches to the core problem and none would
-improve the result. "I can't think of anything" is not exhaustion — it means you
-haven't brainstormed hard enough. Consider: different architectures,
-different creative directions, different interaction models, different content strategies.
-If you haven't explored these alternatives, the space is not exhausted.
+Call `submit_checklist` with per-item reasoning and a report path.
 
 Each score entry MUST include `"reasoning"` explaining why you gave that score —
 reference specific evidence from your analysis.
 
-**Important**: Do not hedge your improvements with language like "optional", "not
-required", "could include", or "nice-to-have". If you identify something that would
-make the answer better, state it as something that **should** be done. If the verdict
-tells you to iterate, you are expected to implement what you identified.
-
+  # When multiple agents exist, use per-agent format (REQUIRED):
   submit_checklist(
     scores={{
-      {score_lines}
+      "<agent_label>": {{
+        {score_lines}
+      }},
+      "<other_agent_label>": {{
+        {score_lines}
+      }}
     }},
     report_path="<path to your markdown gap report>",
-    improvements="<specific failures and root causes from your diagnostic analysis that would make the answer substantially better>",
-    substantiveness={{
-      "transformative": ["<specific change description>", ...],
-      "structural": ["<specific change description>", ...],
-      "incremental": ["<specific change description>", ...],
-      "decision_space_exhausted": <true|false>,
-      "notes": "<why these classifications are accurate>"
-    }}
   )
 
 The tool will evaluate your scores and return a verdict telling you whether
@@ -883,7 +936,7 @@ to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
 
 **Phase 1 — Gather evidence. Do this BEFORE calling `submit_checklist`.**
 
-Spawn **one evaluator** in background that sees **all candidate answers together**,
+Spawn **one evaluator** that sees **all candidate answers together**,
 while you do qualitative analysis in parallel:
 
 - Give the evaluator paths to all agents' answers. Instruct it to compare
@@ -905,91 +958,60 @@ while you do qualitative analysis in parallel:
 - You handle: read all agents' answers, identify qualitative gaps, assess
   creative/craft quality. You make the value judgments — evaluator gives you
   evidence to reason from, not scores.
-- Collect evaluator results when ready. Interpret their observations through
-  your own quality lens to assign per-agent scores per dimension.
+- Once the evaluator returns, interpret its observations through your own
+  quality lens to assign per-agent scores per dimension.
 
 If no specialized subagents are available: do all evidence gathering and
 qualitative analysis inline.
 
+**CHECKPOINT**: Before moving to Phase 2, confirm your evaluator has returned
+results. Use `list_subagents()` to check — it shows `elapsed_seconds` and
+`seconds_remaining` for each running subagent. Evaluator evidence (screenshots,
+test results, accessibility findings) directly affects your scores. Do NOT
+score without this evidence.
+
 **Phase 2 — Score and submit `submit_checklist`.**
 
 Score EACH agent per dimension using the evidence from Phase 1. Submit with
-per-agent scores format. Classify improvements honestly using the definitions
-above — do not downgrade transformative work to avoid triggering a new round.
-The `improvements` field = dimensions where even the best agent fell short.
+per-agent scores format.
 
 `submit_checklist` returns a verdict:
-- **`{iterate_action}`** — improvements needed; continue to Phase 3
+- **`{iterate_action}`** — improvements needed; call `propose_improvements` next
 - **`{terminate_action}`** — output is sufficient; skip to Phase 5 to submit
 
 Follow the verdict. Do not call `submit_checklist` again after receiving it.
 
+When verdict is `{iterate_action}`, you MUST call `propose_improvements` with
+improvements for **every** failing criterion before implementing:
+
+  propose_improvements(
+    improvements={{
+      "E2": ["rethink the feature cards — they look template-assembled, need distinct visual identity and purpose"],
+      "E5": ["the CTA section is just two buttons — needs to feel like a destination with clear next steps"],
+    }}
+  )
+
+The tool validates all failing criteria are covered and returns a task_plan.
+Add each item to your task plan tool, then proceed to Phase 3.
+
 **Phase 3 — Execute improvements (`{iterate_action}` verdict only).**
 
-**Step 3a — Write your task plan first, one task per change.**
+Your `propose_improvements` call returned a validated `task_plan`. Add these
+tasks to your task plan tool, then execute them.
 
-Before executing anything, enumerate every improvement as individual task plan
-items. Each transformative change, each structural fix, each incremental polish
-item gets its own task entry — do not batch them. Fine-grained tasks make
-parallelism possible: if "rewrite hero" and "fix mobile nav" are one item,
-you can't parallelize them.
+{_phase3_execution}
 
-Annotate each task:
-- `[builder]` — focused single-deliverable spec; can run in parallel
-- `[main]` — judgment-heavy work you do inline (architectural decisions, synthesis)
-- `[synthesize]` — pull a specific element from another agent's answer and keep it
-- `[skip]` — deprioritized for this round
+**Phase 4 — Targeted subagents (when criteria plateau).**
 
-Add `depends_on` links only where the output of one task is genuinely required
-input for another. Most improvements are independent — don't add false dependencies.
-
-**Step 3b — Maximize parallelism when executing.**
-
-Look at your task plan. Identify all `[builder]` tasks with no dependencies on
-each other. Spawn them all in a **single** `spawn_subagents` call — they run
-simultaneously:
-
-- `tasks`: one entry per deliverable (not one entry for all of them)
-- `background=True, refine=False`
-- Parent workspace is auto-mounted read-only. The shared peer snapshot directory
-  (temp_workspaces) is also auto-mounted read-only so subagents can access peer
-  context without explicit `context_paths`. Use `context_paths` only for
-  additional paths beyond these defaults.
-- **Subagent file artifacts**: Subagents write to their OWN workspace (not yours —
-  yours is read-only to them). In blocking mode, access artifacts via
-  `result["workspace"] + "/filename"`. In background mode the workspace path is
-  in the running status. Tell subagents to save files with relative paths and
-  report what they saved. Do NOT direct subagents to write into your workspace.
-
-Do your `[main]` work while builders run. Collect and integrate when all finish.
-Then spawn the next wave for tasks that depended on this batch.
-
-When collecting builder results:
-- **Output doesn't match spec**: Check whether the spec was ambiguous. If the
-  builder's interpretation was reasonable, accept it and note the deviation. If
-  the spec was clear and the builder diverged, re-spawn that one task with an
-  explicit correction — do not re-run all builders.
-- **Builder surfaces a hidden dependency**: It will say so in its output. Spawn
-  the blocking task first, then re-run the dependent builder once it completes.
-- **Multiple builders rewrote the same file**: You arbitrate — pick the better
-  version or merge manually inline. Do not silently discard either output.
-
-If no specialized subagents are available, execute tasks inline in dependency
-order.
-
-**Phase 4 — Novelty break-glass (branch: `{iterate_action}` verdict AND zero transformative changes identified).**
-
-Skip this phase if you have transformative changes to implement — go straight to Phase 3.
-Only enter Phase 4 if `submit_checklist` returned zero transformative changes AND
-a novelty subagent is available. If so: spawn novelty (`background=True, refine=False`)
-while you continue implementing structural improvements. When novelty returns,
-evaluate each direction against your findings: does it genuinely break the
-anchoring pattern? Is it implementable? Does it differ from what's already been
-tried? If at least one direction passes, adopt it and list it in the
-`transformative` array of your next checklist submission. If none pass, explain
-in `substantiveness.notes` which direction failed and why — not just "none
-apply." Engaging seriously with novelty's output, even to reject it, is what
-breaks the plateau. Do not ignore it silently.
+If `submit_checklist` reports plateaued criteria (with score trajectories and
+criterion details in the `plateaued_criteria` field), spawn a quality_rethinking
+subagent AND a novelty subagent side-by-side in background — pass each the
+`plateaued_criteria` detail from the checklist result (it includes criterion
+text, category, and full score history so subagents know exactly what's stuck
+and by how much). Meanwhile, proceed with `propose_improvements` and start
+implementing your own ideas. When the subagents return, integrate their
+proposals into your remaining work — their fresh perspective may suggest
+approaches you wouldn't have tried.
 
 **Phase 5 — Integrate, verify, submit.**
 
@@ -2895,6 +2917,7 @@ class EvaluationSection(SystemPromptSection):
         item_categories: dict[str, str] | None = None,
         item_verify_by: dict[str, str] | None = None,
         has_existing_answers: bool = True,
+        builder_enabled: bool = True,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -2915,6 +2938,7 @@ class EvaluationSection(SystemPromptSection):
         self.item_categories = item_categories
         self.item_verify_by = item_verify_by
         self.has_existing_answers = has_existing_answers
+        self.builder_enabled = builder_enabled
 
     def build_content(self) -> str:
         # Vote-only mode: agent has exhausted their answer limit
@@ -3055,6 +3079,7 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                     items,
                     require_gap_report=self.checklist_require_gap_report,
                     gap_report_mode=self.gap_report_mode,
+                    builder_enabled=self.builder_enabled,
                 )
                 evaluation_section = f"""{analysis}
 
@@ -3280,6 +3305,7 @@ Both are terminal actions that end your round.
                     iterate_action="new_answer",
                     require_gap_report=self.checklist_require_gap_report,
                     gap_report_mode=self.gap_report_mode,
+                    builder_enabled=self.builder_enabled,
                 )
                 return f"""**CHOOSING THE RIGHT TOOL — `new_answer` vs `stop`:**
 Both are terminal actions that end your round.
@@ -3972,16 +3998,16 @@ class SubagentSection(SystemPromptSection):
                     "**Parent workspace is auto-mounted read-only by default.** "
                     "Use `context_paths` only for additional paths outside your workspace "
                     "(e.g. peer workspace paths from Available agent workspaces).\n\n"
-                    "**The novelty → build loop** (when novelty fires after T=0):\n"
-                    "1. Novelty returns directions. Evaluate each: does it break the "
-                    "anchoring pattern? Is it implementable? Differs from what's been tried?\n"
-                    "2. If at least one passes, adopt it — list it in the `transformative` "
-                    "array of your next `submit_checklist`. If none pass, explain in "
-                    "`substantiveness.notes` which failed and why.\n"
+                    "**The novelty → build loop** (when criteria plateau):\n"
+                    "1. Novelty returns directions for plateaued criteria. Evaluate each: "
+                    "does it break the anchoring pattern? Is it implementable? Differs from "
+                    "what's been tried?\n"
+                    "2. If at least one passes, adopt it and include it in your "
+                    "`propose_improvements` call.\n"
                     "3. Write a focused spec for ONE deliverable and spawn a builder task.\n"
                     "4. Integrate and verify the result.\n\n"
-                    "**Deferring a valid proposal with T=0 wastes a full round** — "
-                    "it re-triggers novelty instead of making progress.",
+                    "**Ignoring novelty output wastes a full round** — "
+                    "engage seriously with each direction, even to reject it.",
                 )
             lines.append("")
 
@@ -4840,6 +4866,41 @@ If no API keys are available, falling back to free packages like `edge-tts` is f
 do NOT include speaking instructions in it (the TTS will read them aloud). \
 Use the `instructions` parameter for tone/style guidance instead. \
 Voice names like "Rachel" or "Sarah" are auto-resolved to ElevenLabs UUIDs.
+
+### Modality Skills
+For detailed guidance on backends, advanced features, and parameter reference, \
+read the per-modality skills: `image-generation`, `video-generation`, \
+`audio-generation`. These cover backend comparison tables, continuation \
+workflows, and editing capabilities.
+
+### Media Editing Capabilities
+`generate_media` supports editing and transformation beyond basic generation:
+
+**Video:** Use `continue_from` with a previous result's `continuation_id` to \
+refine videos iteratively (OpenAI Sora remix, Google Veo extension, Grok \
+editing). Use `input_images` with `mode="video"` for image-to-video \
+generation (OpenAI Sora, Google Veo, Grok). \
+Veo supports `size` for resolution (`"720p"`, `"1080p"`, `"4k"`; \
+1080p/4k require 8s duration), `video_reference_images` (up to 3 images \
+for style guidance), and `negative_prompt`. Veo extensions are forced to 720p. \
+Veo 3.1 generates audio natively — include dialogue in quotes and \
+describe sounds/atmosphere in the prompt.
+
+**Image editing:** Use `mask_path` for inpainting (OpenAI). Use `style_image`, \
+`control_image`, or `subject_image` for Google Imagen advanced editing. Use \
+`negative_prompt`, `seed`, and `guidance_scale` for fine-grained control \
+(Google Imagen).
+
+**Audio editing:** Use `audio_type` to select operation:
+- `"voice_conversion"` — change voice timbre (requires `input_audio`)
+- `"audio_isolation"` — remove background noise (requires `input_audio`)
+- `"voice_design"` — create voice from text description
+- `"voice_clone"` — clone voice from samples (requires `voice_samples`)
+- `"dubbing"` — translate and dub preserving voice (requires `input_audio`, \
+`target_language`)
+
+**Advanced TTS:** Use `speed` (OpenAI, 0.25-4.0), `voice_stability` and \
+`voice_similarity` (ElevenLabs, 0.0-1.0) for fine-grained speech control.
 
 ### Image Sourcing Fallback
 If you encounter legal restrictions when trying to use or reference existing photographs

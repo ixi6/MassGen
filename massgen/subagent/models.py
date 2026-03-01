@@ -220,9 +220,13 @@ class SubagentOrchestratorConfig:
         enable_web_search: Whether to enable web search for subagents (None = inherit from parent).
                           This is set in YAML config, not by agents at runtime.
         parse_at_references: Whether subagent subprocess CLI should parse @path/@path:w
-            references from task text into context paths. Default True preserves
-            existing behavior. Set False when literal '@' text (for example CSS
-            '@import') should be passed through unchanged.
+            references from task text into context paths. Default False because
+            subagent task text is AI-generated and frequently contains literal '@'
+            characters (CSS @media, @keyframes, font URLs like wght@400) that
+            would be misinterpreted as file path references. Context paths for
+            subagents are provided explicitly via the spawn API's context_paths
+            parameter. Set True only if subagent tasks intentionally use @path
+            syntax.
     """
 
     enabled: bool = False
@@ -230,7 +234,7 @@ class SubagentOrchestratorConfig:
     coordination: dict[str, Any] = field(default_factory=dict)
     max_new_answers: int = 3  # Conservative default for subagents
     enable_web_search: bool | None = None  # None = inherit from parent
-    parse_at_references: bool = True
+    parse_at_references: bool = False
 
     @property
     def num_agents(self) -> int:
@@ -271,7 +275,7 @@ class SubagentOrchestratorConfig:
             coordination=data.get("coordination", {}),
             max_new_answers=data.get("max_new_answers", 3),
             enable_web_search=data.get("enable_web_search"),
-            parse_at_references=data.get("parse_at_references", True),
+            parse_at_references=data.get("parse_at_references", False),
         )
 
     def to_dict(self) -> dict[str, Any]:

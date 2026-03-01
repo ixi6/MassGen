@@ -1129,31 +1129,50 @@ class TestSubagentRuntimeIsolationRouting:
         assert cmd[:2] == ["host-launch", "--exec"]
         assert "--config" in cmd
 
-    def test_subagent_command_disables_parse_at_references_when_configured(self, tmp_path):
+    def test_subagent_command_disables_at_parsing_by_default(self, tmp_path):
+        """Subagent tasks are AI-generated and may contain @media, @keyframes etc.
+        The default must disable @-reference parsing to avoid false positives."""
         manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        # Default SubagentOrchestratorConfig - no explicit parse_at_references
         manager._subagent_orchestrator_config = SubagentOrchestratorConfig(
             enabled=True,
-            parse_at_references=False,
         )
 
         cmd = manager._build_subagent_command(
             yaml_path=Path("/tmp/subagent.yaml"),
             answer_file=Path("/tmp/answer.txt"),
-            full_task="build a stylesheet using @import",
+            full_task="Use CSS @media and @keyframes with wght@400",
             runtime_mode="inherited",
         )
 
         assert "--no-parse-at-references" in cmd
-        assert cmd[-1] == "build a stylesheet using @import"
+        assert cmd[-1] == "Use CSS @media and @keyframes with wght@400"
 
-    def test_coordination_config_toggle_reaches_subagent_command(self, tmp_path):
+    def test_subagent_command_allows_at_parsing_when_explicitly_enabled(self, tmp_path):
+        """When explicitly enabled, @-reference parsing is active."""
+        manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        manager._subagent_orchestrator_config = SubagentOrchestratorConfig(
+            enabled=True,
+            parse_at_references=True,
+        )
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="Review @src/main.py",
+            runtime_mode="inherited",
+        )
+
+        assert "--no-parse-at-references" not in cmd
+
+    def test_coordination_config_default_disables_at_parsing(self, tmp_path):
         from massgen.cli import _parse_coordination_config
 
         coordination = _parse_coordination_config(
             {
                 "subagent_orchestrator": {
                     "enabled": True,
-                    "parse_at_references": False,
+                    # No parse_at_references key - should default to False
                 },
             },
         )

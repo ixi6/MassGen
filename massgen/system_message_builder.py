@@ -185,6 +185,7 @@ class SystemMessageBuilder:
         custom_checklist_items: list[str] | None = None,
         item_categories: dict[str, str] | None = None,
         item_verify_by: dict[str, str] | None = None,
+        builder_enabled: bool = True,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -288,6 +289,7 @@ class SystemMessageBuilder:
                     item_categories=item_categories,
                     item_verify_by=item_verify_by,
                     has_existing_answers=bool(answers),
+                    builder_enabled=builder_enabled,
                 ),
             )
 

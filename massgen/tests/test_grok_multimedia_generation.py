@@ -53,9 +53,10 @@ class TestGrokImageGeneration:
         """Should call client.image.sample() with correct params."""
         monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
 
-        fake_b64 = base64.b64encode(b"fake-png-bytes").decode()
+        raw_b64 = base64.b64encode(b"fake-png-bytes").decode()
+        fake_data_uri = f"data:image/png;base64,{raw_b64}"
         mock_response = MagicMock()
-        mock_response.base64 = fake_b64
+        mock_response.base64 = fake_data_uri
         mock_response.model = "grok-imagine-image"
         mock_response.prompt = "A cat in space"
 
@@ -98,10 +99,11 @@ class TestGrokImageGeneration:
         monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
 
         raw_bytes = b"fake-png-image-data"
-        fake_b64 = base64.b64encode(raw_bytes).decode()
+        raw_b64 = base64.b64encode(raw_bytes).decode()
+        fake_data_uri = f"data:image/png;base64,{raw_b64}"
 
         mock_response = MagicMock()
-        mock_response.base64 = fake_b64
+        mock_response.base64 = fake_data_uri
         mock_response.model = "grok-imagine-image"
 
         mock_image_client = AsyncMock()
@@ -140,9 +142,10 @@ class TestGrokImageGeneration:
         """Result metadata should include continuation_id starting with grok_img_."""
         monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
 
-        fake_b64 = base64.b64encode(b"img").decode()
+        raw_b64 = base64.b64encode(b"img").decode()
+        fake_data_uri = f"data:image/png;base64,{raw_b64}"
         mock_response = MagicMock()
-        mock_response.base64 = fake_b64
+        mock_response.base64 = fake_data_uri
         mock_response.model = "grok-imagine-image"
 
         mock_image_client = AsyncMock()
@@ -176,7 +179,7 @@ class TestGrokImageGeneration:
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ):
-        """continue_from should retrieve stored base64 and pass as image_url data URI."""
+        """continue_from should retrieve stored data URI and pass as image_url."""
         monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
 
         from massgen.tool._multimodal_tools.generation import _image as image_mod
@@ -184,14 +187,16 @@ class TestGrokImageGeneration:
             _grok_image_store,
         )
 
-        # Store a fake base64 image
-        stored_b64 = base64.b64encode(b"original-image").decode()
-        store_id = _grok_image_store.save(stored_b64)
+        # Store a fake data URI (matching real SDK behaviour)
+        raw_b64 = base64.b64encode(b"original-image").decode()
+        stored_data_uri = f"data:image/jpeg;base64,{raw_b64}"
+        store_id = _grok_image_store.save(stored_data_uri)
 
         # Mock SDK for second call
         new_b64 = base64.b64encode(b"edited-image").decode()
+        new_data_uri = f"data:image/jpeg;base64,{new_b64}"
         mock_response = MagicMock()
-        mock_response.base64 = new_b64
+        mock_response.base64 = new_data_uri
         mock_response.model = "grok-imagine-image"
 
         mock_image_client = AsyncMock()
@@ -216,7 +221,8 @@ class TestGrokImageGeneration:
 
         assert result.success is True
         call_kwargs = mock_image_client.sample.call_args.kwargs
-        assert call_kwargs["image_url"] == f"data:image/png;base64,{stored_b64}"
+        # The stored data URI should be passed directly as image_url
+        assert call_kwargs["image_url"] == stored_data_uri
 
     @pytest.mark.asyncio
     async def test_grok_image_continuation_not_found_returns_error(
@@ -254,9 +260,10 @@ class TestGrokImageGeneration:
         """config.aspect_ratio should be passed through to sample()."""
         monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
 
-        fake_b64 = base64.b64encode(b"img").decode()
+        raw_b64 = base64.b64encode(b"img").decode()
+        fake_data_uri = f"data:image/png;base64,{raw_b64}"
         mock_response = MagicMock()
-        mock_response.base64 = fake_b64
+        mock_response.base64 = fake_data_uri
         mock_response.model = "grok-imagine-image"
 
         mock_image_client = AsyncMock()
@@ -286,17 +293,18 @@ class TestGrokImageGeneration:
         assert call_kwargs["aspect_ratio"] == "16:9"
 
     @pytest.mark.asyncio
-    async def test_grok_image_size_mapped_to_resolution(
+    async def test_grok_image_size_always_maps_to_1k(
         self,
         monkeypatch: pytest.MonkeyPatch,
         tmp_path: Path,
     ):
-        """config.size='2k' should map to resolution='2k' in sample()."""
+        """Any size value should map to resolution='1k' (only valid Grok value)."""
         monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
 
-        fake_b64 = base64.b64encode(b"img").decode()
+        raw_b64 = base64.b64encode(b"img").decode()
+        fake_data_uri = f"data:image/png;base64,{raw_b64}"
         mock_response = MagicMock()
-        mock_response.base64 = fake_b64
+        mock_response.base64 = fake_data_uri
         mock_response.model = "grok-imagine-image"
 
         mock_image_client = AsyncMock()
@@ -323,7 +331,49 @@ class TestGrokImageGeneration:
 
         assert result.success is True
         call_kwargs = mock_image_client.sample.call_args.kwargs
-        assert call_kwargs["resolution"] == "2k"
+        assert call_kwargs["resolution"] == "1k"
+
+    @pytest.mark.asyncio
+    async def test_grok_image_to_image_passes_image_url(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        """input_images should be passed as image_url for image-to-image editing."""
+        monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
+
+        raw_b64 = base64.b64encode(b"img").decode()
+        fake_data_uri = f"data:image/png;base64,{raw_b64}"
+        mock_response = MagicMock()
+        mock_response.base64 = fake_data_uri
+        mock_response.model = "grok-imagine-image"
+
+        mock_image_client = AsyncMock()
+        mock_image_client.sample = AsyncMock(return_value=mock_response)
+
+        mock_client = MagicMock()
+        mock_client.image = mock_image_client
+
+        from massgen.tool._multimodal_tools.generation import _image as image_mod
+
+        mock_sdk = MagicMock()
+        mock_sdk.AsyncClient.return_value = mock_client
+        monkeypatch.setattr(image_mod, "xai_sdk", mock_sdk)
+
+        input_data_uri = f"data:image/jpeg;base64,{raw_b64}"
+        config = GenerationConfig(
+            prompt="Add a border",
+            output_path=tmp_path / "edited.png",
+            media_type=MediaType.IMAGE,
+            backend="grok",
+            input_images=[{"image_url": input_data_uri}],
+        )
+
+        result = await image_mod._generate_image_grok(config)
+
+        assert result.success is True
+        call_kwargs = mock_image_client.sample.call_args.kwargs
+        assert call_kwargs["image_url"] == input_data_uri
 
 
 # ---------------------------------------------------------------------------
@@ -332,34 +382,20 @@ class TestGrokImageGeneration:
 
 
 class TestGrokImageSizeMapping:
-    """Tests for _map_size_to_grok_resolution() helper."""
+    """Tests for _map_size_to_grok_resolution() helper.
 
-    def test_2k_maps_to_2k(self):
+    The xAI SDK only accepts ``Literal['1k']`` as a valid resolution,
+    so _map_size_to_grok_resolution always returns "1k".
+    """
+
+    def test_any_input_maps_to_1k(self):
         from massgen.tool._multimodal_tools.generation._image import (
             _map_size_to_grok_resolution,
         )
 
-        assert _map_size_to_grok_resolution("2k") == "2k"
-
-    def test_2K_uppercase_maps_to_2k(self):
-        from massgen.tool._multimodal_tools.generation._image import (
-            _map_size_to_grok_resolution,
-        )
-
-        assert _map_size_to_grok_resolution("2K") == "2k"
-
-    def test_2048x2048_maps_to_2k(self):
-        from massgen.tool._multimodal_tools.generation._image import (
-            _map_size_to_grok_resolution,
-        )
-
-        assert _map_size_to_grok_resolution("2048x2048") == "2k"
-
-    def test_default_maps_to_1k(self):
-        from massgen.tool._multimodal_tools.generation._image import (
-            _map_size_to_grok_resolution,
-        )
-
+        assert _map_size_to_grok_resolution("2k") == "1k"
+        assert _map_size_to_grok_resolution("2K") == "1k"
+        assert _map_size_to_grok_resolution("2048x2048") == "1k"
         assert _map_size_to_grok_resolution("1024x1024") == "1k"
 
     def test_none_maps_to_1k(self):
@@ -557,6 +593,132 @@ class TestGrokVideoGeneration:
         await video_mod._generate_video_grok(config2)
         call_kwargs2 = mock_video_client.generate.call_args.kwargs
         assert call_kwargs2["duration"] == 1
+
+    @pytest.mark.asyncio
+    async def test_grok_video_returns_continuation_id(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        """Result metadata should include continuation_id for editing."""
+        monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
+
+        mock_response = MagicMock()
+        mock_response.url = "https://example.com/video.mp4"
+        mock_response.duration = 5
+        mock_response.model = "grok-imagine-video"
+
+        mock_video_client = AsyncMock()
+        mock_video_client.generate = AsyncMock(return_value=mock_response)
+
+        mock_client = MagicMock()
+        mock_client.video = mock_video_client
+
+        from massgen.tool._multimodal_tools.generation import _video as video_mod
+
+        mock_sdk = MagicMock()
+        mock_sdk.AsyncClient.return_value = mock_client
+        monkeypatch.setattr(video_mod, "xai_sdk", mock_sdk)
+
+        mock_get_response = MagicMock()
+        mock_get_response.content = b"video"
+        mock_get_response.raise_for_status = MagicMock()
+        monkeypatch.setattr(video_mod.requests, "get", MagicMock(return_value=mock_get_response))
+
+        config = GenerationConfig(
+            prompt="Test video",
+            output_path=tmp_path / "vid.mp4",
+            media_type=MediaType.VIDEO,
+            backend="grok",
+        )
+
+        result = await video_mod._generate_video_grok(config)
+
+        assert result.success is True
+        assert "continuation_id" in result.metadata
+        assert result.metadata["continuation_id"].startswith("grok_vid_")
+
+    @pytest.mark.asyncio
+    async def test_grok_video_editing_passes_video_url(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        """continue_from should retrieve stored URL and pass as video_url."""
+        monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
+
+        from massgen.tool._multimodal_tools.generation import _video as video_mod
+        from massgen.tool._multimodal_tools.generation._video import (
+            _grok_video_store,
+        )
+
+        # Store a fake video URL
+        store_id = _grok_video_store.save("https://example.com/original.mp4")
+
+        mock_response = MagicMock()
+        mock_response.url = "https://example.com/edited.mp4"
+        mock_response.model = "grok-imagine-video"
+
+        mock_video_client = AsyncMock()
+        mock_video_client.generate = AsyncMock(return_value=mock_response)
+
+        mock_client = MagicMock()
+        mock_client.video = mock_video_client
+
+        mock_sdk = MagicMock()
+        mock_sdk.AsyncClient.return_value = mock_client
+        monkeypatch.setattr(video_mod, "xai_sdk", mock_sdk)
+
+        mock_get_response = MagicMock()
+        mock_get_response.content = b"edited-video"
+        mock_get_response.raise_for_status = MagicMock()
+        monkeypatch.setattr(video_mod.requests, "get", MagicMock(return_value=mock_get_response))
+
+        config = GenerationConfig(
+            prompt="Make it brighter",
+            output_path=tmp_path / "edited.mp4",
+            media_type=MediaType.VIDEO,
+            backend="grok",
+            continue_from=store_id,
+        )
+
+        result = await video_mod._edit_video_grok(config)
+
+        assert result.success is True
+        call_kwargs = mock_video_client.generate.call_args.kwargs
+        assert call_kwargs["video_url"] == "https://example.com/original.mp4"
+        assert call_kwargs["prompt"] == "Make it brighter"
+        # Editing should NOT pass duration/aspect_ratio/resolution
+        assert "duration" not in call_kwargs
+        assert "aspect_ratio" not in call_kwargs
+        assert "resolution" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_grok_video_editing_not_found_returns_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ):
+        """Invalid continuation ID should return error."""
+        monkeypatch.setenv("XAI_API_KEY", "test-xai-key")
+
+        from massgen.tool._multimodal_tools.generation import _video as video_mod
+
+        mock_sdk = MagicMock()
+        monkeypatch.setattr(video_mod, "xai_sdk", mock_sdk)
+
+        config = GenerationConfig(
+            prompt="Edit this",
+            output_path=tmp_path / "edit.mp4",
+            media_type=MediaType.VIDEO,
+            backend="grok",
+            continue_from="grok_vid_nonexistent",
+        )
+
+        result = await video_mod._edit_video_grok(config)
+
+        assert result.success is False
+        assert "not found" in result.error.lower()
 
 
 # ---------------------------------------------------------------------------

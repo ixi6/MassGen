@@ -328,7 +328,7 @@ class SubagentManager:
         runtime_mode: str,
     ) -> list[str]:
         """Build the subprocess command for a subagent launch."""
-        parse_at_references = True
+        parse_at_references = False  # Subagent tasks are AI-generated; default off
         if self._subagent_orchestrator_config is not None:
             parse_at_references = self._subagent_orchestrator_config.parse_at_references
 

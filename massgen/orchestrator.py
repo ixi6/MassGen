@@ -889,9 +889,6 @@ class Orchestrator(ChatAgent):
                 "require_diagnostic_report": bool(
                     getattr(self.config, "checklist_require_gap_report", True),
                 ),
-                # Require explicit change substantiveness metadata so rounds can
-                # naturally terminate when only incremental work remains.
-                "require_substantiveness": True,
                 # Needed by checklist server to interpret item semantics.
                 "changedoc_mode": self._is_changedoc_enabled(),
                 "workspace_path": getattr(
@@ -912,6 +909,16 @@ class Orchestrator(ChatAgent):
                 "critic_subagent_enabled": "critic" in [t.lower() for t in _active_subagent_types],
                 # Builder subagent guidance only when builder type is available
                 "builder_subagent_enabled": "builder" in [t.lower() for t in _active_subagent_types],
+                # Quality rethinking subagent: per-element craft improvements
+                "quality_rethinking_subagent_enabled": "quality_rethinking" in [t.lower() for t in _active_subagent_types],
+                # Always spawn quality/novelty subagents every round (not just on plateau)
+                "always_spawn_quality_subagents": bool(
+                    getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "always_spawn_quality_subagents",
+                        False,
+                    ),
+                ),
             }
             backend._checklist_state = checklist_state
             backend._checklist_items = list(items)
@@ -949,22 +956,13 @@ class Orchestrator(ChatAgent):
             logger.warning("claude-agent-sdk not available, checklist tool will not be registered")
             return
 
-        from .mcp_tools.checklist_tools_server import evaluate_checklist_submission
+        from .mcp_tools.checklist_tools_server import (
+            evaluate_checklist_submission,
+            evaluate_proposed_improvements,
+        )
 
         # Define tool schema — each score entry requires a reasoning string
-        # to force the model to justify every item.  `improvements` captures
-        # unrealized potential.  Reasoning text is ignored in verdict logic.
-        score_entry_schema = {
-            "type": "object",
-            "properties": {
-                "score": {"type": "integer", "minimum": 0, "maximum": 10},
-                "reasoning": {
-                    "type": "string",
-                    "description": "Why you gave this score — reference specific evidence.",
-                },
-            },
-            "required": ["score", "reasoning"],
-        }
+        # to force the model to justify every item.
         input_schema = {
             "type": "object",
             "properties": {
@@ -972,57 +970,33 @@ class Orchestrator(ChatAgent):
                     "type": "object",
                     "description": (
                         "Your confidence scores with reasoning for each checklist item. "
-                        f"Keys are item IDs (E1-E{len(checklist_items)}), values are objects with 'score' (0-10) "
-                        "and 'reasoning' (justification for that score)."
+                        "When multiple agents exist, use per-agent format: "
+                        '{"agent1.1": {"E1": {"score": N, "reasoning": "..."}, ...}, '
+                        '"agent2.1": {...}}. '
+                        "For single-agent evaluation, use flat format: "
+                        '{"E1": {"score": N, "reasoning": "..."}, ...}.'
                     ),
-                    "properties": {f"E{i+1}": score_entry_schema for i in range(len(checklist_items))},
-                    "required": [f"E{i+1}" for i in range(len(checklist_items))],
-                },
-                "improvements": {
-                    "type": "string",
-                    "description": ("Substantial features or content that would make the answer " "obviously better — not minor tweaks. If nothing meaningful, " "say so."),
+                    "additionalProperties": True,
                 },
                 "report_path": {
                     "type": "string",
                     "description": ("Path to the markdown gap report in the workspace. " "Required when checklist report gating is enabled."),
                 },
-                "substantiveness": {
+            },
+            "required": ["scores"],
+        }
+
+        # propose_improvements input schema
+        propose_schema = {
+            "type": "object",
+            "properties": {
+                "improvements": {
                     "type": "object",
-                    "description": ("Structured summary of planned changes. List specific items " "for each category so the system can verify what you commit to."),
-                    "properties": {
-                        "transformative": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of transformative changes planned (fundamentally different approach/architecture).",
-                        },
-                        "structural": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of structural changes planned (meaningful redesign, new capability).",
-                        },
-                        "incremental": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                            "description": "List of incremental-only changes planned (polish, formatting).",
-                        },
-                        "decision_space_exhausted": {
-                            "type": "boolean",
-                            "description": ("True only when no meaningful structural/transformative " "improvements remain."),
-                        },
-                        "notes": {
-                            "type": "string",
-                            "description": "Short justification for the classifications.",
-                        },
-                    },
-                    "required": [
-                        "transformative",
-                        "structural",
-                        "incremental",
-                        "decision_space_exhausted",
-                    ],
+                    "description": ("Map of criterion ID to list of improvements. " "Must cover ALL failing criteria from the last submit_checklist call."),
+                    "additionalProperties": {"type": "array", "items": {"type": "string"}},
                 },
             },
-            "required": ["scores", "improvements", "substantiveness"],
+            "required": ["improvements"],
         }
 
         # Create tool function with closure over mutable state
@@ -1033,16 +1007,17 @@ class Orchestrator(ChatAgent):
         _orchestrator = self
         _agent_id = agent_id
 
+        # Track last failed criteria for propose_improvements validation
+        _last_checklist_result: dict[str, Any] = {"failed_criteria": [], "items": []}
+
         @tool(
             name="submit_checklist",
             description=(
-                "Submit your checklist evaluation. Each score in 'scores' must be "
-                "an object with 'score' (0-10) and 'reasoning' (why you gave that "
-                "score). The 'improvements' field should describe features or content "
-                "that an ideal answer would have but no existing answer has attempted. "
-                "The 'substantiveness' field must classify planned changes as "
-                "transformative/structural/incremental and indicate whether decision "
-                "space is exhausted. "
+                "Submit your checklist evaluation. When multiple agents exist, "
+                "scores must use per-agent format: "
+                '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, '
+                '"agent2.1": {...}}. '
+                "Each score entry needs 'score' (0-10) and 'reasoning'. "
                 "Use 'report_path' to pass a markdown gap report when required."
             ),
             input_schema=input_schema,
@@ -1087,18 +1062,19 @@ class Orchestrator(ChatAgent):
             raw_scores = args.get("scores", {})
             result = evaluate_checklist_submission(
                 scores=raw_scores,
-                improvements=args.get("improvements", ""),
                 report_path=args.get("report_path", ""),
                 items=items,
                 state=_state,
-                substantiveness=args.get("substantiveness"),
+                checklist_history=agent_state.checklist_history if agent_state else None,
             )
+            _last_checklist_result["failed_criteria"] = result.get("failed_criteria", [])
+            _last_checklist_result["items"] = list(items)
 
             # Only accepted checklist submissions should consume this round's quota.
             # Validation failures (incomplete/malformed payloads or gated rejections)
             # must allow the agent to resubmit within the same round.
             submission_has_validation_error = bool(
-                result.get("error") or result.get("incomplete_scores") or result.get("report_gate_triggered") or result.get("substantiveness_gate_triggered"),
+                result.get("error") or result.get("incomplete_scores") or result.get("report_gate_triggered"),
             )
 
             # Store accepted checklist results for convergence detection and increment call counter.
@@ -1107,8 +1083,8 @@ class Orchestrator(ChatAgent):
                     {
                         "verdict": result.get("verdict"),
                         "true_count": result.get("true_count"),
-                        "substantiveness": result.get("substantiveness", {}),
-                        "convergence_offramp": result.get("convergence_offramp_triggered", False),
+                        "total_score": sum(d["score"] for d in result.get("items", [])),
+                        "items_detail": result.get("items", []),
                     },
                 )
                 agent_state.checklist_calls_this_round += 1
@@ -1120,12 +1096,7 @@ class Orchestrator(ChatAgent):
             if result.get("verdict") == iterate_action:
                 result = dict(result)
                 result["explanation"] = (
-                    result.get("explanation", "") + " You now have your improvement plan. Implement the changes identified above, "
-                    "verify them (screenshots, file checks, confirming changes landed correctly), "
-                    "then call the `new_answer` **workflow tool** to submit your completed work. "
-                    "Do not call `submit_checklist` again — verifying your own implementation "
-                    "after making changes is expected and correct, but `submit_checklist` is "
-                    "used once per answer."
+                    result.get("explanation", "") + " NEXT: Call `propose_improvements` with specific improvements for each " "failing criterion. Then implement your plan and call `new_answer`."
                 )
 
             return {
@@ -1137,11 +1108,39 @@ class Orchestrator(ChatAgent):
                 ],
             }
 
-        # Create SDK MCP server with this one tool
+        @tool(
+            name="propose_improvements",
+            description=(
+                "Propose specific improvements for each failing criterion. "
+                "Must be called after submit_checklist returns an iterate verdict. "
+                "Pass a dict mapping criterion IDs (e.g. 'E2', 'E5') to lists of "
+                "improvement descriptions. All failing criteria must be covered."
+            ),
+            input_schema=propose_schema,
+        )
+        async def propose_improvements_handler(args, _state=state):
+            import json as _json
+
+            improvements = args.get("improvements", {})
+            result = evaluate_proposed_improvements(
+                improvements=improvements,
+                failed_criteria=_last_checklist_result["failed_criteria"],
+                items=_last_checklist_result["items"] or list(items),
+            )
+            return {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": _json.dumps(result),
+                    },
+                ],
+            }
+
+        # Create SDK MCP server with both tools
         sdk_server = create_sdk_mcp_server(
             name="massgen_checklist",
             version="1.0.0",
-            tools=[submit_checklist_handler],
+            tools=[submit_checklist_handler, propose_improvements_handler],
         )
 
         # Inject into backend's MCP servers
@@ -1197,21 +1196,22 @@ class Orchestrator(ChatAgent):
         )
 
     def _detect_convergence(self, agent_id: str) -> tuple:
-        """Detect whether an agent is converging (incremental-only iterations).
+        """Detect whether an agent is converging (total score plateaued).
 
         Returns:
             Tuple of (is_converging: bool, consecutive_count: int).
             is_converging is True when 2+ consecutive checklist results show
-            incremental_only or decision_space_exhausted.
+            no meaningful score improvement (<=1 point gain).
         """
         state = self.agent_states.get(agent_id)
         if state is None:
             return False, 0
         history = state.checklist_history
         consecutive = 0
-        for entry in reversed(history):
-            sub = entry.get("substantiveness", {})
-            if sub.get("incremental_only") or sub.get("decision_space_exhausted"):
+        for i in range(len(history) - 1, 0, -1):
+            curr = history[i].get("total_score", 0)
+            prev = history[i - 1].get("total_score", 0)
+            if curr <= prev + 1:
                 consecutive += 1
             else:
                 break
@@ -1262,7 +1262,6 @@ class Orchestrator(ChatAgent):
                 "require_diagnostic_report": bool(
                     getattr(self.config, "checklist_require_gap_report", True),
                 ),
-                "require_substantiveness": True,
                 "changedoc_mode": self._is_changedoc_enabled(),
                 "workspace_path": getattr(
                     getattr(agent.backend, "filesystem_manager", None),
@@ -1275,6 +1274,8 @@ class Orchestrator(ChatAgent):
                 "critic_subagent_enabled": state.get("critic_subagent_enabled", False),
                 # Preserve builder gating from initial state
                 "builder_subagent_enabled": state.get("builder_subagent_enabled", False),
+                # Preserve always_spawn_quality_subagents from initial state
+                "always_spawn_quality_subagents": state.get("always_spawn_quality_subagents", False),
                 # Update available agent labels so checklist enforces complete coverage.
                 # Includes labels injected mid-stream (updated by update_agent_context_with_new_answers).
                 "available_agent_labels": list(
@@ -4852,6 +4853,13 @@ Your answer:"""
                                 result_data,
                                 snapshot_timestamp=answer_timestamp,
                             )
+                            # Update the agent's own context label so submit_checklist
+                            # accepts the new version (e.g. agent2.2 replaces agent2.1).
+                            self.coordination_tracker.update_agent_context_with_new_answers(
+                                agent_id,
+                                [agent_id],
+                            )
+                            self._refresh_checklist_state_for_agent(agent_id)
                             # Attach changedoc from workspace if enabled
                             if self._is_changedoc_enabled() and agent and agent.backend.filesystem_manager:
                                 from massgen.changedoc import (
@@ -8637,6 +8645,20 @@ Your answer:"""
         """Return True when orchestration is running in decomposition mode."""
         return getattr(self.config, "coordination_mode", "voting") == "decomposition"
 
+    def _is_builder_subagent_enabled(self) -> bool:
+        """Return True when 'builder' is in the active subagent types."""
+        from massgen.subagent.type_scanner import DEFAULT_SUBAGENT_TYPES
+
+        types = (
+            getattr(
+                getattr(self.config, "coordination_config", None),
+                "subagent_types",
+                None,
+            )
+            or DEFAULT_SUBAGENT_TYPES
+        )
+        return "builder" in [t.lower() for t in types]
+
     def _is_changedoc_enabled(self) -> bool:
         """Return True when changedoc decision journal is enabled."""
         coord = getattr(self.config, "coordination_config", None)
@@ -9938,6 +9960,7 @@ Your answer:"""
                 custom_checklist_items=_active_items,
                 item_categories=_active_categories,
                 item_verify_by=_active_verify_by,
+                builder_enabled=self._is_builder_subagent_enabled(),
             )
 
             # Update checklist tool state if registered (mutable dict — tool closure reads this)

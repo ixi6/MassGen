@@ -194,6 +194,7 @@ class CoordinationConfig:
     enable_changedoc: bool = True  # Write changedoc.md decision journal during coordination
     drift_conflict_policy: str = "skip"  # "skip" | "prefer_presenter" | "fail"
     subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
+    always_spawn_quality_subagents: bool = False  # Spawn quality_rethinking + novelty subagents every round, not just on plateau
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
     checklist_criteria_preset: str | None = None  # "persona" | "decomposition" | "evaluation" | "prompt" | "analysis"
     checklist_criteria_inline: list[dict[str, str]] | None = None  # [{text: str, category: must|should|could}]

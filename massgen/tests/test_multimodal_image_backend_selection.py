@@ -650,8 +650,9 @@ class TestGeminiContinuation:
         mock_send_response.candidates = [mock_candidate]
         mock_chat.send_message = MagicMock(return_value=mock_send_response)
 
-        # Store the chat with a known ID
-        chat_id = _gemini_chat_store.save(mock_chat)
+        # Store the chat with a known ID (save requires client + chat)
+        mock_client = MagicMock()
+        chat_id = _gemini_chat_store.save(mock_client, mock_chat)
 
         # Patch genai and genai_types
         mock_genai = MagicMock()

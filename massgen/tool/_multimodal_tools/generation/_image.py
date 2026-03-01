@@ -36,21 +36,29 @@ from massgen.tool._multimodal_tools.generation._base import (
 
 
 class _GeminiChatStore:
-    """In-memory store for Gemini chat objects used in multi-turn image editing."""
+    """In-memory store for Gemini chat objects used in multi-turn image editing.
+
+    Stores ``(client, chat)`` tuples so the ``genai.Client`` stays alive
+    across continuation calls — preventing the underlying HTTP connection
+    from being garbage-collected.
+    """
 
     def __init__(self, max_chats: int = 50):
-        self._store: OrderedDict[str, Any] = OrderedDict()
+        self._store: OrderedDict[str, tuple[Any, Any]] = OrderedDict()
         self._max = max_chats
 
-    def save(self, chat_obj: Any) -> str:
+    def save(self, client: Any, chat_obj: Any) -> str:
         chat_id = f"gemini_chat_{uuid.uuid4().hex[:12]}"
         if len(self._store) >= self._max:
             self._store.popitem(last=False)
-        self._store[chat_id] = chat_obj
+        self._store[chat_id] = (client, chat_obj)
         return chat_id
 
-    def get(self, chat_id: str) -> Any | None:
-        return self._store.get(chat_id)
+    def get(self, chat_id: str) -> tuple[Any, Any]:
+        entry = self._store.get(chat_id)
+        if entry is None:
+            return None, None
+        return entry
 
 
 _gemini_chat_store = _GeminiChatStore()
@@ -80,17 +88,14 @@ _grok_image_store = _GrokImageStore()
 def _map_size_to_grok_resolution(size: str | None) -> str:
     """Map a size string to Grok resolution parameter.
 
+    The xAI SDK only supports ``"1k"`` as a valid resolution value.
+
     Args:
-        size: Size string from config (e.g., "2k", "2K", "2048x2048")
+        size: Size string from config (ignored — only "1k" is valid)
 
     Returns:
-        "2k" for high-res requests, "1k" otherwise
+        Always "1k" (the only supported Grok image resolution)
     """
-    if not size:
-        return "1k"
-    normalized = size.lower().strip()
-    if normalized in ("2k", "2048x2048"):
-        return "2k"
     return "1k"
 
 
@@ -106,6 +111,28 @@ async def generate_image(config: GenerationConfig) -> GenerationResult:
         GenerationResult with success status and file info
     """
     backend = config.backend or "openai"  # Default if not specified
+
+    # Route inpainting when mask_path is provided
+    if config.mask_path:
+        if backend == "google":
+            return await _edit_image_google(config)
+        if backend != "openai":
+            return GenerationResult(
+                success=False,
+                backend_name=backend,
+                error=("Inpainting (mask_path) is supported by " "the OpenAI and Google backends."),
+            )
+        return await _inpaint_image_openai(config)
+
+    # Route Google advanced editing when reference images are provided
+    if _has_google_edit_params(config):
+        if backend != "google":
+            return GenerationResult(
+                success=False,
+                backend_name=backend,
+                error=("Style transfer, control, and subject editing are only " "supported by the Google (Imagen) backend."),
+            )
+        return await _edit_image_google(config)
 
     if backend == "google":
         return await _generate_image_google(config)
@@ -153,12 +180,16 @@ async def _generate_image_openai(config: GenerationConfig) -> GenerationResult:
         else:
             input_content = config.prompt
 
-        # Build image tool config with optional quality and size
+        # Build image tool config with optional quality, size, format, background
         image_tool: dict[str, Any] = {"type": "image_generation"}
         if config.quality:
             image_tool["quality"] = config.quality
         if config.size:
             image_tool["size"] = config.size
+        if config.output_format:
+            image_tool["output_format"] = config.output_format
+        if config.background:
+            image_tool["background"] = config.background
 
         # Build create kwargs with optional continuation
         create_kwargs: dict[str, Any] = {
@@ -304,8 +335,9 @@ async def _generate_image_google_gemini(
         msg_contents = _build_gemini_contents(config)
 
         if config.continue_from:
-            # Retrieve existing chat from store
-            chat = _gemini_chat_store.get(config.continue_from)
+            # Retrieve existing (client, chat) from store — the stored
+            # client keeps the HTTP connection alive.
+            stored_client, chat = _gemini_chat_store.get(config.continue_from)
             if not chat:
                 return GenerationResult(
                     success=False,
@@ -314,16 +346,26 @@ async def _generate_image_google_gemini(
                     error=("Continuation chat not found. The continuation_id " f"'{config.continue_from}' may have expired or is invalid."),
                 )
             response = chat.send_message(msg_contents, config=gen_config)
+            # Keep the original client alive for further continuations
+            client = stored_client
         else:
             # First call — create chat and send initial message
             chat = client.chats.create(model=model, config=gen_config)
             response = chat.send_message(msg_contents, config=gen_config)
 
-        # Store chat for future continuation
-        chat_id = _gemini_chat_store.save(chat)
+        # Store (client, chat) for future continuation
+        chat_id = _gemini_chat_store.save(client, chat)
 
         # Extract image from response parts
-        for part in response.candidates[0].content.parts:
+        candidates = getattr(response, "candidates", None)
+        if not candidates or not candidates[0].content or not candidates[0].content.parts:
+            return GenerationResult(
+                success=False,
+                backend_name="google",
+                model_used=model,
+                error="Google Gemini returned no image content. The model may have refused the request.",
+            )
+        for part in candidates[0].content.parts:
             if part.inline_data is not None:
                 image = part.as_image()
                 image.save(str(config.output_path))
@@ -377,11 +419,25 @@ async def _generate_image_google_imagen(
     try:
         client = genai.Client(api_key=api_key)
 
+        # Determine output MIME type
+        output_mime = "image/png"
+        if config.output_format:
+            fmt_map = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
+            output_mime = fmt_map.get(config.output_format.lower(), "image/png")
+
         # Prepare config
-        gen_config = genai_types.GenerateImagesConfig(
-            number_of_images=1,
-            output_mime_type="image/png",
-        )
+        gen_config_kwargs: dict[str, Any] = {
+            "number_of_images": 1,
+            "output_mime_type": output_mime,
+        }
+        if config.negative_prompt:
+            gen_config_kwargs["negative_prompt"] = config.negative_prompt
+        if config.seed is not None:
+            gen_config_kwargs["seed"] = config.seed
+        if config.guidance_scale is not None:
+            gen_config_kwargs["guidance_scale"] = config.guidance_scale
+
+        gen_config = genai_types.GenerateImagesConfig(**gen_config_kwargs)
 
         # Add aspect ratio if specified
         if config.aspect_ratio:
@@ -462,26 +518,38 @@ async def _generate_image_grok(config: GenerationConfig) -> GenerationResult:
 
         sample_kwargs["resolution"] = _map_size_to_grok_resolution(config.size)
 
-        # Handle continuation — retrieve stored base64 and pass as data URI
+        # Handle continuation — retrieve stored data URI and pass directly
         if config.continue_from:
-            stored_b64 = _grok_image_store.get(config.continue_from)
-            if not stored_b64:
+            stored_data_uri = _grok_image_store.get(config.continue_from)
+            if not stored_data_uri:
                 return GenerationResult(
                     success=False,
                     backend_name="grok",
                     model_used=model,
                     error=("Continuation image not found. The continuation_id " f"'{config.continue_from}' may have expired or is invalid."),
                 )
-            sample_kwargs["image_url"] = f"data:image/png;base64,{stored_b64}"
+            sample_kwargs["image_url"] = stored_data_uri
+        elif config.input_images:
+            # Image-to-image editing: pass first input image as image_url
+            first_image = config.input_images[0]
+            image_url = first_image.get("image_url", "")
+            if image_url:
+                sample_kwargs["image_url"] = image_url
 
         response = await client.image.sample(**sample_kwargs)
 
-        # Decode and save image
-        image_bytes = base64.b64decode(response.base64)
+        # response.base64 is a data URI ("data:image/...;base64,<data>").
+        # Strip the prefix to get raw base64, then decode.
+        data_uri = response.base64
+        if "base64," in data_uri:
+            raw_b64 = data_uri.split("base64,", 1)[1]
+        else:
+            raw_b64 = data_uri
+        image_bytes = base64.b64decode(raw_b64)
         config.output_path.write_bytes(image_bytes)
 
-        # Store base64 for future continuation
-        continuation_id = _grok_image_store.save(response.base64)
+        # Store the full data URI for continuation (image_url expects it)
+        continuation_id = _grok_image_store.save(data_uri)
 
         return GenerationResult(
             success=True,
@@ -637,4 +705,366 @@ async def _generate_image_openrouter(config: GenerationConfig) -> GenerationResu
             success=False,
             backend_name="openrouter",
             error=f"OpenRouter error: {str(e)}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Inpainting (MAS-333 Phase 4)
+# ---------------------------------------------------------------------------
+
+
+async def _inpaint_image_openai(config: GenerationConfig) -> GenerationResult:
+    """Inpaint an image using OpenAI's images.edit() API.
+
+    Requires a mask image (PNG with transparent regions indicating where
+    to generate new content) and optionally a source image.
+
+    Args:
+        config: GenerationConfig with mask_path, prompt, and optionally
+                input_images (source image) or continue_from (previous result)
+
+    Returns:
+        GenerationResult with inpainted image info
+    """
+    api_key = get_api_key("openai")
+    if not api_key:
+        return GenerationResult(
+            success=False,
+            backend_name="openai",
+            error="OpenAI API key not found. Set OPENAI_API_KEY environment variable.",
+        )
+
+    if not config.mask_path or not config.mask_path.exists():
+        return GenerationResult(
+            success=False,
+            backend_name="openai",
+            error=f"Mask file not found: {config.mask_path}",
+        )
+
+    # Must have a source image (via input_images or continue_from)
+    if not config.input_images and not config.continue_from:
+        return GenerationResult(
+            success=False,
+            backend_name="openai",
+            error=("Inpainting requires a source image. Provide input_images " "with the image to edit, or continue_from with a previous " "generation's continuation_id."),
+        )
+
+    try:
+        client = AsyncOpenAI(api_key=api_key)
+        model = config.model or "gpt-5.2"
+
+        # Build edit kwargs
+        edit_kwargs: dict[str, Any] = {
+            "model": model,
+            "prompt": config.prompt,
+        }
+
+        # Load mask file
+        mask_file = open(config.mask_path, "rb")  # noqa: SIM115
+        edit_kwargs["mask"] = mask_file
+
+        # Load source image
+        source_file = None
+        if config.input_images:
+            first_image = config.input_images[0]
+            image_url = first_image.get("image_url", "")
+            if image_url.startswith("data:"):
+                b64_data = image_url.split(",", 1)[1]
+                import io
+
+                source_bytes = base64.b64decode(b64_data)
+                source_file = io.BytesIO(source_bytes)
+                source_file.name = "source.png"
+                edit_kwargs["image"] = source_file
+
+        # Optional parameters
+        if config.output_format:
+            edit_kwargs["output_format"] = config.output_format
+        if config.background:
+            edit_kwargs["background"] = config.background
+        if config.size:
+            edit_kwargs["size"] = config.size
+
+        try:
+            response = await client.images.edit(**edit_kwargs)
+        finally:
+            mask_file.close()
+            if source_file:
+                source_file.close()
+
+        if not response.data:
+            return GenerationResult(
+                success=False,
+                backend_name="openai",
+                model_used=model,
+                error="No image data in inpainting response",
+            )
+
+        # Save the result
+        image_data = response.data[0]
+        if image_data.b64_json:
+            image_bytes = base64.b64decode(image_data.b64_json)
+            config.output_path.write_bytes(image_bytes)
+        elif image_data.url:
+            img_response = requests.get(image_data.url, timeout=60)
+            img_response.raise_for_status()
+            image_bytes = img_response.content
+            config.output_path.write_bytes(image_bytes)
+        else:
+            return GenerationResult(
+                success=False,
+                backend_name="openai",
+                model_used=model,
+                error="No image data or URL in inpainting response",
+            )
+
+        file_size = config.output_path.stat().st_size
+
+        return GenerationResult(
+            success=True,
+            output_path=config.output_path,
+            media_type=MediaType.IMAGE,
+            backend_name="openai",
+            model_used=model,
+            file_size_bytes=file_size,
+            metadata={
+                "edit_mode": "inpaint",
+                "mask_path": str(config.mask_path),
+                "output_format": config.output_format,
+                "background": config.background,
+            },
+        )
+
+    except Exception as e:
+        logger.exception(f"OpenAI inpainting failed: {e}")
+        return GenerationResult(
+            success=False,
+            backend_name="openai",
+            error=f"OpenAI inpainting error: {str(e)}",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Google Advanced Image Editing (MAS-333 Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _has_google_edit_params(config: GenerationConfig) -> bool:
+    """Check if config has any Google advanced editing parameters set."""
+    return any(
+        [
+            config.style_image_path,
+            config.control_image_path,
+            config.subject_image_path,
+            config.mask_mode,
+        ],
+    )
+
+
+def _build_google_reference_images(
+    config: GenerationConfig,
+) -> list[Any]:
+    """Build reference image list for Google Imagen edit_image API.
+
+    Constructs the appropriate ReferenceImage objects based on which
+    editing parameters are set in the config.
+
+    Args:
+        config: GenerationConfig with editing parameters
+
+    Returns:
+        List of ReferenceImage objects for the edit_image API
+    """
+    from google.genai import types
+
+    reference_images = []
+
+    # Style transfer reference
+    if config.style_image_path and config.style_image_path.exists():
+        style_bytes = config.style_image_path.read_bytes()
+        style_config_kwargs: dict[str, Any] = {}
+        if config.style_description:
+            style_config_kwargs["style_description"] = config.style_description
+        reference_images.append(
+            types.StyleReferenceImage(
+                reference_image=types.RawReferenceImage(
+                    reference_id=1,
+                    reference_image=types.Image(image_bytes=style_bytes),
+                ),
+                config=types.StyleReferenceConfig(**style_config_kwargs) if style_config_kwargs else None,
+            ),
+        )
+
+    # Control (structural) reference
+    if config.control_image_path and config.control_image_path.exists():
+        control_bytes = config.control_image_path.read_bytes()
+        control_config_kwargs: dict[str, Any] = {}
+        if config.control_type:
+            control_config_kwargs["control_type"] = config.control_type
+        reference_images.append(
+            types.ControlReferenceImage(
+                reference_image=types.RawReferenceImage(
+                    reference_id=2,
+                    reference_image=types.Image(image_bytes=control_bytes),
+                ),
+                config=types.ControlReferenceConfig(**control_config_kwargs) if control_config_kwargs else None,
+            ),
+        )
+
+    # Subject consistency reference
+    if config.subject_image_path and config.subject_image_path.exists():
+        subject_bytes = config.subject_image_path.read_bytes()
+        subject_config_kwargs: dict[str, Any] = {}
+        if config.subject_type:
+            subject_config_kwargs["subject_type"] = config.subject_type
+        if config.subject_description:
+            subject_config_kwargs["subject_description"] = config.subject_description
+        reference_images.append(
+            types.SubjectReferenceImage(
+                reference_image=types.RawReferenceImage(
+                    reference_id=3,
+                    reference_image=types.Image(image_bytes=subject_bytes),
+                ),
+                config=types.SubjectReferenceConfig(**subject_config_kwargs) if subject_config_kwargs else None,
+            ),
+        )
+
+    # Mask reference (for Google-side inpainting)
+    if config.mask_path and config.mask_path.exists():
+        mask_bytes = config.mask_path.read_bytes()
+        mask_config_kwargs: dict[str, Any] = {}
+        if config.mask_mode:
+            mask_config_kwargs["mask_mode"] = config.mask_mode
+        if config.segmentation_classes:
+            mask_config_kwargs["segmentation_classes"] = config.segmentation_classes
+        # For mask + input_images, use the first input image as the source
+        source_image = None
+        if config.input_images:
+            first_image = config.input_images[0]
+            image_url = first_image.get("image_url", "")
+            if image_url.startswith("data:"):
+                b64_data = image_url.split(",", 1)[1]
+                source_bytes = base64.b64decode(b64_data)
+                source_image = types.Image(image_bytes=source_bytes)
+        reference_images.append(
+            types.MaskReferenceImage(
+                reference_image=types.RawReferenceImage(
+                    reference_id=4,
+                    reference_image=source_image
+                    or types.Image(
+                        image_bytes=mask_bytes,
+                    ),
+                ),
+                config=types.MaskReferenceConfig(**mask_config_kwargs) if mask_config_kwargs else None,
+                mask_image=types.Image(image_bytes=mask_bytes),
+            ),
+        )
+
+    return reference_images
+
+
+async def _edit_image_google(config: GenerationConfig) -> GenerationResult:
+    """Edit an image using Google Imagen's edit_image API.
+
+    Supports style transfer, structural control, subject consistency,
+    and mask-based inpainting via reference images.
+
+    Args:
+        config: GenerationConfig with editing parameters (style_image_path,
+                control_image_path, subject_image_path, mask_path, etc.)
+
+    Returns:
+        GenerationResult with edited image info
+    """
+    api_key = get_api_key("google")
+    if not api_key:
+        return GenerationResult(
+            success=False,
+            backend_name="google",
+            error="Google API key not found. Set GOOGLE_API_KEY or GEMINI_API_KEY.",
+        )
+
+    try:
+        from google.genai import types
+
+        client = genai.Client(api_key=api_key)
+        model = config.model or "imagen-3.0-capability-001"
+
+        # Build reference images
+        reference_images = _build_google_reference_images(config)
+        if not reference_images:
+            return GenerationResult(
+                success=False,
+                backend_name="google",
+                model_used=model,
+                error="No valid reference images for editing operation.",
+            )
+
+        # Build edit config
+        edit_config_kwargs: dict[str, Any] = {
+            "number_of_images": 1,
+            "output_mime_type": "image/png",
+        }
+        if config.negative_prompt:
+            edit_config_kwargs["negative_prompt"] = config.negative_prompt
+        if config.seed is not None:
+            edit_config_kwargs["seed"] = config.seed
+        if config.guidance_scale is not None:
+            edit_config_kwargs["guidance_scale"] = config.guidance_scale
+
+        edit_config = types.EditImageConfig(**edit_config_kwargs)
+
+        # Call edit_image API
+        response = client.models.edit_image(
+            model=model,
+            prompt=config.prompt,
+            reference_images=reference_images,
+            config=edit_config,
+        )
+
+        if not response.generated_images:
+            return GenerationResult(
+                success=False,
+                backend_name="google",
+                model_used=model,
+                error="No images generated from editing operation.",
+            )
+
+        # Save first result
+        generated_image = response.generated_images[0]
+        generated_image.image.save(str(config.output_path))
+
+        file_size = config.output_path.stat().st_size
+
+        # Determine edit type for metadata
+        edit_types = []
+        if config.style_image_path:
+            edit_types.append("style_transfer")
+        if config.control_image_path:
+            edit_types.append("control")
+        if config.subject_image_path:
+            edit_types.append("subject")
+        if config.mask_path:
+            edit_types.append("inpaint")
+
+        return GenerationResult(
+            success=True,
+            output_path=config.output_path,
+            media_type=MediaType.IMAGE,
+            backend_name="google",
+            model_used=model,
+            file_size_bytes=file_size,
+            metadata={
+                "edit_types": edit_types,
+                "reference_count": len(reference_images),
+                "total_images": len(response.generated_images),
+            },
+        )
+
+    except Exception as e:
+        logger.exception(f"Google Imagen editing failed: {e}")
+        return GenerationResult(
+            success=False,
+            backend_name="google",
+            error=f"Google Imagen editing error: {str(e)}",
         )

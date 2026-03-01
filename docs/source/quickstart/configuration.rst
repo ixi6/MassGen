@@ -92,6 +92,24 @@ MassGen also creates a ``.massgen/`` directory in your project for sessions, wor
    # Then use it:
    uv run massgen --config research-team "Your question"
 
+Quickstart Output Filenames
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Quickstart supports explicit config filenames without manually editing paths:
+
+.. code-block:: bash
+
+   # Uses quickstart defaults and saves to .massgen/team-config.yaml
+   uv run massgen --quickstart --config team-config
+
+   # Extension is optional; .yaml is added when omitted
+   uv run massgen --quickstart --config team-config.yaml
+
+In the TUI/Web quickstart wizard, use the "Save Location" step to:
+
+* choose project (``.massgen/``) or global (``~/.config/massgen/``) save location
+* enter a custom filename
+
 Environment Variables
 ---------------------
 

@@ -152,6 +152,13 @@ COMMON_MODELS_BY_PROVIDER = {
         "kimi-k2-instruct",
         "kimi-k2-base",
     ],
+    "nvidia_nim": [
+        "moonshotai/kimi-k2.5",
+        "deepseek-ai/deepseek-r1",
+        "meta/llama-3.3-70b-instruct",
+        "nvidia/llama-3.1-nemotron-70b-instruct",
+        "mistralai/mistral-large-2-instruct",
+    ],
     "qwen": [
         "qwen3-max",
         "qwen3-max-2025-09-23",
@@ -204,6 +211,7 @@ def get_all_models_for_provider(provider_type: str, use_api: bool = True) -> lis
         "nebius",
         "fireworks",
         "moonshot",
+        "nvidia_nim",
         "qwen",
         "openai",
     ]

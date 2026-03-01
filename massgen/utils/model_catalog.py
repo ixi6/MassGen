@@ -348,6 +348,9 @@ async def get_models_for_provider(provider: str, use_cache: bool = True) -> list
     elif provider == "moonshot":
         # Moonshot/Kimi uses OpenAI-compatible endpoint
         models = await fetch_openai_compatible_models("https://api.moonshot.cn/v1", os.getenv("MOONSHOT_API_KEY"))
+    elif provider == "nvidia_nim":
+        # Nvidia NIM uses OpenAI-compatible endpoint
+        models = await fetch_openai_compatible_models("https://integrate.api.nvidia.com/v1", os.getenv("NGC_API_KEY"))
     elif provider == "qwen":
         # Qwen uses DashScope API (OpenAI-compatible)
         models = await fetch_openai_compatible_models(

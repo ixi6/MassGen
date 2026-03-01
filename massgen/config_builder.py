@@ -340,6 +340,7 @@ class ConfigBuilder:
             "nebius",
             "fireworks",
             "moonshot",
+            "nvidia_nim",
             "qwen",
         ]
 
@@ -568,6 +569,7 @@ class ConfigBuilder:
                 ("openrouter", "OpenRouter", "OPENROUTER_API_KEY"),
                 ("zai", "ZAI (Zhipu.ai)", "ZAI_API_KEY"),
                 ("moonshot", "Kimi/Moonshot AI", "MOONSHOT_API_KEY"),
+                ("nvidia_nim", "Nvidia NIM", "NGC_API_KEY"),
                 ("poe", "POE", "POE_API_KEY"),
                 ("qwen", "Qwen (Alibaba)", "QWEN_API_KEY"),
             ]

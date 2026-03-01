@@ -9,6 +9,7 @@ Supported Providers and Environment Variables:
 - Fireworks AI: FIREWORKS_API_KEY
 - Groq: GROQ_API_KEY
 - Kimi/Moonshot: MOONSHOT_API_KEY or KIMI_API_KEY
+- Nvidia NIM: NGC_API_KEY
 - Nebius AI Studio: NEBIUS_API_KEY
 - OpenRouter: OPENROUTER_API_KEY
 - ZAI: ZAI_API_KEY
@@ -1103,6 +1104,8 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             return "Nebius AI Studio"
         elif "moonshot.ai" in base_url or "moonshot.cn" in base_url:
             return "Kimi"
+        elif "nvidia.com" in base_url:
+            return "Nvidia NIM"
         elif "poe.com" in base_url:
             return "POE"
         elif "aliyuncs.com" in base_url:

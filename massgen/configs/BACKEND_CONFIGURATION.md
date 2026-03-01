@@ -363,6 +363,7 @@ backend:
 - **Fireworks**: `https://api.fireworks.ai/inference/v1`
 - **Groq**: `https://api.groq.com/openai/v1`
 - **OpenRouter**: `https://openrouter.ai/api/v1`
+- **Nvidia NIM**: `https://integrate.api.nvidia.com/v1`
 - **Kimi/Moonshot**: `https://api.moonshot.cn/v1`
 
 ---
@@ -440,6 +441,7 @@ TOGETHER_API_KEY=your-together-key
 CEREBRAS_API_KEY=your-cerebras-key
 GROQ_API_KEY=your-groq-key
 MOONSHOT_API_KEY=your-kimi-key
+NGC_API_KEY=your-nvidia-nim-key
 
 # MCP Services
 BRAVE_API_KEY=your-brave-search-key

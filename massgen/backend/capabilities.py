@@ -572,6 +572,20 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         notes="OpenAI-compatible API. Chinese language optimized models with long context windows.",
         base_url="https://api.moonshot.cn/v1",
     ),
+    "nvidia_nim": BackendCapabilities(
+        backend_type="nvidia_nim",
+        provider_name="Nvidia NIM",
+        supported_capabilities={
+            "mcp",
+        },
+        builtin_tools=[],
+        filesystem_support="mcp",
+        models=["moonshotai/kimi-k2.5", "custom"],
+        default_model="moonshotai/kimi-k2.5",
+        env_var="NGC_API_KEY",
+        notes="OpenAI-compatible API. Nvidia NIM inference microservices. Access to models like Kimi K2.5, DeepSeek, Llama, and Nemotron via Nvidia's cloud.",
+        base_url="https://integrate.api.nvidia.com/v1",
+    ),
     "nebius": BackendCapabilities(
         backend_type="nebius",
         provider_name="Nebius AI Studio",

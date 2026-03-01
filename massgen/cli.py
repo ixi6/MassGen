@@ -1668,6 +1668,7 @@ def create_backend(backend_type: str, **kwargs) -> Any:
     - claude: Anthropic Claude (requires ANTHROPIC_API_KEY)
     - gemini: Google Gemini (requires GOOGLE_API_KEY or GEMINI_API_KEY)
     - chatcompletion: OpenAI-compatible providers (auto-detects API key based on base_url)
+    - nvidia_nim: Nvidia NIM (requires NGC_API_KEY)
 
     Supported backend with external dependencies:
     - ag2/autogen: AG2 (AutoGen) framework agents
@@ -1679,6 +1680,7 @@ def create_backend(backend_type: str, **kwargs) -> Any:
     - Groq (groq.com) -> GROQ_API_KEY
     - Nebius AI Studio (studio.nebius.ai) -> NEBIUS_API_KEY
     - OpenRouter (openrouter.ai) -> OPENROUTER_API_KEY
+    - Nvidia NIM (nvidia.com) -> NGC_API_KEY
     - POE (poe.com) -> POE_API_KEY
     - Qwen (dashscope.aliyuncs.com) -> QWEN_API_KEY
 
@@ -1806,6 +1808,15 @@ def create_backend(backend_type: str, **kwargs) -> Any:
                         "  - Current directory: .env\n"
                         "  - Global config: ~/.massgen/.env",
                     )
+            elif base_url and "nvidia.com" in base_url:
+                api_key = os.getenv("NGC_API_KEY")
+                if not api_key:
+                    raise ConfigurationError(
+                        "Nvidia NIM API key not found. Set NGC_API_KEY environment variable.\n"
+                        "You can add it to a .env file in:\n"
+                        "  - Current directory: .env\n"
+                        "  - Global config: ~/.massgen/.env",
+                    )
             elif base_url and "poe.com" in base_url:
                 api_key = os.getenv("POE_API_KEY")
                 if not api_key:
@@ -1899,6 +1910,17 @@ def create_backend(backend_type: str, **kwargs) -> Any:
             )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.moonshot.cn/v1"
+        return ChatCompletionsBackend(api_key=api_key, **kwargs)
+
+    elif backend_type == "nvidia_nim":
+        # Nvidia NIM uses OpenAI-compatible Chat Completions API
+        api_key = kwargs.get("api_key") or os.getenv("NGC_API_KEY")
+        if not api_key:
+            raise ConfigurationError(
+                _api_key_error_message("Nvidia NIM", "NGC_API_KEY", config_path),
+            )
+        if "base_url" not in kwargs:
+            kwargs["base_url"] = "https://integrate.api.nvidia.com/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
 
     elif backend_type == "nebius":
@@ -2218,6 +2240,7 @@ def create_agents_from_config(
             "groq",
             "openrouter",
             "moonshot",
+            "nvidia_nim",
             "nebius",
             "poe",
             "qwen",

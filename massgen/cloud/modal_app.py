@@ -19,12 +19,27 @@ APP_NAME = "massgen-cloud-job"
 RESULT_MARKER = CloudJobLauncher.RESULT_MARKER
 
 app = modal.App(APP_NAME)
-image = modal.Image.debian_slim(python_version="3.11").pip_install("massgen")
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .pip_install(
+        "massgen",
+        "fastmcp",
+        "uv",
+    )
+    .apt_install(
+        "nodejs",
+        "npm",
+        "curl",
+        "wget",
+        "git",
+        "build-essential",
+    )
+)
 
 
 @app.function(image=image, timeout=60 * 60)
 def run_massgen_job(payload_b64: str) -> dict:
-    """Run massgen automation in Modal and print a parseable result marker."""
+    """Local entrypoint for Modal job."""
     payload: Dict[str, object] = json.loads(base64.b64decode(payload_b64).decode("utf-8"))
 
     prompt = str(payload["prompt"])
@@ -35,6 +50,9 @@ def run_massgen_job(payload_b64: str) -> dict:
 
     for key, value in forwarded_env.items():
         os.environ[str(key)] = str(value)
+    # Note: A better way to handle is using Modal secrets
+    # But this requires user to run
+    # `modal secret create massgen-env --from-dotenv .env`
 
     workspace = Path("/tmp/massgen_cloud_job")
     if workspace.exists():

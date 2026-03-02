@@ -9,6 +9,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from massgen.backend.response import ResponseBackend
 from massgen.chat_agent import SingleAgent
 from massgen.orchestrator import Orchestrator
@@ -16,6 +18,8 @@ from massgen.orchestrator import Orchestrator
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+pytestmark = [pytest.mark.integration, pytest.mark.live_api]
 
 
 async def test_single_agent():

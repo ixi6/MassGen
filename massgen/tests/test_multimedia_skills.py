@@ -133,13 +133,22 @@ class TestSymlinks:
 
     CLAUDE_SKILLS_DIR = Path(__file__).parent.parent.parent / ".claude" / "skills"
 
+    def _require_claude_skills_dir(self) -> None:
+        """Skip symlink checks when local Claude skills dir is not provisioned."""
+        if not self.CLAUDE_SKILLS_DIR.exists():
+            pytest.skip(
+                f"Skipping symlink checks: local skills dir not found at {self.CLAUDE_SKILLS_DIR}",
+            )
+
     @pytest.mark.parametrize("skill_name", EXPECTED_SKILLS.keys())
     def test_symlink_exists(self, skill_name: str) -> None:
+        self._require_claude_skills_dir()
         symlink = self.CLAUDE_SKILLS_DIR / skill_name
         assert symlink.exists(), f"Symlink missing: {symlink}. " f"Run: ln -sf '../../massgen/skills/{skill_name}' " f"'.claude/skills/{skill_name}'"
 
     @pytest.mark.parametrize("skill_name", EXPECTED_SKILLS.keys())
     def test_symlink_target_resolves(self, skill_name: str) -> None:
+        self._require_claude_skills_dir()
         symlink = self.CLAUDE_SKILLS_DIR / skill_name
         if symlink.is_symlink():
             target = symlink.resolve()

@@ -256,6 +256,10 @@ class TestSaveAgentSnapshotPassesPreserveFlag:
 
         self.orch.agents = {"agent_a": self.agent_mock}
 
+        from massgen.orchestrator import AgentState
+
+        self.orch.agent_states = {"agent_a": AgentState()}
+
     # -- Test 10 --
     @pytest.mark.asyncio
     async def test_answer_submission_does_not_preserve(self):

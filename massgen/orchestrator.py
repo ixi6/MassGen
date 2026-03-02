@@ -984,12 +984,17 @@ class Orchestrator(ChatAgent):
         _all_agent_ids = sorted(self.agents.keys())
         _is_multi_agent = len(_all_agent_ids) > 1
         if _is_multi_agent:
-            _example_entries = ", ".join(f'"{aid}": {{...}}' for aid in _all_agent_ids)
+            _num_agents = len(_all_agent_ids)
+            _anon_ids = [f"agent{i + 1}" for i in range(_num_agents)]
             _scores_desc = (
                 "Your confidence scores with reasoning for each checklist item. "
-                f"This session has {len(_all_agent_ids)} agents: {_all_agent_ids}. "
-                "Use per-agent format with EXACTLY these agent IDs as keys: "
-                f"{{{_example_entries}}}. "
+                f"This session has {_num_agents} agents. "
+                "Use per-agent format where keys are the most recent answer label "
+                'for each agent (labels look like "agent1.1", "agent2.1", '
+                '"agent1.2", etc. — if an agent updated their answer, use the '
+                'latest label, e.g., "agent1.2" not "agent1.1"). '
+                "Example keys for this session: " + ", ".join(f'"{aid}.1"' for aid in _anon_ids) + ". "
+                "Score ALL agents whose answers you have seen. "
                 "Each agent entry maps criterion IDs to "
                 '{"score": N, "reasoning": "..."} objects.'
             )

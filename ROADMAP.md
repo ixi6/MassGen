@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.57
+**Current Version:** v0.1.58
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** February 27, 2026
+**Last Updated:** March 2, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,47 +42,15 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.58** | 03/02/26 | ElevenLabs TTS & STT Support | @ncrispino | Add ElevenLabs support for TTS and speech-to-text in generate/read media ([#942](https://github.com/massgen/MassGen/issues/942)) |
-| **v0.1.59** | 03/04/26 | Nano Banana 2 Default Image Generation | @ncrispino | Support Nano Banana 2 as default image generation model ([#951](https://github.com/massgen/MassGen/issues/951)) |
-| **v0.1.60** | 03/06/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
+| **v0.1.59** | 03/04/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
+| **v0.1.60** | 03/06/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
+| **v0.1.61** | 03/09/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.58 - ElevenLabs Media
-
-### Features
-
-**1. ElevenLabs TTS & STT Support** (@ncrispino)
-- Issue: [#942](https://github.com/massgen/MassGen/issues/942)
-- Add ElevenLabs as a provider for text-to-speech and speech-to-text
-- Integration with existing `generate_media` and `read_media` tools
-- **Use Case**: High-quality voice synthesis and transcription via ElevenLabs API
-
-### Success Criteria
-- ✅ ElevenLabs TTS working via `generate_media`
-- ✅ ElevenLabs STT working via `read_media`
-
----
-
-## 📋 v0.1.59 - Nano Banana 2 Image Generation
-
-### Features
-
-**1. Nano Banana 2 Default Image Generation** (@ncrispino)
-- Issue: [#951](https://github.com/massgen/MassGen/issues/951)
-- Support Nano Banana 2 as the default image generation model
-- Integration with existing `generate_media` tool for image output
-- **Use Case**: Higher quality default image generation for multi-agent workflows
-
-### Success Criteria
-- ✅ Nano Banana 2 available as image generation model
-- ✅ Set as default image generation model
-
----
-
-## 📋 v0.1.60 - Skill Use & Exploration
+## 📋 v0.1.59 - Skill Use & Exploration
 
 ### Features
 
@@ -98,6 +66,38 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - ✅ Skills usable in local (non-Docker) mode
 - ✅ Skill registry created and used in system prompts
 - ✅ Skill consolidation workflow available in analyze mode
+
+---
+
+## 📋 v0.1.60 - Image/Video Edit Capabilities
+
+### Features
+
+**1. Check Image/Video Edit Capabilities** (@ncrispino)
+- Issue: [#959](https://github.com/massgen/MassGen/issues/959)
+- Investigate and support image and video editing capabilities across providers
+- Multi-turn editing workflows with continuation IDs
+- **Use Case**: Enable iterative media editing within multi-agent workflows
+
+### Success Criteria
+- ✅ Image editing capabilities documented and tested
+- ✅ Video editing capabilities documented and tested
+
+---
+
+## 📋 v0.1.61 - OpenAI Audio API
+
+### Features
+
+**1. Support OpenAI Audio API for Audio Understanding** (@ncrispino)
+- Issue: [#960](https://github.com/massgen/MassGen/issues/960)
+- OpenAI audio API integration for audio understanding tasks
+- Integration with existing `read_media` tool for audio input
+- **Use Case**: Enable audio understanding via OpenAI's native audio API
+
+### Success Criteria
+- ✅ OpenAI audio API working via `read_media`
+- ✅ Audio understanding integrated into multi-agent workflows
 
 ---
 
@@ -790,6 +790,27 @@ These features are being actively developed on **separate parallel tracks** and 
 - Claude Code reasoning parameters for updated SDK
 - **Status:** ✅ Completed in v0.1.57
 
+### Track: Multimodal Revamp (@ncrispino, nickcrispino)
+- Issues: [#942](https://github.com/massgen/MassGen/issues/942), [#951](https://github.com/massgen/MassGen/issues/951)
+- ElevenLabs TTS & STT integration for high-quality voice synthesis and transcription
+- Nano Banana 2 as default image generation model
+- Grok Imagine image/video generation ([#958](https://github.com/massgen/MassGen/issues/958)) via xAI API
+- Audio generation skills and multi-turn image editing with continuation IDs
+- **Status:** ✅ Completed in v0.1.58
+
+### Track: Nvidia NIM Backend (@ncrispino, nickcrispino)
+- PR: [#962](https://github.com/massgen/MassGen/pull/962)
+- First-class provider integration for NVIDIA Inference Microservices
+- Support for NVIDIA-hosted models via NIM API
+- **Status:** ✅ Completed in v0.1.58
+
+### Track: Quality Rethinking Subagent (@ncrispino, nickcrispino)
+- PR: [#964](https://github.com/massgen/MassGen/pull/964)
+- New `quality_rethinking` subagent type for targeted per-element craft improvements
+- Explicit improve/preserve listings in checklists with better label refresh ordering
+- Subagent hardening: better '@' parsing, error handling for multiple submit_checklist calls
+- **Status:** ✅ Completed in v0.1.58
+
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
 - PR: [#251](https://github.com/massgen/MassGen/pull/251)
 - Enhanced file operations and workspace management
@@ -871,5 +892,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** February 27, 2026
+**Last Updated:** March 2, 2026
 **Maintained By:** MassGen Team

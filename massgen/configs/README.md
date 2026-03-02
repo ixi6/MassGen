@@ -227,7 +227,26 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.57 - Latest
+### v0.1.58 - Latest
+**New Features:** Multimodal Revamp, Nvidia NIM Backend, Quality Rethinking Subagent, Checklist Improvements
+
+**Key Features:**
+- **Multimodal Revamp**: ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, audio generation skills, multi-turn image editing with continuation IDs
+- **Nvidia NIM Backend**: First-class provider integration for NVIDIA Inference Microservices
+- **Quality Rethinking Subagent**: New `quality_rethinking` subagent type for targeted per-element craft improvements
+- **Checklist Improvements**: Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.58
+pip install --upgrade massgen
+
+# Try checklist-driven refinement with quality rethinking
+uv run massgen --config @examples/features/subagent_checklist.yaml \
+  "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
+```
+
+### v0.1.57
 **New Features:** Subagent Delegation Protocol, Builder Subagent, Substantiveness Tracking, Claude Code Reasoning
 
 **Key Features:**
@@ -235,16 +254,6 @@ Most configurations use environment variables for API keys:so
 - **Builder Subagent**: New subagent type for large-scale work (complex rewrites, big documents) with fresh context, auto-triggered when transformative changes are needed
 - **Substantiveness Tracking**: Checklist classifies planned changes as transformative, structural, or incremental for smarter convergence decisions
 - **Claude Code Reasoning**: Updated SDK with unified `reasoning` config supporting adaptive/enabled/disabled modes and effort levels
-
-**Try It:**
-```bash
-# Install or upgrade to v0.1.57
-pip install --upgrade massgen
-
-# Try builder subagent with checklist-driven refinement
-uv run massgen --config @examples/features/subagent_checklist.yaml \
-  "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
-```
 
 ### v0.1.56
 **New Features:** Spec Plan Mode, ask_others Targeting, Critic Subagent, Codex OAuth Login Fix

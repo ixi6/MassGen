@@ -9,16 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.58 (March 2, 2026)** - Multimodal Revamp, Nvidia NIM Backend & Quality Rethinking
+Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image generation, and Grok multimedia. Nvidia NIM backend for NVIDIA Inference Microservices. Quality rethinking subagent for per-element craft improvements. Smarter checklists with improve/preserve listings. Logging architecture refactor and CLI mode flags.
+
 **v0.1.57 (February 27, 2026)** - Delegated Subagent Protocol & Builder Subagent
 File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Claude Code reasoning parameters for updated SDK. Smarter convergence with substantiveness tracking and diagnostic report gating.
 
 **v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
 Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
 
-**v0.1.55 (February 23, 2026)** - Specialized Subagent Types & Dynamic Evaluation Criteria
-Specialized subagent roles (evaluator, explorer, researcher, novelty) with discovery-based type system. Dynamic task-specific evaluation criteria with core/stretch gates. Native backend routing for image understanding. Configurable video frame extraction.
-
 ---
+
+## [0.1.58] - 2026-03-02
+
+### Added
+- **Comprehensive Multimodal Revamp**: Major expansion of multimodal generation and understanding capabilities
+  - ElevenLabs TTS & STT ([#942](https://github.com/massgen/MassGen/issues/942)): High-quality voice synthesis and transcription via `generate_media` and `read_media` tools
+  - Nano Banana 2 Image Generation ([#951](https://github.com/massgen/MassGen/issues/951)): New default image generation model with higher quality output
+  - Grok Image/Video Generation: Grok multimedia generation support via xAI API
+  - Audio Generation Skills: New skills for audio generation workflows
+  - Multi-Turn Image Editing: Continuation IDs for iterative image editing sessions
+
+- **Nvidia NIM Backend** ([#962](https://github.com/massgen/MassGen/pull/962)): First-class provider integration for NVIDIA Inference Microservices
+  - Support for NVIDIA-hosted models via NIM API
+  - Full integration with MassGen's multi-agent coordination
+
+- **Quality Rethinking Subagent** ([#964](https://github.com/massgen/MassGen/pull/964)): New `quality_rethinking` subagent type for targeted per-element craft improvements
+  - Explicit improve/preserve listings in checklists
+  - Better label refresh ordering for more coherent checklist updates
+
+- **CLI Mode Flags**: New command-line flags mirroring TUI toggles
+  - `--quick`, `--single-agent`, `--coordination-mode`, `--personas` flags
+  - Plan mode accessible from command line
+
+### Changed
+- **Logging Architecture Refactor**: Fixed concurrent logging for parallel multi-agent execution with `LoggingSession` isolation
+  - Each agent gets isolated logging context preventing log interleaving
+- **Evaluation Criteria Defaults**: Sensible defaults for evaluation criteria when not explicitly specified
+- **Checklist Label Refresh Ordering**: Improved ordering of checklist label refreshes for better coherence
+
+### Fixed
+- **Subagent Hardening** ([#964](https://github.com/massgen/MassGen/pull/964)): Better '@' parsing and error handling for multiple `submit_checklist` calls
+  - Clearer subagent context and improved error messages
+- **Pre-Collaboration Checklist**: Fixed checklist behavior before collaboration phase
+- **Evaluation Criteria Defaults**: Fixed default handling for evaluation criteria
+
+### Technical Details
+- **Major Focus**: Multimodal revamp, Nvidia NIM backend, quality rethinking subagent, checklist improvements
+- **PRs Merged**: [#962](https://github.com/massgen/MassGen/pull/962) (Nvidia NIM), [#964](https://github.com/massgen/MassGen/pull/964) (Subagent hardening)
+- **Contributors**: @ncrispino (11 commits), @AbhimanyuAryan (1 commit)
 
 ## [0.1.57] - 2026-02-27
 

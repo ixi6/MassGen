@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.57 Features](#-latest-features-v0157)
+- [v0.1.58 Features](#-latest-features-v0158)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.57)](#recent-achievements-v0157)
-- [Previous Achievements (v0.0.3 - v0.1.56)](#previous-achievements-v003---v0156)
+- [Recent Achievements (v0.1.58)](#recent-achievements-v0158)
+- [Previous Achievements (v0.0.3 - v0.1.57)](#previous-achievements-v003---v0157)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.58 Roadmap](#v0158-roadmap)
+- [v0.1.59 Roadmap](#v0159-roadmap)
 </details>
 
 <details open>
@@ -155,22 +155,22 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.57)
+## 🆕 Latest Features (v0.1.58)
 
-**🎉 Released: February 27, 2026**
+**🎉 Released: March 2, 2026**
 
-**What's New in v0.1.57:**
-- **🔗 Subagent Delegation Protocol** - Spawn subagents from within Docker containers via a secure file-based delegation protocol with workspace validation.
-- **🏗️ Builder Subagent** - New subagent type for tackling large-scale work (complex rewrites, big documents) with fresh context, auto-triggered when transformative changes are needed.
-- **📊 Smarter Convergence** - Substantiveness tracking classifies planned changes (transformative/structural/incremental) to guide better refinement decisions, with diagnostic report gating and per-agent scoring.
-- **🧠 Claude Code Reasoning** - Updated SDK integration with unified `reasoning` config supporting adaptive/enabled/disabled modes and effort levels.
+**What's New in v0.1.58:**
+- **🎨 Comprehensive Multimodal Revamp** - ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, audio generation skills, and multi-turn image editing with continuation IDs.
+- **🟢 Nvidia NIM Backend** - First-class provider integration for NVIDIA Inference Microservices, enabling access to NVIDIA-hosted models.
+- **🔍 Quality Rethinking Subagent** - New `quality_rethinking` subagent type for targeted per-element craft improvements with explicit improve/preserve listings.
+- **✅ Smarter Checklists** - Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults, and hardened subagent parsing.
 
-**Try v0.1.57 Features:**
+**Try v0.1.58 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Try builder subagent with checklist-driven refinement
+# Try checklist-driven refinement with quality rethinking
 uv run massgen --config @examples/features/subagent_checklist.yaml \
   "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
 ```
@@ -1234,27 +1234,39 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.57)
+### Recent Achievements (v0.1.58)
 
-**🎉 Released: February 27, 2026**
+**🎉 Released: March 2, 2026**
 
-#### Subagent Delegation Protocol
-- **Container-to-Host Spawning**: File-based delegation protocol enabling subagents to be spawned from within Docker containers via `SubagentLaunchWatcher` with atomic JSON request/response exchange and workspace path validation
+#### Comprehensive Multimodal Revamp
+- **ElevenLabs TTS & STT** ([#942](https://github.com/massgen/MassGen/issues/942)): High-quality voice synthesis and transcription via ElevenLabs API integrated with `generate_media` and `read_media` tools
+- **Nano Banana 2 Image Generation** ([#951](https://github.com/massgen/MassGen/issues/951)): New default image generation model with higher quality output
+- **Grok Image/Video Generation**: Grok multimedia generation support via xAI API
+- **Audio Generation Skills**: New skills for audio generation workflows
+- **Multi-Turn Image Editing**: Continuation IDs for iterative image editing sessions
 
-#### Builder Subagent
-- **Large Artifact Generation**: New subagent type for executing substantial work (complex rewrites, large documents) with fresh context, auto-triggered when the checklist identifies transformative changes needed
+#### Nvidia NIM Backend
+- **NVIDIA Inference Microservices** ([#962](https://github.com/massgen/MassGen/pull/962)): First-class provider integration for NVIDIA-hosted models via NIM API
 
-#### Smarter Convergence
-- **Substantiveness Tracking**: Checklist captures planned changes as transformative, structural, or incremental — with builder subagent auto-triggered for transformative work and novelty injection when progress plateaus
-- **Diagnostic Report Gating & Per-Agent Scoring**: Optional quality gate requiring structured diagnostic reports, plus support for evaluating multiple agents separately
+#### Quality & Checklist Improvements
+- **Quality Rethinking Subagent** ([#964](https://github.com/massgen/MassGen/pull/964)): New `quality_rethinking` subagent type for targeted per-element craft improvements
+- **Explicit Improve/Preserve Listings**: Checklists now specify what to improve and what to preserve separately
+- **Better Label Refresh Ordering**: Improved ordering of checklist label refreshes
+- **Evaluation Criteria Defaults**: Sensible defaults for evaluation criteria
 
-#### Claude Code Reasoning
-- **Updated SDK Integration**: Migrated to unified `reasoning` config with `type` (adaptive/enabled/disabled), `effort` levels, and `budget_tokens`, backward compatible with legacy configurations
+#### Logging & CLI
+- **Logging Architecture Refactor**: Fixed concurrent logging for parallel multi-agent execution with `LoggingSession` isolation
+- **CLI Mode Flags**: `--quick`, `--single-agent`, `--coordination-mode`, `--personas` flags mirroring TUI toggles
+- **Plan Mode CLI**: Plan mode accessible from command line
 
 #### Bug Fixes
-- Fixed Codex backend subagent spawning, subagent synchronization and timeout handling
+- Hardened subagent '@' parsing and error handling for multiple `submit_checklist` calls
+- Clearer subagent context and improved error messages
+- Fixed pre-collaboration checklist and evaluation criteria defaults
 
-### Previous Achievements (v0.0.3 - v0.1.56)
+### Previous Achievements (v0.0.3 - v0.1.57)
+
+✅ **Delegated Subagent Protocol & Builder Subagent (v0.1.57)**: File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Substantiveness tracking for smarter convergence. Claude Code reasoning parameters for updated SDK.
 
 ✅ **Spec Plan Mode & Targeted Messaging (v0.1.56)**: Formal requirements specification with `plan_mode="spec"` and TUI spec mode support. Targeted agent-to-agent messaging via `target_agents` parameter. Critic subagent for quality assessment. Media conversation continuity for follow-up image analysis. Codex OAuth login fix.
 
@@ -1513,12 +1525,12 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.58 Roadmap
+### v0.1.59 Roadmap
 
-Version 0.1.58 focuses on adding ElevenLabs support for text-to-speech and speech-to-text:
+Version 0.1.59 focuses on improving skill use and exploration:
 
 #### Planned Features
-- **ElevenLabs TTS & STT Support** ([#942](https://github.com/massgen/MassGen/issues/942)): Add ElevenLabs as a provider for high-quality voice synthesis and transcription via generate/read media tools
+- **Improve Skill Use and Exploration** ([#873](https://github.com/massgen/MassGen/issues/873)): Local skill execution, skill registry with hierarchical organization, and skill consolidation workflow
 
 ---
 

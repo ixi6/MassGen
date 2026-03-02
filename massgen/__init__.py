@@ -364,226 +364,240 @@ async def run(
         run_single_question,
     )
     from .logger_config import (
-        reset_logging_session,
+        LoggingSession,
+        _current_session,
         save_execution_metadata,
+        set_current_session,
         setup_logging,
     )
 
-    # Reset logging state to ensure fresh log directory for each run
-    reset_logging_session()
+    # Create an isolated logging session for this run so concurrent massgen.run()
+    # calls don't share globals (see MAS-274).
+    _run_session = LoggingSession.create()
+    _session_token = set_current_session(_run_session)
+
+    def _cleanup_session():
+        """Ensure session handlers are closed and ContextVar is restored."""
+        _run_session.close()
+        _current_session.reset(_session_token)
+
     from .utils import get_backend_type_from_model
 
     # Initialize logging for programmatic API
     # This ensures massgen.log is created and captures INFO+ messages
-    setup_logging(debug=False)
+    setup_logging(debug=False, session=_run_session)
 
     # Generate session ID
     session_id = f"api_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    # Determine config to use (priority order)
-    final_config_dict = None
-    raw_config_for_metadata = None  # Raw config (unexpanded env vars) for safe logging
-    config_path_used = None
+    try:
+        # Determine config to use (priority order)
+        final_config_dict = None
+        raw_config_for_metadata = None  # Raw config (unexpanded env vars) for safe logging
+        config_path_used = None
 
-    if config_dict:
-        # 1. Pre-built config dict provided directly
-        final_config_dict = config_dict
-        raw_config_for_metadata = config_dict  # No env expansion for dict input
-        config_path_used = "config_dict"
+        if config_dict:
+            # 1. Pre-built config dict provided directly
+            final_config_dict = config_dict
+            raw_config_for_metadata = config_dict  # No env expansion for dict input
+            config_path_used = "config_dict"
 
-    elif models:
-        # 2. Multiple models specified - build multi-agent config
-        final_config_dict = build_config(
-            models=models,
-            use_docker=use_docker,
-            context_paths=kwargs.get("context_paths"),
-        )
-        raw_config_for_metadata = final_config_dict  # No env expansion for built config
-        config_path_used = f"multi-agent:{','.join(models)}"
+        elif models:
+            # 2. Multiple models specified - build multi-agent config
+            final_config_dict = build_config(
+                models=models,
+                use_docker=use_docker,
+                context_paths=kwargs.get("context_paths"),
+            )
+            raw_config_for_metadata = final_config_dict  # No env expansion for built config
+            config_path_used = f"multi-agent:{','.join(models)}"
 
-    elif model and enable_filesystem:
-        # 3. Model with filesystem support (default) - use full config
-        final_config_dict = build_config(
-            num_agents=num_agents or 1,
-            model=model,
-            use_docker=use_docker,
-            context_paths=kwargs.get("context_paths"),
-        )
-        raw_config_for_metadata = final_config_dict  # No env expansion for built config
-        config_path_used = f"agent:{model}x{num_agents or 1}"
+        elif model and enable_filesystem:
+            # 3. Model with filesystem support (default) - use full config
+            final_config_dict = build_config(
+                num_agents=num_agents or 1,
+                model=model,
+                use_docker=use_docker,
+                context_paths=kwargs.get("context_paths"),
+            )
+            raw_config_for_metadata = final_config_dict  # No env expansion for built config
+            config_path_used = f"agent:{model}x{num_agents or 1}"
 
-    elif config:
-        # 4. Config file path
-        resolved_path = resolve_config_path(config)
-        if resolved_path is None:
-            raise ValueError("Could not resolve config path. Use --init to create default config.")
-        final_config_dict, raw_config_for_metadata = load_config_file(str(resolved_path))
-        config_path_used = str(resolved_path)
+        elif config:
+            # 4. Config file path
+            resolved_path = resolve_config_path(config)
+            if resolved_path is None:
+                raise ValueError("Could not resolve config path. Use --init to create default config.")
+            final_config_dict, raw_config_for_metadata = load_config_file(str(resolved_path))
+            config_path_used = str(resolved_path)
 
-    elif model:
-        # 5. Lightweight mode (enable_filesystem=False) - no MCP/filesystem
-        backend_type = get_backend_type_from_model(model)
-        headless_ui_config = {
-            "display_type": "simple",
-            "logging_enabled": enable_logging,
-        }
-        final_config_dict = create_simple_config(
-            backend_type=backend_type,
-            model=model,
-            system_message=kwargs.get("system_message"),
-            base_url=kwargs.get("base_url"),
-            ui_config=headless_ui_config,
-        )
-        raw_config_for_metadata = final_config_dict  # No env expansion for simple config
-        config_path_used = f"single-agent-light:{model}"
+        elif model:
+            # 5. Lightweight mode (enable_filesystem=False) - no MCP/filesystem
+            backend_type = get_backend_type_from_model(model)
+            headless_ui_config = {
+                "display_type": "simple",
+                "logging_enabled": enable_logging,
+            }
+            final_config_dict = create_simple_config(
+                backend_type=backend_type,
+                model=model,
+                system_message=kwargs.get("system_message"),
+                base_url=kwargs.get("base_url"),
+                ui_config=headless_ui_config,
+            )
+            raw_config_for_metadata = final_config_dict  # No env expansion for simple config
+            config_path_used = f"single-agent-light:{model}"
 
-    else:
-        # 6. Try default config
-        default_config = Path.home() / ".config/massgen/config.yaml"
-        if default_config.exists():
-            final_config_dict, raw_config_for_metadata = load_config_file(str(default_config))
-            config_path_used = str(default_config)
         else:
-            raise ValueError(
-                "No config specified and no default config found.\n" "Options: specify model=, models=, config=, or config_dict=\n" "Or run `massgen --init` to create a default configuration.",
+            # 6. Try default config
+            default_config = Path.home() / ".config/massgen/config.yaml"
+            if default_config.exists():
+                final_config_dict, raw_config_for_metadata = load_config_file(str(default_config))
+                config_path_used = str(default_config)
+            else:
+                raise ValueError(
+                    "No config specified and no default config found.\n" "Options: specify model=, models=, config=, or config_dict=\n" "Or run `massgen --init` to create a default configuration.",
+                )
+
+        # Use the determined config
+        config_dict = final_config_dict
+
+        # Parse @references from query if opt-in
+        if parse_at_references:
+            from .path_handling.prompt_parser import (
+                PromptParserError,
+                parse_prompt_for_context,
             )
 
-    # Use the determined config
-    config_dict = final_config_dict
+            try:
+                parsed = parse_prompt_for_context(query)
+                if parsed.context_paths:
+                    # Inject into config
+                    if "orchestrator" not in config_dict:
+                        config_dict["orchestrator"] = {}
+                    if "context_paths" not in config_dict["orchestrator"]:
+                        config_dict["orchestrator"]["context_paths"] = []
 
-    # Parse @references from query if opt-in
-    if parse_at_references:
-        from .path_handling.prompt_parser import (
-            PromptParserError,
-            parse_prompt_for_context,
-        )
-
-        try:
-            parsed = parse_prompt_for_context(query)
-            if parsed.context_paths:
-                # Inject into config
-                if "orchestrator" not in config_dict:
-                    config_dict["orchestrator"] = {}
-                if "context_paths" not in config_dict["orchestrator"]:
-                    config_dict["orchestrator"]["context_paths"] = []
-
-                # Add extracted paths (avoiding duplicates)
-                existing_paths = {p.get("path") for p in config_dict["orchestrator"]["context_paths"]}
-                for ctx in parsed.context_paths:
-                    if ctx["path"] not in existing_paths:
-                        config_dict["orchestrator"]["context_paths"].append(ctx)
-                        existing_paths.add(ctx["path"])
-
-                # Use cleaned query
-                query = parsed.cleaned_prompt
-
-                # Show extracted paths if verbose
-                if verbose:
-                    print("\n📂 Context paths from query:")
+                    # Add extracted paths (avoiding duplicates)
+                    existing_paths = {p.get("path") for p in config_dict["orchestrator"]["context_paths"]}
                     for ctx in parsed.context_paths:
-                        perm_icon = "📝" if ctx["permission"] == "write" else "📖"
-                        print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
-                    for suggestion in parsed.suggestions:
-                        print(f"   💡 {suggestion}")
-                    print()
-        except PromptParserError as e:
-            raise ValueError(str(e)) from e
+                        if ctx["path"] not in existing_paths:
+                            config_dict["orchestrator"]["context_paths"].append(ctx)
+                            existing_paths.add(ctx["path"])
 
-    # Extract orchestrator config
-    orchestrator_cfg = config_dict.get("orchestrator", {})
+                    # Use cleaned query
+                    query = parsed.cleaned_prompt
 
-    # Create agents
-    agents = create_agents_from_config(config_dict, orchestrator_cfg)
-    if not agents:
-        raise ValueError("No agents configured")
+                    # Show extracted paths if verbose
+                    if verbose:
+                        print("\n📂 Context paths from query:")
+                        for ctx in parsed.context_paths:
+                            perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+                            print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+                        for suggestion in parsed.suggestions:
+                            print(f"   💡 {suggestion}")
+                        print()
+            except PromptParserError as e:
+                raise ValueError(str(e)) from e
 
-    # Save execution metadata for debugging and reconstruction (matches CLI behavior)
-    # Use raw_config_for_metadata to avoid logging expanded secrets
-    save_execution_metadata(
-        query=query,
-        config_path=config_path_used if config_path_used and not config_path_used.startswith(("config_dict", "multi-agent:", "agent:", "single-agent-light:")) else None,
-        config_content=raw_config_for_metadata,
-        cli_args={
-            "mode": "programmatic_api",
-            "session_id": session_id,
-            "enable_logging": enable_logging,
-            "verbose": verbose,
-            "config_source": config_path_used,
-        },
-    )
+        # Extract orchestrator config
+        orchestrator_cfg = config_dict.get("orchestrator", {})
 
-    # Force headless UI config for programmatic API usage
-    # Override any UI settings from the config file to ensure non-interactive operation
-    ui_config = {
-        "display_type": "simple" if verbose else "none",  # Quiet by default, simple if verbose
-        "logging_enabled": enable_logging,
-    }
+        # Create agents
+        agents = create_agents_from_config(config_dict, orchestrator_cfg)
+        if not agents:
+            raise ValueError("No agents configured")
 
-    # Build kwargs for run_single_question
-    run_kwargs = {
-        "orchestrator": orchestrator_cfg,
-    }
-    if output_file:
-        run_kwargs["output_file"] = output_file
+        # Save execution metadata for debugging and reconstruction (matches CLI behavior)
+        # Use raw_config_for_metadata to avoid logging expanded secrets
+        save_execution_metadata(
+            query=query,
+            config_path=config_path_used if config_path_used and not config_path_used.startswith(("config_dict", "multi-agent:", "agent:", "single-agent-light:")) else None,
+            config_content=raw_config_for_metadata,
+            cli_args={
+                "mode": "programmatic_api",
+                "session_id": session_id,
+                "enable_logging": enable_logging,
+                "verbose": verbose,
+                "config_source": config_path_used,
+            },
+        )
 
-    # Run the query - use history-aware version if conversation history provided
-    if conversation_history:
-        # Use run_question_with_history for multi-turn context
-        session_info = {
-            "session_id": session_id,
-            "current_turn": len([m for m in conversation_history if m.get("role") == "user"]),
-            "previous_turns": [],
-            "winning_agents_history": [],
+        # Force headless UI config for programmatic API usage
+        # Override any UI settings from the config file to ensure non-interactive operation
+        ui_config = {
+            "display_type": "simple" if verbose else "none",  # Quiet by default, simple if verbose
+            "logging_enabled": enable_logging,
         }
-        response_text, _, _ = await run_question_with_history(
-            query,
-            agents,
-            ui_config,
-            history=conversation_history,
-            session_info=session_info,
-            **run_kwargs,
-        )
-        response = {"answer": response_text, "coordination_result": None}
-    else:
-        # Standard single-turn query with metadata
-        response = await run_single_question(
-            query,
-            agents,
-            ui_config,
-            session_id=session_id,
-            return_metadata=True,
-            **run_kwargs,
-        )
 
-    # Extract answer and coordination result
-    answer = response.get("answer", "") if isinstance(response, dict) else response
-    coordination_result = response.get("coordination_result") if isinstance(response, dict) else None
+        # Build kwargs for run_single_question
+        run_kwargs = {
+            "orchestrator": orchestrator_cfg,
+        }
+        if output_file:
+            run_kwargs["output_file"] = output_file
 
-    # Build result dict
-    result = {
-        "final_answer": answer,
-        "config_used": config_path_used,
-        "session_id": session_id,
-    }
+        # Run the query - use history-aware version if conversation history provided
+        if conversation_history:
+            # Use run_question_with_history for multi-turn context
+            session_info = {
+                "session_id": session_id,
+                "current_turn": len([m for m in conversation_history if m.get("role") == "user"]),
+                "previous_turns": [],
+                "winning_agents_history": [],
+            }
+            response_text, _, _ = await run_question_with_history(
+                query,
+                agents,
+                ui_config,
+                history=conversation_history,
+                session_info=session_info,
+                **run_kwargs,
+            )
+            response = {"answer": response_text, "coordination_result": None}
+        else:
+            # Standard single-turn query with metadata
+            response = await run_single_question(
+                query,
+                agents,
+                ui_config,
+                session_id=session_id,
+                return_metadata=True,
+                **run_kwargs,
+            )
 
-    # Add coordination metadata if available
-    if coordination_result:
-        result["selected_agent"] = coordination_result.get("selected_agent")
-        result["vote_results"] = coordination_result.get("vote_results")
-        result["answers"] = coordination_result.get("answers")  # List with label, agent_id, answer_path, content
-        result["log_directory"] = coordination_result.get("log_directory")
-        result["final_answer_path"] = coordination_result.get("final_answer_path")
-        result["usage"] = coordination_result.get("usage")  # Token usage stats
-        # Note: agent_mapping is inside vote_results (vote_results.agent_mapping)
-    elif enable_logging:
-        # Fallback: add log directory even without full coordination result
-        try:
-            from .logger_config import get_log_session_root
+        # Extract answer and coordination result
+        answer = response.get("answer", "") if isinstance(response, dict) else response
+        coordination_result = response.get("coordination_result") if isinstance(response, dict) else None
 
-            log_dir = get_log_session_root()
-            result["log_directory"] = str(log_dir)
-        except Exception:
-            pass  # Log directory not available
+        # Build result dict
+        result = {
+            "final_answer": answer,
+            "config_used": config_path_used,
+            "session_id": session_id,
+        }
+
+        # Add coordination metadata if available
+        if coordination_result:
+            result["selected_agent"] = coordination_result.get("selected_agent")
+            result["vote_results"] = coordination_result.get("vote_results")
+            result["answers"] = coordination_result.get("answers")  # List with label, agent_id, answer_path, content
+            result["log_directory"] = coordination_result.get("log_directory")
+            result["final_answer_path"] = coordination_result.get("final_answer_path")
+            result["usage"] = coordination_result.get("usage")  # Token usage stats
+            # Note: agent_mapping is inside vote_results (vote_results.agent_mapping)
+        elif enable_logging:
+            # Fallback: add log directory even without full coordination result
+            try:
+                from .logger_config import get_log_session_root
+
+                log_dir = get_log_session_root()
+                result["log_directory"] = str(log_dir)
+            except Exception:
+                pass  # Log directory not available
+
+    finally:
+        _cleanup_session()
 
     return result
 

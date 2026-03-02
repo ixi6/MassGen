@@ -66,18 +66,27 @@ class PersonaGeneratorConfig:
         persona_guidelines: Optional custom guidelines for persona generation
         persist_across_turns: If True, reuse personas across turns in multi-turn sessions.
             If False (default), generate fresh personas each turn.
+        after_first_answer: What happens to the persona after the agent submits its first answer:
+            - "drop": Persona is completely removed (default). Agents synthesize freely.
+            - "soften": Persona is softened to a preference, not a position to defend.
+            - "keep": Persona stays at full strength for all answers.
     """
 
     enabled: bool = False
     diversity_mode: str = "perspective"  # "perspective" or "implementation"
     persona_guidelines: str | None = None
     persist_across_turns: bool = False  # Default: generate new personas each turn
+    after_first_answer: str = "drop"  # "drop" | "soften" | "keep"
 
     def __post_init__(self):
         # Validate diversity_mode
         valid_modes = (DiversityMode.PERSPECTIVE, DiversityMode.IMPLEMENTATION, DiversityMode.METHODOLOGY)
         if self.diversity_mode not in valid_modes:
             self.diversity_mode = DiversityMode.PERSPECTIVE
+        # Validate after_first_answer
+        valid_lifecycle = ("drop", "soften", "keep")
+        if self.after_first_answer not in valid_lifecycle:
+            self.after_first_answer = "drop"
 
 
 class PersonaGenerator:
@@ -640,6 +649,8 @@ Generate personas now:"""
         orchestrator_id: str,
         log_directory: str | None = None,
         on_subagent_started: Callable[[str, str, int, Callable[[str], Any | None], str | None], None] | None = None,
+        voting_sensitivity: str | None = None,
+        voting_threshold: int | None = None,
     ) -> dict[str, GeneratedPersona]:
         """Generate all personas via a single subagent call.
 
@@ -658,6 +669,10 @@ Generate personas now:"""
             parent_workspace: Path to parent workspace for subagent workspace creation
             orchestrator_id: ID of the parent orchestrator
             log_directory: Optional path to log directory for subagent logs
+            voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
+            voting_threshold: Optional voting threshold to pass through to
+                the pre-collaboration subagent coordination config.
 
         Returns:
             Dictionary mapping agent_id to GeneratedPersona
@@ -689,15 +704,21 @@ Generate personas now:"""
             # Create simplified agent configs (same models, no tools)
             simplified_configs = self._create_simplified_agent_configs(parent_agent_configs)
 
-            # Configure subagent orchestrator with simplified agents
+            # Configure subagent orchestrator with simplified agents.
+            coordination = {
+                "enable_subagents": False,  # No nested subagents
+                "broadcast": False,  # Keep it simple
+                "checklist_criteria_preset": "persona",
+            }
+            if voting_sensitivity:
+                coordination["voting_sensitivity"] = voting_sensitivity
+            if voting_threshold is not None:
+                coordination["voting_threshold"] = voting_threshold
+
             subagent_orch_config = SubagentOrchestratorConfig(
                 enabled=True,
                 agents=simplified_configs,
-                coordination={
-                    "enable_subagents": False,  # No nested subagents
-                    "broadcast": False,  # Keep it simple
-                    "checklist_criteria_preset": "persona",
-                },
+                coordination=coordination,
             )
 
             manager = SubagentManager(

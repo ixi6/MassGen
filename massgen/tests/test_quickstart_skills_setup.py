@@ -319,6 +319,16 @@ def test_quickstart_config_uses_skills_returns_false_when_disabled(tmp_path):
     assert cli._quickstart_config_uses_skills(str(config_path)) is False
 
 
+def test_quickstart_filename_from_config_arg_uses_filename_only():
+    """Quickstart filename helper should normalize to a safe basename."""
+    assert cli._quickstart_filename_from_config_arg(".massgen/custom/team-config") == "team-config.yaml"
+
+
+def test_quickstart_filename_from_config_arg_returns_none_for_blank():
+    """Quickstart filename helper should ignore empty values."""
+    assert cli._quickstart_filename_from_config_arg("   ") is None
+
+
 def test_ensure_quickstart_skills_ready_runs_installer_when_needed(monkeypatch):
     """CLI should run quickstart installer when config enables skills."""
     calls = []

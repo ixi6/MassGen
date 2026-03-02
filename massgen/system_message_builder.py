@@ -184,6 +184,8 @@ class SystemMessageBuilder:
         novelty_pressure_data: dict[str, Any] | None = None,
         custom_checklist_items: list[str] | None = None,
         item_categories: dict[str, str] | None = None,
+        item_verify_by: dict[str, str] | None = None,
+        builder_enabled: bool = True,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -262,6 +264,7 @@ class SystemMessageBuilder:
                     has_changedoc=changedoc_enabled,
                     custom_checklist_items=custom_checklist_items,
                     item_categories=item_categories,
+                    item_verify_by=item_verify_by,
                 ),
             )
         else:
@@ -284,7 +287,9 @@ class SystemMessageBuilder:
                     has_changedoc=changedoc_enabled,
                     custom_checklist_items=custom_checklist_items,
                     item_categories=item_categories,
+                    item_verify_by=item_verify_by,
                     has_existing_answers=bool(answers),
+                    builder_enabled=builder_enabled,
                 ),
             )
 
@@ -490,13 +495,21 @@ class SystemMessageBuilder:
                     workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
                 # Get max concurrent from config, default to 3
                 max_concurrent = getattr(self.config.coordination_config, "subagent_max_concurrent", 3)
+                default_timeout = getattr(self.config.coordination_config, "subagent_default_timeout", 300)
                 # Discover specialized subagent types from disk, filtered by config
                 from massgen.subagent.type_scanner import DEFAULT_SUBAGENT_TYPES
 
                 _st_cfg = getattr(self.config.coordination_config, "subagent_types", None)
                 _allowed = _st_cfg if _st_cfg is not None else DEFAULT_SUBAGENT_TYPES
                 specialized_subagents = self._discover_specialized_subagents(allowed_types=_allowed)
-                builder.add_section(SubagentSection(workspace_path, max_concurrent, specialized_subagents=specialized_subagents))
+                builder.add_section(
+                    SubagentSection(
+                        workspace_path,
+                        max_concurrent,
+                        default_timeout=default_timeout,
+                        specialized_subagents=specialized_subagents,
+                    ),
+                )
                 logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent}, specialized_types: {len(specialized_subagents)})")
 
         # PRIORITY 10 (MEDIUM): Task Context (when multimodal tools OR subagents are enabled)

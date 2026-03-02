@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Any
 
 try:
     from textual.app import ComposeResult
-    from textual.containers import Container, Horizontal, ScrollableContainer
+    from textual.containers import (
+        Container,
+        Horizontal,
+        ScrollableContainer,
+        VerticalScroll,
+    )
     from textual.widget import Widget
     from textual.widgets import Button, Input, Label, Select, Static, TextArea
 
@@ -36,6 +41,96 @@ class TextContentModal(BaseModal):
             yield Label(self.title, id="text_content_header")
             yield TextArea(self.content, id="text_content_body", read_only=True)
             yield Button("Close (ESC)", id="close_text_content_button")
+
+
+class EvaluationCriteriaModal(BaseModal):
+    """Modal showing the active evaluation criteria (E1, E2, …) for the current run."""
+
+    # Category badge markup: MUST=red bold, SHOULD=yellow, COULD=green dim
+    _CATEGORY_COLORS: dict[str, str] = {
+        "must": "[bold red]MUST[/]",
+        "should": "[yellow]SHOULD[/]",
+        "could": "[green]COULD[/]",
+    }
+
+    def __init__(
+        self,
+        criteria: list[dict] | None,
+        source: str = "default",
+    ):
+        super().__init__()
+        self._criteria: list[dict] = list(criteria) if criteria else []
+        self._source = source
+
+    # ------------------------------------------------------------------
+    # Helper methods (tested directly by unit tests)
+    # ------------------------------------------------------------------
+
+    def _category_badge(self, category: str) -> str:
+        """Return Rich-markup badge for a criterion category."""
+        return self._CATEGORY_COLORS.get(category.lower(), f"[dim]{category.upper()}[/]")
+
+    def _build_summary_line(self) -> str:
+        """Return a one-line summary: count + source + per-category breakdown."""
+        total = len(self._criteria)
+        if total == 0:
+            return "[dim]No evaluation criteria loaded.[/]"
+        counts: dict[str, int] = {}
+        for c in self._criteria:
+            cat = c.get("category", "should").lower()
+            counts[cat] = counts.get(cat, 0) + 1
+        parts = []
+        for cat in ("must", "should", "could"):
+            n = counts.get(cat, 0)
+            if n:
+                parts.append(f"{n} {cat}")
+        breakdown = ", ".join(parts) if parts else f"{total}"
+        source_label = f"  [dim]source: {self._source}[/]" if self._source != "default" else ""
+        return f"[bold]{total}[/] criteria ({breakdown}){source_label}"
+
+    def _render_criterion(self, criterion: dict) -> str:
+        """Return Rich-markup string for a single criterion entry."""
+        cid = criterion.get("id", "?")
+        text = criterion.get("text", "")
+        category = criterion.get("category", "should")
+        verify_by = criterion.get("verify_by")
+
+        badge = self._category_badge(category)
+        lines = [f"[bold cyan]{cid}[/]  {badge}   {text}"]
+        if verify_by:
+            lines.append(f"  [dim]Verify: {verify_by}[/]")
+        return "\n".join(lines)
+
+    def _build_content(self) -> str:
+        """Return the full scrollable content string for all criteria."""
+        if not self._criteria:
+            return "[dim]No evaluation criteria are active for this run.[/]"
+        separator = "\n" + "─" * 60 + "\n"
+        return separator.join(self._render_criterion(c) for c in self._criteria)
+
+    # ------------------------------------------------------------------
+    # Textual compose
+    # ------------------------------------------------------------------
+
+    def compose(self) -> ComposeResult:
+        with Container(id="eval_criteria_container"):
+            yield Label("Evaluation Criteria", id="eval_criteria_header")
+            yield Static(
+                self._build_summary_line(),
+                id="eval_criteria_summary",
+                markup=True,
+            )
+            with VerticalScroll(id="eval_criteria_scroll"):
+                yield Static(
+                    self._build_content(),
+                    id="eval_criteria_body",
+                    markup=True,
+                )
+            yield Button("Close (ESC)", id="eval_criteria_close_button")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "eval_criteria_close_button":
+            self.dismiss()
 
 
 class TurnDetailModal(BaseModal):
@@ -523,3 +618,88 @@ class ContextModal(BaseModal):
                 if str(Path(p["path"]).resolve()) == resolved:
                     p["permission"] = new_permission
                     break
+
+
+class SubagentContextModal(BaseModal):
+    """Read-only context paths modal for subagent views."""
+
+    DEFAULT_CSS = """
+    SubagentContextModal #context_container {
+        width: 80;
+        max-height: 35;
+    }
+
+    SubagentContextModal .context-path-row {
+        height: 3;
+        width: 100%;
+    }
+
+    SubagentContextModal .context-path-text {
+        width: 1fr;
+        height: 3;
+        content-align: left middle;
+        padding: 0 1;
+    }
+
+    SubagentContextModal .perm-badge {
+        min-width: 10;
+        max-width: 10;
+        margin: 0 1;
+    }
+
+    SubagentContextModal #context_paths_list {
+        max-height: 15;
+        border: solid $primary-background;
+        margin: 1 0;
+        padding: 1;
+    }
+
+    SubagentContextModal #close_context_button {
+        margin-top: 1;
+    }
+    """
+
+    def __init__(self, context_paths_labeled: list[dict[str, str]]):
+        super().__init__()
+        self._paths = context_paths_labeled
+
+    def compose(self) -> ComposeResult:
+        with Container(id="context_container"):
+            yield Label("Subagent Context Paths", id="context_header")
+            yield Label(
+                "All paths are read-only for subagents",
+                id="context_hint",
+            )
+            with ScrollableContainer(id="context_paths_list"):
+                yield from self._build_path_rows()
+            yield Button("Close (ESC)", id="close_context_button", variant="default")
+
+    def _build_path_rows(self) -> list[Widget]:
+        rows: list[Widget] = []
+        for i, entry in enumerate(self._paths):
+            path_str = entry.get("path", "")
+            label = entry.get("label", Path(path_str).name)
+            row = Horizontal(
+                Static(
+                    f"{path_str}\n  [dim]{label}[/]",
+                    markup=True,
+                    classes="context-path-text",
+                ),
+                Button(
+                    "Read",
+                    variant="primary",
+                    classes="perm-badge",
+                    disabled=True,
+                ),
+                classes="context-path-row",
+                id=f"path_row_{i}",
+            )
+            rows.append(row)
+        if not rows:
+            rows.append(
+                Static(
+                    "[dim]No context paths configured.[/]",
+                    markup=True,
+                ),
+            )
+        return rows

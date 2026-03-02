@@ -13,6 +13,9 @@ Tests cover:
 """
 
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from massgen.persona_generator import (
     SOFTENED_PERSPECTIVE_TEMPLATE,
@@ -36,6 +39,7 @@ class TestPersonaGeneratorConfig:
         assert config.diversity_mode == "perspective"
         assert config.persona_guidelines is None
         assert config.persist_across_turns is False
+        assert config.after_first_answer == "drop"
 
     def test_invalid_diversity_mode_falls_back(self):
         config = PersonaGeneratorConfig(diversity_mode="invalid")
@@ -48,6 +52,15 @@ class TestPersonaGeneratorConfig:
     def test_valid_methodology_mode(self):
         config = PersonaGeneratorConfig(diversity_mode="methodology")
         assert config.diversity_mode == DiversityMode.METHODOLOGY
+
+    def test_after_first_answer_valid_values(self):
+        for value in ("drop", "soften", "keep"):
+            config = PersonaGeneratorConfig(after_first_answer=value)
+            assert config.after_first_answer == value
+
+    def test_after_first_answer_invalid_falls_back_to_drop(self):
+        config = PersonaGeneratorConfig(after_first_answer="invalid")
+        assert config.after_first_answer == "drop"
 
 
 # ---------------------------------------------------------------------------
@@ -483,3 +496,94 @@ class TestStrategyInstructions:
         gen = self._make_generator("unknown_strategy")
         text = gen._get_strategy_instructions()
         assert "complement" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_subagent_persona_generation_passes_voting_sensitivity(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["coordination"] = kwargs["subagent_orchestrator_config"].coordination
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "personas": {
+                            "agent_a": {
+                                "persona_text": "Be rigorous and practical.",
+                                "attributes": {},
+                            },
+                        },
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = PersonaGenerator()
+    personas = await generator.generate_personas_via_subagent(
+        agent_ids=["agent_a"],
+        task="Test task",
+        existing_system_messages={},
+        parent_agent_configs=[{"id": "agent_a", "backend": {"type": "openai", "model": "gpt-4o-mini"}}],
+        parent_workspace=str(tmp_path),
+        orchestrator_id="orch_test",
+        voting_sensitivity="checklist_gated",
+    )
+
+    assert "agent_a" in personas
+    assert captured["coordination"]["voting_sensitivity"] == "checklist_gated"
+
+
+@pytest.mark.asyncio
+async def test_subagent_persona_generation_passes_voting_threshold(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["coordination"] = kwargs["subagent_orchestrator_config"].coordination
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "personas": {
+                            "agent_a": {
+                                "persona_text": "Be rigorous and practical.",
+                                "attributes": {},
+                            },
+                        },
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = PersonaGenerator()
+    personas = await generator.generate_personas_via_subagent(
+        agent_ids=["agent_a"],
+        task="Test task",
+        existing_system_messages={},
+        parent_agent_configs=[{"id": "agent_a", "backend": {"type": "openai", "model": "gpt-4o-mini"}}],
+        parent_workspace=str(tmp_path),
+        orchestrator_id="orch_test",
+        voting_sensitivity="checklist_gated",
+        voting_threshold=11,
+    )
+
+    assert "agent_a" in personas
+    assert captured["coordination"]["voting_threshold"] == 11

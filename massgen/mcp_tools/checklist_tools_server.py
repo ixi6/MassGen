@@ -106,116 +106,190 @@ def _extract_score(entry: Any) -> int:
     return 0
 
 
-def _as_non_negative_int(value: Any, default: int = 0) -> int:
-    """Best-effort conversion to non-negative int."""
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return default
+def _find_plateaued_criteria(
+    current_items: list[dict],
+    checklist_history: list[dict],
+    items: list[str] | None = None,
+    item_categories: dict[str, str] | None = None,
+    min_rounds: int = 2,
+) -> list[dict]:
+    """Return detail dicts for criteria whose scores haven't improved.
 
+    Each returned dict contains:
+    - id: criterion ID (e.g. "E1")
+    - text: criterion text (from items list)
+    - category: must/should/could
+    - score_history: list of scores across rounds (prior + current)
+    - current_score: latest score
 
-def _normalize_substantiveness(
-    substantiveness: Any,
-    state: dict[str, Any],
-) -> dict[str, Any]:
-    """Normalize structured substantiveness payload for checklist gating.
-
-    Accepts two payload formats:
-
-    **List format** (preferred — prevents satisficing by naming specific items):
-    {
-      "transformative": ["rewrite nav as SPA router"],
-      "structural": ["add timeline", "add search"],
-      "incremental": ["fix typos", "adjust colors"],
-      "decision_space_exhausted": bool,
-      "notes": str (optional)
-    }
-
-    **Legacy count format** (backward compatible):
-    {
-      "transformative_count": int >= 0,
-      "structural_count": int >= 0,
-      "incremental_count": int >= 0,
-      "decision_space_exhausted": bool,
-      "notes": str (optional)
-    }
-
-    List format is detected by the presence of a "transformative" key with a list value.
-    Counts are derived via len() for list format.
+    This rich detail is designed to be passed directly to quality/novelty
+    subagents so they have full context about what's stuck and by how much.
     """
-    require_substantiveness = bool(state.get("require_substantiveness", False))
-    result: dict[str, Any] = {
-        "required": require_substantiveness,
-        "provided": substantiveness is not None,
-        "valid": True,
-        "issues": [],
-        "transformative_count": 0,
-        "structural_count": 0,
-        "incremental_count": 0,
-        "transformative_items": [],
-        "structural_items": [],
-        "incremental_items": [],
-        "decision_space_exhausted": False,
-        "notes": "",
-        "has_substantive_plan": False,
-        "incremental_only": False,
-    }
+    if len(checklist_history) < min_rounds:
+        return []
+    items = items or []
+    item_categories = item_categories or {}
+    current_by_id = {d["id"]: d["score"] for d in current_items}
+    plateaued = []
+    for cid, current_score in current_by_id.items():
+        stuck = True
+        score_history = []
+        for entry in checklist_history[-min_rounds:]:
+            prev_items = {d["id"]: d["score"] for d in entry.get("items_detail", [])}
+            prev_score = prev_items.get(cid)
+            score_history.append(prev_score)
+            if prev_score is None or current_score > prev_score + 1:
+                stuck = False
+                break
+        if stuck:
+            idx = int(cid[1:]) - 1
+            score_history.append(current_score)
+            plateaued.append(
+                {
+                    "id": cid,
+                    "text": items[idx] if idx < len(items) else cid,
+                    "category": item_categories.get(cid, "unknown"),
+                    "score_history": score_history,
+                    "current_score": current_score,
+                },
+            )
+    return plateaued
 
-    if substantiveness is None:
-        if require_substantiveness:
-            result["valid"] = False
-            result["issues"].append("Missing `substantiveness` payload.")
-        return result
 
-    if isinstance(substantiveness, str):
-        try:
-            substantiveness = json.loads(substantiveness)
-        except (json.JSONDecodeError, TypeError):
-            result["valid"] = False
-            result["issues"].append("`substantiveness` must be a JSON object.")
-            return result
+def _normalize_improvement_entry(entry: Any) -> dict[str, Any]:
+    """Normalize an improvement entry to {"plan": str, "sources": list}."""
+    if isinstance(entry, str):
+        return {"plan": entry, "sources": []}
+    if isinstance(entry, dict):
+        return {
+            "plan": str(entry.get("plan", "")),
+            "sources": list(entry.get("sources", [])),
+        }
+    return {"plan": str(entry), "sources": []}
 
-    if not isinstance(substantiveness, dict):
-        result["valid"] = False
-        result["issues"].append("`substantiveness` must be an object.")
-        return result
 
-    # Detect format: list-based if "transformative" key holds a list
-    uses_list_format = isinstance(substantiveness.get("transformative"), list)
+def _normalize_preserve_entry(entry: Any) -> dict[str, str]:
+    """Normalize a preserve entry to {"what": str, "source": str}."""
+    if isinstance(entry, str):
+        return {"what": entry, "source": ""}
+    if isinstance(entry, dict):
+        return {
+            "what": str(entry.get("what", "")),
+            "source": str(entry.get("source", "")),
+        }
+    return {"what": str(entry), "source": ""}
 
-    if uses_list_format:
-        # List format: extract items, derive counts
-        result["transformative_items"] = [str(x) for x in (substantiveness.get("transformative") or [])]
-        result["structural_items"] = [str(x) for x in (substantiveness.get("structural") or [])]
-        result["incremental_items"] = [str(x) for x in (substantiveness.get("incremental") or [])]
-        result["transformative_count"] = len(result["transformative_items"])
-        result["structural_count"] = len(result["structural_items"])
-        result["incremental_count"] = len(result["incremental_items"])
+
+def evaluate_proposed_improvements(
+    improvements: dict[str, Any],
+    failed_criteria: list[str],
+    items: list[str],
+    all_criteria_ids: list[str] | None = None,
+    preserve: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate that improvements cover all failing criteria and preserve strengths."""
+    if not isinstance(improvements, dict):
+        return {"valid": False, "error": "improvements must be a dict mapping criterion IDs to lists"}
+
+    if not failed_criteria:
+        return {"valid": False, "error": "No failed criteria to improve"}
+
+    missing = [cid for cid in failed_criteria if cid not in improvements]
+    empty = [cid for cid in failed_criteria if cid in improvements and not improvements[cid]]
+
+    if missing or empty:
+        issues = []
+        if missing:
+            issues.append(f"Missing improvements for: {', '.join(missing)}")
+        if empty:
+            issues.append(f"Empty improvements for: {', '.join(empty)}")
+        return {
+            "valid": False,
+            "error": "; ".join(issues),
+            "missing_criteria": missing,
+            "empty_criteria": empty,
+            "failed_criteria": failed_criteria,
+        }
+
+    # --- Preserve validation (only when all_criteria_ids is provided) ---
+    preserve = preserve or {}
+    normalized_preserve: dict[str, dict[str, str]] = {}
+
+    if all_criteria_ids is not None:
+        # Require at least one preserve entry when criteria exist
+        if all_criteria_ids and not preserve:
+            return {
+                "valid": False,
+                "error": ("Preserve is required: specify what to protect from regression. " f"Criteria available: {', '.join(all_criteria_ids)}"),
+            }
+
+        # Validate each preserve entry
+        for cid, entry in preserve.items():
+            if cid not in all_criteria_ids:
+                return {
+                    "valid": False,
+                    "error": f"Preserve key {cid} is not a valid criterion ID. Valid: {', '.join(all_criteria_ids)}",
+                }
+            norm = _normalize_preserve_entry(entry)
+            if not norm["what"].strip():
+                return {
+                    "valid": False,
+                    "error": f"Preserve entry for {cid} has empty 'what' — describe what to protect.",
+                }
+            normalized_preserve[cid] = norm
     else:
-        # Legacy count format: keep counts, empty item lists
-        result["transformative_count"] = _as_non_negative_int(
-            substantiveness.get("transformative_count", 0),
-        )
-        result["structural_count"] = _as_non_negative_int(
-            substantiveness.get("structural_count", 0),
-        )
-        result["incremental_count"] = _as_non_negative_int(
-            substantiveness.get("incremental_count", 0),
+        # Backward compat: normalize whatever was passed but don't enforce
+        for cid, entry in preserve.items():
+            normalized_preserve[cid] = _normalize_preserve_entry(entry)
+
+    # --- Build task plan: preserve entries first, then improvements ---
+    task_plan: list[dict[str, Any]] = []
+
+    # Preserve entries first
+    for cid, pentry in normalized_preserve.items():
+        criterion_idx = int(cid[1:]) - 1
+        criterion_text = items[criterion_idx] if criterion_idx < len(items) else cid
+        task_plan.append(
+            {
+                "type": "preserve",
+                "criterion_id": cid,
+                "criterion": criterion_text,
+                "what_to_protect": pentry["what"],
+                "source": pentry["source"],
+            },
         )
 
-    result["decision_space_exhausted"] = bool(
-        substantiveness.get("decision_space_exhausted", False),
-    )
-    result["notes"] = str(substantiveness.get("notes", "") or "").strip()
-    result["has_substantive_plan"] = (result["transformative_count"] + result["structural_count"]) > 0
-    result["incremental_only"] = not result["has_substantive_plan"] and result["incremental_count"] > 0
+    # Improvement entries
+    for cid in failed_criteria:
+        criterion_idx = int(cid[1:]) - 1
+        criterion_text = items[criterion_idx] if criterion_idx < len(items) else cid
+        for imp_entry in improvements[cid]:
+            norm = _normalize_improvement_entry(imp_entry)
+            task_plan.append(
+                {
+                    "type": "improve",
+                    "criterion_id": cid,
+                    "criterion": criterion_text,
+                    "plan": norm["plan"],
+                    "sources": norm["sources"],
+                    # Keep backward-compat "improvement" key
+                    "improvement": norm["plan"],
+                },
+            )
 
-    if require_substantiveness and not result["decision_space_exhausted"] and (result["transformative_count"] + result["structural_count"] + result["incremental_count"]) == 0:
-        result["valid"] = False
-        result["issues"].append(
-            "Substantiveness is required: provide change lists or mark decision space as exhausted.",
-        )
-
+    result: dict[str, Any] = {
+        "valid": True,
+        "task_plan": task_plan,
+        "message": (
+            f"Improvements validated for {len(failed_criteria)} criteria. "
+            f"{len(normalized_preserve)} criteria marked for preservation. "
+            "Add each item from task_plan to your task plan tool, then "
+            "execute them. Preserve items are guardrails — verify them after "
+            "implementing improvements. Do not skip criteria or substitute easier work."
+        ),
+    }
+    if normalized_preserve:
+        result["preserve"] = normalized_preserve
     return result
 
 
@@ -366,11 +440,10 @@ def _extract_flat_scores(
 
 def evaluate_checklist_submission(
     scores: dict[str, Any],
-    improvements: str,
     report_path: str,
     items: list,
     state: dict[str, Any],
-    substantiveness: dict[str, Any] | None = None,
+    checklist_history: list[dict] | None = None,
 ) -> dict[str, Any]:
     """Evaluate checklist submission and return verdict payload used by stdio + SDK."""
     if not isinstance(scores, dict):
@@ -415,8 +488,6 @@ def evaluate_checklist_submission(
                 "items": [],
                 "report": report_eval,
                 "report_gate_triggered": False,
-                "substantiveness_gate_triggered": False,
-                "convergence_offramp_triggered": False,
             }
         # Validate all available agents are covered when labels are known.
         if available_agent_labels and has_existing_answers:
@@ -437,8 +508,6 @@ def evaluate_checklist_submission(
                     "items": [],
                     "report": report_eval,
                     "report_gate_triggered": False,
-                    "substantiveness_gate_triggered": False,
-                    "convergence_offramp_triggered": False,
                 }
         best_agent, scores, per_agent_scores = _extract_flat_scores(scores, item_prefix, len(items))
     elif len(available_agent_labels) >= 2 and has_existing_answers:
@@ -459,8 +528,6 @@ def evaluate_checklist_submission(
             "items": [],
             "report": report_eval,
             "report_gate_triggered": False,
-            "substantiveness_gate_triggered": False,
-            "convergence_offramp_triggered": False,
         }
 
     # Reject incomplete submissions — agent must score ALL criteria
@@ -492,8 +559,6 @@ def evaluate_checklist_submission(
             "items": [],
             "report": report_eval,
             "report_gate_triggered": False,
-            "substantiveness_gate_triggered": False,
-            "convergence_offramp_triggered": False,
         }
 
     items_detail = []
@@ -509,174 +574,91 @@ def evaluate_checklist_submission(
         items_detail.append({"id": key, "score": score, "passed": passed})
 
     report_eval = _evaluate_gap_report(report_path, state)
-    substantiveness_eval = _normalize_substantiveness(substantiveness, state)
-    substantiveness_gate_triggered = False
-    convergence_offramp_triggered = False
+
+    plateaued_failing: list[dict] = []
 
     if not has_existing_answers:
         verdict = iterate_action
         explanation = f"First answer — no existing answers to evaluate. Verdict: {verdict}."
     else:
-        # Verdict determined solely by T-item scores — no report gate
+        # Verdict determined solely by item scores
         verdict = terminate_action if true_count >= required else iterate_action
-
-        # Substantiveness gate: require payload when configured
-        if substantiveness_eval.get("required", False) and not substantiveness_eval.get("valid", True):
-            verdict = iterate_action
-            substantiveness_gate_triggered = True
-
-        # Natural convergence off-ramp:
-        # When core quality is strong and only tail "more improvement/novelty"
-        # style items are failing, stop if no substantive plan remains.
-        #
-        # Important: changedoc and generic checklist modes use different
-        # semantics for T3. In changedoc mode, T3 is traceability and should
-        # remain part of core quality; in generic mode, T3 is a tail
-        # "no meaningful improvements left" check.
         failed_ids = [d["id"] for d in items_detail if not d["passed"]]
         failed_set = set(failed_ids)
-        passed_map = {d["id"]: d["passed"] for d in items_detail}
 
-        # Dynamic core/tail from item_categories in state, with fallback
-        stored_categories = state.get("item_categories")
-        if stored_categories:
-            core_item_candidates = tuple(k for k, v in stored_categories.items() if v in ("core", "must", "should"))
-            tail_failure_ids = {k for k, v in stored_categories.items() if v in ("stretch", "could")}
-        else:
-            # Legacy fallback: all items except last are core
-            all_ids = [f"{item_prefix}{i+1}" for i in range(len(items))]
-            core_item_candidates = tuple(all_ids[:-1])
-            tail_failure_ids = {all_ids[-1]} if all_ids else set()
-
-        core_quality_ids = [item_id for item_id in core_item_candidates if item_id in passed_map]
-        core_quality_strong = all(passed_map[item_id] for item_id in core_quality_ids)
-        only_tail_failures = bool(failed_set) and failed_set.issubset(tail_failure_ids)
-        near_converged = true_count >= max(1, required - 2)
-        no_substantive_path = (
-            substantiveness_eval.get("valid", False)
-            and not substantiveness_eval.get("has_substantive_plan", False)
-            and (substantiveness_eval.get("decision_space_exhausted", False) or substantiveness_eval.get("incremental_only", False))
-        )
-        if verdict == iterate_action and not substantiveness_gate_triggered and only_tail_failures and core_quality_strong and near_converged and no_substantive_path:
-            verdict = terminate_action
-            convergence_offramp_triggered = True
-
-        if verdict == iterate_action and not convergence_offramp_triggered:
-            improvements_text = improvements.strip() if improvements else ""
+        if verdict == iterate_action:
             explanation = f"{true_count} of {len(items)} items passed (required: {required}). " f"Verdict: {verdict}. "
             if failed_ids:
                 explanation += f"Items that need improvement: {', '.join(failed_ids)}. "
-            if substantiveness_gate_triggered:
-                explanation += (
-                    "Substantiveness details are required before iterating: provide lists of "
-                    "transformative/structural/incremental changes, or mark "
-                    "`decision_space_exhausted=true` when no meaningful improvements remain. "
-                )
-            if (
-                has_existing_answers
-                and substantiveness_eval.get("valid", False)
-                and not substantiveness_eval.get("has_substantive_plan", False)
-                and not substantiveness_eval.get("decision_space_exhausted", False)
-            ):
-                explanation += (
-                    "You have not identified any structural or transformative work yet. " "Do not spend another round on cosmetic changes — either define a " "substantive plan or terminate. "
-                )
 
-            # Echo specific structural/transformative items when available
-            structural_items = substantiveness_eval.get("structural_items", [])
-            transformative_items = substantiveness_eval.get("transformative_items", [])
-            if structural_items or transformative_items:
-                if transformative_items:
-                    items_str = ", ".join(transformative_items)
-                    explanation += f"Your own analysis identified these transformative changes: {items_str}. " f"Implement ALL of them. "
-                if structural_items:
-                    items_str = ", ".join(structural_items)
-                    explanation += f"Your own analysis identified these structural changes: {items_str}. " f"Implement ALL of them. "
-                # Require task plan logging so commitments can be verified
-                explanation += (
-                    "BEFORE starting work, add each committed item above to your task plan "
-                    "as a separate task with verification and verification_method fields "
-                    "describing how to confirm it is truly done (e.g., screenshot + read_media, "
-                    "test output, visual inspection). Mark tasks 'completed' when implemented, "
-                    "then 'verified' only after you confirm the result. Do not substitute "
-                    "easier work — deliver exactly what you committed to. "
-                )
+            # Per-criterion plateau → targeted subagent guidance
+            _item_categories = state.get("item_categories", {})
+            plateaued_all = _find_plateaued_criteria(
+                items_detail,
+                checklist_history or [],
+                items=items,
+                item_categories=_item_categories,
+                min_rounds=2,
+            )
+            plateaued_failing = [d for d in plateaued_all if d["id"] in failed_set]
 
-            # Builder subagent guidance: when transformative changes are identified,
-            # suggest delegating implementation to a builder subagent rather than
-            # doing the work inline. Transformative = fundamental rethink = substantial
-            # implementation effort, the right trigger for offloading to fresh context.
-            # Complementary to novelty/critic (those fire when transformative_count == 0;
-            # builder fires when transformative_count > 0).
-            _builder_enabled = state.get("builder_subagent_enabled", False)
-            if _builder_enabled and has_existing_answers and transformative_items:
-                explanation += (
-                    "These are transformative changes — delegate implementation to a "
-                    "`builder` subagent (background=True) rather than doing the work "
-                    "inline. Pass the builder: the current workspace, a prescriptive "
-                    "spec with what to build AND what patterns are FORBIDDEN (negative "
-                    "constraints), and the evaluation criteria. The builder runs in "
-                    "fresh context and won't exhaust your token budget. Once it reports "
-                    "back, you evaluate the result and submit the checklist. "
-                )
-
-            # Stretch-item guidance: when stretch criteria fail, give concrete direction
-            stretch_failures = failed_set & tail_failure_ids
-            if stretch_failures and substantiveness_eval.get("valid", False):
-                # Build a human-readable label for the stretch items that failed
-                stretch_labels = ", ".join(sorted(stretch_failures))
-                if substantiveness_eval.get("decision_space_exhausted", False) or substantiveness_eval.get("incremental_only", False):
-                    explanation += (
-                        f"{stretch_labels} (stretch criteria) failed and you reported no structural/transformative "
-                        "work remaining. Incremental polish will not fix a stretch-quality deficit. "
-                        f"To pass {stretch_labels} you must go beyond the safe, obvious approach — make an "
-                        "existing element significantly richer, find an elegant solution to a "
-                        "known hard problem, or introduce a distinctive design choice. Depth "
-                        "counts: improving what exists can satisfy this. If no such move exists, "
-                        "mark `decision_space_exhausted=true` and let the system converge. "
-                    )
-                else:
-                    explanation += (
-                        f"{stretch_labels} (stretch criteria) failed. Your next answer needs at least one "
-                        "element showing care beyond correctness — not just "
-                        "mechanical execution. This can be a novel feature, an existing "
-                        "element made significantly richer, or thoughtful synthesis that "
-                        "combines the best of multiple approaches and improves on them. "
-                    )
-            # Novelty subagent guidance: when no transformative work identified,
-            # suggest spawning a novelty subagent to break anchoring
+            _quality_rethinking_enabled = state.get(
+                "quality_rethinking_subagent_enabled",
+                False,
+            )
             _novelty_enabled = state.get("novelty_subagent_enabled", False)
-            if has_existing_answers and substantiveness_eval.get("valid", False) and substantiveness_eval.get("transformative_count", 0) == 0:
-                if _novelty_enabled:
-                    explanation += (
-                        "Your evaluation found zero transformative changes — you are "
-                        "stuck in a plateau. Spawn a novelty subagent in the background "
-                        "(`background=True, refine=False`) — pass it your diagnostic "
-                        "analysis, the current workspace, and evaluation findings. It "
-                        "will propose fundamentally different directions while you "
-                        "continue working on structural or incremental improvements "
-                        "already identified. When its results arrive, evaluate each "
-                        "direction: does it genuinely break the anchoring pattern? Is "
-                        "it implementable? Does it differ from what's already been "
-                        "tried? If at least one passes, adopt it and list it in the "
-                        "`transformative` array of your next checklist submission. If "
-                        "none pass, explain in `substantiveness.notes` which direction "
-                        "failed and why — not just 'none apply.' Engaging seriously "
-                        "with novelty's output, even to reject it, is what breaks the "
-                        "plateau. Do not ignore it silently. "
+            _always_spawn = state.get("always_spawn_quality_subagents", False)
+
+            if has_existing_answers and plateaued_failing:
+                # Build score trajectory strings like "E5 (should, scores: 5→6→6)"
+                trajectory_parts = []
+                for pd in plateaued_failing:
+                    scores_str = "\u2192".join(str(s) for s in pd["score_history"])
+                    trajectory_parts.append(
+                        f"{pd['id']} ({pd['category']}, scores: {scores_str})",
                     )
-            explanation += "Your new answer MUST make material changes — do NOT simply copy or " "resubmit the same content."
-            if improvements_text:
+                plateaued_str = ", ".join(trajectory_parts)
+                if _quality_rethinking_enabled and _novelty_enabled:
+                    explanation += (
+                        f"Criteria {plateaued_str} have plateaued. "
+                        "Spawn a quality_rethinking subagent AND a novelty subagent "
+                        "side-by-side in background \u2014 pass each the "
+                        "plateaued_criteria detail from this result (it contains "
+                        "criterion text, category, and full score history). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
+                elif _quality_rethinking_enabled:
+                    explanation += (
+                        f"Criteria {plateaued_str} have plateaued. "
+                        "Spawn a quality_rethinking subagent in background \u2014 pass "
+                        "it the plateaued_criteria detail from this result. It will "
+                        "propose per-element craft improvements targeted at raising "
+                        "these specific scores. "
+                    )
+                elif _novelty_enabled:
+                    explanation += (
+                        f"Criteria {plateaued_str} have plateaued. "
+                        "Spawn a novelty subagent in background \u2014 pass it the "
+                        "plateaued_criteria detail from this result. It will propose "
+                        "fundamentally different approaches to break through. "
+                    )
+
+            # Always-spawn mode: fire quality/novelty guidance for ALL failing
+            # criteria every round, not just plateaued ones.
+            elif _always_spawn and failed_ids and (_quality_rethinking_enabled or _novelty_enabled):
                 explanation += (
-                    f" Your own improvements analysis identified: {improvements_text} "
-                    f"— implement all identified improvements, not just one. Each round "
-                    f"is expensive; deliver the full scope of changes. The result must be "
-                    f"obviously better, not just marginally different."
+                    "Spawn a quality_rethinking subagent AND a novelty subagent "
+                    "side-by-side in background \u2014 pass each the "
+                    "failing_criteria_detail from this result (it contains "
+                    "criterion text and category for every failing criterion). "
+                    "Meanwhile, proceed with propose_improvements and start "
+                    "implementing. Integrate subagent proposals when they return. "
                 )
+
+            explanation += "NEXT STEP: Call `propose_improvements` with specific improvements " "for each failing criterion. This is required before implementing."
         else:
             explanation = f"{true_count} of {len(items)} items passed (required: {required}). Verdict: {verdict}."
-            if convergence_offramp_triggered:
-                explanation += " Convergence off-ramp activated: core quality is strong and no " "substantive novelty plan remains, so additional rounds would likely " "be incremental-only."
 
     # Apply diagnostic report gate (skip on first answer — nothing to diagnose yet)
     report_gate_triggered = False
@@ -693,17 +675,19 @@ def evaluate_checklist_submission(
             report_summary += f" Report notes: {'; '.join(report_eval['issues'])}."
         explanation += report_summary
 
-    # Include substantiveness diagnostics
-    substantiveness_summary = (
-        " Substantiveness: "
-        f"T={substantiveness_eval.get('transformative_count', 0)}, "
-        f"S={substantiveness_eval.get('structural_count', 0)}, "
-        f"I={substantiveness_eval.get('incremental_count', 0)}, "
-        f"exhausted={'yes' if substantiveness_eval.get('decision_space_exhausted') else 'no'}."
-    )
-    if substantiveness_eval.get("issues"):
-        substantiveness_summary += f" Substantiveness issues: {'; '.join(substantiveness_eval['issues'])}."
-    explanation += substantiveness_summary
+    # Reuse plateaued_failing from the iterate branch if computed, otherwise
+    # compute fresh for the result dict (e.g. when report gate changed verdict).
+    if not plateaued_failing and has_existing_answers and verdict != terminate_action:
+        _item_cats = state.get("item_categories", {})
+        _plateaued = _find_plateaued_criteria(
+            items_detail,
+            checklist_history or [],
+            items=items,
+            item_categories=_item_cats,
+            min_rounds=2,
+        )
+        _failed_set = {d["id"] for d in items_detail if not d["passed"]}
+        plateaued_failing = [d for d in _plateaued if d["id"] in _failed_set]
 
     result = {
         "verdict": verdict,
@@ -711,16 +695,35 @@ def evaluate_checklist_submission(
         "true_count": true_count,
         "required": required,
         "items": items_detail,
+        "failed_criteria": [d["id"] for d in items_detail if not d["passed"]],
+        "plateaued_criteria": plateaued_failing,
         "report": report_eval,
-        "substantiveness": substantiveness_eval,
         "report_gate_triggered": report_gate_triggered,
-        "substantiveness_gate_triggered": substantiveness_gate_triggered,
-        "convergence_offramp_triggered": convergence_offramp_triggered,
     }
     if best_agent is not None:
         result["best_agent"] = best_agent
     if per_agent_scores is not None:
         result["per_agent_scores"] = per_agent_scores
+
+    # In always-spawn mode, include detail for ALL failing criteria so agents
+    # can pass rich context to quality/novelty subagents every round.
+    _always_spawn = state.get("always_spawn_quality_subagents", False)
+    if _always_spawn and result.get("failed_criteria"):
+        _item_cats = state.get("item_categories", {})
+        failing_detail = []
+        for d in items_detail:
+            if not d["passed"]:
+                idx = int(d["id"][1:]) - 1
+                failing_detail.append(
+                    {
+                        "id": d["id"],
+                        "text": items[idx] if idx < len(items) else d["id"],
+                        "category": _item_cats.get(d["id"], "unknown"),
+                        "current_score": d["score"],
+                    },
+                )
+        result["failing_criteria_detail"] = failing_detail
+
     return result
 
 
@@ -732,15 +735,13 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
     specs = _read_specs(specs_path)
     items = specs.get("items", [])
 
+    # Track last failed criteria so propose_improvements can validate coverage
+    _last_result: dict[str, Any] = {"failed_criteria": [], "items": [], "all_criteria_ids": []}
+
     # Create handler that re-reads state on each call.
-    # Each score entry is {"score": int, "reasoning": str} — the reasoning
-    # forces the model to justify each item but is not used in verdict logic.
-    # `improvements` captures unrealized potential.
     async def submit_checklist(
         scores: dict,
-        improvements: str = "",
         report_path: str = "",
-        substantiveness: dict | None = None,
     ) -> str:
         # Codex sometimes sends scores as a JSON string; normalise to dict
         if isinstance(scores, str):
@@ -761,26 +762,25 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         state = current.get("state", {})
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements=improvements,
             report_path=report_path,
             items=current_items,
             state=state,
-            substantiveness=substantiveness,
         )
+        _last_result["failed_criteria"] = result.get("failed_criteria", [])
+        _last_result["items"] = current_items
+        _last_result["all_criteria_ids"] = [f"E{i+1}" for i in range(len(current_items))]
         return json.dumps(result)
 
     submit_checklist.__doc__ = (
         "Submit your checklist evaluation. "
         "Score each agent's answer separately per criterion, then submit all "
         "agent scores in 'scores' as a nested object: "
-        '{"agent1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2": {...}}. '
+        '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2.1": {...}}. '
+        "Use the exact agent labels from the 'Available answers' section of your context "
+        "(e.g. agent1.1, agent2.1). "
         "The verdict is determined by the strongest agent's scores — the agent "
         "with the highest aggregate across all criteria. Include all agents so "
         "the evaluation is transparent and auditable. "
-        "The 'improvements' field should describe dimensions where even the "
-        "best agent fell short — genuine gaps requiring a new answer. "
-        "Use the 'substantiveness' object to report planned change counts "
-        "(transformative/structural/incremental) and whether decision space is exhausted. "
         "Use 'report_path' to provide a markdown gap report when report gating "
         "is enabled."
     )
@@ -789,9 +789,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
     sig = inspect.Signature(
         [
             inspect.Parameter("scores", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-            inspect.Parameter("improvements", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-            inspect.Parameter("report_path", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-            inspect.Parameter("substantiveness", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None),
+            inspect.Parameter("report_path", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=""),
         ],
     )
     submit_checklist.__signature__ = sig
@@ -801,7 +799,53 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         description=submit_checklist.__doc__,
     )(submit_checklist)
 
-    logger.info("Registered submit_checklist MCP tool")
+    # propose_improvements: validate improvement coverage for all failing criteria
+    async def propose_improvements(improvements: dict, preserve: dict = None) -> str:
+        if isinstance(improvements, str):
+            try:
+                improvements = json.loads(improvements)
+            except (json.JSONDecodeError, TypeError):
+                return json.dumps(
+                    {"valid": False, "error": "improvements must be a JSON object"},
+                )
+        if isinstance(preserve, str):
+            try:
+                preserve = json.loads(preserve)
+            except (json.JSONDecodeError, TypeError):
+                preserve = None
+        result = evaluate_proposed_improvements(
+            improvements=improvements,
+            failed_criteria=_last_result["failed_criteria"],
+            items=_last_result["items"],
+            all_criteria_ids=_last_result.get("all_criteria_ids"),
+            preserve=preserve,
+        )
+        return json.dumps(result)
+
+    propose_improvements.__doc__ = (
+        "Propose specific improvements for each failing criterion. "
+        "Must be called after submit_checklist returns an iterate verdict. "
+        "Pass 'improvements' mapping criterion IDs (e.g. 'E2') to lists of "
+        "entries, each with 'plan' (what to do) and 'sources' (which answers "
+        "to draw from). Pass 'preserve' mapping criterion IDs to entries with "
+        "'what' (strength to protect) and 'source' (which answer). A criterion "
+        "can appear in both improvements and preserve."
+    )
+
+    propose_sig = inspect.Signature(
+        [
+            inspect.Parameter("improvements", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("preserve", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None),
+        ],
+    )
+    propose_improvements.__signature__ = propose_sig
+
+    mcp.tool(
+        name="propose_improvements",
+        description=propose_improvements.__doc__,
+    )(propose_improvements)
+
+    logger.info("Registered submit_checklist + propose_improvements MCP tools")
 
 
 # ---------- spec file I/O ----------

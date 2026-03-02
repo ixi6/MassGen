@@ -120,13 +120,13 @@ class TestPriorAnswerReframing:
     """Change 3: Reframe prior answers as benchmarks."""
 
     def test_changedoc_subsequent_has_evaluating_prior_answers(self):
-        """Subsequent round prompt reframes prior answers as evidence."""
+        """Subsequent round prompt analyzes each answer independently."""
         from massgen.system_prompt_sections import ChangedocSection
 
         section = ChangedocSection(has_prior_answers=True)
         content = section.build_content()
-        assert "are the existing answers good" in content
-        assert "just present?" in content
+        assert "analyze each existing answer independently" in content
+        assert "uniquely well" in content
 
     def test_no_pick_one_as_base(self):
         """Old 'do not pick one as your base' is replaced."""
@@ -284,7 +284,7 @@ class TestCriticChecklistGuidance:
     """Tests for parallel critic + novelty spawning guidance."""
 
     def test_checklist_mentions_novelty_not_critic_when_both_available(self):
-        """When critic and novelty are both available, guidance mentions novelty only (critic removed from plateau loop)."""
+        """When critic and novelty are both available and criteria have plateaued, guidance mentions novelty only (critic removed from plateau loop)."""
         from massgen.mcp_tools.checklist_tools_server import (
             evaluate_checklist_submission,
         )
@@ -309,22 +309,33 @@ class TestCriticChecklistGuidance:
             "E1": {"score": 4, "reasoning": "needs work"},
             "E2": {"score": 4, "reasoning": "needs work"},
         }
+        # Build checklist_history with 2 rounds of flat scores to trigger
+        # per-criterion plateau detection
+        checklist_history = [
+            {
+                "items_detail": [
+                    {"id": "E1", "score": 4, "passed": False},
+                    {"id": "E2", "score": 4, "passed": False},
+                ],
+            },
+            {
+                "items_detail": [
+                    {"id": "E1", "score": 4, "passed": False},
+                    {"id": "E2", "score": 4, "passed": False},
+                ],
+            },
+        ]
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="fix everything",
             report_path="",
             items=items,
             state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": ["redesign layout"],
-                "incremental": [],
-                "decision_space_exhausted": False,
-            },
+            checklist_history=checklist_history,
         )
         # Verdict must be new_answer; guidance should mention novelty (not critic)
         assert result.get("verdict") == "new_answer", f"Expected 'new_answer' but got {result.get('verdict')!r}; full result: {result}"
         explanation = result.get("explanation", "")
+        assert "plateaued" in explanation.lower(), f"Expected 'plateaued' in explanation: {explanation}"
         assert "novelty" in explanation.lower()
         assert "spawn a `critic`" not in explanation
         assert "spawn two background" not in explanation
@@ -455,92 +466,6 @@ class TestPresetsTiers:
         assert "core" not in categories
 
 
-class TestConvergenceOffRampBackwardCompat:
-    """Tests for convergence off-ramp with new and old category names."""
-
-    def test_must_should_treated_as_core_in_offramp(self):
-        """must and should items are treated as core for off-ramp."""
-        from massgen.mcp_tools.checklist_tools_server import (
-            evaluate_checklist_submission,
-        )
-
-        items = ["criterion 1", "criterion 2", "criterion 3"]
-        state = {
-            "threshold": 5,
-            "items": items,
-            "remaining_rounds": 1,
-            "total_rounds": 5,
-            "item_prefix": "E",
-            "item_categories": {"E1": "must", "E2": "should", "E3": "could"},
-            "mode": "checklist_gated",
-            "cutoff": 7,
-            "required": 3,
-            "novelty_subagent_enabled": False,
-            "has_existing_answers": True,
-        }
-        scores = {
-            "E1": {"score": 9, "reasoning": "great"},
-            "E2": {"score": 8, "reasoning": "good"},
-            "E3": {"score": 3, "reasoning": "mediocre"},
-        }
-        result = evaluate_checklist_submission(
-            scores=scores,
-            improvements="",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": [],
-                "incremental": ["minor polish"],
-                "decision_space_exhausted": True,
-            },
-        )
-        # With core quality (must+should) strong, only 'could' failing,
-        # near-converged, and no substantive path, should trigger off-ramp
-        assert result.get("verdict") == "vote"
-
-    def test_old_core_stretch_still_works(self):
-        """Old core/stretch categories still work correctly."""
-        from massgen.mcp_tools.checklist_tools_server import (
-            evaluate_checklist_submission,
-        )
-
-        items = ["criterion 1", "criterion 2", "criterion 3"]
-        state = {
-            "threshold": 5,
-            "items": items,
-            "remaining_rounds": 1,
-            "total_rounds": 5,
-            "item_prefix": "E",
-            "item_categories": {"E1": "core", "E2": "core", "E3": "stretch"},
-            "mode": "checklist_gated",
-            "cutoff": 7,
-            "required": 3,
-            "novelty_subagent_enabled": False,
-            "has_existing_answers": True,
-        }
-        scores = {
-            "E1": {"score": 9, "reasoning": "great"},
-            "E2": {"score": 8, "reasoning": "good"},
-            "E3": {"score": 3, "reasoning": "mediocre"},
-        }
-        result = evaluate_checklist_submission(
-            scores=scores,
-            improvements="",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": [],
-                "incremental": ["minor polish"],
-                "decision_space_exhausted": True,
-            },
-        )
-        assert result.get("verdict") == "vote"
-
-
 class TestGenerationPromptTiers:
     """Tests for the updated generation prompt."""
 
@@ -571,3 +496,175 @@ class TestGenerationPromptTiers:
         prompt = gen._build_generation_prompt("test task", has_changedoc=False)
         assert "quality/craft" in prompt.lower() or "overall quality" in prompt.lower()
         assert "mediocre" in prompt.lower()
+
+    def test_generation_prompt_requires_per_part_quality(self):
+        """Generation prompt requires per-part quality evaluation."""
+        from massgen.evaluation_criteria_generator import EvaluationCriteriaGenerator
+
+        gen = EvaluationCriteriaGenerator()
+        prompt = gen._build_generation_prompt("test task", has_changedoc=False)
+        lower = prompt.lower()
+        # Must mention per-part or per-section quality concept
+        assert "per-part" in lower or "each significant part" in lower
+        # Must mention evaluating the weakest component, not the average
+        assert "weakest" in lower
+
+    def test_generation_prompt_per_part_bad_good_example(self):
+        """Generation prompt has BAD/GOOD example for whole-output vs per-part."""
+        from massgen.evaluation_criteria_generator import EvaluationCriteriaGenerator
+
+        gen = EvaluationCriteriaGenerator()
+        prompt = gen._build_generation_prompt("test task", has_changedoc=False)
+        lower = prompt.lower()
+        # Must have a BAD example about whole-output criteria
+        assert "whole-output" in lower or "whole output" in lower
+        # Must have a GOOD example about per-part/per-section criteria
+        assert "per-part" in lower or "per-section" in lower
+
+    def test_propose_improvements_example_not_incremental(self):
+        """System prompt propose_improvements example shows substantial improvements."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
+        )
+        # The example should NOT contain trivially incremental fixes
+        assert "fix font sizes" not in prompt.lower()
+        # The example should show rethinking, not pixel tweaks
+        assert "propose_improvements" in prompt
+
+    def test_propose_improvements_example_includes_preserve(self):
+        """System prompt propose_improvements example includes preserve parameter."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
+        )
+        # preserve should appear in the example call
+        assert "preserve" in prompt
+
+    def test_propose_improvements_example_has_sources(self):
+        """System prompt propose_improvements example includes sources."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
+        )
+        # sources should appear in the structured improvement example
+        assert "sources" in prompt
+
+
+# ===========================================================================
+# Part D: Per-Answer Analysis Across All Evaluation Modes
+# ===========================================================================
+
+
+class TestPerAnswerAnalysis:
+    """Per-answer analysis: agents must analyze each answer before deciding."""
+
+    def test_strict_mode_has_per_answer_step(self):
+        """Strict evaluation contains per-answer strengths step."""
+        from massgen.system_prompt_sections import EvaluationSection
+
+        section = EvaluationSection(voting_sensitivity="strict")
+        content = section.build_content()
+        # Must reference analyzing each answer, not just "the best answer"
+        assert "each existing answer" in content.lower() or "per-answer" in content.lower()
+
+    def test_balanced_mode_has_per_answer_step(self):
+        """Balanced evaluation contains per-answer analysis."""
+        from massgen.system_prompt_sections import EvaluationSection
+
+        section = EvaluationSection(voting_sensitivity="balanced")
+        content = section.build_content()
+        assert "each existing answer" in content.lower() or "per-answer" in content.lower()
+
+    def test_adversarial_mode_has_per_answer_step(self):
+        """Adversarial evaluation references multiple answers."""
+        from massgen.system_prompt_sections import EvaluationSection
+
+        section = EvaluationSection(voting_sensitivity="adversarial")
+        content = section.build_content()
+        assert "each answer" in content.lower()
+
+    def test_consistency_mode_has_per_answer_step(self):
+        """Consistency evaluation references multiple approaches."""
+        from massgen.system_prompt_sections import EvaluationSection
+
+        section = EvaluationSection(voting_sensitivity="consistency")
+        content = section.build_content()
+        assert "each answer" in content.lower() or "different approaches" in content.lower()
+
+    def test_reflective_mode_has_per_answer_step(self):
+        """Reflective evaluation has per-answer fit analysis."""
+        from massgen.system_prompt_sections import EvaluationSection
+
+        section = EvaluationSection(voting_sensitivity="reflective")
+        content = section.build_content()
+        assert "each answer" in content.lower() or "per-answer" in content.lower()
+
+    def test_improve_vary_replaced_with_synthesis(self):
+        """New answer strategies mention analyzing each existing answer."""
+        from massgen.system_prompt_sections import EvaluationSection
+
+        section = EvaluationSection(voting_sensitivity="strict")
+        content = section.build_content()
+        # Old "Improve/Vary" replaced with synthesis-focused language
+        assert "each existing answer" in content.lower()
+        # Should have Synthesize and Rethink strategies
+        assert "synthesize" in content.lower()
+        assert "rethink" in content.lower()
+
+    def test_decision_block_iterate_not_single_base(self):
+        """Iterate action says 'each existing answer', not 'from scratch'."""
+        from massgen.system_prompt_sections import (
+            _build_checklist_decision,
+            _build_checklist_scored_decision,
+        )
+
+        # Check checklist decision
+        result1 = _build_checklist_decision(
+            threshold=5,
+            remaining=3,
+            total=5,
+            checklist_items=["E1", "E2"],
+        )
+        assert "each existing answer" in result1.lower()
+        assert "from scratch" not in result1.lower()
+
+        # Check checklist_scored decision
+        result2 = _build_checklist_scored_decision(
+            threshold=5,
+            remaining=3,
+            total=5,
+            checklist_items=["E1", "E2"],
+        )
+        assert "each existing answer" in result2.lower()
+        assert "from scratch" not in result2.lower()
+
+    def test_checklist_flow_per_answer_before_propose(self):
+        """Checklist gated prompt has per-answer review before propose_improvements."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
+        )
+        lower = prompt.lower()
+        # Must have a dedicated per-answer review instruction
+        assert "review each existing answer" in lower, "Must have per-answer review step before propose_improvements"
+        # The review instruction should appear BEFORE the propose_improvements
+        # call instruction (not just the first mention in verdict description)
+        review_pos = lower.find("review each existing answer")
+        propose_call_pos = lower.find("must call `propose_improvements`")
+        assert review_pos < propose_call_pos, "Per-answer review must appear before propose_improvements call"
+
+    def test_evaluating_prior_answers_per_answer(self):
+        """Changedoc section has per-answer independent analysis."""
+        from massgen.system_prompt_sections import ChangedocSection
+
+        section = ChangedocSection(has_prior_answers=True)
+        content = section.build_content()
+        # Must analyze each answer independently
+        assert "each existing answer" in content.lower() or "each answer" in content.lower()
+        # Must ask about unique strengths per answer
+        assert "uniquely well" in content.lower() or "does well" in content.lower()

@@ -240,13 +240,64 @@ When a `new_answer` is accepted:
 - terminal decisions are reset for re-evaluation
 - peers are marked for update delivery (unless `disable_injection: true`)
 
-## Injection And Restart Behavior
+## Workspace And Snapshot Lifecycle
 
-Peer update delivery is timing-aware:
+Each agent has three storage locations:
 
-1. First peer update usually triggers restart-style refresh.
-2. Subsequent updates use mid-stream injection where backend path supports it.
-3. Hookless or unconsumed cases fall back to between-turn delivery.
+- **workspace** — the agent's live working directory during a round
+- **snapshot_storage** — single-slot buffer holding the most recent deliverable; peers read this via `temp_workspace` before each round
+- **log directory** — append-only per-timestamp archive for debugging
+
+### Normal Answer Submission
+
+When an agent calls `new_answer`:
+
+```text
+Agent calls new_answer
+  │
+  ├─ _save_agent_snapshot(answer_content="...")
+  │   ├─ Save answer text → log dir (timestamped)
+  │   ├─ save_snapshot(preserve_existing_snapshot=False)
+  │   │   ├─ OVERWRITE snapshot_storage with workspace
+  │   │   └─ Copy workspace → log dir
+  │   └─ clear_workspace()
+  │
+  ├─ Record answer in coordination_tracker
+  └─ Set restart_pending=True on all peers (unless disable_injection)
+```
+
+### Peer Update Delivery (Injection vs Restart)
+
+When a peer submits a `new_answer`, the current agent needs to see it. Delivery depends on backend capabilities and first-answer protection:
+
+```text
+Peer submits new_answer → restart_pending=True set on current agent
+  │
+  ├─ Agent hasn't produced first answer yet?
+  │   └─ DEFER — first-answer diversity protection, clear restart_pending
+  │       (handled by _should_defer_restart_for_first_answer)
+  │
+  ├─ Backend has hook delivery?
+  │   │  (GeneralHookManager, native hooks, or MCP server hooks)
+  │   │
+  │   │  Hook delivery mechanisms:
+  │   │  - Standard backends → GeneralHookManager + MidStreamInjectionHook
+  │   │  - Claude Code → supports_native_hooks() (SDK-level)
+  │   │  - Codex → supports_mcp_server_hooks() + file IPC
+  │   │    (_setup_codex_mcp_hooks / _flush_codex_hook_payloads)
+  │   │
+  │   ├─ Not too close to soft timeout?
+  │   │   └─ MID-STREAM INJECTION — content injected via hook callback
+  │   │      (no restart, agent continues working with injected context)
+  │   │
+  │   └─ Too close to timeout?
+  │       └─ SKIP — restart_pending stays set; agent finishes current round,
+  │          and the next round starts with the new answer already in context
+  │
+  └─ No hook delivery? (defensive fallback — all current backends have hooks)
+      ├─ Stream already started → enforcement message injection
+      └─ No in-flight buffer → clean restart
+```
 
 Non-peer payloads can also inject during rounds:
 
@@ -254,6 +305,59 @@ Non-peer payloads can also inject during rounds:
 - background subagent completions
 - background tool completions
 - timeout warnings
+
+On restart, the agent's workspace carries forward (it is NOT cleared between rounds). The new round starts with the same workspace, but updated system context and peer snapshots in `temp_workspace`.
+
+### Vote/Stop Submission
+
+```text
+Agent calls vote (or stop in decomposition mode)
+  │
+  ├─ _save_agent_snapshot(vote_data={...})
+  │   ├─ Save vote JSON → log dir
+  │   └─ SKIP workspace snapshot (preserve previous answer's workspace)
+  │
+  └─ Record terminal decision
+```
+
+### Interrupted/Early Termination Saves
+
+Two code paths handle saving when agents don't complete normally:
+
+1. **Orchestration cancelled/timed out** → `_save_partial_execution_traces_for_interrupted_turn()` runs for all agents
+2. **No successful agents** → `_save_partial_snapshots_for_early_termination()` calls `_save_agent_snapshot(answer_content=None)` per agent
+
+Both paths invoke `save_snapshot(preserve_existing_snapshot=True)`.
+
+### Snapshot Preservation Invariant
+
+During interrupted or early-termination saves, `snapshot_storage` is **never** overwritten if it already contains content from a previous submission. The agent was interrupted mid-work — whatever's in the workspace is by definition incomplete. The previous snapshot (from an actual `new_answer` submission) is always more valuable.
+
+| `snapshot_storage` | workspace | Action |
+|---|---|---|
+| Has content | Any | **SKIP** — preserve submitted answer |
+| Empty | Has content | **COPY** — partial work better than nothing |
+| Empty | Empty | **SKIP** — nothing to save |
+
+Normal saves (`answer_content` provided) and final saves (`is_final=True`) always overwrite as before.
+
+This is enforced in:
+- `save_snapshot(preserve_existing_snapshot=True)` in `FilesystemManager`
+- `_save_partial_workspace_snapshots_for_interrupted_turn()` in `Orchestrator` (inline copy logic)
+
+### Final Answer Phase
+
+```text
+Presenter selected (vote winner or configured)
+  │
+  ├─ _save_agent_snapshot(is_final=True)
+  │   ├─ save_snapshot(is_final=True, preserve=False) → OVERWRITE snapshot_storage
+  │   │   └─ Copy → log dir under "final/"
+  │   └─ restore_from_snapshot_storage() (for post-evaluator visibility)
+  │
+  ├─ Final presentation runs
+  └─ clear_workspace() (after presentation complete)
+```
 
 ## Fairness And Pacing
 

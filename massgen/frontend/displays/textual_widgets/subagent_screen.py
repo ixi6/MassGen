@@ -51,7 +51,7 @@ from massgen.subagent.models import SubagentDisplayData, SubagentResult
 from ..base_tui_layout import BaseTUILayoutMixin
 from ..shared.tui_debug import tui_log
 from ..tui_event_pipeline import TimelineEventAdapter
-from .agent_status_ribbon import AgentStatusRibbon
+from .agent_status_ribbon import AgentStatusRibbon, ContextPathsClicked
 from .content_sections import FinalPresentationCard, TimelineSection
 from .queued_input_banner import QueuedInputBanner
 from .tab_bar import AgentTabBar, AgentTabChanged, SessionInfoClicked
@@ -60,10 +60,14 @@ logger = logging.getLogger(__name__)
 
 
 class SubagentHeader(Horizontal):
-    """Header bar for subagent screen with back button and subagent info."""
+    """Header bar for subagent screen with back button and subagent info.
+
+    Context paths are now shown via the ribbon's folder icon -> SubagentContextModal,
+    so this header is simplified to just back button + title.
+    """
 
     class ContextPathClicked(Message):
-        """Emitted when a context path link is clicked."""
+        """Emitted when a context path link is clicked (legacy, kept for compatibility)."""
 
         def __init__(self, path: str) -> None:
             super().__init__()
@@ -97,25 +101,6 @@ class SubagentHeader(Horizontal):
         color: $primary;
         text-style: bold;
     }
-
-    SubagentHeader #header_context_paths {
-        width: auto;
-    }
-
-    SubagentHeader .context-path-btn {
-        width: auto;
-        color: $text-muted;
-        min-width: 1;
-        height: 1;
-        border: none;
-        background: transparent;
-        margin-left: 1;
-    }
-
-    SubagentHeader .context-path-btn:hover {
-        color: $primary;
-        text-style: underline;
-    }
     """
 
     def __init__(
@@ -126,72 +111,10 @@ class SubagentHeader(Horizontal):
     ) -> None:
         super().__init__(id=id)
         self._subagent = subagent
-        self._context_button_map: dict[str, str] = {}
-        self._context_btn_generation: int = 0
 
     def compose(self) -> ComposeResult:
         yield Button("← Back", classes="back-button", id="back_btn")
         yield Static(f"Subagent: {self._subagent.id}", classes="subagent-title", id="header_title")
-        yield Horizontal(id="header_context_paths")
-
-    def on_mount(self) -> None:
-        self._refresh_context_path_buttons()
-
-    @staticmethod
-    def _normalize_context_paths(raw_paths: Any) -> list[str]:
-        if not raw_paths:
-            return []
-        if not isinstance(raw_paths, list):
-            raw_paths = [raw_paths]
-
-        normalized: list[str] = []
-        seen: set[str] = set()
-        for entry in raw_paths:
-            path_value = ""
-            if isinstance(entry, str):
-                path_value = entry.strip()
-            elif isinstance(entry, dict):
-                candidate = entry.get("path")
-                if candidate is not None:
-                    path_value = str(candidate).strip()
-            elif entry is not None:
-                path_value = str(entry).strip()
-
-            if not path_value or path_value in seen:
-                continue
-            seen.add(path_value)
-            normalized.append(path_value)
-
-        return normalized
-
-    @staticmethod
-    def _format_context_label(path: str) -> str:
-        path_obj = Path(path)
-        label = path_obj.name or path
-        return f"📂 {label}"
-
-    def _refresh_context_path_buttons(self) -> None:
-        try:
-            container = self.query_one("#header_context_paths", Horizontal)
-        except Exception:
-            return
-
-        self._context_button_map = {}
-        self._context_btn_generation += 1
-        gen = self._context_btn_generation
-        container.remove_children()
-
-        context_paths = self._normalize_context_paths(getattr(self._subagent, "context_paths", []))
-        for index, path in enumerate(context_paths):
-            button_id = f"context_path_btn_{gen}_{index}"
-            self._context_button_map[button_id] = path
-            container.mount(
-                Button(
-                    self._format_context_label(path),
-                    id=button_id,
-                    classes="context-path-btn",
-                ),
-            )
 
     def update_subagent(self, subagent: SubagentDisplayData) -> None:
         """Update the header for a new subagent."""
@@ -200,14 +123,6 @@ class SubagentHeader(Horizontal):
             self.query_one("#header_title", Static).update(f"Subagent: {subagent.id}")
         except Exception as e:
             tui_log(f"[SubagentScreen] {e}")
-        self._refresh_context_path_buttons()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        button_id = event.button.id or ""
-        context_path = self._context_button_map.get(button_id)
-        if context_path:
-            self.post_message(self.ContextPathClicked(context_path))
-            event.stop()
 
 
 class ReturnToMainPromptModal(ModalScreen[bool]):
@@ -955,6 +870,7 @@ class SubagentView(Container):
         auto_return_timeout_seconds: int = 8,
         send_message_callback: Callable[..., bool] | None = None,
         continue_subagent_callback: Callable[..., bool] | None = None,
+        subagent_index: int | None = None,
         id: str | None = None,
     ) -> None:
         """Initialize the subagent screen.
@@ -973,11 +889,14 @@ class SubagentView(Container):
         self._all_subagents = all_subagents or [subagent]
         self._current_index = 0
 
-        # Find current index
-        for i, sa in enumerate(self._all_subagents):
-            if sa.id == subagent.id:
-                self._current_index = i
-                break
+        # Find current index: prefer explicit index, fall back to identity match
+        if subagent_index is not None and 0 <= subagent_index < len(self._all_subagents):
+            self._current_index = subagent_index
+        else:
+            for i, sa in enumerate(self._all_subagents):
+                if sa is subagent:
+                    self._current_index = i
+                    break
 
         self._status_callback = status_callback
         self._send_message_callback = send_message_callback
@@ -2097,6 +2016,19 @@ class SubagentView(Container):
         event.stop()
         self._open_context_path(event.path)
 
+    def on_context_paths_clicked(self, event: ContextPathsClicked) -> None:
+        """Handle context paths icon click in ribbon - open read-only context modal."""
+        from massgen.frontend.displays.textual.widgets.modals.content_modals import (
+            SubagentContextModal,
+        )
+
+        labeled = getattr(self._subagent, "context_paths_labeled", [])
+        if not labeled:
+            labeled = [{"path": p, "label": Path(p).name, "permission": "read"} for p in (self._subagent.context_paths or [])]
+
+        self.app.push_screen(SubagentContextModal(context_paths_labeled=labeled))
+        event.stop()
+
     def _open_context_path(self, path_str: str) -> None:
         """Open a context path from the header."""
         if not path_str:
@@ -2904,6 +2836,7 @@ class SubagentScreen(Screen):
         auto_return_on_completion: bool = False,
         send_message_callback: Callable[..., bool] | None = None,
         continue_subagent_callback: Callable[..., bool] | None = None,
+        subagent_index: int | None = None,
     ) -> None:
         super().__init__()
         self._subagent = subagent
@@ -2912,6 +2845,7 @@ class SubagentScreen(Screen):
         self._auto_return_on_completion = auto_return_on_completion
         self._send_message_callback = send_message_callback
         self._continue_subagent_callback = continue_subagent_callback
+        self._subagent_index = subagent_index
 
     def compose(self) -> ComposeResult:
         yield SubagentView(
@@ -2921,6 +2855,7 @@ class SubagentScreen(Screen):
             auto_return_on_completion=self._auto_return_on_completion,
             send_message_callback=self._send_message_callback,
             continue_subagent_callback=self._continue_subagent_callback,
+            subagent_index=self._subagent_index,
             id="subagent-view",
         )
 

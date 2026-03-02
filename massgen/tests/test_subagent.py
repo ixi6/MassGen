@@ -360,6 +360,7 @@ class TestSubagentOrchestratorConfig:
         assert config.num_agents == 1  # Defaults to 1 when agents list is empty
         assert config.agents == []
         assert config.coordination == {}
+        assert config.parse_at_references is False
 
     def test_enabled_with_custom_agents(self):
         """Test creating config with custom agent configs."""
@@ -405,6 +406,7 @@ class TestSubagentOrchestratorConfig:
                 {"backend": {"type": "anthropic", "model": "claude-3-sonnet"}},
             ],
             "coordination": {"voting": {"enabled": True}},
+            "parse_at_references": False,
         }
         config = SubagentOrchestratorConfig.from_dict(data)
         assert config.enabled is True
@@ -412,6 +414,7 @@ class TestSubagentOrchestratorConfig:
         assert len(config.agents) == 2
         assert config.agents[0]["backend"]["model"] == "gpt-4o-mini"
         assert config.coordination == {"voting": {"enabled": True}}
+        assert config.parse_at_references is False
 
     def test_from_dict_with_defaults(self):
         """Test from_dict uses defaults for missing keys."""
@@ -431,11 +434,13 @@ class TestSubagentOrchestratorConfig:
             enabled=True,
             agents=agents,
             coordination={"planning": True},
+            parse_at_references=False,
         )
         data = config.to_dict()
         assert data["enabled"] is True
         assert len(data["agents"]) == 2
         assert data["coordination"] == {"planning": True}
+        assert data["parse_at_references"] is False
 
     def test_roundtrip_serialization(self):
         """Test that config survives serialization round-trip."""
@@ -448,6 +453,7 @@ class TestSubagentOrchestratorConfig:
             enabled=True,
             agents=agents,
             coordination={"broadcast": {"type": "always"}},
+            parse_at_references=False,
         )
         data = original.to_dict()
         restored = SubagentOrchestratorConfig.from_dict(data)
@@ -455,6 +461,7 @@ class TestSubagentOrchestratorConfig:
         assert restored.num_agents == original.num_agents
         assert len(restored.agents) == len(original.agents)
         assert restored.coordination == original.coordination
+        assert restored.parse_at_references == original.parse_at_references
 
     def test_get_agent_config(self):
         """Test get_agent_config method."""

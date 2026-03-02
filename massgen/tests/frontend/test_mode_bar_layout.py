@@ -177,6 +177,42 @@ async def test_mode_bar_does_not_stack_when_initial_width_is_unavailable(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_default_plan_mode_bootstraps_into_plan_mode(monkeypatch, tmp_path: Path) -> None:
+    """Display-level default plan mode should initialize the TUI in Plan mode."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+
+    display = TextualTerminalDisplay(
+        ["agent_a"],
+        agent_models={"agent_a": "gpt-5.3-codex"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+        default_plan_mode="plan",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(120, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._mode_state.plan_mode == "plan"
+        assert app._mode_bar is not None
+        assert app._mode_bar.get_plan_mode() == "plan"
+
+
+@pytest.mark.asyncio
 async def test_mode_bar_logs_layout_refresh_decisions(monkeypatch, tmp_path: Path) -> None:
     """Mode bar should emit explicit debug lines for layout refresh calculations."""
     monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)

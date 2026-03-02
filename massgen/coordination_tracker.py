@@ -505,22 +505,34 @@ class CoordinationTracker:
         (preempt-not-restart), ensuring their context_labels accurately reflects
         what they've seen for vote label resolution.
 
+        When a newer version of an answer is injected (e.g. agent1.2 replacing
+        agent1.1), the old label is **replaced** rather than kept alongside the
+        new one.  This prevents the checklist from requiring scores for stale
+        superseded versions that the agent should no longer evaluate.
+
         Args:
             agent_id: The agent receiving the update
             new_answer_agent_ids: List of agent IDs whose answers are being injected
         """
-        # Get current context labels for this agent
         current_labels = self.agent_context_labels.get(agent_id, [])
 
-        # Add labels for the new answers
         for answering_agent_id in new_answer_agent_ids:
             if answering_agent_id in self.answers_by_agent and self.answers_by_agent[answering_agent_id]:
-                # Get the most recent answer's label
                 latest_answer = self.answers_by_agent[answering_agent_id][-1]
-                if latest_answer.label not in current_labels:
-                    current_labels.append(latest_answer.label)
+                new_label = latest_answer.label
 
-        # Update the agent's context labels
+                if new_label in current_labels:
+                    continue  # already present, nothing to do
+
+                # Remove any older label from the same agent base
+                # Labels follow "agent{N}.{version}" pattern
+                agent_num = self._get_agent_number(answering_agent_id)
+                if agent_num is not None:
+                    prefix = f"agent{agent_num}."
+                    current_labels = [lbl for lbl in current_labels if not lbl.startswith(prefix)]
+
+                current_labels.append(new_label)
+
         self.agent_context_labels[agent_id] = current_labels
 
     def track_restart_signal(self, triggering_agent: str, agents_restarted: list[str]):

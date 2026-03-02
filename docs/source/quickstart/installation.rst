@@ -100,7 +100,17 @@ On first run, MassGen guides you through setup. Choose your preferred interface:
       - 🗳️ Vote visualization and consensus tracking
       - 💬 Multi-turn conversation management
 
-Your configuration is saved to ``~/.config/massgen/config.yaml``.
+By default, setup creates ``~/.config/massgen/config.yaml``.
+Quickstart also supports custom filenames:
+
+* In the TUI/Web Quickstart "Save Location" step, choose project (``.massgen/``) or global
+  (``~/.config/massgen/``) and enter a filename.
+* In CLI quickstart, ``--config`` can be used as the output filename:
+
+.. code-block:: bash
+
+   # Saves to .massgen/team-config.yaml
+   uv run massgen --quickstart --config team-config
 
 API Keys
 --------

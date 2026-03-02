@@ -280,59 +280,6 @@ def _make_snapshot_subagent(
     )
 
 
-async def _seed_real_tui_subagent_snapshot(pilot) -> None:  # noqa: ANN001 - fixture-provided type
-    app = pilot.app
-    panel = app.agent_widgets["agent_a"]
-    panel._hide_loading()
-    _stop_round_timers_if_running(app)
-
-    timeline = panel._get_timeline()
-    assert timeline is not None
-    timeline.add_text(
-        "Delegating validation to evaluator subagents while implementation continues.",
-        text_class="content-inline",
-        round_number=1,
-    )
-    timeline.add_widget(
-        SubagentCard(
-            subagents=[
-                _make_snapshot_subagent(
-                    "evaluator_beatles_site_round2",
-                    status="running",
-                    task="Re-evaluate the updated Beatles website after fixes and verify accessibility.",
-                    elapsed_seconds=92.0,
-                    timeout_seconds=300.0,
-                ),
-                _make_snapshot_subagent(
-                    "explorer_context_audit",
-                    status="completed",
-                    task="Summarize architecture and produce implementation recommendations.",
-                    elapsed_seconds=67.0,
-                    timeout_seconds=300.0,
-                    answer_preview="Completed review with 3 high-confidence recommendations.",
-                ),
-            ],
-            tool_call_id="snapshot_spawn_call",
-            id="subagent_snapshot_card",
-        ),
-    )
-    app.query_one("#timeout_display", Label).update("⏱ 1:32 / 10:00")
-    app.query_one("#status_cwd", Static).update("[dim]📁[/] /workspace")
-    app.set_focus(None)
-    _complete_tool_appearance_states(app)
-    _stop_all_tui_timers(app)
-    await pilot.pause()
-
-
-def test_subagent_card_snapshot_option_a(snap_compare, monkeypatch, tmp_path: Path) -> None:  # noqa: ANN001 - pytest fixture type
-    _configure_real_tui_snapshot_environment(monkeypatch)
-    assert snap_compare(
-        _build_real_tui_snapshot_app(tmp_path),
-        terminal_size=(140, 42),
-        run_before=_seed_real_tui_subagent_snapshot,
-    )
-
-
 async def _seed_real_tui_round_snapshot(pilot) -> None:  # noqa: ANN001 - fixture-provided type
     app = pilot.app
     panel = app.agent_widgets["agent_a"]

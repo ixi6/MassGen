@@ -101,6 +101,8 @@ Requirements:
         orchestrator_id: str,
         log_directory: str | None = None,
         on_subagent_started: Callable[[str, str, int, Callable[[str], Any | None], str | None], None] | None = None,
+        voting_sensitivity: str | None = None,
+        voting_threshold: int | None = None,
     ) -> dict[str, str]:
         """Generate subtask assignments via a MassGen subagent call.
 
@@ -116,6 +118,10 @@ Requirements:
             parent_workspace: Path to parent workspace for subagent workspace creation
             orchestrator_id: ID of the parent orchestrator
             log_directory: Optional path to log directory for subagent logs
+            voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
+            voting_threshold: Optional voting threshold to pass through to
+                the pre-collaboration subagent coordination config.
 
         Returns:
             Dictionary mapping agent_id to subtask description
@@ -188,14 +194,20 @@ Requirements:
 
         try:
             # Use orchestrator mode so decomposition itself can be multi-agent.
+            coordination = {
+                "enable_subagents": False,
+                "broadcast": False,
+                "checklist_criteria_preset": "decomposition",
+            }
+            if voting_sensitivity:
+                coordination["voting_sensitivity"] = voting_sensitivity
+            if voting_threshold is not None:
+                coordination["voting_threshold"] = voting_threshold
+
             subagent_orch_config = SubagentOrchestratorConfig(
                 enabled=True,
                 agents=simplified_configs,
-                coordination={
-                    "enable_subagents": False,
-                    "broadcast": False,
-                    "checklist_criteria_preset": "decomposition",
-                },
+                coordination=coordination,
                 max_new_answers=5,
             )
 

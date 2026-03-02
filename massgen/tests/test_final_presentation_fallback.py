@@ -33,7 +33,7 @@ async def test_final_presentation_fallback():
         orchestrator = Orchestrator(agents={})
 
         # Mock the agent states to simulate a stored answer
-        orchestrator.agent_states = {"test_agent": Mock(answer="This is a stored answer for testing purposes.")}
+        orchestrator.agent_states = {"test_agent": Mock(answer="This is a stored answer for testing purposes.", answer_count=0, checklist_calls_this_round=0)}
 
         # Mock the message templates
         orchestrator.message_templates = Mock()
@@ -101,7 +101,7 @@ async def test_final_presentation_with_content():
         orchestrator = Orchestrator(agents={})
 
         # Mock the agent states
-        orchestrator.agent_states = {"test_agent": Mock(answer="This is a stored answer for testing purposes.")}
+        orchestrator.agent_states = {"test_agent": Mock(answer="This is a stored answer for testing purposes.", answer_count=0, checklist_calls_this_round=0)}
 
         # Mock the message templates
         orchestrator.message_templates = Mock()
@@ -170,7 +170,7 @@ async def test_no_stored_answer_fallback():
         orchestrator = Orchestrator(agents={})
 
         # Mock the agent states with no stored answer
-        orchestrator.agent_states = {"test_agent": Mock(answer="")}  # No stored answer
+        orchestrator.agent_states = {"test_agent": Mock(answer="", answer_count=0, checklist_calls_this_round=0)}  # No stored answer
 
         # Mock the message templates
         orchestrator.message_templates = Mock()

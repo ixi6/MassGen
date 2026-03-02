@@ -6,6 +6,11 @@ from massgen.cli import get_spec_creation_prompt_prefix
 class TestSpecCreationPromptPrefix:
     """Test spec mode prompt prefix generation."""
 
+    def test_default_broadcast_uses_scope_analysis(self):
+        prefix = get_spec_creation_prompt_prefix()
+        assert "Scope Analysis" in prefix
+        assert "Scope Confirmation" not in prefix
+
     def test_instructs_project_spec_json_output(self):
         prefix = get_spec_creation_prompt_prefix()
         assert "project_spec.json" in prefix

@@ -7,13 +7,12 @@ are used instead.
 
 Each criterion is tagged with a tier:
 - "must": Hard requirements — failing these means the answer is wrong.
-- "should": Quality expectations — missing these means the answer is mediocre.
-- "could": Excellence markers — missing these is acceptable but achieving them
-  shows real craft.
+- "should": Quality expectations that demand deliberate craft — not just
+  functional completeness, but thoughtful execution a user would notice.
+- "could": Excellence markers — genuine creative ambition or distinctive
+  quality that makes the output stand out.
 
 For backward compatibility, old "core" maps to "must" and "stretch" maps to "could".
-The convergence off-ramp fires when only "could" items fail and "must"/"should"
-items all pass.
 """
 
 import json
@@ -50,12 +49,20 @@ class GeneratedCriterion:
     Attributes:
         id: Criterion identifier (e.g., "E1", "E2")
         text: The criterion description text
-        category: "core" or "stretch"
+        category: "must", "should", or "could" (legacy: "core"→"must", "stretch"→"could")
+        verify_by: Optional free-form instruction for how to gather evidence for this
+            criterion. Set when reading the output text is insufficient — e.g.
+            "render each slide to PNG and view visually with read_media",
+            "record a video of the full animation and review the motion",
+            "listen to the audio output from start to finish",
+            "open in browser and test: click all links, submit forms, check states".
+            None when textual inspection of the output is sufficient.
     """
 
     id: str
     text: str
     category: str  # "must", "should", or "could" (legacy: "core"→"must", "stretch"→"could")
+    verify_by: str | None = None
 
 
 # Static defaults inspired by GEPA's diagnostic structure.
@@ -224,6 +231,90 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
             "The analysis identifies patterns across the dataset, not just individual"
             " anomalies. Recurring behaviors, systematic biases, or structural issues"
             " are surfaced alongside one-off events.",
+            "could",
+        ),
+    ],
+    "planning": [
+        (
+            "The plan captures the user's requested outcome and constraints" " without scope drift. Critical requirements are explicit, and no" " mandatory deliverable expectation is omitted.",
+            "must",
+        ),
+        (
+            "The task graph is executable and internally consistent:" " dependencies are valid, ordering is coherent, and there are no" " contradictory or impossible steps.",
+            "must",
+        ),
+        (
+            "Tasks describe both what to produce AND how to approach it —"
+            " the method, key decisions, and constraints that guide execution."
+            " 'Create the hero section' is insufficient; 'restructure the hero"
+            " section: move value proposition above the fold, use existing brand"
+            " palette, add a single prominent CTA' tells the executor what to"
+            " actually do. Each task should be actionable without requiring the"
+            " executor to infer creative or technical direction.",
+            "must",
+        ),
+        (
+            "Each task has verification guidance matched to its type."
+            " Verification may be deterministic (run tests, validate responses,"
+            " check file structure) or qualitative (render to images and assess"
+            " visual quality, read the output and evaluate tone, watch playback"
+            " and judge pacing). Plans must NOT force numeric thresholds on"
+            " inherently qualitative work — 'visually inspect the rendered page"
+            " for layout balance and readability' is valid verification."
+            " Verification says what to examine and what to look for.",
+            "must",
+        ),
+        (
+            "Technology and tooling choices are explicit and justified."
+            " Frameworks, libraries, APIs, and tools are named — not left for"
+            " the executor to guess. For existing codebases, the plan respects"
+            " the established stack and conventions rather than introducing"
+            " gratuitous alternatives.",
+            "must",
+        ),
+        (
+            "Where tasks connect or produce artifacts consumed by other tasks,"
+            " interface contracts are specified: data shapes, file conventions,"
+            " API signatures, or shared types. Independent execution of tasks"
+            " should not require reverse-engineering unstated agreements.",
+            "should",
+        ),
+        (
+            "Assumptions, boundaries, and trade-offs are documented with" " rationale. Ambiguities are resolved with explicit defaults rather" " than left implicit.",
+            "should",
+        ),
+        (
+            "The plan demonstrates thoughtful sequencing and risk management:"
+            " chunking and prioritization reduce rework, high-risk or"
+            " foundational tasks come first, and quality gates are placed"
+            " where they most improve final output quality.",
+            "should",
+        ),
+    ],
+    "spec": [
+        (
+            "Requirements are complete and unambiguous — each requirement" " describes a single, testable behavior or property. A developer" " reading the spec can implement without guessing intent.",
+            "must",
+        ),
+        (
+            "Each requirement has concrete acceptance criteria: specific" " conditions, inputs, expected outputs, or observable behaviors" " that prove the requirement is met.",
+            "must",
+        ),
+        (
+            "Scope boundaries are explicit — what is in scope and what is"
+            " deliberately out of scope are both stated. The spec does not"
+            " silently omit aspects the user would expect to be covered.",
+            "must",
+        ),
+        (
+            "Requirements are prioritized and internally consistent — no two"
+            " requirements contradict each other, and the priority or"
+            " ordering reflects genuine implementation dependencies and"
+            " user-facing importance.",
+            "should",
+        ),
+        (
+            "Requirements anticipate edge cases, error states, and boundary" " conditions relevant to the domain. The spec does not only" " describe the happy path.",
             "could",
         ),
     ],
@@ -414,11 +505,15 @@ def _parse_criteria_response(
             category = _CATEGORY_MAP.get(raw_category, raw_category)
             if category not in _VALID_CATEGORIES:
                 category = "must"
+            verify_by = item.get("verify_by") or None
+            if verify_by and not isinstance(verify_by, str):
+                verify_by = None
             criteria.append(
                 GeneratedCriterion(
                     id=f"E{i + 1}",
                     text=text,
                     category=category,
+                    verify_by=verify_by,
                 ),
             )
 
@@ -494,10 +589,35 @@ what to look for when assessing it.
 Criteria must be **concrete and verifiable** — specific enough that an evaluator \
 can point to evidence in the output.
 
-Important: do NOT only generate functional/correctness criteria. A correct output \
-can still be mediocre. Include at least one criterion that assesses whether the \
-output shows intentional craft — cohesive choices, not just adequate execution. \
-Tag it as "should".
+## What Correctness Means
+
+Correctness is not just "the file exists and opens." A correct output is one that \
+works as the user actually experiences it across all relevant dimensions:
+
+- **Structural correctness**: the output has the right form and can be used at all \
+  (file opens, code runs, API responds)
+- **Content correctness**: the output says or computes the right things — accurate, \
+  complete, no factual errors or wrong results
+- **Experiential correctness**: the output behaves correctly in its primary use \
+  environment — text renders without overflow or clipped characters, visuals display \
+  as intended, interactions work, audio/video plays back properly, no obvious visual \
+  glitches or broken elements at the normal viewing context
+
+An output that passes structural checks but fails experiential ones (e.g., text that \
+renders with a single letter orphaned on its own line, a chart that displays blank, a \
+button that does nothing, a layout that is visually broken at the default viewport) is \
+a *wrong* output, not a mediocre one. Correctness criteria must cover all three \
+dimensions, not just structural validity.
+
+Experiential correctness at the **primary use context** is always MUST — the output \
+must work correctly where and how it will normally be used. Extended contexts (e.g., \
+multiple screen sizes, edge-case inputs, non-default settings) may be SHOULD or COULD \
+depending on whether the task explicitly requires them.
+
+Correctness is separate from **quality/craft**: a correct output can still be mediocre. Craft \
+criteria ask whether the output shows intentional quality — cohesive choices, thoughtful \
+structure, elegance — beyond what is merely correct. Include at least one craft criterion \
+tagged "should".
 
 BAD (abstract): "Visual design quality."
 GOOD (concrete): "Visual design: typography is legible at mobile resolution \
@@ -509,28 +629,42 @@ GOOD (concrete): "Code quality: functions have single responsibility, error \
 paths are handled (no swallowed exceptions), public API has type annotations, \
 no hardcoded secrets or credentials."
 
-BAD (only functional): all criteria check correctness, completeness, and requirements
-GOOD (includes craft): at least one criterion asks whether the output shows \
-intentional quality — cohesive design choices, consistent style, or elegant \
-structure that a domain expert would recognize as crafted, not just assembled.
+BAD (only structural): all criteria check whether the output exists and has the right form
+GOOD (covers all dimensions): criteria cover what it says/computes, how it behaves \
+when actually used, and whether it shows intentional craft beyond correctness.
 
 ## Tier System
 
 Organize criteria into three tiers:
-- **MUST**: Hard requirements from the task. Failing these means the answer is wrong. \
-A first-year professional in the domain would not ship output that fails this. \
+- **MUST**: Hard requirements from the task. Failing these means the answer is wrong — \
+across all dimensions of correctness (structural, content, and experiential). A first-year \
+professional in the domain would not ship output that fails this. \
 (e.g., "Output is a working 30-second video, not a still image or broken render")
-- **SHOULD**: Quality expectations a demanding user would have. A competent first draft \
-often misses these — they require deliberate effort to satisfy. Missing these means \
-the answer is mediocre. (e.g., "Text is readable without pausing the video")
-- **COULD**: Excellence markers that separate good from outstanding. A solid submission \
-might reasonably skip these; they represent genuine craft above the bar. Missing these \
-is acceptable but achieving them signals real skill. (e.g., "Visual transitions \
-reinforce the narrative rather than just being decorative")
+- **SHOULD**: Quality dimensions where the output must demonstrate deliberate, \
+thoughtful execution — not just functional completeness. A SHOULD criterion \
+asks "did the creator make intentional choices here, or just do the obvious \
+thing?" Functional baselines (e.g., "has mobile support", "images load") \
+belong in MUST if they're requirements, not SHOULD. SHOULD criteria target \
+the quality of execution: how well something is done, not whether it exists. \
+(e.g., "Typography creates clear visual hierarchy with intentional size, \
+weight, and spacing choices — not just default browser styles")
+- **COULD**: Creative ambition and distinctive quality that makes the output \
+memorable. COULD criteria ask "does this show a point of view?" — not just \
+competent execution but something a viewer would specifically remember or \
+comment on. These matter; they are what separates \
+forgettable-but-correct output from work someone would show to a colleague. \
+(e.g., "The site has a distinctive interactive moment that reinforces the \
+brand identity — not a generic animation library demo but something that \
+feels designed for this specific product")
 
-**Calibration test**: ask yourself — would a competent first attempt satisfy this? \
-If yes, it belongs in MUST. If a good attempt might miss it, SHOULD. \
-If only exceptional work achieves it, COULD.
+**Calibration test**: first ask whether this is a correctness criterion — does failing \
+it mean the output is *wrong* (broken, inaccurate, or misbehaving in its actual \
+environment)? If yes, it is MUST regardless of how difficult it is to achieve. \
+Only after ruling that out, ask: is this about the *quality of execution* — how \
+thoughtfully something is done? Then it is SHOULD. Is this about *distinctive \
+creative ambition* — would someone specifically notice or remember this? Then \
+it is COULD. If a criterion can be satisfied by a simple checkbox action \
+(add X, include Y, support Z), it belongs in MUST, not SHOULD.
 
 ## Requirements
 1. Generate between {min_criteria} and {max_criteria} criteria
@@ -539,15 +673,30 @@ If only exceptional work achieves it, COULD.
 4. 1-3 criteria may be "could" (what separates good from exceptional)
 5. Each criterion must be specific to THIS task, not generic
 6. Each criterion should be scoreable — an evaluator rates it on a 1-10 scale
-7. **One criterion MUST assess overall quality/craft** — whether the output \
-shows intentional, cohesive choices beyond functional correctness. Tag it \
-as "should". Without this, agents produce correct but mediocre output.
+7. **One criterion MUST assess quality/craft** — whether the output shows intentional, \
+cohesive choices that a viewer would notice and appreciate. This criterion should \
+demand evidence of a point of view, not just absence of defects. Tag it as "should". \
+Without this, agents produce correct but forgettable output.
 8. **Criteria must cover distinct dimensions of the task** — do not cluster \
 multiple criteria around the same aspect. Think about what the major \
-independent quality axes are (e.g., correctness, completeness, error handling, \
-usability, performance, style) and ensure each significant dimension gets \
-at least one criterion. An evaluator reading the full set should feel like \
-the entire task space is covered.
+independent quality axes are for this specific task (e.g., content correctness, \
+experiential correctness, completeness, error handling, usability, craft) and \
+ensure each significant dimension gets at least one criterion. An evaluator \
+reading the full set should feel like the entire task space is covered.
+9. **For tasks that produce a rendered or experienced artifact** (website, slides, \
+document, video, audio, interactive app): you MUST include a dedicated `must` \
+criterion whose sole focus is rendering/playback correctness in the primary use \
+context — no defects when the output is opened and experienced normally. This means: \
+no text overflow or clipping, no element collisions, no invisible or blank content, \
+no broken playback. Do NOT merge this into a craft or polish criterion — those are \
+separate. Do NOT make this criterion `should`. It is always `must`.
+10. **Per-part quality**: When the output has multiple distinct parts (sections of a \
+page, chapters of a document, modules of a codebase, scenes of a video), include at \
+least one criterion that assesses whether EACH significant part independently meets a \
+quality bar. Whole-output criteria like "visual craft is intentional" allow one strong \
+area to mask mediocrity elsewhere — an impressive hero section can pull up the score \
+while feature cards, testimonials, and CTAs remain template-tier. A per-part criterion \
+forces evaluation of the weakest component, not the average. Tag this "should".
 {changedoc_instruction}
 ## Examples
 
@@ -562,6 +711,16 @@ For a task "Write an API client library":
 - "Error handling: client is resilient to network failures, rate limits, and malformed responses."
 - "Developer ergonomics: naming is clear, the public API is discoverable, and usage is self-evident."
 
+For tasks producing an artifact that is experienced rather than just read (rendered \
+visuals, video, audio, interactive output): always include a MUST criterion covering \
+correctness in the primary use context — for rendered output this means no visual \
+defects when viewed normally; for video/audio this means plays back correctly without \
+distortion, sync errors, or gaps; for interactive output this means all interactions \
+work as expected without errors. This is separate from extended-context correctness \
+(other viewports, edge devices, alternative players), which is typically SHOULD. \
+The verify_by must require actually experiencing the full artifact, not just checking \
+its source or structure.
+
 Notice: these name a quality axis and list what to look for — they do NOT prescribe \
 specific quantities, thresholds, or implementation choices.
 
@@ -571,15 +730,48 @@ GOOD (evaluation dimension): "Breadth and depth of topic coverage: all major asp
 BAD (implementation plan): "Each of the four Beatles is individually featured with accurate biographical details including birth year, role, and contributions"
 GOOD (evaluation dimension): "Individual member coverage: each member has accurate biographical detail, distinct contributions, and is not reduced to a footnote."
 
+BAD (whole-output only): "The output shows intentional design choices"
+GOOD (per-part): "Per-section quality: each significant section of the output independently \
+demonstrates craft and purpose — no section is carried by the strength of others. \
+Evaluate the weakest section, not the average."
+
 ## Output Format
 Return JSON with this structure:
 {{
     "criteria": [
         {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "must"}},
-        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "should"}},
+        {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "should", "verify_by": "render output to images and inspect for [specific defects to check]"}},
         {{"text": "[Aspect name]: [concrete things to look for and how to assess them].", "category": "could"}}
     ]
 }}
+
+**`verify_by` field**: Required whenever the criterion involves experiential correctness \
+or craft that cannot be assessed by reading the source alone. Describe WHAT EVIDENCE to \
+gather and WHAT TO CHECK — not which specific application or GUI to use. The evaluator \
+will choose the best available tool (rendering, screenshots, browser automation, code \
+execution, computer use, etc.) based on their capabilities.
+
+State the full scope (all pages, all slides, full playback — not a sample) and list \
+the specific defects or properties to look for.
+
+- Rendered output (slides, pages, images): render ALL pages/slides to images and inspect \
+  each for specific defects (e.g. text overflow, clipped elements, unreadable font sizes \
+  below Npt, element collisions, blank content areas)
+- Interactive output (web apps, forms): test all navigation links, form submissions, \
+  button actions, and interactive state changes — list what each interaction should do
+- Motion/animation: capture and review full animation playback — list expected motion \
+  behavior and timing
+- Audio/video: listen to or watch the complete output — list what to assess (clarity, \
+  pacing, content accuracy)
+- Executable code: run with representative inputs and check outputs against expected results
+
+Do NOT name specific desktop applications (e.g. "open in PowerPoint", "view in Finder"). \
+Do NOT describe GUI-specific actions (e.g. "hover to see cursor change", "right-click and \
+select"). Instead describe the observable property to verify and let the evaluator choose \
+the method.
+
+Omit only when the criterion can be fully assessed by reading the output text or \
+inspecting the source file structure.
 
 Write the JSON to a file called `criteria.json` in your workspace.
 Generate evaluation criteria now for the task above."""
@@ -595,6 +787,8 @@ Generate evaluation criteria now for the task above."""
         min_criteria: int = 4,
         max_criteria: int = 7,
         on_subagent_started: Callable | None = None,
+        voting_sensitivity: str | None = None,
+        voting_threshold: int | None = None,
     ) -> list[GeneratedCriterion]:
         """Generate criteria via a subagent run.
 
@@ -608,6 +802,10 @@ Generate evaluation criteria now for the task above."""
             min_criteria: Minimum criteria count
             max_criteria: Maximum criteria count
             on_subagent_started: Callback when subagent starts
+            voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
+            voting_threshold: Optional voting threshold to pass through to
+                the pre-collaboration subagent coordination config.
 
         Returns:
             List of GeneratedCriterion objects
@@ -649,14 +847,20 @@ Generate evaluation criteria now for the task above."""
                     },
                 )
 
+            coordination = {
+                "enable_subagents": False,
+                "broadcast": False,
+                "checklist_criteria_preset": "evaluation",
+            }
+            if voting_sensitivity:
+                coordination["voting_sensitivity"] = voting_sensitivity
+            if voting_threshold is not None:
+                coordination["voting_threshold"] = voting_threshold
+
             subagent_config = SubagentOrchestratorConfig(
                 enabled=True,
                 agents=simplified,
-                coordination={
-                    "enable_subagents": False,
-                    "broadcast": False,
-                    "checklist_criteria_preset": "evaluation",
-                },
+                coordination=coordination,
             )
 
             manager = SubagentManager(

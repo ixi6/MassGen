@@ -182,6 +182,7 @@ When adding framework tooling capabilities (for example custom-tool lifecycle, b
 - `claude_code.py` has its own SDK MCP wrapping path and requires explicit wiring for new framework custom tools.
 - `codex.py` relies on `massgen/mcp_tools/custom_tools_server.py` + `.codex/custom_tool_specs.json`; new custom/background capabilities must be wired through that path explicitly.
 - Any non-trivial tooling feature should add backend parity tests for at least: one `base_with_custom_tool_and_mcp` backend, `claude_code`, and `codex`.
+- **Workspace metadata directories**: Backends that create config directories in the workspace (e.g., `.codex/` for Codex) must add those directory names to the `_metadata_dirs` set in `FilesystemManager.save_snapshot()`'s `has_meaningful_content()` helper (`massgen/filesystem_manager/_filesystem_manager.py`). Otherwise, these metadata-only directories cause the final snapshot to copy a near-empty workspace instead of falling back to `snapshot_storage` with the real deliverables. Current exclusions: `.git`, `.codex`, `.massgen`, `memory`.
 
 ## Configuration
 

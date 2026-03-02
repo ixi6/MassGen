@@ -12,7 +12,11 @@ Run with: uv run pytest massgen/tests/test_config_builder.py -v
 
 import pytest
 
-from massgen.config_builder import ConfigBuilder
+from massgen.config_builder import (
+    ConfigBuilder,
+    build_quickstart_config_path,
+    normalize_quickstart_config_filename,
+)
 
 
 class TestCloneAgent:
@@ -553,6 +557,33 @@ class TestQuickstartReasoningSettings:
             "effort": "xhigh",
             "summary": "auto",
         }
+
+
+class TestQuickstartConfigPathHelpers:
+    """Test quickstart output filename/path helper behavior."""
+
+    def test_normalize_quickstart_filename_adds_yaml_extension(self):
+        assert normalize_quickstart_config_filename("team-config") == "team-config.yaml"
+
+    def test_normalize_quickstart_filename_uses_basename_only(self):
+        assert normalize_quickstart_config_filename(".massgen/nested/custom.yml") == "custom.yml"
+
+    def test_build_quickstart_project_path_uses_dot_massgen(self, tmp_path):
+        path = build_quickstart_config_path(
+            location="project",
+            filename="my-team",
+            cwd=tmp_path,
+        )
+        assert path == tmp_path / ".massgen" / "my-team.yaml"
+
+    def test_build_quickstart_global_path_uses_home_config_dir(self, tmp_path):
+        fake_home = tmp_path / "home"
+        path = build_quickstart_config_path(
+            location="global",
+            filename="global-name",
+            home_dir=fake_home,
+        )
+        assert path == fake_home / ".config" / "massgen" / "global-name.yaml"
 
 
 if __name__ == "__main__":

@@ -319,7 +319,7 @@ class PlanOptionsPopover(Widget):
         current_chunk_target: int | None = None,
         current_execute_auto_continue: bool = True,
         current_execute_refinement_mode: str = "inherit",
-        current_broadcast: Any = "human",
+        current_broadcast: Any = False,
         analysis_target_type: str = "log",
         analysis_profile: str = "dev",
         analysis_log_options: list[tuple[str, str]] | None = None,

@@ -123,6 +123,20 @@ def git_commit_if_changed(workspace: Path, message: str) -> bool:
         return False
 
 
+_WORKSPACE_METADATA_DIRS = frozenset({".git", ".codex", ".massgen", "memory"})
+
+
+def has_meaningful_content(path: Path | None) -> bool:
+    """Check if a directory contains meaningful deliverable content.
+
+    Excludes symlinks and workspace/backend metadata directories
+    that are not agent-produced deliverables.
+    """
+    if not path or not path.exists() or not path.is_dir():
+        return False
+    return any(not item.is_symlink() and item.name not in _WORKSPACE_METADATA_DIRS for item in path.iterdir())
+
+
 class FilesystemManager:
     """
     Manages filesystem operations for backends with MCP filesystem support.
@@ -1880,7 +1894,7 @@ class FilesystemManager:
         self.path_permission_manager.context_write_access_enabled = True
         logger.info("[FilesystemManager] Context write access enabled - agent can now modify files with write permissions")
 
-    async def save_snapshot(self, timestamp: str | None = None, is_final: bool = False) -> None:
+    async def save_snapshot(self, timestamp: str | None = None, is_final: bool = False, preserve_existing_snapshot: bool = False) -> None:
         """
         Save a snapshot of the workspace. Always saves to snapshot_storage if available (keeping only most recent).
         Additionally saves to log directories if logging is enabled.
@@ -1898,20 +1912,6 @@ class FilesystemManager:
         if self.use_two_tier_workspace:
             commit_prefix = "[FINAL]" if is_final else "[SNAPSHOT]"
             self._git_commit_if_changed(self.cwd, f"{commit_prefix} Auto-commit before snapshot")
-
-        def has_meaningful_content(path: Path | None) -> bool:
-            """Check if a directory contains meaningful deliverable content.
-
-            Excludes:
-            - .git directory (version control metadata)
-            - memory directory (workspace metadata, not deliverables)
-            - symlinks (reference to other locations)
-
-            Returns True only if there are actual deliverable files/directories.
-            """
-            if not path or not path.exists() or not path.is_dir():
-                return False
-            return any(not item.is_symlink() and item.name not in (".git", "memory") for item in path.iterdir())
 
         # Use current workspace as source
         source_path = Path(self.cwd)
@@ -1938,8 +1938,10 @@ class FilesystemManager:
         try:
             # --- 1. Save to snapshot_storage ---
             if self.snapshot_storage:
-                # Don't overwrite a non-empty snapshot with an empty workspace
-                if not workspace_has_content and snapshot_storage_has_content:
+                if preserve_existing_snapshot and snapshot_storage_has_content:
+                    # Interrupted save: never overwrite a submitted answer's snapshot
+                    logger.info(f"[FilesystemManager] Preserving existing snapshot during interrupted save ({self.snapshot_storage})")
+                elif not workspace_has_content and snapshot_storage_has_content:
                     logger.info(f"[FilesystemManager] Skipping snapshot_storage update - workspace is empty but snapshot_storage has content ({self.snapshot_storage})")
                 else:
                     # Normal case: overwrite with current workspace

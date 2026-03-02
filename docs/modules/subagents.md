@@ -80,14 +80,30 @@ On timeout or `asyncio.CancelledError`, `SubagentManager` writes an empty `cance
 
 ## Context Contract
 
-`spawn_subagents` requires every task to include `context_paths`.
+`spawn_subagents` mounts workspaces read-only for subagents. Per-task options:
 
-- `context_paths` must be present in each task object
-- `context_paths` must be a list
-- Use `[]` for no additional context
-- Use `["./"]` for parent workspace read access
+- `include_parent_workspace` (bool, default `True`) — mount the parent's workspace read-only.
+  Set `False` for fully isolated research subagents.
+- `include_temp_workspace` (bool, default `True`) — auto-mount the shared reference directory
+  (`temp_workspaces/`) read-only. Contains peer agent snapshots. Set `False` to skip.
+- `context_paths` (list, optional, default `[]`) — additional read-only paths beyond the
+  auto-mounted parent workspace and temp_workspaces. Must be a list if provided. Only needed
+  for paths outside the two auto-mounted locations.
 
-This is validated at the subagent MCP gateway (`_subagent_mcp_server.py`), not only by prompt guidance.
+The `_subagent_mcp_server.py` MCP gateway validates that `context_paths`, if provided, is a list
+and that all paths exist on the filesystem.
+
+### File Write-Back Pattern
+
+Subagents can **only** write to their own workspace — the parent workspace is mounted read-only
+to them. Correct pattern:
+
+1. Tell the subagent to save artifacts with relative paths (e.g. `verification/`).
+2. The spawn result always includes `"workspace": "/abs/path/to/subagent/workspace"`.
+3. After the subagent completes, read artifacts from that path.
+
+**WRONG**: `"Save screenshots to /parent/workspace/.massgen_scratch/verification/"`
+**RIGHT**: `"Save screenshots to verification/ in your workspace and list them in your answer."`
 
 ## Specialized Subagent Profiles
 

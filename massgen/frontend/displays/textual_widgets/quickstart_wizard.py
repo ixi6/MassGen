@@ -28,6 +28,12 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
+from massgen.config_builder import (
+    DEFAULT_QUICKSTART_CONFIG_FILENAME,
+    build_quickstart_config_path,
+    normalize_quickstart_config_filename,
+)
+
 from .setup_wizard import DockerSetupStep
 from .wizard_base import StepComponent, WizardModal, WizardState, WizardStep
 from .wizard_steps import LaunchOptionsStep, WelcomeStep
@@ -1428,28 +1434,55 @@ class ConfigLocationStep(StepComponent):
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected: str = "project"
+        self._filename: str = DEFAULT_QUICKSTART_CONFIG_FILENAME
         self._option_list: OptionList | None = None
+        self._filename_input: Input | None = None
         self._warning_label: Label | None = None
-        self._project_path = Path.cwd() / ".massgen" / "config.yaml"
-        self._global_path = Path.home() / ".config" / "massgen" / "config.yaml"
+        saved_value = self.wizard_state.get("config_location")
+        if isinstance(saved_value, dict):
+            self._selected = str(saved_value.get("location", "project"))
+            self._filename = normalize_quickstart_config_filename(
+                str(saved_value.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME)),
+            )
+        elif isinstance(saved_value, str):
+            self._selected = saved_value
 
-    def _path_for(self, location: str) -> Path:
-        return self._global_path if location == "global" else self._project_path
+    def _path_for(self, location: str, filename: str | None = None) -> Path:
+        return build_quickstart_config_path(
+            location=location,
+            filename=filename or self._filename,
+        )
 
     def _build_options(self) -> list:
         options = []
         for value, label, desc, path in [
-            ("project", "This Project (Recommended)", ".massgen/config.yaml in current directory", self._project_path),
-            ("global", "Global", "~/.config/massgen/config.yaml — available from any directory", self._global_path),
+            (
+                "project",
+                "This Project (Recommended)",
+                ".massgen/ in current directory",
+                self._path_for("project"),
+            ),
+            (
+                "global",
+                "Global",
+                "~/.config/massgen/ — available from any directory",
+                self._path_for("global"),
+            ),
         ]:
             exists_tag = "  [yellow]⚠ exists[/yellow]" if path.exists() else ""
             option_text = f"[bold]{label}{exists_tag}[/bold]\n[dim]{desc}[/dim]"
             options.append(Option(option_text, id=value))
         return options
 
+    def _current_filename(self) -> str:
+        if self._filename_input:
+            return self._filename_input.value.strip()
+        return self._filename
+
     def _update_warning(self) -> None:
         if self._warning_label:
-            path = self._path_for(self._selected)
+            filename = normalize_quickstart_config_filename(self._current_filename())
+            path = self._path_for(self._selected, filename)
             if path.exists():
                 self._warning_label.update(
                     f"[yellow]A config already exists at {path}. It will be overwritten.[/yellow]",
@@ -1469,7 +1502,20 @@ class ConfigLocationStep(StepComponent):
         yield self._option_list
 
         if self._option_list:
-            self._option_list.highlighted = 0
+            self._option_list.highlighted = 1 if self._selected == "global" else 0
+
+        yield Label("Config filename:", classes="text-input-label")
+        self._filename_input = Input(
+            value=self._filename,
+            placeholder=DEFAULT_QUICKSTART_CONFIG_FILENAME,
+            classes="text-input",
+            id="config_filename_input",
+        )
+        yield self._filename_input
+        yield Label(
+            "Only a filename is needed. Quickstart chooses the directory for you.",
+            classes="password-hint",
+        )
 
         self._warning_label = Label("", classes="password-hint")
         self._warning_label.display = False
@@ -1482,17 +1528,47 @@ class ConfigLocationStep(StepComponent):
             self._selected = str(event.option.id)
             self._update_warning()
 
-    def get_value(self) -> str:
-        return self._selected
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "config_filename_input":
+            self._filename = event.value.strip() or self._filename
+            self._update_warning()
+
+    def validate(self) -> str | None:
+        raw_filename = self._current_filename()
+        if not raw_filename:
+            return "Please enter a config filename"
+
+        if Path(raw_filename).name != raw_filename or raw_filename in {".", ".."}:
+            return "Enter a filename only (no directory path)"
+
+        return None
+
+    def get_value(self) -> dict[str, str]:
+        return {
+            "location": self._selected,
+            "filename": normalize_quickstart_config_filename(self._current_filename()),
+        }
 
     def set_value(self, value: Any) -> None:
-        if isinstance(value, str):
-            self._selected = value
-            options = [("project", 0), ("global", 1)]
-            idx = next((i for v, i in options if v == value), None)
-            if idx is not None and self._option_list:
-                self._option_list.highlighted = idx
-            self._update_warning()
+        if isinstance(value, dict):
+            location = str(value.get("location", "project"))
+            filename = str(value.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME))
+        elif isinstance(value, str):
+            location = value
+            filename = self._filename
+        else:
+            return
+
+        self._selected = location
+        self._filename = normalize_quickstart_config_filename(filename)
+
+        options = [("project", 0), ("global", 1)]
+        idx = next((i for v, i in options if v == self._selected), None)
+        if idx is not None and self._option_list:
+            self._option_list.highlighted = idx
+        if self._filename_input:
+            self._filename_input.value = self._filename
+        self._update_warning()
 
 
 class ConfigPreviewStep(StepComponent):
@@ -1616,8 +1692,20 @@ class QuickstartCompleteStep(StepComponent):
             yield Label("OK", classes="complete-icon")
             yield Label("Configuration Ready!", classes="complete-title")
 
-            location = self.wizard_state.get("config_location", "project")
-            default = "~/.config/massgen/config.yaml" if location == "global" else ".massgen/config.yaml"
+            location_data = self.wizard_state.get("config_location", "project")
+            if isinstance(location_data, dict):
+                location = str(location_data.get("location", "project"))
+                filename = str(location_data.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME))
+            else:
+                location = str(location_data or "project")
+                filename = DEFAULT_QUICKSTART_CONFIG_FILENAME
+
+            default = str(
+                build_quickstart_config_path(
+                    location=location,
+                    filename=filename,
+                ),
+            )
             config_path = self.wizard_state.get("config_path", default)
             yield Label(f"Saved to: {config_path}", classes="complete-message")
 
@@ -1669,6 +1757,7 @@ class QuickstartWizard(WizardModal):
 
     def __init__(
         self,
+        config_filename: str | None = None,
         *,
         id: str | None = None,
         classes: str | None = None,
@@ -1676,6 +1765,14 @@ class QuickstartWizard(WizardModal):
         super().__init__(id=id, classes=classes)
         self._dynamic_steps_added = False
         self._config_path: str | None = None
+        if config_filename:
+            self.state.set(
+                "config_location",
+                {
+                    "location": "project",
+                    "filename": normalize_quickstart_config_filename(config_filename),
+                },
+            )
 
     def get_steps(self) -> list[WizardStep]:
         """Return the wizard steps."""
@@ -1914,14 +2011,28 @@ class QuickstartWizard(WizardModal):
                 coordination_settings=coordination_settings,
             )
 
-            # Save config to chosen location
-            config_location = self.state.get("config_location", "project")
-            if config_location == "global":
-                config_dir = Path.home() / ".config" / "massgen"
+            # Save config to chosen location + filename
+            config_location_data = self.state.get("config_location", "project")
+            if isinstance(config_location_data, dict):
+                config_location = str(config_location_data.get("location", "project"))
+                config_filename = str(config_location_data.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME))
             else:
-                config_dir = Path(".massgen")
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_path = config_dir / "config.yaml"
+                config_location = str(config_location_data or "project")
+                config_filename = DEFAULT_QUICKSTART_CONFIG_FILENAME
+
+            normalized_filename = normalize_quickstart_config_filename(config_filename)
+            self.state.set(
+                "config_location",
+                {
+                    "location": config_location,
+                    "filename": normalized_filename,
+                },
+            )
+            config_path = build_quickstart_config_path(
+                location=config_location,
+                filename=normalized_filename,
+            )
+            config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(config_path, "w") as f:
                 yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 

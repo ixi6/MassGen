@@ -60,6 +60,7 @@ try:
         CostBreakdownModal,
         DecompositionGenerationModal,
         DecompositionSubtasksModal,
+        EvaluationCriteriaModal,
         FileInspectionModal,
         KeyboardShortcutsModal,
         MCPStatusModal,
@@ -434,6 +435,31 @@ def _normalize_subagent_type(raw_type: Any) -> str | None:
     return value.lower()
 
 
+def _build_context_paths_labeled(
+    context_paths: list[str],
+    workspace_path: str,
+    sa_data: dict[str, Any],
+    existing: SubagentDisplayData | None,
+) -> list[dict[str, str]]:
+    """Build labeled context paths for the SubagentContextModal."""
+    if existing and existing.context_paths_labeled and not context_paths:
+        return existing.context_paths_labeled
+    if not context_paths:
+        return []
+
+    labeled: list[dict[str, str]] = []
+    for p in context_paths:
+        # Determine label based on path characteristics
+        if workspace_path and p == workspace_path:
+            label = "Parent CWD"
+        elif "temp_workspace" in p or "temp_ws" in p:
+            label = "Temp Workspace"
+        else:
+            label = Path(p).name or p
+        labeled.append({"path": p, "label": label, "permission": "read"})
+    return labeled
+
+
 def _build_subagent_display_data(
     sa_data: dict[str, Any],
     existing: SubagentDisplayData | None = None,
@@ -502,6 +528,14 @@ def _build_subagent_display_data(
     if workspace_file_count == 0 and existing and existing.workspace_file_count > 0:
         workspace_file_count = existing.workspace_file_count
 
+    # Build labeled context paths for the SubagentContextModal
+    context_paths_labeled = _build_context_paths_labeled(
+        context_paths,
+        workspace_path,
+        sa_data,
+        existing,
+    )
+
     return SubagentDisplayData(
         id=subagent_id,
         task=task,
@@ -516,6 +550,7 @@ def _build_subagent_display_data(
         answer_preview=answer_preview,
         log_path=str(log_path) if log_path else None,
         context_paths=context_paths,
+        context_paths_labeled=context_paths_labeled,
         subagent_type=subagent_type,
     )
 
@@ -637,6 +672,17 @@ class TextualTerminalDisplay(TerminalDisplay):
             self.default_cwd_context_mode = "read"
         else:
             self.default_cwd_context_mode = "off"
+        # CLI mode defaults (set by --single-agent, --quick, --personas, --coordination-mode)
+        self.default_agent_mode = kwargs.get("default_agent_mode", "multi")
+        self.default_selected_agent = kwargs.get("default_selected_agent", None)
+        default_plan_mode = str(kwargs.get("default_plan_mode", "normal")).strip().lower()
+        if default_plan_mode not in {"normal", "plan", "spec", "execute", "analysis"}:
+            default_plan_mode = "normal"
+        self.default_plan_mode = default_plan_mode
+        self.default_refinement_enabled = kwargs.get("default_refinement_enabled", True)
+        self.default_personas_enabled = kwargs.get("default_personas_enabled", False)
+        self.default_persona_diversity_mode = kwargs.get("default_persona_diversity_mode", "perspective")
+
         # Runtime toggle to ignore hotkeys/key handling when enabled
         self.safe_keyboard_mode = kwargs.get("safe_keyboard_mode", False)
         self.max_buffer_batch = kwargs.get("max_buffer_batch", 50)
@@ -1643,6 +1689,20 @@ class TextualTerminalDisplay(TerminalDisplay):
         """
         if self._app:
             self._call_app_method("set_agent_personas", personas)
+
+    def set_evaluation_criteria(
+        self,
+        criteria: list[dict],
+        source: str = "default",
+    ) -> None:
+        """Pass active evaluation criteria to the TUI for display via Ctrl+E.
+
+        Args:
+            criteria: List of dicts with keys: id, text, category, verify_by.
+            source: Where the criteria came from (generated, inline, preset name, default).
+        """
+        if self._app:
+            self._call_app_method("set_evaluation_criteria", criteria, source)
 
     def begin_restart(
         self,
@@ -3488,6 +3548,8 @@ if TEXTUAL_AVAILABLE:
             Binding("ctrl+shift+i", "toggle_human_input_target", "Inject Target", priority=True, show=False),
             # Theme toggle
             Binding("ctrl+shift+t", "toggle_theme", "Theme", priority=True, show=False),
+            # Evaluation criteria viewer
+            Binding("ctrl+e", "show_evaluation_criteria", "Criteria", priority=True, show=False),
         ]
 
         def __init__(
@@ -3615,6 +3677,11 @@ if TEXTUAL_AVAILABLE:
 
             # TUI Mode State (plan mode, agent mode, refinement mode, override)
             self._mode_state = TuiModeState()
+            requested_default_plan_mode = getattr(self.coordination_display, "default_plan_mode", "normal")
+            if requested_default_plan_mode in {"plan", "spec"}:
+                # Seed mode state immediately so first submitted turn uses
+                # the requested planning/spec workflow even before first repaint.
+                self._mode_state.plan_mode = requested_default_plan_mode
             self._mode_state.analysis_config.include_previous_session_skills = bool(
                 self.coordination_display.default_load_previous_session_skills,
             )
@@ -3624,12 +3691,28 @@ if TEXTUAL_AVAILABLE:
             self._mode_state.analysis_config.skill_lifecycle_mode = lifecycle_mode
             if self.coordination_display.default_coordination_mode == "decomposition":
                 self._mode_state.coordination_mode = "decomposition"
+
+            # Apply CLI mode defaults (--single-agent, --quick, --personas, --coordination-mode)
+            if self.coordination_display.default_agent_mode == "single":
+                self._mode_state.agent_mode = "single"
+                if self.coordination_display.default_selected_agent:
+                    self._mode_state.selected_single_agent = self.coordination_display.default_selected_agent
+                elif self.coordination_display.agent_ids:
+                    self._mode_state.selected_single_agent = self.coordination_display.agent_ids[0]
+            if not self.coordination_display.default_refinement_enabled:
+                self._mode_state.refinement_enabled = False
+            if self.coordination_display.default_personas_enabled:
+                self._mode_state.parallel_personas_enabled = True
+                self._mode_state.persona_diversity_mode = self.coordination_display.default_persona_diversity_mode
+
             self._mode_bar: ModeBar | None = None
 
             # Runtime decomposition generation UI state
             self._decomposition_generation_modal: DecompositionGenerationModal | None = None
             self._runtime_decomposition_subtasks: dict[str, str] = {}
             self._runtime_parallel_personas: dict[str, str] = {}
+            self._runtime_evaluation_criteria: list[dict] | None = None
+            self._runtime_evaluation_criteria_source: str = "default"
             self._decomposition_completion_source: str = "subagent"
             self._precollab_subagents: dict[str, _PrecollabSubagentState] = {}
             # Workspace browser open-guard to prevent duplicate modal pushes from
@@ -4072,9 +4155,16 @@ if TEXTUAL_AVAILABLE:
             self._set_cwd_context_mode(self._cwd_context_mode, notify=False)
             self._refresh_welcome_context_hint()
             if self._mode_bar:
+                self._mode_bar.set_agent_mode(self._mode_state.agent_mode)
+                self._mode_bar.set_refinement_mode(self._mode_state.refinement_enabled)
                 self._mode_bar.set_coordination_mode(self._mode_state.coordination_mode)
                 self._mode_bar.set_coordination_enabled(self._mode_state.agent_mode != "single")
                 self._mode_bar.set_parallel_personas_enabled(self._mode_state.parallel_personas_enabled, self._mode_state.persona_diversity_mode)
+            default_plan_mode = getattr(self.coordination_display, "default_plan_mode", "normal")
+            if default_plan_mode != "normal":
+                self.call_after_refresh(
+                    lambda mode=default_plan_mode: self._handle_plan_mode_change(mode),
+                )
             self._refresh_skills_button_state()
             self._refresh_input_modes_row_layout()
             self._update_running_tools_count()
@@ -7595,6 +7685,15 @@ Type your question and press Enter to ask the agents.
             if self._tab_bar and self._mode_state.coordination_mode == "parallel" and self._mode_state.parallel_personas_enabled:
                 self._tab_bar.set_agent_personas(self._runtime_parallel_personas)
 
+        def set_evaluation_criteria(
+            self,
+            criteria: list[dict],
+            source: str = "default",
+        ) -> None:
+            """Store the active evaluation criteria for display via Ctrl+E."""
+            self._runtime_evaluation_criteria = list(criteria) if criteria else []
+            self._runtime_evaluation_criteria_source = source
+
         def set_input_enabled(self, enabled: bool):
             """Enable or disable mode controls during execution.
 
@@ -9110,7 +9209,7 @@ Type your question and press Enter to ask the agents.
             """Handle plan mode toggle.
 
             Args:
-                mode: "normal", "plan", "execute", or "analysis".
+                mode: "normal", "plan", "spec", "execute", or "analysis".
             """
             tui_log(f"_handle_plan_mode_change: {mode}")
 
@@ -9119,6 +9218,11 @@ Type your question and press Enter to ask the agents.
                 if self._mode_bar:
                     self._mode_bar.set_plan_mode(mode)
                 self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
+            elif mode == "spec":
+                self._mode_state.plan_mode = mode
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode(mode)
+                self.notify("Spec Mode: ON - Submit query to create requirements spec", severity="information", timeout=3)
             elif mode == "execute":
                 # Entering execute mode - use helper which handles plan loading and popover
                 # Note: The mode bar already shows "execute", but _enter_execute_mode
@@ -9350,7 +9454,7 @@ Type your question and press Enter to ask the agents.
 
         @keyboard_action
         def action_toggle_plan_mode(self) -> None:
-            """Toggle mode: normal -> plan -> execute -> analysis -> normal (Shift+Tab)."""
+            """Toggle mode: normal -> plan -> spec -> execute -> analysis -> normal (Shift+Tab)."""
             tui_log("action_toggle_plan_mode")
 
             # Block during execution (keyboard_action decorator handles this,
@@ -9365,34 +9469,19 @@ Type your question and press Enter to ask the agents.
 
             if self._mode_state.plan_mode == "normal":
                 # normal → plan
-                self._mode_state.plan_mode = "plan"
-                if self._mode_bar:
-                    self._mode_bar.set_plan_mode("plan")
-                self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
+                self._handle_plan_mode_change("plan")
             elif self._mode_state.plan_mode == "plan":
                 # plan → spec
-                self._mode_state.plan_mode = "spec"
-                if self._mode_bar:
-                    self._mode_bar.set_plan_mode("spec")
-                self.notify("Spec Mode: ON - Submit query to create requirements spec", severity="information", timeout=3)
+                self._handle_plan_mode_change("spec")
             elif self._mode_state.plan_mode == "spec":
                 # spec → execute (show plan/spec selector if sessions exist)
-                self._enter_execute_mode()
+                self._handle_plan_mode_change("execute")
             elif self._mode_state.plan_mode == "execute":
                 # execute -> analysis
-                self._enter_analysis_mode()
+                self._handle_plan_mode_change("analysis")
             elif self._mode_state.plan_mode == "analysis":
                 # analysis -> normal
-                self._mode_state.reset_plan_state()
-                if self._mode_bar:
-                    self._mode_bar.set_plan_mode("normal")
-                # Hide popover if visible
-                if hasattr(self, "_plan_options_popover") and "visible" in self._plan_options_popover.classes:
-                    self._plan_options_popover.hide()
-                # Reset input placeholder
-                if hasattr(self, "question_input"):
-                    self.question_input.placeholder = "Enter to submit • Shift+Enter for newline • @ for files • Ctrl+G help"
-                self.notify("Plan Mode: OFF", severity="information", timeout=2)
+                self._handle_plan_mode_change("normal")
 
         @keyboard_action
         def action_trigger_override(self) -> None:
@@ -9713,6 +9802,7 @@ Type your question and press Enter to ask the agents.
                 status_callback=status_callback,
                 send_message_callback=self._subagent_message_callback,
                 continue_subagent_callback=getattr(self, "_subagent_continue_callback", None),
+                subagent_index=getattr(event, "subagent_index", None),
             )
             self.push_screen(screen, _on_screen_dismiss)
             event.stop()
@@ -10026,6 +10116,14 @@ Type your question and press Enter to ask the agents.
         def action_show_help(self) -> None:
             """Show help modal (Ctrl+/ binding)."""
             self._show_help_modal()
+
+        def action_show_evaluation_criteria(self) -> None:
+            """Show the active evaluation criteria modal (Ctrl+E binding)."""
+            criteria = getattr(self, "_runtime_evaluation_criteria", None) or []
+            source = getattr(self, "_runtime_evaluation_criteria_source", "default")
+            self._show_modal_async(
+                EvaluationCriteriaModal(criteria=criteria, source=source),
+            )
 
         def action_open_vote_results(self):
             """Open vote results modal."""

@@ -1023,7 +1023,7 @@ Coordination Configuration
    * - ``subagent_orchestrator``
      - object
      - No
-     - Subagent orchestrator configuration (multi-agent subagents with custom models)
+     - Subagent orchestrator configuration (multi-agent subagents with custom models), including options such as ``parse_at_references`` for literal ``@`` task text.
    * - ``background_subagents``
      - object
      - No

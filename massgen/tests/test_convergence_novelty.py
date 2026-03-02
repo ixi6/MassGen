@@ -3,7 +3,6 @@
 Tests cover:
 - Rationale preservation rules in changedoc subsequent round prompt
 - T4 ambition/craft definition (depth over breadth, synthesis with improvement counts)
-- Substantiveness test in checklist gated evaluation
 - Fresh approach enhancements (FEWER decisions restraint)
 - Substantiveness classification in changedoc analysis
 """
@@ -86,70 +85,6 @@ class TestE4StretchDefinition:
     def test_e4_is_could_category(self):
         """E4 must be tagged as could (aspirational), not must."""
         assert _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC["E4"] == "could"
-
-
-# ---------------------------------------------------------------------------
-# Substantiveness Test in Checklist Gated Evaluation
-# ---------------------------------------------------------------------------
-
-
-class TestSubstantivenessTest:
-    """Tests for substantiveness classification in checklist gated decision."""
-
-    def test_gated_decision_has_substantiveness_test(self):
-        """Checklist gated decision must include substantiveness test section."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        assert "Substantiveness Test" in decision
-
-    def test_gated_decision_has_three_classifications(self):
-        """Decision text must mention all three classification levels."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        assert "TRANSFORMATIVE" in decision
-        assert "STRUCTURAL" in decision
-        assert "INCREMENTAL" in decision
-
-    def test_gated_decision_guides_voting_for_incremental(self):
-        """Decision text must suggest voting when all improvements are incremental."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        lower = decision.lower()
-        assert "voting may be the better choice" in lower
-
-    def test_gated_decision_has_substantiveness_object_instructions(self):
-        """Gated decision must instruct agents to provide a substantiveness object."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        assert "substantiveness" in decision.lower()
-        # Should use list-based format keys, not count-based
-        assert '"transformative"' in decision or "'transformative'" in decision
-        assert "decision_space_exhausted" in decision
-
-    def test_gated_decision_has_diverse_examples(self):
-        """Decision text must give examples for each classification level."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        # TRANSFORMATIVE examples
-        assert "data model" in decision.lower() or "event-driven" in decision.lower()
-        # STRUCTURAL examples
-        assert "real-time" in decision.lower() or "caching" in decision.lower()
-        # INCREMENTAL examples
-        assert "aria labels" in decision.lower() or "alt text" in decision.lower()
-
-    def test_gated_decision_classifies_changedoc_only_as_incremental(self):
-        """Changedoc-only improvements must be classified as INCREMENTAL."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        lower = decision.lower()
-        assert "changedoc" in lower and "incremental" in lower
-        # Specifically check the INCREMENTAL section mentions changedoc work
-        # (text may wrap across lines, so normalize whitespace)
-        normalized = " ".join(lower.split())
-        assert "changedoc decisions without corresponding" in normalized
-
-    def test_gated_decision_requires_implementing_all_identified_improvements(self):
-        """Iterate verdict guidance must say to implement ALL identified improvements, not just one."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        normalized = " ".join(decision.lower().split())
-        # Must instruct agents to implement all improvements, not cherry-pick
-        assert "all" in normalized and "improvements" in normalized
-        # Must discourage picking only a subset (any of these phrasings suffice)
-        assert "cherry" in normalized or "single easiest" in normalized or "one and stop" in normalized or "not just one" in normalized or "not just some" in normalized
 
 
 # ---------------------------------------------------------------------------
@@ -325,26 +260,6 @@ class TestDiagnosticGoalAlignment:
         """Generic analysis must have Cross-Answer Synthesis section."""
         analysis = _build_checklist_analysis()
         assert "Cross-Answer Synthesis" in analysis
-
-
-# ---------------------------------------------------------------------------
-# Change 4: Exhaustion Criteria
-# ---------------------------------------------------------------------------
-
-
-class TestExhaustionCriteria:
-    """Tests for strengthened decision_space_exhausted criteria."""
-
-    def test_gated_decision_mentions_three_approaches(self):
-        """Gated decision must mention '3 fundamentally different approaches'."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        assert "3 fundamentally different approaches" in decision
-
-    def test_gated_decision_mentions_different_directions(self):
-        """Gated decision must mention different architectures and creative directions."""
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        assert "different architectures" in decision
-        assert "different creative directions" in decision
 
 
 # ---------------------------------------------------------------------------

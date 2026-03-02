@@ -75,7 +75,13 @@ class DockerManager:
         if not DOCKER_AVAILABLE:
             raise RuntimeError("Docker Python library not available. Install with: pip install docker")
 
-        self.instance_id = instance_id  # Unique instance ID for parallel execution
+        # Auto-generate a session-unique instance_id to prevent container
+        # name collisions when two concurrent processes use the same config.
+        if instance_id is None:
+            import uuid
+
+            instance_id = uuid.uuid4().hex[:8]
+        self.instance_id = instance_id
 
         # If sudo is enabled and user is using default image, switch to sudo variant
         self.enable_sudo = enable_sudo

@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from massgen.cli import (
     _disable_evaluation_criteria_generation_for_planning,
     _is_planning_turn,
+    _set_planning_checklist_criteria_defaults,
 )
 
 
@@ -62,3 +63,59 @@ def test_disable_eval_criteria_noops_when_already_disabled():
     )
 
     assert changed is False
+
+
+def test_set_planning_checklist_defaults_for_object_coordination_config():
+    coordination_config = SimpleNamespace(
+        checklist_criteria_inline=None,
+        checklist_criteria_preset=None,
+    )
+
+    changed = _set_planning_checklist_criteria_defaults(
+        coordination_config,
+    )
+
+    assert changed is True
+    assert coordination_config.checklist_criteria_preset == "planning"
+
+
+def test_set_planning_checklist_defaults_for_dict_coordination_config():
+    coordination_config = {
+        "checklist_criteria_inline": None,
+        "checklist_criteria_preset": None,
+    }
+
+    changed = _set_planning_checklist_criteria_defaults(
+        coordination_config,
+    )
+
+    assert changed is True
+    assert coordination_config["checklist_criteria_preset"] == "planning"
+
+
+def test_set_planning_checklist_defaults_noops_when_inline_set():
+    coordination_config = {
+        "checklist_criteria_inline": [{"text": "Use this", "category": "must"}],
+        "checklist_criteria_preset": None,
+    }
+
+    changed = _set_planning_checklist_criteria_defaults(
+        coordination_config,
+    )
+
+    assert changed is False
+    assert coordination_config["checklist_criteria_preset"] is None
+
+
+def test_set_planning_checklist_defaults_noops_when_preset_set():
+    coordination_config = {
+        "checklist_criteria_inline": None,
+        "checklist_criteria_preset": "persona",
+    }
+
+    changed = _set_planning_checklist_criteria_defaults(
+        coordination_config,
+    )
+
+    assert changed is False
+    assert coordination_config["checklist_criteria_preset"] == "persona"

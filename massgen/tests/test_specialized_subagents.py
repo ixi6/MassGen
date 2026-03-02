@@ -536,3 +536,43 @@ def test_evaluation_evaluator_directive_keeps_main_agent_decision_authority():
     )
     content = section.build_content().lower()
     assert "submit_checklist" in content
+
+
+# ── SubagentSection timeout in system prompt ──
+
+
+def test_subagent_section_includes_timeout_seconds_in_prompt():
+    """SubagentSection with explicit default_timeout should mention the value in seconds."""
+    from massgen.system_prompt_sections import SubagentSection
+
+    section = SubagentSection("/workspace", max_concurrent=3, default_timeout=600)
+    content = section.build_content()
+    assert "600 seconds" in content or "600" in content
+
+
+def test_subagent_section_includes_timeout_minutes_in_prompt():
+    """SubagentSection with default_timeout=600 should mention 10 minutes."""
+    from massgen.system_prompt_sections import SubagentSection
+
+    section = SubagentSection("/workspace", max_concurrent=3, default_timeout=600)
+    content = section.build_content()
+    assert "10 minutes" in content
+
+
+def test_subagent_section_default_timeout_is_300():
+    """SubagentSection with no default_timeout arg should use 300 seconds / 5 minutes."""
+    from massgen.system_prompt_sections import SubagentSection
+
+    section = SubagentSection("/workspace", max_concurrent=3)
+    content = section.build_content()
+    assert "300 seconds" in content or "5 minutes" in content
+
+
+def test_subagent_section_list_subagents_description_mentions_timeout_fields():
+    """list_subagents() description in prompt should mention elapsed/timeout/remaining fields."""
+    from massgen.system_prompt_sections import SubagentSection
+
+    section = SubagentSection("/workspace", max_concurrent=3)
+    content = section.build_content()
+    assert "elapsed_seconds" in content
+    assert "seconds_remaining" in content

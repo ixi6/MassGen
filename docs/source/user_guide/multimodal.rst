@@ -113,50 +113,90 @@ generate_media
        voice="nova"
    )
 
-**Parameters**:
+**Core Parameters**:
 
-- ``prompt`` (required): Text description of what to generate
-- ``mode`` (required): Type of media - ``"image"``, ``"video"``, or ``"audio"``
-- ``storage_path`` (optional): Directory to save generated media (defaults to workspace root)
-- ``backend`` (optional): Preferred backend (``"openai"``, ``"google"``, ``"openrouter"``, or ``"auto"``)
+- ``prompt`` (required): Text description of what to generate. For audio speech, this is the
+  **literal text to speak** — do NOT include speaking instructions here.
+- ``mode`` (required): Type of media — ``"image"``, ``"video"``, or ``"audio"``
+- ``backend_type`` (optional): Preferred backend — ``"auto"``, ``"openai"``, ``"google"``,
+  ``"grok"``, ``"openrouter"``, or ``"elevenlabs"``
 - ``model`` (optional): Override the default model for the selected backend
+- ``storage_path`` (optional): Directory to save generated media (defaults to workspace root)
+- ``continue_from`` (optional): Continuation ID from a previous result for multi-turn editing
 
 **Image-specific parameters**:
 
-- ``quality``: ``"standard"`` or ``"hd"`` (OpenAI)
-- ``aspect_ratio``: e.g., ``"16:9"``, ``"1:1"``
-- ``input_images``: List of image paths for image-to-image (OpenAI Responses API)
+- ``quality``: ``"low"``, ``"medium"``, ``"high"``, ``"auto"`` (OpenAI)
+- ``size``: Image dimensions. OpenAI: ``"1024x1024"``, ``"1024x1536"``, ``"1536x1024"``.
+  Gemini: ``"512px"``, ``"1K"``, ``"2K"``, ``"4K"``. Grok: ``"1k"``.
+- ``aspect_ratio``: e.g., ``"16:9"``, ``"1:1"``, ``"9:16"`` (Google, Grok, OpenRouter)
+- ``input_images``: List of image paths for image-to-image editing (OpenAI, Google Gemini, Grok)
+- ``mask_path``: Path to mask PNG for inpainting (OpenAI, Google Imagen)
+- ``output_format``: ``"png"``, ``"jpeg"``, ``"webp"`` (OpenAI, Google Imagen)
+- ``background``: ``"transparent"``, ``"opaque"``, ``"auto"`` (OpenAI only)
+- ``style_image``: Style reference image for Google Imagen style transfer
+- ``control_image``: Structural control image for Google Imagen
+- ``subject_image``: Subject reference image for Google Imagen consistency
+- ``negative_prompt``: What to exclude (Google Imagen)
+- ``seed``: Reproducibility seed (Google Imagen, ElevenLabs)
+- ``guidance_scale``: Prompt adherence strength (Google Imagen)
 
 **Video-specific parameters**:
 
-- ``duration``: Length in seconds (e.g., 4, 8)
+- ``duration``: Length in seconds (clamped per backend)
+- ``size``: Resolution — Grok: ``"480p"``, ``"720p"``; Veo: ``"720p"``, ``"1080p"``, ``"4k"``
+- ``aspect_ratio``: e.g., ``"16:9"``, ``"9:16"``
+- ``input_images``: Source image for image-to-video (all 3 backends)
+- ``video_reference_images``: Style/content guide images for Veo (up to 3)
+- ``negative_prompt``: What to exclude (Google Veo)
 
 **Audio-specific parameters**:
 
-- ``voice``: Voice ID (e.g., ``"alloy"``, ``"echo"``, ``"nova"``, ``"shimmer"``)
-- ``audio_format``: Output format (mp3, wav, opus, etc.)
-- ``instructions``: Speaking style instructions
+- ``audio_type``: Type of audio operation — ``"speech"`` (default), ``"music"``,
+  ``"sound_effect"``, ``"voice_conversion"``, ``"audio_isolation"``, ``"voice_design"``,
+  ``"voice_clone"``, ``"dubbing"``
+- ``voice``: Voice name or ID (e.g., ``"Rachel"``, ``"alloy"``, ``"nova"``)
+- ``instructions``: Speaking style guidance (OpenAI ``gpt-4o-mini-tts`` only)
+- ``speed``: Playback speed multiplier, 0.25–4.0 (OpenAI)
+- ``audio_format``: Output format (``"mp3"``, ``"wav"``, ``"opus"``)
+- ``input_audio``: Path to input audio for voice conversion, isolation, or dubbing
+- ``voice_samples``: List of audio file paths for voice cloning
+- ``target_language``: Target language code for dubbing (e.g., ``"es"``, ``"fr"``)
+- ``source_language``: Source language code for dubbing (optional, auto-detected)
+- ``voice_stability``: ElevenLabs voice stability (0.0–1.0)
+- ``voice_similarity``: ElevenLabs similarity boost (0.0–1.0)
 
 **Returns**:
 
-Path to the generated media file with metadata about the generation.
+JSON with ``success``, ``file_path``, ``file_size``, ``backend``, ``model``, ``continuation_id``,
+and ``metadata`` fields.
 
 **Supported Backends**:
 
-- **Image Generation**:
+.. list-table::
+   :header-rows: 1
 
-  - OpenAI: gpt-4.1, gpt-4.1-mini (DALL-E)
-  - Google: Imagen 3 (nanobanana)
-  - OpenRouter: Various providers
-
-- **Video Generation**:
-
-  - Google: Veo 2
-  - OpenAI: Sora-2
-
-- **Audio Generation**:
-
-  - OpenAI: gpt-4o-mini-tts (text-to-speech)
+   * - Mode
+     - Backends (priority order)
+     - Default Models
+   * - image
+     - google, openai, grok, openrouter
+     - Nano Banana 2 (``gemini-3.1-flash-image-preview``), ``gpt-5.2``, ``grok-imagine-image``, Nano Banana 2 (via OR)
+   * - video
+     - grok, google, openai
+     - ``grok-imagine-video``, Veo 3.1 (``veo-3.1-generate-preview``), ``sora-2``
+   * - audio (speech)
+     - elevenlabs, openai
+     - ``eleven_multilingual_v2``, ``gpt-4o-mini-tts``
+   * - audio (music)
+     - elevenlabs
+     - ``elevenlabs-music``
+   * - audio (sfx)
+     - elevenlabs
+     - ``elevenlabs-sfx``
+   * - audio (editing)
+     - elevenlabs
+     - See ``audio_type`` values above
 
 Backend Configuration
 ---------------------
@@ -320,7 +360,7 @@ Complete Multimodal Workflow
              model: gpt-5.2
            video:
              backend: google
-             model: veo-2
+             model: veo-3.1-generate-preview
 
    task: |
      1. Generate an image of a futuristic city
@@ -370,7 +410,7 @@ Multi-Agent with Specialized Backends
          multimodal_config:
            video:
              backend: google
-             model: veo-2  # Best for videos
+             model: veo-3.1-generate-preview  # Best for videos
 
 Troubleshooting
 ---------------
@@ -382,13 +422,19 @@ Ensure required API keys are set:
 
 .. code-block:: bash
 
-   # For OpenAI (images, audio)
+   # For OpenAI (images, video, audio)
    export OPENAI_API_KEY="sk-..."
 
-   # For Google/Gemini (video, Imagen)
+   # For Google/Gemini (images, video)
    export GEMINI_API_KEY="..."
 
-   # For OpenRouter (alternative)
+   # For Grok/xAI (images, video)
+   export XAI_API_KEY="..."
+
+   # For ElevenLabs (audio: speech, music, SFX, voice editing)
+   export ELEVENLABS_API_KEY="..."
+
+   # For OpenRouter (images)
    export OPENROUTER_API_KEY="..."
 
 No Backend Available
@@ -414,8 +460,8 @@ File Size Limits
 
 Be aware of backend limits:
 
-- **OpenAI Images**: 20MB limit
-- **Google Video**: Varies by duration
+- **Input images**: 4MB per image (PNG, JPEG only)
+- **Google Video**: Varies by duration and resolution
 - **Audio**: Generally generous limits
 
 See Also

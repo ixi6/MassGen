@@ -80,6 +80,7 @@ class SubagentModal(ModalScreen[None]):
         subagent: SubagentDisplayData,
         all_subagents: list[SubagentDisplayData] | None = None,
         status_callback: Callable[[str], SubagentDisplayData | None] | None = None,
+        subagent_index: int | None = None,
     ) -> None:
         """Initialize the modal.
 
@@ -87,16 +88,20 @@ class SubagentModal(ModalScreen[None]):
             subagent: The subagent to display
             all_subagents: All subagents for navigation
             status_callback: Callback to get updated status
+            subagent_index: Explicit index of the subagent in all_subagents
         """
         super().__init__()
         self._subagent = subagent
         self._all_subagents = all_subagents or [subagent]
         self._current_index = 0
-        # Find current index
-        for i, sa in enumerate(self._all_subagents):
-            if sa.id == subagent.id:
-                self._current_index = i
-                break
+        # Find current index: prefer explicit index, fall back to identity match
+        if subagent_index is not None and 0 <= subagent_index < len(self._all_subagents):
+            self._current_index = subagent_index
+        else:
+            for i, sa in enumerate(self._all_subagents):
+                if sa is subagent:
+                    self._current_index = i
+                    break
 
         self._status_callback = status_callback
         self._log_streamer: LogStreamer | None = None

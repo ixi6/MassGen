@@ -8,6 +8,7 @@ Tests for the background subagent execution feature:
 """
 
 import inspect
+import json
 import sys
 
 import pytest
@@ -615,6 +616,67 @@ class TestSpawnSubagentsContextPathsRequirement:
         assert result["success"] is True
         assert result["mode"] == "background"
         assert len(fake_manager.background_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_temp_workspace_auto_mounted_by_default(self, monkeypatch, tmp_path):
+        """When _agent_temporary_workspace is set, it is prepended to every task's context_paths."""
+        tw = tmp_path / "temp_ws"
+        tw.mkdir()
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        monkeypatch.setattr(server, "_agent_temporary_workspace", str(tw))
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Eval site", "subagent_id": "eval1"}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert str(tw) in fake_manager.background_calls[0]["context_paths"]
+        # temp_workspace is prepended (appears first)
+        assert fake_manager.background_calls[0]["context_paths"][0] == str(tw)
+
+    @pytest.mark.asyncio
+    async def test_temp_workspace_opt_out(self, monkeypatch, tmp_path):
+        """include_temp_workspace=False skips the auto-mount."""
+        tw = tmp_path / "temp_ws"
+        tw.mkdir()
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        monkeypatch.setattr(server, "_agent_temporary_workspace", str(tw))
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Isolated research", "include_temp_workspace": False}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert str(tw) not in fake_manager.background_calls[0]["context_paths"]
+
+    @pytest.mark.asyncio
+    async def test_temp_workspace_not_added_when_unset(self, monkeypatch, tmp_path):
+        """When _agent_temporary_workspace is None, no path is added."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        monkeypatch.setattr(server, "_agent_temporary_workspace", None)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Task"}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        # No unexpected paths injected
+        assert fake_manager.background_calls[0]["context_paths"] == []
 
 
 class TestSpecializedTypesFileNotDeleted:
@@ -1456,3 +1518,275 @@ class TestSpawnSubagentsErrorHandling:
         # If spawn_subagent_background fails, should still return
         # partial success with error info
         pass  # Implementation will handle
+
+
+# =============================================================================
+# Phase 1: Blocking spawn with workspace_path=None (UnboundLocalError fix)
+# =============================================================================
+
+
+class TestBlockingSpawnWithoutWorkspacePath:
+    """Blocking mode must not crash when _workspace_path is None."""
+
+    @pytest.mark.asyncio
+    async def test_blocking_spawn_no_workspace_path(self, monkeypatch, tmp_path):
+        """Blocking spawn with _workspace_path=None must not raise UnboundLocalError."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        # Simulate no workspace path (edge case: MCP server started without workspace)
+        monkeypatch.setattr(server, "_workspace_path", None)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Do blocking work", "subagent_id": "blk1"}],
+            background=False,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert result["mode"] == "blocking"
+        assert result["results"][0]["subagent_id"] == "blk1"
+
+
+# =============================================================================
+# Phase 2: Monotonic counter (no decrement on failure)
+# =============================================================================
+
+
+class TestMonotonicAutoIdCounter:
+    """Auto-ID counter must never decrease, even after spawn failure."""
+
+    @pytest.mark.asyncio
+    async def test_counter_never_decreases_after_spawn_failure(self, monkeypatch, tmp_path):
+        """Counter stays incremented even when background spawn returns error status."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+
+        class _FailingManager(_FakeSubagentManager):
+            def spawn_subagent_background(self, **kwargs):
+                self.background_calls.append(kwargs)
+                sid = kwargs.get("subagent_id") or "subagent_0"
+                return {"subagent_id": sid, "status": "error", "error": "spawn failed"}
+
+            def remove_immediately_failed_subagent(self, subagent_id):
+                pass  # Manager cleanup still happens, but counter should not roll back
+
+        failing_manager = _FailingManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: failing_manager)
+
+        # First spawn: should get subagent_0, then fail
+        result1 = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Will fail"}],
+            background=True,
+            refine=False,
+        )
+        assert result1["success"] is True  # spawn_subagents itself succeeded
+        first_id = result1["subagents"][0]["subagent_id"]
+        assert first_id == "subagent_0"
+
+        # Second spawn: must be subagent_1 (NOT subagent_0 reused)
+        result2 = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Second try"}],
+            background=True,
+            refine=False,
+        )
+        second_id = result2["subagents"][0]["subagent_id"]
+        assert second_id == "subagent_1", f"Expected 'subagent_1' but got '{second_id}' — " "counter must never decrease after failure"
+
+
+# =============================================================================
+# Phase 3a: Non-string context path elements rejected
+# =============================================================================
+
+
+class TestContextPathElementTypeValidation:
+    """Individual context_path elements must be strings."""
+
+    @pytest.mark.asyncio
+    async def test_non_string_context_path_element_rejected(self, monkeypatch, tmp_path):
+        """A non-string element inside context_paths list should fail fast."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Research", "context_paths": [123]}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is False
+        assert "expected string" in result["error"]
+        assert "int" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_dict_context_path_element_rejected(self, monkeypatch, tmp_path):
+        """A dict element inside context_paths list should fail fast."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Research", "context_paths": [{"path": "/tmp"}]}],
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is False
+        assert "expected string" in result["error"]
+        assert "dict" in result["error"]
+
+
+# =============================================================================
+# Phase 3b: JSON decode fallback
+# =============================================================================
+
+
+class TestJsonDecodeFallback:
+    """JSON decode errors should fall back to temp workspace snapshot."""
+
+    def test_json_decode_error_falls_back_to_temp_workspace(self, monkeypatch, tmp_path):
+        """JSONDecodeError on primary file should try temp workspace fallback."""
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        # Create a corrupted primary file
+        primary = tmp_path / "config.json"
+        primary.write_text("{invalid json")
+
+        # Create a valid fallback in temp workspace
+        temp_ws = tmp_path / "temp_workspaces" / "agent_a"
+        snapshot_dir = temp_ws / "snap1" / ".massgen" / "subagent_mcp"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        valid_data = {"key": "value"}
+        (snapshot_dir / "config.json").write_text(json.dumps(valid_data))
+
+        monkeypatch.setattr(server, "_agent_temporary_workspace", str(temp_ws))
+
+        data, used_path = server._load_json_with_temp_workspace_fallback(str(primary))
+        assert data == valid_data
+        assert used_path == snapshot_dir / "config.json"
+
+    def test_json_decode_error_without_fallback_raises(self, monkeypatch, tmp_path):
+        """JSONDecodeError without available fallback should raise."""
+        import json
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        primary = tmp_path / "bad.json"
+        primary.write_text("{broken")
+
+        monkeypatch.setattr(server, "_agent_temporary_workspace", None)
+
+        with pytest.raises(json.JSONDecodeError):
+            server._load_json_with_temp_workspace_fallback(str(primary))
+
+
+# =============================================================================
+# Phase 3c: Registry write error handling
+# =============================================================================
+
+
+class TestRegistryWriteErrorHandling:
+    """Registry write failures should be logged, not crash the server."""
+
+    def test_registry_write_failure_logged_not_raised(self, monkeypatch, tmp_path, caplog):
+        """OSError during registry write should be logged but not propagated."""
+        import logging
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        monkeypatch.setattr(server, "_workspace_path", tmp_path)
+
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        # Make the subagents directory read-only to trigger OSError
+        subagents_dir = tmp_path / "subagents"
+        subagents_dir.mkdir()
+        registry_file = subagents_dir / "_registry.json"
+        registry_file.write_text("{}")
+        registry_file.chmod(0o000)
+
+        try:
+            # Should not raise — error is caught and logged
+            with caplog.at_level(logging.ERROR):
+                server._save_subagents_to_filesystem()
+
+            assert "Failed to save registry" in caplog.text
+        finally:
+            # Restore permissions for cleanup
+            registry_file.chmod(0o644)
+
+
+# =============================================================================
+# Phase 4: Process cleanup hardening
+# =============================================================================
+
+
+class TestSyncCleanup:
+    """atexit cleanup should terminate then force-kill hung processes."""
+
+    def test_sync_cleanup_terminates_and_force_kills(self, monkeypatch):
+        """_sync_cleanup should terminate, wait with timeout, then kill if needed."""
+        import subprocess
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        class MockProcess:
+            def __init__(self, hangs=False):
+                self.returncode = None
+                self._terminated = False
+                self._killed = False
+                self._hangs = hangs
+
+            def terminate(self):
+                self._terminated = True
+
+            def wait(self, timeout=None):
+                if self._hangs:
+                    raise subprocess.TimeoutExpired(cmd="test", timeout=timeout)
+                self.returncode = 0
+
+            def kill(self):
+                self._killed = True
+
+        # Create a mock manager with two processes: one clean, one hung
+        clean_proc = MockProcess(hangs=False)
+        hung_proc = MockProcess(hangs=True)
+
+        class FakeManager:
+            _active_processes = {"sub_clean": clean_proc, "sub_hung": hung_proc}
+
+        monkeypatch.setattr(server, "_manager", FakeManager())
+
+        server._sync_cleanup()
+
+        # Clean process: terminated, not killed
+        assert clean_proc._terminated is True
+        assert clean_proc._killed is False
+
+        # Hung process: terminated, then force-killed
+        assert hung_proc._terminated is True
+        assert hung_proc._killed is True
+
+    def test_sync_cleanup_handles_already_exited_process(self, monkeypatch):
+        """Processes with returncode != None should be skipped."""
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        class AlreadyDone:
+            returncode = 0
+
+            def terminate(self):
+                raise RuntimeError("should not be called")
+
+        class FakeManager:
+            _active_processes = {"sub_done": AlreadyDone()}
+
+        monkeypatch.setattr(server, "_manager", FakeManager())
+
+        # Should not raise — skips already-exited process
+        server._sync_cleanup()

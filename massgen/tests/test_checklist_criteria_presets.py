@@ -4,6 +4,7 @@ Tests get_criteria_for_preset(), config validation, orchestrator wiring,
 and inline criteria support.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -29,15 +30,16 @@ class TestGetCriteriaForPreset:
         assert all(isinstance(c, GeneratedCriterion) for c in criteria)
 
     @pytest.mark.parametrize("preset_name", list(VALID_CRITERIA_PRESETS))
-    def test_each_preset_has_five_criteria(self, preset_name: str):
+    def test_each_preset_has_at_least_five_criteria(self, preset_name: str):
         criteria = get_criteria_for_preset(preset_name)
-        assert len(criteria) == 5
+        assert len(criteria) >= 5
 
     @pytest.mark.parametrize("preset_name", list(VALID_CRITERIA_PRESETS))
-    def test_ids_are_e1_through_e5(self, preset_name: str):
+    def test_ids_are_sequential(self, preset_name: str):
         criteria = get_criteria_for_preset(preset_name)
         ids = [c.id for c in criteria]
-        assert ids == ["E1", "E2", "E3", "E4", "E5"]
+        expected = [f"E{i + 1}" for i in range(len(criteria))]
+        assert ids == expected
 
     @pytest.mark.parametrize("preset_name", list(VALID_CRITERIA_PRESETS))
     def test_categories_are_valid(self, preset_name: str):
@@ -233,6 +235,20 @@ class TestPresetContentSanity:
         assert categories.count("must") == 3
         assert categories.count("should") == 1 and categories.count("could") == 1
 
+    def test_planning_preset_exists(self):
+        criteria = get_criteria_for_preset("planning")
+        categories = [c.category for c in criteria]
+        assert len(criteria) == 8
+        assert categories.count("must") == 5
+        assert categories.count("should") == 3 and categories.count("could") == 0
+
+    def test_spec_preset_exists(self):
+        criteria = get_criteria_for_preset("spec")
+        categories = [c.category for c in criteria]
+        assert len(criteria) == 5
+        assert categories.count("must") == 3
+        assert categories.count("should") == 1 and categories.count("could") == 1
+
 
 # ---------------------------------------------------------------------------
 # Inline criteria tests
@@ -383,6 +399,13 @@ class TestPresetWiringThroughParseCoordinationConfig:
         assert config.checklist_criteria_preset is None
         assert config.checklist_criteria_inline is None
 
+    def test_pre_collab_voting_threshold_wired_through_parse(self):
+        from massgen.cli import _parse_coordination_config
+
+        coord_cfg = {"pre_collab_voting_threshold": 12}
+        config = _parse_coordination_config(coord_cfg)
+        assert config.pre_collab_voting_threshold == 12
+
 
 class TestInlineCriteriaPriority:
     """Test that inline criteria take highest priority in _init_checklist_tool."""
@@ -455,7 +478,7 @@ class TestGetActiveCriteria:
     def test_inline_criteria_returned(self):
         """Inline criteria should be returned when set."""
         orch = self._make_orch(inline=_SAMPLE_INLINE)
-        items, categories = orch._get_active_criteria()
+        items, categories, verify_by = orch._get_active_criteria()
         assert len(items) == 3
         assert items[0] == "Visual design is cohesive and polished"
         assert categories["E1"] == "must"
@@ -467,7 +490,7 @@ class TestGetActiveCriteria:
             GeneratedCriterion(id="E1", text="Generated criterion", category="must"),
         ]
         orch = self._make_orch(inline=_SAMPLE_INLINE, generated=generated)
-        items, _ = orch._get_active_criteria()
+        items, _, _vb = orch._get_active_criteria()
         assert len(items) == 3
         assert "Generated criterion" not in items
 
@@ -477,20 +500,86 @@ class TestGetActiveCriteria:
             GeneratedCriterion(id="E1", text="Generated criterion", category="must"),
         ]
         orch = self._make_orch(generated=generated)
-        items, categories = orch._get_active_criteria()
+        items, categories, verify_by = orch._get_active_criteria()
         assert items == ["Generated criterion"]
         assert categories == {"E1": "must"}
+        assert verify_by is None  # no verify_by on this criterion
 
     def test_preset_returned_when_no_inline_or_generated(self):
         """Preset criteria returned when no inline or generated."""
         orch = self._make_orch(preset="persona")
-        items, _ = orch._get_active_criteria()
+        items, _, _vb = orch._get_active_criteria()
         # Persona preset has 5 items
         assert len(items) == 5
 
     def test_none_returned_when_nothing_configured(self):
-        """Returns (None, None) when no criteria source is available."""
+        """Returns (None, None, None) when no criteria source is available."""
         orch = self._make_orch(changedoc=False)
-        items, categories = orch._get_active_criteria()
+        items, categories, verify_by = orch._get_active_criteria()
         assert items is None
         assert categories is None
+        assert verify_by is None
+
+
+class TestChecklistCriteriaDisplayBackfill:
+    """Ensure criteria are shown even when checklist init runs before UI attach."""
+
+    def _make_orch(self, changedoc: bool):
+        from massgen.orchestrator import Orchestrator
+
+        orch = object.__new__(Orchestrator)
+        mock_config = MagicMock()
+        mock_config.voting_sensitivity = "checklist_gated"
+        mock_config.coordination_config.checklist_criteria_inline = None
+        mock_config.coordination_config.checklist_criteria_preset = None
+        mock_config.coordination_config.subagent_types = None
+        mock_config.coordination_config.enable_changedoc = changedoc
+        mock_config.voting_threshold = 5
+        mock_config.max_new_answers_per_agent = 5
+        mock_config.checklist_require_gap_report = True
+        orch.config = mock_config
+
+        mock_backend = MagicMock()
+        mock_backend.supports_sdk_mcp = False
+        mock_backend.set_subagent_spawn_callback = MagicMock()
+        mock_agent = MagicMock()
+        mock_agent.backend = mock_backend
+        orch.agents = {"a1": mock_agent}
+        orch._generated_evaluation_criteria = None
+        orch._criteria_pushed_to_display = False
+        orch._criteria_display_payload = None
+        return orch
+
+    def test_backfills_changedoc_criteria_when_ui_attaches_later(self):
+        orch = self._make_orch(changedoc=True)
+        orch._init_checklist_tool()  # runs before coordination_ui/display exists
+        assert orch._criteria_pushed_to_display is False
+
+        display = MagicMock()
+        orch.coordination_ui = SimpleNamespace(display=display)
+        orch.setup_subagent_spawn_callbacks()
+
+        display.set_evaluation_criteria.assert_called_once()
+        call = display.set_evaluation_criteria.call_args
+        criteria = call.args[0]
+        source = call.kwargs.get("source")
+
+        assert source == "changedoc"
+        assert [c["id"] for c in criteria] == ["E1", "E2", "E3", "E4"]
+
+    def test_backfills_generic_criteria_when_changedoc_disabled(self):
+        orch = self._make_orch(changedoc=False)
+        orch._init_checklist_tool()  # runs before coordination_ui/display exists
+        assert orch._criteria_pushed_to_display is False
+
+        display = MagicMock()
+        orch.coordination_ui = SimpleNamespace(display=display)
+        orch.setup_subagent_spawn_callbacks()
+
+        display.set_evaluation_criteria.assert_called_once()
+        call = display.set_evaluation_criteria.call_args
+        criteria = call.args[0]
+        source = call.kwargs.get("source")
+
+        assert source == "generic"
+        assert [c["id"] for c in criteria] == ["E1", "E2", "E3", "E4", "E5"]

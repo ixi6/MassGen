@@ -18,6 +18,7 @@ import atexit
 import json
 import logging
 import signal
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -87,9 +88,7 @@ def _load_json_with_temp_workspace_fallback(path_str: str) -> tuple[Any, Path]:
     try:
         with open(primary) as f:
             return json.load(f), primary
-    except json.JSONDecodeError:
-        raise
-    except (FileNotFoundError, OSError) as primary_err:
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as primary_err:
         fallback = _find_temp_workspace_mcp_fallback(primary.name)
         if fallback is None:
             raise primary_err
@@ -212,7 +211,10 @@ def _save_subagents_to_filesystem() -> None:
     }
 
     registry_file = subagents_dir / "_registry.json"
-    registry_file.write_text(json.dumps(registry, indent=2))
+    try:
+        registry_file.write_text(json.dumps(registry, indent=2))
+    except OSError as e:
+        logger.error(f"[SubagentMCP] Failed to save registry: {e}")
 
 
 async def create_server() -> fastmcp.FastMCP:
@@ -459,6 +461,8 @@ async def create_server() -> fastmcp.FastMCP:
         _setup_signal_handlers(loop)
     except RuntimeError:
         pass  # No running loop yet, handlers will be set up later if needed
+    except Exception as e:
+        logger.warning(f"[SubagentMCP] Signal handler setup failed: {e}")
 
     # Register atexit handler as a fallback for cleanup
     atexit.register(_sync_cleanup)
@@ -513,6 +517,10 @@ async def create_server() -> fastmcp.FastMCP:
                    - "task": (REQUIRED) string describing what to do
                    - "include_parent_workspace": (optional bool, default True) mount parent
                      workspace read-only. Set False for fully isolated research.
+                   - "include_temp_workspace": (optional bool, default True) auto-mount the
+                     shared reference directory (temp_workspaces) read-only. Contains
+                     snapshots from all peer agents. Set False for fully isolated subagents
+                     that don't need peer context.
                    - "context_paths": (optional) extra read-only paths beyond the parent
                      workspace. Use for peer workspace paths (from Available agent
                      workspaces section) or other allowed paths. Defaults to [].
@@ -526,6 +534,22 @@ async def create_server() -> fastmcp.FastMCP:
             context_paths: (optional) Top-level extra read-only paths applied to ALL tasks.
                            Merged with any per-task context_paths. Use this when all subagents
                            need the same peer workspace paths (e.g. temp_workspaces for evaluation).
+
+        FILE ARTIFACTS:
+        Subagents can ONLY write to their OWN workspace. Do NOT tell a subagent to save
+        files into your workspace — it is mounted read-only to them.
+
+        Correct pattern:
+        1. Tell the subagent to save artifacts to its own workspace (no path prefix needed —
+           relative paths work from the subagent's cwd).
+        2. The spawn result always includes "workspace": "/abs/path/to/subagent/workspace".
+        3. After the subagent completes, read artifacts from that path.
+
+        Example task wording:
+          WRONG: "Save screenshots to /parent/workspace/.massgen_scratch/verification/"
+          RIGHT: "Save screenshots to verification/ in your workspace and list them in your answer."
+
+        Then access: result["workspace"] + "/verification/"
 
         TIMEOUT HANDLING (for blocking mode, background=False):
         Subagents that timeout will attempt to recover any completed work:
@@ -581,11 +605,12 @@ async def create_server() -> fastmcp.FastMCP:
                 ]
             )
 
-            # BACKGROUND: Fully isolated research (no parent workspace access)
+            # BACKGROUND: Fully isolated research (no parent workspace, no peer snapshots)
             # FIRST: write_file("CONTEXT.md", "Building secure authentication system")
             spawn_subagents(
                 tasks=[{{"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research",
-                         "include_parent_workspace": False}}],
+                         "include_parent_workspace": False,
+                         "include_temp_workspace": False}}],
                 background=True  # Returns immediately, result injected later
             )
 
@@ -637,6 +662,22 @@ async def create_server() -> fastmcp.FastMCP:
                     merged_tasks.append(t)
                 tasks = merged_tasks
 
+            # Auto-mount temp_workspace (shared reference dir) for all tasks unless
+            # opted out via include_temp_workspace=False. Prepended so it's always
+            # first, giving subagents immediate access to peer agent snapshots.
+            if _agent_temporary_workspace:
+                tw_str = str(_agent_temporary_workspace)
+                merged_tasks = []
+                for t in tasks:
+                    if t.get("include_temp_workspace", True):
+                        t = dict(t)
+                        per_task = list(t.get("context_paths") or [])
+                        if tw_str not in per_task:
+                            per_task.insert(0, tw_str)
+                        t["context_paths"] = per_task
+                    merged_tasks.append(t)
+                tasks = merged_tasks
+
             for i, task_config in enumerate(tasks):
                 if "task" not in task_config:
                     return {
@@ -654,6 +695,13 @@ async def create_server() -> fastmcp.FastMCP:
                         "operation": "spawn_subagents",
                         "error": (f"Task at index {i} has invalid 'context_paths' type: " f"expected list, got {actual_type}. " "Use [] for no extra paths or a list of path strings."),
                     }
+                for idx, path_str in enumerate(context_paths_val or []):
+                    if not isinstance(path_str, str):
+                        return {
+                            "success": False,
+                            "operation": "spawn_subagents",
+                            "error": (f"Task at index {i} context_paths[{idx}]: " f"expected string, got {type(path_str).__name__}"),
+                        }
                 if _workspace_path:
                     workspace_root = Path(_workspace_path)
                     for path_str in context_paths_val or []:
@@ -676,16 +724,13 @@ async def create_server() -> fastmcp.FastMCP:
             for t in tasks:
                 if "subagent_id" in t:
                     task_id = t["subagent_id"]
-                    auto_id = False
                 else:
                     task_id = f"subagent_{_next_subagent_index}"
                     _next_subagent_index += 1
-                    auto_id = True
                 normalized_tasks.append(
                     {
                         **t,
                         "subagent_id": task_id,
-                        "_auto_id": auto_id,
                     },
                 )
 
@@ -746,18 +791,11 @@ async def create_server() -> fastmcp.FastMCP:
 
             logger.info(f"[SubagentMCP] Spawning {len(normalized_tasks)} subagents: {task_ids}")
 
-            # Branch based on background mode
-            # Note: background path pops _auto_id per-task; strip from blocking tasks here.
-            if not background:
-                for t in normalized_tasks:
-                    t.pop("_auto_id", None)
-
             if background:
                 # BACKGROUND MODE: Spawn subagents in background and return immediately
                 # Results will be injected via SubagentCompleteHook when they complete
                 spawned = []
                 for task_config in normalized_tasks:
-                    auto_id = task_config.pop("_auto_id", False)
                     # Task is passed as-is; context will be loaded from CONTEXT.md
                     info = manager.spawn_subagent_background(
                         task=task_config["task"],
@@ -771,12 +809,10 @@ async def create_server() -> fastmcp.FastMCP:
                         skills=task_config.get("skills"),
                         subagent_type=task_config.get("subagent_type") or None,
                     )
-                    # If spawn failed before doing any real work and this was an
-                    # auto-generated ID, free the slot so the retry gets the same ID.
-                    if info.get("status") == "error" and auto_id:
+                    # Clean up manager state for immediately-failed spawns
+                    if info.get("status") == "error":
                         assigned_id = task_config.get("subagent_id", "")
                         manager.remove_immediately_failed_subagent(assigned_id)
-                        _next_subagent_index -= 1
                     spawned.append(info)
 
                 # Save registry to filesystem
@@ -792,6 +828,7 @@ async def create_server() -> fastmcp.FastMCP:
 
             else:
                 # BLOCKING MODE: Wait for all subagents to complete (existing behavior)
+                started_at = datetime.now().isoformat()
                 # Write spawning status to file for TUI polling (BEFORE starting)
                 if _workspace_path is not None:
                     subagents_dir = _workspace_path / "subagents"
@@ -799,7 +836,7 @@ async def create_server() -> fastmcp.FastMCP:
                     status_file = subagents_dir / "_spawn_status.json"
                     spawn_status = {
                         "status": "spawning",
-                        "started_at": datetime.now().isoformat(),
+                        "started_at": started_at,
                         "subagents": [
                             {
                                 "subagent_id": t["subagent_id"],
@@ -830,7 +867,7 @@ async def create_server() -> fastmcp.FastMCP:
                     status_file = _workspace_path / "subagents" / "_spawn_status.json"
                     completed_status = {
                         "status": "completed",
-                        "started_at": spawn_status.get("started_at", ""),
+                        "started_at": started_at,
                         "completed_at": datetime.now().isoformat(),
                         "subagents": [r.to_dict() for r in results],
                     }
@@ -1096,16 +1133,19 @@ async def create_server() -> fastmcp.FastMCP:
                     "error": "Missing required 'message' parameter",
                 }
 
-            success = manager.send_message_to_subagent(
+            success, error = manager.send_message_to_subagent(
                 subagent_id,
                 message,
                 target_agents=target_agents,
             )
-            return {
+            result: dict[str, Any] = {
                 "success": success,
                 "subagent_id": subagent_id,
                 "operation": "send_message",
             }
+            if error:
+                result["error"] = error
+            return result
 
         except Exception as e:
             logger.error(f"[SubagentMCP] Error sending message to subagent: {e}")
@@ -1181,7 +1221,11 @@ def _sync_cleanup():
             if process.returncode is None:
                 try:
                     process.terminate()
-                    logger.info(f"[SubagentMCP] Terminated subagent {subagent_id}")
+                    try:
+                        process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"[SubagentMCP] Force killing {subagent_id}")
+                        process.kill()
                 except Exception as e:
                     logger.error(f"[SubagentMCP] Error terminating {subagent_id}: {e}")
 

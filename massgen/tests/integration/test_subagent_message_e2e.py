@@ -52,12 +52,13 @@ class TestTargetedMessageE2E:
         sub_workspace.mkdir(parents=True)
         _register_running_subagent(manager, "sub1", sub_workspace)
 
-        result = manager.send_message_to_subagent(
+        success, error = manager.send_message_to_subagent(
             "sub1",
             "focus on edge cases",
             target_agents=["agent_a"],
         )
-        assert result is True
+        assert success is True
+        assert error is None
 
         # Verify file was written
         inbox_dir = sub_workspace / ".massgen" / "runtime_inbox"
@@ -246,8 +247,9 @@ class TestEdgeCases:
 
     def test_message_to_nonexistent_subagent_fails(self, tmp_path):
         manager = _make_manager(tmp_path)
-        result = manager.send_message_to_subagent("nonexistent", "hello")
-        assert result is False
+        success, error = manager.send_message_to_subagent("nonexistent", "hello")
+        assert success is False
+        assert "not found" in error
 
     def test_message_to_non_running_subagent_fails(self, tmp_path):
         manager = _make_manager(tmp_path)
@@ -266,8 +268,28 @@ class TestEdgeCases:
         )
         manager._subagents["sub1"] = state
 
-        result = manager.send_message_to_subagent("sub1", "hello")
-        assert result is False
+        success, error = manager.send_message_to_subagent("sub1", "hello")
+        assert success is False
+        assert "completed" in error
+
+    def test_message_to_subagent_with_answer_file_fails(self, tmp_path):
+        """Running subagent with answer.txt (race condition) -> rejected."""
+        manager = _make_manager(tmp_path)
+        sub_workspace = tmp_path / "sub_workspace"
+        sub_workspace.mkdir(parents=True)
+        _register_running_subagent(manager, "sub1", sub_workspace)
+
+        # Simulate subprocess having written answer.txt (subagent effectively done)
+        (sub_workspace / "answer.txt").write_text("Final answer from subagent")
+
+        success, error = manager.send_message_to_subagent("sub1", "too late message")
+        assert success is False
+        assert "already completed" in error
+
+        # Verify no message file was written to inbox
+        inbox_dir = sub_workspace / ".massgen" / "runtime_inbox"
+        if inbox_dir.exists():
+            assert list(inbox_dir.glob("msg_*.json")) == []
 
     def test_poller_handles_empty_inbox(self, tmp_path):
         inbox_dir = tmp_path / ".massgen" / "runtime_inbox"

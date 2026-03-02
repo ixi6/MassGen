@@ -104,6 +104,10 @@ class CoordinationConfig:
                           When enabled, an LLM generates diverse system message personas for each agent.
         evaluation_criteria_generator: Configuration for task-specific evaluation criteria generation.
                                       When enabled, generates GEPA-style criteria tailored to the task.
+        pre_collab_voting_threshold: Optional voting threshold override for pre-collaboration
+                                    subagent runs (persona generation, evaluation criteria generation,
+                                    and decomposition). When unset, pre-collab runs use the main
+                                    orchestrator voting_threshold.
         enable_subagents: If True, agents receive subagent MCP tools for spawning independent
                          agent instances with fresh context and isolated workspaces. Useful for
                          parallel task execution and avoiding context pollution.
@@ -176,6 +180,7 @@ class CoordinationConfig:
     evaluation_criteria_generator: EvaluationCriteriaGeneratorConfig = field(
         default_factory=EvaluationCriteriaGeneratorConfig,
     )
+    pre_collab_voting_threshold: int | None = None
     enable_subagents: bool = False
     subagent_default_timeout: int = 300
     subagent_min_timeout: int = 60  # Minimum 1 minute
@@ -194,6 +199,7 @@ class CoordinationConfig:
     enable_changedoc: bool = True  # Write changedoc.md decision journal during coordination
     drift_conflict_policy: str = "skip"  # "skip" | "prefer_presenter" | "fail"
     subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
+    always_spawn_quality_subagents: bool = False  # Spawn quality_rethinking + novelty subagents every round, not just on plateau
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
     checklist_criteria_preset: str | None = None  # "persona" | "decomposition" | "evaluation" | "prompt" | "analysis"
     checklist_criteria_inline: list[dict[str, str]] | None = None  # [{text: str, category: must|should|could}]
@@ -207,6 +213,7 @@ class CoordinationConfig:
         self._validate_drift_conflict_policy()
         self._validate_novelty_injection()
         self._validate_learning_capture_mode()
+        self._validate_pre_collab_voting_threshold()
 
     def _validate_timeout_config(self):
         """Validate subagent timeout configuration."""
@@ -277,6 +284,16 @@ class CoordinationConfig:
         if self.learning_capture_mode not in valid_values:
             raise ValueError(
                 f"Invalid learning_capture_mode: '{self.learning_capture_mode}'. " f"Must be one of: {sorted(valid_values)}",
+            )
+
+    def _validate_pre_collab_voting_threshold(self):
+        """Validate optional pre-collab checklist threshold override."""
+        threshold = self.pre_collab_voting_threshold
+        if threshold is None:
+            return
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
+            raise ValueError(
+                "pre_collab_voting_threshold must be a positive integer or None",
             )
 
     def _validate_subagent_runtime_config(self):

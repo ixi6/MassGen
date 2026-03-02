@@ -22,7 +22,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from massgen.subagent.models import SubagentConfig, SubagentResult, SubagentState
+from massgen.subagent.models import (
+    SubagentConfig,
+    SubagentOrchestratorConfig,
+    SubagentResult,
+    SubagentState,
+)
 
 # =============================================================================
 # Callback Registration Tests
@@ -1009,6 +1014,91 @@ class TestSubagentConfigInheritance:
         assert backend["audio_generation_backend"] == "openai"
         assert backend["audio_generation_model"] == "gpt-4o-mini-tts"
 
+    def test_promotes_voting_settings_from_coordination_to_orchestrator(self, tmp_path):
+        """voting/checklist settings should be top-level orchestrator fields in YAML."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                coordination={
+                    "voting_sensitivity": "checklist_gated",
+                    "voting_threshold": 9,
+                    "checklist_require_gap_report": True,
+                    "gap_report_mode": "separate",
+                    "checklist_criteria_preset": "persona",
+                },
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Generate personas",
+            parent_agent_id="parent-agent",
+            subagent_id="persona-sub",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        coord_cfg = orchestrator_cfg["coordination"]
+
+        assert orchestrator_cfg["voting_sensitivity"] == "checklist_gated"
+        assert orchestrator_cfg["voting_threshold"] == 9
+        assert orchestrator_cfg["checklist_require_gap_report"] is True
+        assert orchestrator_cfg["gap_report_mode"] == "separate"
+
+        # Non-top-level coordination settings should remain in coordination.
+        assert coord_cfg["checklist_criteria_preset"] == "persona"
+        assert "voting_sensitivity" not in coord_cfg
+        assert "voting_threshold" not in coord_cfg
+        assert "checklist_require_gap_report" not in coord_cfg
+        assert "gap_report_mode" not in coord_cfg
+
+    def test_parent_voting_settings_not_promoted_without_subagent_orchestrator(self, tmp_path):
+        """General subagents should not inherit voting/checklist settings from parent coordination."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            parent_coordination_config={
+                "voting_sensitivity": "checklist_gated",
+                "voting_threshold": 13,
+                "checklist_require_gap_report": True,
+                "gap_report_mode": "separate",
+            },
+        )
+
+        config = SubagentConfig.create(
+            task="General subagent task",
+            parent_agent_id="parent-agent",
+            subagent_id="general-sub",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        assert "voting_sensitivity" not in orchestrator_cfg
+        assert "voting_threshold" not in orchestrator_cfg
+        assert "checklist_require_gap_report" not in orchestrator_cfg
+        assert "gap_report_mode" not in orchestrator_cfg
+
 
 class TestSubagentManagerContextNormalization:
     def test_parent_workspace_added_to_context_paths(self, tmp_path):
@@ -1124,6 +1214,65 @@ class TestSubagentRuntimeIsolationRouting:
         assert cmd[:2] == ["host-launch", "--exec"]
         assert "--config" in cmd
 
+    def test_subagent_command_disables_at_parsing_by_default(self, tmp_path):
+        """Subagent tasks are AI-generated and may contain @media, @keyframes etc.
+        The default must disable @-reference parsing to avoid false positives."""
+        manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        # Default SubagentOrchestratorConfig - no explicit parse_at_references
+        manager._subagent_orchestrator_config = SubagentOrchestratorConfig(
+            enabled=True,
+        )
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="Use CSS @media and @keyframes with wght@400",
+            runtime_mode="inherited",
+        )
+
+        assert "--no-parse-at-references" in cmd
+        assert cmd[-1] == "Use CSS @media and @keyframes with wght@400"
+
+    def test_subagent_command_allows_at_parsing_when_explicitly_enabled(self, tmp_path):
+        """When explicitly enabled, @-reference parsing is active."""
+        manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        manager._subagent_orchestrator_config = SubagentOrchestratorConfig(
+            enabled=True,
+            parse_at_references=True,
+        )
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="Review @src/main.py",
+            runtime_mode="inherited",
+        )
+
+        assert "--no-parse-at-references" not in cmd
+
+    def test_coordination_config_default_disables_at_parsing(self, tmp_path):
+        from massgen.cli import _parse_coordination_config
+
+        coordination = _parse_coordination_config(
+            {
+                "subagent_orchestrator": {
+                    "enabled": True,
+                    # No parse_at_references key - should default to False
+                },
+            },
+        )
+        manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        manager._subagent_orchestrator_config = coordination.subagent_orchestrator
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="Use CSS @import",
+            runtime_mode="inherited",
+        )
+
+        assert "--no-parse-at-references" in cmd
+
     def test_inherited_mode_rejects_fallback_setting(self, tmp_path):
         from massgen.subagent.manager import SubagentManager
 
@@ -1203,8 +1352,9 @@ class TestSendMessageToSubagent:
         sub_workspace.mkdir(parents=True, exist_ok=True)
         self._register_running_subagent(manager, "sub1", sub_workspace)
 
-        result = manager.send_message_to_subagent("sub1", "focus on performance")
-        assert result is True
+        success, error = manager.send_message_to_subagent("sub1", "focus on performance")
+        assert success is True
+        assert error is None
 
         inbox = sub_workspace / ".massgen" / "runtime_inbox"
         assert inbox.exists()
@@ -1217,13 +1367,14 @@ class TestSendMessageToSubagent:
         assert "timestamp" in data
 
     def test_send_message_returns_false_for_unknown_subagent(self, tmp_path):
-        """Nonexistent ID → False."""
+        """Nonexistent ID → (False, error)."""
         manager = self._make_manager(tmp_path)
-        result = manager.send_message_to_subagent("nonexistent", "hello")
-        assert result is False
+        success, error = manager.send_message_to_subagent("nonexistent", "hello")
+        assert success is False
+        assert "not found" in error
 
     def test_send_message_returns_false_for_non_running_subagent(self, tmp_path):
-        """Completed subagent → False."""
+        """Completed subagent → (False, error)."""
         from massgen.subagent.models import SubagentConfig, SubagentState
 
         manager = self._make_manager(tmp_path)
@@ -1235,8 +1386,23 @@ class TestSendMessageToSubagent:
         )
         manager._subagents["done1"] = state
 
-        result = manager.send_message_to_subagent("done1", "hello")
-        assert result is False
+        success, error = manager.send_message_to_subagent("done1", "hello")
+        assert success is False
+        assert "completed" in error
+
+    def test_send_message_rejects_when_answer_file_exists(self, tmp_path):
+        """Running subagent with answer.txt (race condition) → (False, error)."""
+        manager = self._make_manager(tmp_path)
+        sub_workspace = tmp_path / "workspace" / "subagents" / "sub_done" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+        self._register_running_subagent(manager, "sub_done", sub_workspace)
+
+        # Simulate subprocess having written answer.txt
+        (sub_workspace / "answer.txt").write_text("Final answer")
+
+        success, error = manager.send_message_to_subagent("sub_done", "too late")
+        assert success is False
+        assert "already completed" in error
 
     def test_send_message_atomic_write(self, tmp_path):
         """Verify .tmp → rename pattern (no partial reads)."""
@@ -1245,8 +1411,9 @@ class TestSendMessageToSubagent:
         sub_workspace.mkdir(parents=True, exist_ok=True)
         self._register_running_subagent(manager, "sub2", sub_workspace)
 
-        result = manager.send_message_to_subagent("sub2", "test atomic")
-        assert result is True
+        success, error = manager.send_message_to_subagent("sub2", "test atomic")
+        assert success is True
+        assert error is None
 
         inbox = sub_workspace / ".massgen" / "runtime_inbox"
         # No .tmp files should remain
@@ -2038,3 +2205,98 @@ class TestContinueSubagentSessionFallback:
         assert result.answer == "recovered without session subprocess"
         assert recovery_called["subagent_id"] == "sub1"
         assert recovery_called["reuse_subagent_id"] is True
+
+
+# =============================================================================
+# list_subagents timeout/elapsed fields
+# =============================================================================
+
+
+class TestListSubagentsTimeoutFields:
+    """list_subagents() should expose elapsed/timeout/remaining for running subagents."""
+
+    def _make_manager(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        return SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+    def test_running_subagent_includes_timeout_fields(self, tmp_path):
+        """A running in-memory subagent should expose elapsed_seconds, timeout_seconds, seconds_remaining."""
+        manager = self._make_manager(tmp_path)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent", timeout_seconds=300)
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(tmp_path / "sub1"),
+            started_at=datetime.now(),
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub1"]
+
+        assert "elapsed_seconds" in entry, "running subagent must expose elapsed_seconds"
+        assert "timeout_seconds" in entry, "running subagent must expose timeout_seconds"
+        assert "seconds_remaining" in entry, "running subagent must expose seconds_remaining"
+        assert entry["timeout_seconds"] == 300.0
+        assert 0.0 <= entry["elapsed_seconds"] < 5.0  # started just now
+        assert entry["seconds_remaining"] <= 300.0
+        assert entry["seconds_remaining"] >= 295.0  # should be close to max
+
+    def test_completed_subagent_does_not_include_timeout_fields(self, tmp_path):
+        """A completed subagent should NOT have elapsed_seconds/timeout_seconds/seconds_remaining injected."""
+        manager = self._make_manager(tmp_path)
+
+        config = SubagentConfig(id="sub2", task="done task", parent_agent_id="test-agent", timeout_seconds=300)
+        result = SubagentResult.create_success(
+            subagent_id="sub2",
+            answer="done",
+            workspace_path=str(tmp_path / "sub2"),
+            execution_time_seconds=42.0,
+        )
+        manager._subagents["sub2"] = SubagentState(
+            config=config,
+            status="completed",
+            workspace_path=str(tmp_path / "sub2"),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+            result=result,
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub2"]
+
+        assert "elapsed_seconds" not in entry, "completed subagent should not have elapsed_seconds injected"
+        assert "seconds_remaining" not in entry, "completed subagent should not have seconds_remaining injected"
+
+    def test_running_subagent_seconds_remaining_decreases_with_time(self, tmp_path):
+        """seconds_remaining should reflect time actually elapsed since started_at."""
+        from datetime import timedelta
+
+        manager = self._make_manager(tmp_path)
+
+        # Simulate a subagent that started 100 seconds ago
+        started = datetime.now() - timedelta(seconds=100)
+        config = SubagentConfig(id="sub3", task="slow task", parent_agent_id="test-agent", timeout_seconds=300)
+        manager._subagents["sub3"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(tmp_path / "sub3"),
+            started_at=started,
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub3"]
+
+        # elapsed should be ~100s
+        assert entry["elapsed_seconds"] >= 99.0
+        assert entry["elapsed_seconds"] < 110.0
+        # remaining should be ~200s
+        assert entry["seconds_remaining"] <= 201.0
+        assert entry["seconds_remaining"] >= 190.0

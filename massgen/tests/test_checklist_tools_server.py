@@ -6,7 +6,8 @@ Tests cover:
 - submit_checklist verdict logic (iterate vs terminate)
 - First-answer forced iterate behavior
 - Codex JSON-string normalization for scores
-- Improvement analysis inclusion in explanations
+- Per-criterion plateau detection
+- propose_improvements validation
 - write_checklist_specs() file I/O
 - build_server_config() structure
 """
@@ -14,15 +15,17 @@ Tests cover:
 import json
 import sys
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
 from massgen.mcp_tools.checklist_tools_server import (
     _extract_score,
-    _normalize_substantiveness,
+    _find_plateaued_criteria,
     _read_specs,
     build_server_config,
     evaluate_checklist_submission,
+    evaluate_proposed_improvements,
     write_checklist_specs,
 )
 
@@ -133,7 +136,6 @@ class TestSubmitChecklistVerdict:
         result = json.loads(
             await handler(
                 scores={"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 7, "reasoning": "ok"}},
-                improvements="",
             ),
         )
         assert result["verdict"] == "vote"
@@ -155,7 +157,6 @@ class TestSubmitChecklistVerdict:
         result = json.loads(
             await handler(
                 scores={"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 5, "reasoning": "bad"}, "E3": {"score": 9, "reasoning": "great"}},
-                improvements="",
             ),
         )
         assert result["verdict"] == "new_answer"
@@ -178,7 +179,6 @@ class TestSubmitChecklistVerdict:
         result = json.loads(
             await handler(
                 scores={"E1": {"score": 10, "reasoning": "perfect"}},
-                improvements="",
             ),
         )
         # Even though score passes, first answer always iterates
@@ -203,7 +203,6 @@ class TestSubmitChecklistVerdict:
         result = json.loads(
             await handler(
                 scores='{"E1": {"score": 8, "reasoning": "good"}}',
-                improvements="",
             ),
         )
         assert result["verdict"] == "vote"
@@ -216,30 +215,8 @@ class TestSubmitChecklistVerdict:
         state = {"has_existing_answers": True, "required": 1, "cutoff": 7}
         handler = _build_handler(_make_specs_file(tmp_path, items, state))
 
-        result = json.loads(await handler(scores="not valid json", improvements=""))
+        result = json.loads(await handler(scores="not valid json"))
         assert "error" in result
-
-    @pytest.mark.asyncio
-    async def test_improvements_included_in_iterate_explanation(self, tmp_path):
-        """Improvement analysis text should appear in iterate explanations."""
-        items = ["Check 1"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 1,
-            "cutoff": 7,
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={"E1": {"score": 3, "reasoning": "bad"}},
-                improvements="Add error handling and validation",
-            ),
-        )
-        assert result["verdict"] == "new_answer"
-        assert "Add error handling and validation" in result["explanation"]
 
     @pytest.mark.asyncio
     async def test_missing_score_keys_rejected_when_existing_answers(self, tmp_path):
@@ -258,7 +235,6 @@ class TestSubmitChecklistVerdict:
         result = json.loads(
             await handler(
                 scores={"E1": {"score": 8, "reasoning": "good"}},
-                improvements="",
             ),
         )
         assert result["verdict"] == "new_answer"
@@ -282,7 +258,6 @@ class TestSubmitChecklistVerdict:
         result = json.loads(
             await handler(
                 scores={"E1": {"score": 8, "reasoning": "good"}},
-                improvements="",
             ),
         )
         assert result["verdict"] == "new_answer"
@@ -305,7 +280,6 @@ class TestSubmitChecklistVerdict:
         result = json.loads(
             await handler(
                 scores={"E1": {"score": 8, "reasoning": "good"}},
-                improvements="",
             ),
         )
         assert result["verdict"] == "stop"
@@ -331,7 +305,6 @@ class TestIncompleteScoreRejection:
         }
         result = evaluate_checklist_submission(
             scores={"E1": {"score": 8, "reasoning": "good"}},
-            improvements="",
             report_path="",
             items=items,
             state=state,
@@ -356,7 +329,6 @@ class TestIncompleteScoreRejection:
                 "E1": {"score": 8, "reasoning": "good"},
                 "E2": {"score": 9, "reasoning": "great"},
             },
-            improvements="",
             report_path="",
             items=items,
             state=state,
@@ -376,7 +348,6 @@ class TestIncompleteScoreRejection:
         }
         result = evaluate_checklist_submission(
             scores={},
-            improvements="",
             report_path="",
             items=items,
             state=state,
@@ -396,7 +367,6 @@ class TestIncompleteScoreRejection:
         }
         result = evaluate_checklist_submission(
             scores={"E1": {"score": 8, "reasoning": "good"}},
-            improvements="",
             report_path="",
             items=items,
             state=state,
@@ -420,7 +390,6 @@ class TestIncompleteScoreRejection:
                 "T1": {"score": 8, "reasoning": "good"},
                 "T2": {"score": 9, "reasoning": "great"},
             },
-            improvements="",
             report_path="",
             items=items,
             state=state,
@@ -444,7 +413,6 @@ class TestIncompleteScoreRejection:
                 "E1": {"score": 8, "reasoning": "ok"},
                 "E3": {"score": 7, "reasoning": "ok"},
             },
-            improvements="",
             report_path="",
             items=items,
             state=state,
@@ -494,11 +462,9 @@ class TestGapReportGateRemoval:
         # All scores pass, no report path — verdict should be "vote"
         result = evaluate_checklist_submission(
             scores={"E1": 8, "E2": 9},
-            improvements="",
             report_path="",
             items=items,
             state=state,
-            substantiveness=None,
         )
         assert result["verdict"] == "vote"
         # Report gate should NOT override
@@ -516,11 +482,9 @@ class TestGapReportGateRemoval:
         }
         result = evaluate_checklist_submission(
             scores={"E1": 8},
-            improvements="",
             report_path="",
             items=items,
             state=state,
-            substantiveness=None,
         )
         # Report diagnostics should be in the result
         assert "report" in result
@@ -539,483 +503,20 @@ class TestGapReportGateRemoval:
         # Empty report path
         result = evaluate_checklist_submission(
             scores={"E1": 9},
-            improvements="",
             report_path="",
             items=items,
             state=state,
-            substantiveness=None,
         )
         assert result["verdict"] == "vote"
 
         # None-ish report path
         result2 = evaluate_checklist_submission(
             scores={"E1": 9},
-            improvements="",
             report_path="nonexistent/path.md",
             items=items,
             state=state,
-            substantiveness=None,
         )
         assert result2["verdict"] == "vote"
-
-
-# ---------------------------------------------------------------------------
-# Substantiveness gating and convergence off-ramp
-# ---------------------------------------------------------------------------
-
-
-class TestSubstantivenessGating:
-    """Tests for substantiveness-based convergence control."""
-
-    @pytest.mark.asyncio
-    async def test_substantiveness_required_forces_iterate_when_missing(self, tmp_path):
-        """When substantiveness is required, missing payload should force iterate."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_gap_report": False,
-            "require_substantiveness": True,
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={
-                    "E1": {"score": 10, "reasoning": "strong"},
-                    "E2": {"score": 10, "reasoning": "strong"},
-                    "E3": {"score": 10, "reasoning": "strong"},
-                    "E4": {"score": 10, "reasoning": "strong"},
-                },
-                improvements="No critical gaps",
-            ),
-        )
-        assert result["verdict"] == "new_answer"
-        assert result["substantiveness_gate_triggered"] is True
-        assert "Substantiveness" in result["explanation"]
-
-    @pytest.mark.asyncio
-    async def test_convergence_offramp_terminates_incremental_only_tail_failures(self, tmp_path):
-        """Allow natural termination when only T4 fails and no substantive plan remains."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_gap_report": False,
-            "require_substantiveness": True,
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={
-                    "E1": {"score": 9, "reasoning": "core quality strong"},
-                    "E2": {"score": 9, "reasoning": "core quality strong"},
-                    "E3": {"score": 9, "reasoning": "core quality strong"},
-                    "E4": {"score": 6, "reasoning": "ambition limited"},
-                },
-                improvements="Only polish-level tweaks remain",
-                substantiveness={
-                    "transformative": [],
-                    "structural": [],
-                    "incremental": ["fix spacing", "adjust colors"],
-                    "decision_space_exhausted": True,
-                    "notes": "No meaningful structural moves left",
-                },
-            ),
-        )
-        assert result["verdict"] == "vote"
-        assert result["convergence_offramp_triggered"] is True
-        assert "Convergence off-ramp activated" in result["explanation"]
-
-    @pytest.mark.asyncio
-    async def test_convergence_offramp_does_not_trigger_with_structural_plan(self, tmp_path):
-        """Do not terminate early when a structural plan still exists."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_gap_report": False,
-            "require_substantiveness": True,
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={
-                    "E1": {"score": 9, "reasoning": "core quality strong"},
-                    "E2": {"score": 9, "reasoning": "core quality strong"},
-                    "E3": {"score": 9, "reasoning": "core quality strong"},
-                    "E4": {"score": 6, "reasoning": "ambition limited"},
-                },
-                improvements="Need one major architecture revision",
-                substantiveness={
-                    "transformative": [],
-                    "structural": ["redesign navigation architecture"],
-                    "incremental": [],
-                    "decision_space_exhausted": False,
-                    "notes": "A structural redesign remains feasible",
-                },
-            ),
-        )
-        assert result["verdict"] == "new_answer"
-        assert result["convergence_offramp_triggered"] is False
-
-    @pytest.mark.asyncio
-    async def test_changedoc_offramp_does_not_treat_t3_as_tail_failure(self, tmp_path):
-        """In changedoc mode, failing T3 (traceability) should block off-ramp termination."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_gap_report": False,
-            "require_substantiveness": True,
-            "changedoc_mode": True,
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={
-                    "E1": {"score": 9, "reasoning": "deliverable strong"},
-                    "E2": {"score": 9, "reasoning": "gaps addressed"},
-                    "E3": {"score": 6, "reasoning": "traceability gaps remain"},
-                    "E4": {"score": 6, "reasoning": "ambition limited"},
-                },
-                improvements="Need to fix traceability mappings",
-                substantiveness={
-                    "transformative": [],
-                    "structural": [],
-                    "incremental": ["fix traceability"],
-                    "decision_space_exhausted": True,
-                    "notes": "No architectural changes left",
-                },
-            ),
-        )
-        assert result["verdict"] == "new_answer"
-        assert result["convergence_offramp_triggered"] is False
-
-    @pytest.mark.asyncio
-    async def test_changedoc_offramp_can_trigger_when_only_t4_fails(self, tmp_path):
-        """In changedoc mode, off-ramp may trigger when T1-T3 pass and only T4 fails."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_gap_report": False,
-            "require_substantiveness": True,
-            "changedoc_mode": True,
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={
-                    "E1": {"score": 9, "reasoning": "deliverable strong"},
-                    "E2": {"score": 9, "reasoning": "gaps addressed"},
-                    "E3": {"score": 9, "reasoning": "traceability is complete"},
-                    "E4": {"score": 6, "reasoning": "ambition limited"},
-                },
-                improvements="No substantive ambition paths remain",
-                substantiveness={
-                    "transformative": [],
-                    "structural": [],
-                    "incremental": ["minor polish"],
-                    "decision_space_exhausted": True,
-                    "notes": "Only polish options remain",
-                },
-            ),
-        )
-        assert result["verdict"] == "vote"
-        assert result["convergence_offramp_triggered"] is True
-
-    @pytest.mark.asyncio
-    async def test_stretch_criteria_guidance_when_exhausted(self, tmp_path):
-        """When stretch criteria fail and decision space is exhausted, give specific guidance."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 9,
-            "require_gap_report": False,
-            "require_substantiveness": True,
-            "item_categories": {"E1": "core", "E2": "core", "E3": "core", "E4": "stretch"},
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={
-                    "E1": {"score": 8, "reasoning": "decent coverage"},
-                    "E2": {"score": 8, "reasoning": "decent rationale"},
-                    "E3": {"score": 9, "reasoning": "good traceability"},
-                    "E4": {"score": 4, "reasoning": "no genuine ambition"},
-                },
-                improvements="Add attribution and fallback UX",
-                substantiveness={
-                    "transformative": [],
-                    "structural": [],
-                    "incremental": ["add attribution", "fallback UX", "polish"],
-                    "decision_space_exhausted": True,
-                    "notes": "Only incremental polish remains",
-                },
-            ),
-        )
-        assert result["verdict"] == "new_answer"
-        # Should contain stretch-specific guidance
-        assert "E4 (stretch crit" in result["explanation"]
-        assert "stretch-quality deficit" in result["explanation"]
-
-    @pytest.mark.asyncio
-    async def test_stretch_criteria_guidance_when_substantive_plan_exists(self, tmp_path):
-        """When stretch criteria fail but structural work remains, give different guidance."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 9,
-            "require_gap_report": False,
-            "require_substantiveness": True,
-            "item_categories": {"E1": "core", "E2": "core", "E3": "core", "E4": "stretch"},
-        }
-        handler = _build_handler(_make_specs_file(tmp_path, items, state))
-
-        result = json.loads(
-            await handler(
-                scores={
-                    "E1": {"score": 8, "reasoning": "decent coverage"},
-                    "E2": {"score": 8, "reasoning": "decent rationale"},
-                    "E3": {"score": 9, "reasoning": "good traceability"},
-                    "E4": {"score": 4, "reasoning": "no genuine ambition"},
-                },
-                improvements="Add interactive timeline and fallback UX",
-                substantiveness={
-                    "transformative": [],
-                    "structural": ["add interactive timeline"],
-                    "incremental": ["fallback UX", "polish"],
-                    "decision_space_exhausted": False,
-                    "notes": "Interactive timeline would be structural",
-                },
-            ),
-        )
-        assert result["verdict"] == "new_answer"
-        # Should still get stretch guidance but the non-exhausted variant
-        assert "E4 (stretch crit" in result["explanation"]
-        assert "care beyond correctness" in result["explanation"]
-
-
-class TestIterateVerdictBreadth:
-    """Tests that iterate verdict encourages implementing ALL identified improvements."""
-
-    def test_iterate_verdict_says_implement_all(self, tmp_path):
-        """When iterating, verdict must tell agent to implement ALL improvements, not just one."""
-        items = ["Coverage", "Quality", "Polish", "Depth"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "substantiveness_eval": {"required": True, "valid": True, "has_substantive_plan": True},
-        }
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps in coverage"},
-                "E2": {"score": 5, "reasoning": "weak quality"},
-                "E3": {"score": 7, "reasoning": "decent polish"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Add interactive timeline, redesign navigation, add real data sources",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": ["interactive timeline", "redesign navigation", "real data sources"],
-                "incremental": ["minor polish"],
-                "decision_space_exhausted": False,
-                "notes": "Three structural improvements identified",
-            },
-        )
-        assert result["verdict"] == "new_answer"
-        explanation_lower = result["explanation"].lower()
-        normalized = " ".join(explanation_lower.split())
-        # Must tell agent to implement all improvements, not just pick one
-        assert "implement all" in normalized or "address all" in normalized or "all identified" in normalized
-
-
-# ---------------------------------------------------------------------------
-# Substantiveness list format and backward compatibility
-# ---------------------------------------------------------------------------
-
-
-class TestSubstantivenessListFormat:
-    """Tests for structured list-based substantiveness format."""
-
-    def test_list_format_derives_counts_from_lengths(self):
-        """List format should derive counts from len() of each list."""
-        state = {"require_substantiveness": True}
-        result = _normalize_substantiveness(
-            {
-                "transformative": ["rewrite nav as SPA router"],
-                "structural": ["add timeline", "add search"],
-                "incremental": ["fix typos", "adjust colors", "add alt text"],
-                "decision_space_exhausted": False,
-                "notes": "test",
-            },
-            state,
-        )
-        assert result["transformative_count"] == 1
-        assert result["structural_count"] == 2
-        assert result["incremental_count"] == 3
-        assert result["has_substantive_plan"] is True
-        assert result["incremental_only"] is False
-
-    def test_list_format_stores_items(self):
-        """List format should store the actual item lists in result."""
-        state = {"require_substantiveness": True}
-        result = _normalize_substantiveness(
-            {
-                "transformative": ["rewrite as SPA"],
-                "structural": ["add caching layer"],
-                "incremental": ["fix typos"],
-                "decision_space_exhausted": False,
-            },
-            state,
-        )
-        assert result["transformative_items"] == ["rewrite as SPA"]
-        assert result["structural_items"] == ["add caching layer"]
-        assert result["incremental_items"] == ["fix typos"]
-
-    def test_legacy_count_format_still_works(self):
-        """Old count-based format should still be accepted for backward compat."""
-        state = {"require_substantiveness": True}
-        result = _normalize_substantiveness(
-            {
-                "transformative_count": 1,
-                "structural_count": 2,
-                "incremental_count": 3,
-                "decision_space_exhausted": False,
-                "notes": "legacy",
-            },
-            state,
-        )
-        assert result["transformative_count"] == 1
-        assert result["structural_count"] == 2
-        assert result["incremental_count"] == 3
-        assert result["has_substantive_plan"] is True
-        # Legacy format should have empty item lists
-        assert result["transformative_items"] == []
-        assert result["structural_items"] == []
-        assert result["incremental_items"] == []
-
-    def test_empty_lists_mean_zero_counts(self):
-        """Empty lists should produce zero counts."""
-        state = {"require_substantiveness": True}
-        result = _normalize_substantiveness(
-            {
-                "transformative": [],
-                "structural": [],
-                "incremental": [],
-                "decision_space_exhausted": True,
-            },
-            state,
-        )
-        assert result["transformative_count"] == 0
-        assert result["structural_count"] == 0
-        assert result["incremental_count"] == 0
-        assert result["has_substantive_plan"] is False
-
-
-class TestVerdictEchoWithItems:
-    """Tests for echoing specific item names in iterate verdict."""
-
-    def test_iterate_verdict_echoes_structural_items(self):
-        """When iterating with structural items, echo them by name."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_substantiveness": True,
-        }
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Various improvements needed",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": ["add interactive timeline", "redesign navigation"],
-                "incremental": ["fix typos"],
-                "decision_space_exhausted": False,
-                "notes": "Two structural changes",
-            },
-        )
-        assert result["verdict"] == "new_answer"
-        # Must echo specific structural items by name
-        assert "add interactive timeline" in result["explanation"]
-        assert "redesign navigation" in result["explanation"]
-
-    def test_iterate_verdict_echoes_transformative_items(self):
-        """When iterating with transformative items, echo them by name."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_substantiveness": True,
-        }
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Major rework needed",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness={
-                "transformative": ["rewrite as event-driven architecture"],
-                "structural": [],
-                "incremental": [],
-                "decision_space_exhausted": False,
-                "notes": "One transformative change",
-            },
-        )
-        assert result["verdict"] == "new_answer"
-        assert "rewrite as event-driven architecture" in result["explanation"]
 
 
 class TestChecklistRequiredTrue:
@@ -1067,400 +568,797 @@ class TestChecklistRequiredTrue:
         assert _checklist_required_true(70, num_items=3) >= 2  # floor = max(1, (3+1)//2) = 2
 
 
-class TestTaskPlanCommitmentTracking:
-    """Tests for task plan commitment tracking in iterate verdicts."""
+# ---------------------------------------------------------------------------
+# Per-criterion plateau detection
+# ---------------------------------------------------------------------------
 
-    def test_iterate_verdict_instructs_task_plan_logging(self):
-        """When iterating with structural items, verdict must instruct agent to log them as tasks."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+
+class TestCriterionPlateau:
+    """Tests for _find_plateaued_criteria helper."""
+
+    def test_plateau_detected_after_two_flat_rounds(self):
+        """Same score for 2 rounds → plateaued."""
+        current_items = [{"id": "E1", "score": 5}, {"id": "E2", "score": 7}]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 7}]},
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 7}]},
+        ]
+        result = _find_plateaued_criteria(current_items, history, min_rounds=2)
+        result_ids = [d["id"] for d in result]
+        assert "E1" in result_ids
+        assert "E2" in result_ids
+
+    def test_no_plateau_when_improving(self):
+        """Score increases → not plateaued."""
+        current_items = [{"id": "E1", "score": 8}, {"id": "E2", "score": 9}]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 6}]},
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 6}]},
+        ]
+        # No items/categories needed when result is empty
+        result = _find_plateaued_criteria(current_items, history, min_rounds=2)
+        assert result == []
+
+    def test_no_plateau_with_insufficient_history(self):
+        """<2 rounds of history → empty."""
+        current_items = [{"id": "E1", "score": 5}]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}]},
+        ]
+        result = _find_plateaued_criteria(current_items, history, min_rounds=2)
+        assert result == []
+
+    def test_per_criterion_plateau(self):
+        """E1 stuck but E2 improving → only E1 plateaued."""
+        current_items = [{"id": "E1", "score": 5}, {"id": "E2", "score": 9}]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 6}]},
+        ]
+        result = _find_plateaued_criteria(current_items, history, min_rounds=2)
+        result_ids = [d["id"] for d in result]
+        assert "E1" in result_ids
+        assert "E2" not in result_ids
+
+    def test_plateau_threshold(self):
+        """+1 point = still plateau, +2 = not plateau."""
+        current_items = [{"id": "E1", "score": 6}, {"id": "E2", "score": 7}]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+        ]
+        result = _find_plateaued_criteria(current_items, history, min_rounds=2)
+        # E1: 6 > 5 + 1 is False, so E1 is stuck
+        result_ids = [d["id"] for d in result]
+        assert "E1" in result_ids
+        # E2: 7 > 5 + 1 is True, so E2 is improving
+        assert "E2" not in result_ids
+
+    def test_returns_rich_detail_dicts(self):
+        """Plateaued criteria return dicts with id, text, category, score_history, current_score."""
+        items = ["First criterion text", "Second criterion text"]
+        categories = {"E1": "should", "E2": "could"}
+        current_items = [{"id": "E1", "score": 6}, {"id": "E2", "score": 5}]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 6}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 6}, {"id": "E2", "score": 5}]},
+        ]
+        result = _find_plateaued_criteria(
+            current_items,
+            history,
+            items=items,
+            item_categories=categories,
+            min_rounds=2,
+        )
+        assert len(result) == 2
+        e1 = next(d for d in result if d["id"] == "E1")
+        assert e1["text"] == "First criterion text"
+        assert e1["category"] == "should"
+        assert e1["current_score"] == 6
+        assert "score_history" in e1
+
+    def test_score_trajectory_in_detail(self):
+        """Score history includes prior rounds + current score."""
+        items = ["Criterion A"]
+        categories = {"E1": "must"}
+        current_items = [{"id": "E1", "score": 6}]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 6}]},
+        ]
+        result = _find_plateaued_criteria(
+            current_items,
+            history,
+            items=items,
+            item_categories=categories,
+            min_rounds=2,
+        )
+        assert len(result) == 1
+        assert result[0]["score_history"] == [5, 6, 6]
+
+
+# ---------------------------------------------------------------------------
+# propose_improvements validation
+# ---------------------------------------------------------------------------
+
+
+class TestProposeImprovements:
+    """Tests for evaluate_proposed_improvements function."""
+
+    def test_valid_improvements_all_criteria_covered(self):
+        """All failing criteria covered → valid."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix fonts"], "E5": ["add timeline"]},
+            failed_criteria=["E2", "E5"],
+            items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+        )
+        assert result["valid"] is True
+        assert "task_plan" in result
+        assert len(result["task_plan"]) == 2
+
+    def test_missing_criteria_returns_error(self):
+        """Missing improvements for a criterion → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix fonts"]},
+            failed_criteria=["E2", "E5"],
+            items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+        )
+        assert result["valid"] is False
+        assert "E5" in result["error"]
+        assert "E5" in result["missing_criteria"]
+
+    def test_empty_improvements_for_criterion_returns_error(self):
+        """Empty list for a criterion → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix fonts"], "E5": []},
+            failed_criteria=["E2", "E5"],
+            items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+        )
+        assert result["valid"] is False
+        assert "E5" in result["empty_criteria"]
+
+    def test_task_plan_built_from_improvements(self):
+        """Task plan items contain criterion info and improvement text."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": ["add mobile nav", "fix breakpoints"],
+                "E3": ["add real images"],
+            },
+            failed_criteria=["E1", "E3"],
+            items=["Goal alignment", "Correctness", "Depth"],
+        )
+        assert result["valid"] is True
+        assert len(result["task_plan"]) == 3
+        # Check structure
+        first = result["task_plan"][0]
+        assert first["criterion_id"] == "E1"
+        assert first["criterion"] == "Goal alignment"
+        assert first["improvement"] == "add mobile nav"
+
+    def test_improvements_must_be_dict(self):
+        """Non-dict improvements → error."""
+        result = evaluate_proposed_improvements(
+            improvements="just a string",
+            failed_criteria=["E1"],
+            items=["Check 1"],
+        )
+        assert result["valid"] is False
+        assert "must be a dict" in result["error"]
+
+    # --- Structured improvements (plan + sources) ---
+
+    def test_structured_improvements_accepted(self):
+        """Structured [{"plan": "...", "sources": [...]}] format accepted."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E2": [{"plan": "rethink feature cards", "sources": ["agent_b.1"]}],
+            },
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+        )
+        assert result["valid"] is True
+
+    def test_string_improvements_backward_compat(self):
+        """Plain string lists auto-wrapped to {"plan": str, "sources": []}."""
+        result = evaluate_proposed_improvements(
+            improvements={"E1": ["fix layout"]},
+            failed_criteria=["E1"],
+            items=["Check 1"],
+        )
+        assert result["valid"] is True
+        improve_entries = [t for t in result["task_plan"] if t.get("type", "improve") == "improve"]
+        assert len(improve_entries) >= 1
+        # Should have plan and sources in task_plan entry
+        assert improve_entries[0]["plan"] == "fix layout"
+        assert improve_entries[0]["sources"] == []
+
+    # --- Preserve parameter ---
+
+    def test_preserve_required_when_criteria_exist(self):
+        """Empty preserve + all_criteria_ids provided → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix layout"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2", "Check 3"],
+            all_criteria_ids=["E1", "E2", "E3"],
+            preserve={},
+        )
+        assert result["valid"] is False
+        assert "preserve" in result["error"].lower()
+
+    def test_preserve_allows_same_criterion_in_both(self):
+        """Same criterion in improvements AND preserve → accepted."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix the cards"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={
+                "E1": {"what": "hero section impact", "source": "agent_a.2"},
+                "E2": {"what": "section header layout", "source": "agent_a.2"},
+            },
+        )
+        assert result["valid"] is True
+
+    def test_preserve_key_must_be_valid_criterion_id(self):
+        """Preserve key not in all_criteria_ids → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E1": ["fix it"]},
+            failed_criteria=["E1"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E99": {"what": "something", "source": "agent_a.1"}},
+        )
+        assert result["valid"] is False
+        assert "E99" in result["error"]
+
+    def test_preserve_value_structured(self):
+        """Preserve value {"what": "...", "source": "..."} accepted."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": {"what": "hero section impact", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is True
+        assert result["preserve"]["E1"]["what"] == "hero section impact"
+        assert result["preserve"]["E1"]["source"] == "agent_a.2"
+
+    def test_preserve_string_value_backward_compat(self):
+        """Plain string preserve value auto-wrapped to {"what": str, "source": ""}."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": "hero section impact"},
+        )
+        assert result["valid"] is True
+        assert result["preserve"]["E1"]["what"] == "hero section impact"
+        assert result["preserve"]["E1"]["source"] == ""
+
+    def test_preserve_empty_what_rejected(self):
+        """Preserve with empty 'what' → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": {"what": "", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is False
+        assert "empty" in result["error"].lower()
+
+    def test_task_plan_includes_preserve_entries(self):
+        """Task plan has type: preserve entries BEFORE improve entries."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix cards"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2", "Check 3"],
+            all_criteria_ids=["E1", "E2", "E3"],
+            preserve={
+                "E1": {"what": "hero impact", "source": "agent_a.2"},
+                "E3": {"what": "color palette", "source": "agent_a.2"},
+            },
+        )
+        assert result["valid"] is True
+        types = [t["type"] for t in result["task_plan"]]
+        # Preserve entries come first
+        preserve_indices = [i for i, t in enumerate(types) if t == "preserve"]
+        improve_indices = [i for i, t in enumerate(types) if t == "improve"]
+        assert len(preserve_indices) == 2
+        assert len(improve_indices) >= 1
+        assert max(preserve_indices) < min(improve_indices)
+
+    def test_task_plan_improve_entries_have_sources(self):
+        """Improve entries include plan and sources fields."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "rethink cards", "sources": ["agent_b.1"]}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E2": {"what": "layout", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is True
+        improve = [t for t in result["task_plan"] if t["type"] == "improve"][0]
+        assert improve["plan"] == "rethink cards"
+        assert improve["sources"] == ["agent_b.1"]
+
+    def test_preserve_echoed_in_response(self):
+        """Response includes preserve dict."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": {"what": "hero impact", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is True
+        assert "preserve" in result
+        assert "E1" in result["preserve"]
+
+    def test_backward_compat_no_all_criteria_ids(self):
+        """Without all_criteria_ids arg, preserve enforcement skipped."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix fonts"], "E5": ["add timeline"]},
+            failed_criteria=["E2", "E5"],
+            items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+        )
+        assert result["valid"] is True
+
+
+# ---------------------------------------------------------------------------
+# Simplified submit_checklist (no improvements/substantiveness params)
+# ---------------------------------------------------------------------------
+
+
+class TestSimplifiedSubmitChecklist:
+    """Tests that submit_checklist no longer accepts improvements/substantiveness."""
+
+    def test_no_improvements_param(self):
+        """evaluate_checklist_submission has no improvements param."""
+        import inspect
+
+        sig = inspect.signature(evaluate_checklist_submission)
+        assert "improvements" not in sig.parameters
+
+    def test_no_substantiveness_param(self):
+        """evaluate_checklist_submission has no substantiveness param."""
+        import inspect
+
+        sig = inspect.signature(evaluate_checklist_submission)
+        assert "substantiveness" not in sig.parameters
+
+    def test_submit_checklist_returns_failed_criteria(self):
+        """Result includes failed_criteria list."""
+        items = ["Check 1", "Check 2"]
         state = {
             "terminate_action": "vote",
             "iterate_action": "new_answer",
             "has_existing_answers": True,
-            "required": 4,
+            "required": 2,
             "cutoff": 7,
-            "require_substantiveness": True,
         }
         result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Various improvements needed",
+            scores={"E1": 8, "E2": 5},
             report_path="",
             items=items,
             state=state,
-            substantiveness={
-                "transformative": [],
-                "structural": ["add interactive timeline", "redesign navigation"],
-                "incremental": ["fix typos"],
-                "decision_space_exhausted": False,
-            },
         )
         assert result["verdict"] == "new_answer"
-        explanation = result["explanation"].lower()
-        # Must instruct the agent to log committed items in its task plan
-        assert "task plan" in explanation or "task list" in explanation
+        assert "failed_criteria" in result
+        assert "E2" in result["failed_criteria"]
+        assert "E1" not in result["failed_criteria"]
 
-    def test_iterate_verdict_no_task_plan_when_no_items(self):
-        """When iterating with legacy count format (no item lists), no task plan instruction."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+    def test_submit_checklist_returns_plateaued_criteria(self):
+        """Result includes plateaued_criteria when history shows plateau."""
+        items = ["Check 1", "Check 2"]
         state = {
             "terminate_action": "vote",
             "iterate_action": "new_answer",
             "has_existing_answers": True,
-            "required": 4,
+            "required": 2,
             "cutoff": 7,
-            "require_substantiveness": True,
         }
+        history = [
+            {"items_detail": [{"id": "E1", "score": 8}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 8}, {"id": "E2", "score": 5}]},
+        ]
         result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Various improvements needed",
+            scores={"E1": 8, "E2": 5},
             report_path="",
             items=items,
             state=state,
-            substantiveness={
-                "transformative_count": 0,
-                "structural_count": 2,
-                "incremental_count": 1,
-                "decision_space_exhausted": False,
-            },
+            checklist_history=history,
         )
         assert result["verdict"] == "new_answer"
-        # Legacy format has no specific items to track — no task plan instruction
-        explanation = result["explanation"].lower()
-        assert "task plan" not in explanation and "task list" not in explanation
+        assert "plateaued_criteria" in result
+        # E2 is failing and plateaued — plateaued_criteria is list of dicts
+        plateaued_ids = [d["id"] for d in result["plateaued_criteria"]]
+        assert "E2" in plateaued_ids
 
-    def test_system_prompt_iterate_guidance_mentions_task_plan(self):
-        """System prompt iterate guidance must mention logging committed items as tasks."""
-        from massgen.system_prompt_sections import (
-            _CHECKLIST_ITEMS_CHANGEDOC,
-            _build_checklist_gated_decision,
-        )
-
-        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
-        lower = decision.lower()
-        assert "task plan" in lower or "task list" in lower
-
-
-class TestNoveltySubagentGuidance:
-    """Tests for novelty subagent spawning guidance in iterate verdicts."""
-
-    def _make_t0_state(self, **overrides):
-        """Helper: state dict for T=0 iterate scenario."""
+    def test_no_convergence_offramp(self):
+        """Result never has convergence_offramp_triggered."""
+        items = ["Check 1", "Check 2"]
         state = {
             "terminate_action": "vote",
             "iterate_action": "new_answer",
             "has_existing_answers": True,
-            "required": 4,
+            "required": 2,
             "cutoff": 7,
-            "require_substantiveness": True,
+        }
+        result = evaluate_checklist_submission(
+            scores={"E1": 8, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+        )
+        assert "convergence_offramp_triggered" not in result
+
+    def test_propose_improvements_instruction_in_iterate_verdict(self):
+        """Iterate verdict must instruct agent to call propose_improvements."""
+        items = ["Check 1", "Check 2"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+        }
+        result = evaluate_checklist_submission(
+            scores={"E1": 8, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+        )
+        assert result["verdict"] == "new_answer"
+        assert "propose_improvements" in result["explanation"]
+
+
+# ---------------------------------------------------------------------------
+# Quality rethinking subagent guidance (per-criterion plateau trigger)
+# ---------------------------------------------------------------------------
+
+
+class TestQualityRethinkingPlateauTrigger:
+    """Quality rethinking + novelty subagent guidance fires on per-criterion plateau."""
+
+    def test_plateau_triggers_quality_rethinking_guidance(self):
+        """When criteria plateau for 2+ rounds and quality_rethinking enabled, guidance appears."""
+        items = ["Check 1", "Check 2"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "quality_rethinking_subagent_enabled": True,
+        }
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+        ]
+        result = evaluate_checklist_submission(
+            scores={"E1": 5, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+            checklist_history=history,
+        )
+        assert "quality_rethinking" in result["explanation"].lower()
+
+    def test_plateau_triggers_novelty_guidance(self):
+        """When criteria plateau and novelty enabled, novelty guidance appears."""
+        items = ["Check 1", "Check 2"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
             "novelty_subagent_enabled": True,
         }
-        state.update(overrides)
-        return state
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+        ]
+        result = evaluate_checklist_submission(
+            scores={"E1": 5, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+            checklist_history=history,
+        )
+        assert "novelty" in result["explanation"].lower()
 
-    def _t0_substantiveness(self):
-        """Helper: substantiveness with T=0."""
-        return {
-            "transformative": [],
-            "structural": [],
-            "incremental": ["fix spacing", "adjust colors"],
-            "decision_space_exhausted": False,
-            "notes": "Only incremental work identified",
+    def test_no_plateau_guidance_when_scores_improving(self):
+        """No subagent guidance when scores are improving (no plateau)."""
+        items = ["Check 1", "Check 2"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 90,
+            "quality_rethinking_subagent_enabled": True,
+            "novelty_subagent_enabled": True,
         }
-
-    def test_novelty_guidance_when_t0_and_has_existing_answers(self):
-        """When T=0, iterate verdict, novelty enabled, and has_existing_answers: explanation contains novelty subagent guidance."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+        history = [
+            {"items_detail": [{"id": "E1", "score": 3}, {"id": "E2", "score": 3}]},
+            {"items_detail": [{"id": "E1", "score": 3}, {"id": "E2", "score": 3}]},
+        ]
+        # Current scores jump significantly — not plateaued
         result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Minor polish and formatting",
+            scores={"E1": 8, "E2": 8},
             report_path="",
             items=items,
-            state=self._make_t0_state(),
-            substantiveness=self._t0_substantiveness(),
+            state=state,
+            checklist_history=history,
         )
-        assert result["verdict"] == "new_answer"
-        explanation_lower = result["explanation"].lower()
-        assert "novelty" in explanation_lower
-        assert "subagent" in explanation_lower
-        assert "background" in explanation_lower
+        assert "quality_rethinking" not in result["explanation"].lower()
+        assert "novelty" not in result["explanation"].lower()
 
-    def test_no_novelty_guidance_when_transformative_exists(self):
-        """When T>0, no novelty subagent guidance needed (agent already has transformative ideas)."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Major rework needed",
-            report_path="",
-            items=items,
-            state=self._make_t0_state(),
-            substantiveness={
-                "transformative": ["rewrite as event-driven architecture"],
-                "structural": [],
-                "incremental": [],
-                "decision_space_exhausted": False,
-                "notes": "One transformative change",
-            },
-        )
-        assert result["verdict"] == "new_answer"
-        explanation_lower = result["explanation"].lower()
-        assert "novelty" not in explanation_lower or "subagent" not in explanation_lower
-
-    def test_no_novelty_guidance_on_first_answer(self):
-        """When first answer (no existing), no novelty subagent guidance."""
+    def test_no_plateau_guidance_on_first_answer(self):
+        """No plateau guidance on first answer."""
         items = ["Check 1", "Check 2"]
         state = {
             "terminate_action": "vote",
             "iterate_action": "new_answer",
             "has_existing_answers": False,
             "required": 2,
+            "cutoff": 90,
+            "quality_rethinking_subagent_enabled": True,
+        }
+        result = evaluate_checklist_submission(
+            scores={"E1": 5, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+        )
+        assert "quality_rethinking" not in result["explanation"].lower()
+
+
+class TestPlateauEnrichedDetail:
+    """Tests that plateau response includes rich detail for subagent context."""
+
+    def test_plateaued_criteria_result_has_detail_dicts(self):
+        """plateaued_criteria in result contains dicts with text and score_history."""
+        items = ["First criterion", "Second criterion"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
             "cutoff": 7,
+            "item_categories": {"E1": "should", "E2": "could"},
+        }
+        history = [
+            {"items_detail": [{"id": "E1", "score": 8}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 8}, {"id": "E2", "score": 5}]},
+        ]
+        result = evaluate_checklist_submission(
+            scores={"E1": 8, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+            checklist_history=history,
+        )
+        plateaued = result["plateaued_criteria"]
+        assert len(plateaued) >= 1
+        e2_detail = next(d for d in plateaued if d["id"] == "E2")
+        assert "text" in e2_detail
+        assert e2_detail["text"] == "Second criterion"
+        assert "score_history" in e2_detail
+        assert "category" in e2_detail
+        assert e2_detail["category"] == "could"
+
+    def test_plateau_explanation_includes_score_numbers(self):
+        """Explanation text includes actual score trajectory numbers."""
+        items = ["First criterion", "Second criterion"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "item_categories": {"E1": "should", "E2": "could"},
+            "quality_rethinking_subagent_enabled": True,
+        }
+        history = [
+            {"items_detail": [{"id": "E1", "score": 8}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 8}, {"id": "E2", "score": 5}]},
+        ]
+        result = evaluate_checklist_submission(
+            scores={"E1": 8, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+            checklist_history=history,
+        )
+        # Explanation should contain score trajectory like "5→5→5"
+        explanation = result["explanation"]
+        assert "5" in explanation and "→" in explanation
+
+    def test_plateau_guidance_spawns_both_subagents(self):
+        """When both quality_rethinking and novelty enabled, guidance says side-by-side."""
+        items = ["Criterion A", "Criterion B"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "item_categories": {"E1": "should", "E2": "could"},
+            "quality_rethinking_subagent_enabled": True,
             "novelty_subagent_enabled": True,
         }
+        history = [
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+            {"items_detail": [{"id": "E1", "score": 5}, {"id": "E2", "score": 5}]},
+        ]
         result = evaluate_checklist_submission(
-            scores={"E1": {"score": 10, "reasoning": "perfect"}, "E2": {"score": 10, "reasoning": "perfect"}},
-            improvements="",
+            scores={"E1": 5, "E2": 5},
             report_path="",
             items=items,
             state=state,
+            checklist_history=history,
         )
-        assert result["verdict"] == "new_answer"
-        assert "novelty" not in result["explanation"].lower()
+        explanation = result["explanation"].lower()
+        assert "side-by-side" in explanation or "side by side" in explanation
+        assert "quality_rethinking" in explanation
+        assert "novelty" in explanation
 
-    def test_no_novelty_guidance_when_disabled(self):
-        """When novelty_subagent_enabled=False, novelty guidance is suppressed even with T=0."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Minor polish",
-            report_path="",
-            items=items,
-            state=self._make_t0_state(novelty_subagent_enabled=False),
-            substantiveness=self._t0_substantiveness(),
+
+class TestSubagentPatienceCheckpoints:
+    """Tests that system prompt includes patience checkpoints."""
+
+    def test_evaluator_checkpoint_in_prompt(self):
+        """System prompt has CHECKPOINT before Phase 2 about evaluator results."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
         )
-        assert result["verdict"] == "new_answer"
-        assert "novelty" not in result["explanation"].lower()
+        assert "CHECKPOINT" in prompt
+        # Checkpoint must mention evaluator returning before scoring
+        idx_checkpoint = prompt.index("CHECKPOINT")
+        idx_phase2 = prompt.index("Phase 2")
+        assert idx_checkpoint < idx_phase2, "CHECKPOINT must appear before Phase 2"
 
-    def test_no_novelty_guidance_when_key_absent(self):
-        """When novelty_subagent_enabled absent from state, default OFF (safe)."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_substantiveness": True,
-            # No novelty_subagent_enabled key
-        }
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Minor polish",
-            report_path="",
-            items=items,
-            state=state,
-            substantiveness=self._t0_substantiveness(),
+    def test_builder_checkpoint_in_prompt(self):
+        """System prompt has explicit checkpoint about confirming all builders returned."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
         )
-        assert result["verdict"] == "new_answer"
-        assert "novelty" not in result["explanation"].lower()
+        # Must have explicit CHECKPOINT about builder completion
+        assert "CHECKPOINT" in prompt
+        # Two checkpoints: one for evaluator, one for builders
+        checkpoints = [i for i in range(len(prompt)) if prompt[i : i + 10] == "CHECKPOINT"]
+        assert len(checkpoints) >= 2, f"Expected 2+ CHECKPOINTs, found {len(checkpoints)}"
 
 
-class TestBuilderSubagentGuidance:
-    """Builder subagent guidance in verdict text.
-
-    The builder fires when transformative items are present (T>0) AND builder
-    is enabled — complementary to novelty/critic which fire when T==0.
-    """
-
-    def _make_state(self, **overrides):
-        state = {
-            "terminate_action": "vote",
-            "iterate_action": "new_answer",
-            "has_existing_answers": True,
-            "required": 4,
-            "cutoff": 7,
-            "require_substantiveness": True,
-            "builder_subagent_enabled": True,
-        }
-        state.update(overrides)
-        return state
-
-    def _transformative_substantiveness(self):
-        return {
-            "transformative": ["rebuild layout as era-based chapters", "replace card grids with full-bleed sections"],
-            "structural": [],
-            "incremental": [],
-            "decision_space_exhausted": False,
-            "notes": "Two transformative changes identified",
-        }
-
-    def _incremental_only_substantiveness(self):
-        return {
-            "transformative": [],
-            "structural": ["add timeline connector nodes"],
-            "incremental": ["fix contrast", "increase font size"],
-            "decision_space_exhausted": False,
-            "notes": "Only incremental/structural work",
-        }
-
-    def test_builder_guidance_when_transformative_and_enabled(self):
-        """Builder guidance appears when transformative items present + builder enabled."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Rebuild layout and replace card grids",
-            report_path="",
-            items=items,
-            state=self._make_state(),
-            substantiveness=self._transformative_substantiveness(),
-        )
-        assert result["verdict"] == "new_answer"
-        explanation_lower = result["explanation"].lower()
-        assert "builder" in explanation_lower
-        assert "subagent" in explanation_lower
-        assert "background" in explanation_lower
+class TestBuilderGatedPrompt:
+    """Tests that builder-specific prompt sections are gated on builder_enabled."""
 
     def test_no_builder_guidance_when_disabled(self):
-        """No builder guidance when builder_subagent_enabled=False."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Rebuild layout",
-            report_path="",
-            items=items,
-            state=self._make_state(builder_subagent_enabled=False),
-            substantiveness=self._transformative_substantiveness(),
-        )
-        assert result["verdict"] == "new_answer"
-        assert "builder" not in result["explanation"].lower()
+        """When builder_enabled=False, no [builder] annotation or Step 3b in prompt."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
 
-    def test_no_builder_guidance_when_no_transformative_items(self):
-        """No builder guidance when there are no transformative items (only structural/incremental)."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Fix some issues",
-            report_path="",
-            items=items,
-            state=self._make_state(),
-            substantiveness=self._incremental_only_substantiveness(),
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
+            builder_enabled=False,
         )
-        assert result["verdict"] == "new_answer"
-        assert "builder" not in result["explanation"].lower()
+        assert "[builder]" not in prompt
+        assert "Step 3b" not in prompt
+        # Should still have evaluator CHECKPOINT but NOT builder CHECKPOINT
+        assert "CHECKPOINT" in prompt
+        checkpoints = [i for i in range(len(prompt)) if prompt[i : i + 10] == "CHECKPOINT"]
+        assert len(checkpoints) == 1, f"Expected 1 CHECKPOINT (evaluator only), found {len(checkpoints)}"
 
-    def test_no_builder_guidance_on_first_answer(self):
-        """No builder guidance on first answer (has_existing_answers=False)."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Rebuild everything",
-            report_path="",
-            items=items,
-            state=self._make_state(has_existing_answers=False),
-            substantiveness=self._transformative_substantiveness(),
+    def test_builder_guidance_present_by_default(self):
+        """By default (builder_enabled=True), builder guidance is present."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
         )
-        assert result["verdict"] == "new_answer"
-        assert "builder" not in result["explanation"].lower()
+        assert "[builder]" in prompt
+        assert "Step 3b" in prompt
 
-    def test_no_builder_guidance_when_key_absent(self):
-        """When builder_subagent_enabled absent from state, default OFF (safe)."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
+    def test_inline_execution_when_no_builders(self):
+        """When builder_enabled=False, Phase 3 says to execute inline."""
+        from massgen.system_prompt_sections import _build_checklist_gated_decision
+
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["Criterion 1", "Criterion 2"],
+            builder_enabled=False,
+        )
+        assert "inline" in prompt.lower()
+
+
+class TestAlwaysSpawnQualitySubagents:
+    """Tests for always_spawn_quality_subagents mode."""
+
+    def test_quality_subagent_guidance_fires_without_plateau(self):
+        """When always_spawn_quality_subagents=True, guidance fires even without plateau."""
+        items = ["Criterion A", "Criterion B"]
         state = {
             "terminate_action": "vote",
             "iterate_action": "new_answer",
             "has_existing_answers": True,
-            "required": 4,
+            "required": 2,
             "cutoff": 7,
+            "item_categories": {"E1": "should", "E2": "could"},
+            "quality_rethinking_subagent_enabled": True,
+            "novelty_subagent_enabled": True,
+            "always_spawn_quality_subagents": True,
+        }
+        # No history — so no plateau possible
+        result = evaluate_checklist_submission(
+            scores={"E1": 5, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+        )
+        explanation = result["explanation"].lower()
+        assert "quality_rethinking" in explanation
+        assert "novelty" in explanation
+
+    def test_quality_subagent_guidance_includes_failing_criteria_detail(self):
+        """Always mode builds detail for all failing criteria, not just plateaued."""
+        items = ["First criterion text", "Second criterion text"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "item_categories": {"E1": "should", "E2": "could"},
+            "quality_rethinking_subagent_enabled": True,
+            "novelty_subagent_enabled": True,
+            "always_spawn_quality_subagents": True,
         }
         result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Rebuild layout",
+            scores={"E1": 5, "E2": 5},
             report_path="",
             items=items,
             state=state,
-            substantiveness=self._transformative_substantiveness(),
         )
-        assert result["verdict"] == "new_answer"
-        assert "builder" not in result["explanation"].lower()
+        # Should include failing_criteria_detail in result
+        assert "failing_criteria_detail" in result
+        detail = result["failing_criteria_detail"]
+        assert len(detail) == 2
+        assert detail[0]["id"] == "E1"
+        assert detail[0]["text"] == "First criterion text"
+        assert detail[0]["category"] == "should"
 
-    def test_builder_and_novelty_are_mutually_exclusive(self):
-        """Builder fires on T>0; novelty fires on T==0 — they don't appear together."""
-        items = ["Check 1", "Check 2", "Check 3", "Check 4"]
-        state = self._make_state(novelty_subagent_enabled=True)
-
+    def test_no_guidance_without_flag(self):
+        """Without the flag, no quality subagent guidance on non-plateaued criteria."""
+        items = ["Criterion A", "Criterion B"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "quality_rethinking_subagent_enabled": True,
+            "novelty_subagent_enabled": True,
+            # No always_spawn_quality_subagents flag
+        }
         result = evaluate_checklist_submission(
-            scores={
-                "E1": {"score": 6, "reasoning": "gaps"},
-                "E2": {"score": 5, "reasoning": "weak"},
-                "E3": {"score": 7, "reasoning": "ok"},
-                "E4": {"score": 5, "reasoning": "shallow"},
-            },
-            improvements="Rebuild layout",
+            scores={"E1": 5, "E2": 5},
             report_path="",
             items=items,
             state=state,
-            substantiveness=self._transformative_substantiveness(),
         )
-        assert result["verdict"] == "new_answer"
-        explanation_lower = result["explanation"].lower()
-        # Builder fires (T>0)
-        assert "builder" in explanation_lower
-        # Novelty does NOT fire (T>0, so no novelty guidance needed)
-        assert "novelty" not in explanation_lower
+        explanation = result["explanation"].lower()
+        # Without plateau, no subagent guidance
+        assert "quality_rethinking" not in explanation
 
 
 class TestBuildServerConfig:
@@ -1607,6 +1505,103 @@ class TestChecklistStdioRegistration:
         assert SERVER_NAME in FRAMEWORK_MCPS, f"{SERVER_NAME!r} missing from FRAMEWORK_MCPS — " f"checklist tool will be filtered out of direct model tools"
 
 
+class TestChecklistSdkSubmissionCounting:
+    """Tests for SDK checklist call quota accounting."""
+
+    @staticmethod
+    def _install_fake_claude_agent_sdk(monkeypatch) -> None:
+        """Install a minimal claude_agent_sdk stub for orchestrator SDK tool tests."""
+        fake_sdk = ModuleType("claude_agent_sdk")
+
+        def tool(**_kwargs):
+            def decorator(fn):
+                return fn
+
+            return decorator
+
+        def create_sdk_mcp_server(*, name, version, tools):
+            return {
+                "name": name,
+                "version": version,
+                "tools": tools,
+            }
+
+        fake_sdk.tool = tool
+        fake_sdk.create_sdk_mcp_server = create_sdk_mcp_server
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_sdk)
+
+    @pytest.mark.asyncio
+    async def test_incomplete_submission_does_not_consume_round_quota(self, monkeypatch):
+        """Flat scores (invalid with multiple agents) should not spend the per-round call budget."""
+        from massgen.orchestrator import AgentState, Orchestrator
+
+        self._install_fake_claude_agent_sdk(monkeypatch)
+
+        class _MockBackend:
+            def __init__(self):
+                self.config = {}
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.config = SimpleNamespace(
+            max_checklist_calls_per_round=1,
+            checklist_first_answer=False,
+        )
+        orchestrator.agents = {"agent_0": None, "agent_1": None}
+        orchestrator.agent_states = {"agent_0": AgentState(answer_count=1)}
+
+        backend = _MockBackend()
+        checklist_state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "available_agent_labels": ["agent1.1", "agent2.1"],
+        }
+        items = ["Check 1", "Check 2"]
+
+        orchestrator._init_checklist_tool_sdk(
+            "agent_0",
+            backend,
+            checklist_state,
+            items,
+        )
+        submit_checklist = backend.config["mcp_servers"]["massgen_checklist"]["tools"][0]
+
+        invalid_args = {
+            "scores": {
+                "E1": {"score": 8, "reasoning": "solid"},
+                "E2": {"score": 8, "reasoning": "solid"},
+            },
+        }
+        invalid_result = await submit_checklist(invalid_args)
+        invalid_payload = json.loads(invalid_result["content"][0]["text"])
+        assert invalid_payload.get("incomplete_scores") is True
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 0
+
+        valid_args = {
+            "scores": {
+                "agent1.1": {
+                    "E1": {"score": 8, "reasoning": "solid"},
+                    "E2": {"score": 9, "reasoning": "solid"},
+                },
+                "agent2.1": {
+                    "E1": {"score": 7, "reasoning": "solid"},
+                    "E2": {"score": 8, "reasoning": "solid"},
+                },
+            },
+        }
+        valid_result = await submit_checklist(valid_args)
+        valid_payload = json.loads(valid_result["content"][0]["text"])
+        assert valid_payload.get("incomplete_scores") is not True
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 1
+
+        blocked_result = await submit_checklist(valid_args)
+        assert blocked_result["isError"] is True
+        assert "already called 1 time(s)" in blocked_result["content"][0]["text"]
+
+
 @pytest.mark.asyncio
 async def test_checklist_create_server_standalone_with_hook_dir(
     monkeypatch,
@@ -1688,7 +1683,6 @@ class TestDiagnosticReportGate:
         state = self._make_state(tmp_path)
         result = evaluate_checklist_submission(
             scores=self._passing_scores(),
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=state,
@@ -1703,7 +1697,6 @@ class TestDiagnosticReportGate:
         state = self._make_state(tmp_path)
         result = evaluate_checklist_submission(
             scores=self._passing_scores(),
-            improvements="",
             report_path=str(report),
             items=["Check 1", "Check 2"],
             state=state,
@@ -1718,7 +1711,6 @@ class TestDiagnosticReportGate:
         state = self._make_state(tmp_path)
         result = evaluate_checklist_submission(
             scores=self._passing_scores(),
-            improvements="",
             report_path=str(report),
             items=["Check 1", "Check 2"],
             state=state,
@@ -1740,7 +1732,6 @@ class TestDiagnosticReportGate:
         state = self._make_state(tmp_path)
         result = evaluate_checklist_submission(
             scores=self._passing_scores(),
-            improvements="",
             report_path=str(report),
             items=["Check 1", "Check 2"],
             state=state,
@@ -1756,7 +1747,6 @@ class TestDiagnosticReportGate:
         state = self._make_state(tmp_path)
         result = evaluate_checklist_submission(
             scores=self._passing_scores(),
-            improvements="",
             report_path=str(report),
             items=["Check 1", "Check 2"],
             state=state,
@@ -1768,7 +1758,6 @@ class TestDiagnosticReportGate:
         state = self._make_state(tmp_path, has_existing=False)
         result = evaluate_checklist_submission(
             scores=self._passing_scores(),
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=state,
@@ -1788,7 +1777,6 @@ class TestDiagnosticReportGate:
         }
         result = evaluate_checklist_submission(
             scores={"E1": 9},
-            improvements="",
             report_path="",
             items=["Check 1"],
             state=state,
@@ -1802,7 +1790,6 @@ class TestDiagnosticReportGate:
         state["changedoc_mode"] = True  # changedoc active
         result = evaluate_checklist_submission(
             scores=self._passing_scores(),
-            improvements="",
             report_path="",  # no separate report
             items=["Check 1", "Check 2"],
             state=state,
@@ -1836,7 +1823,6 @@ class TestPerAgentScores:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=self._base_state(),
@@ -1853,7 +1839,6 @@ class TestPerAgentScores:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="E2 is weak across all agents",
             report_path="",
             items=["Check 1", "Check 2"],
             state=self._base_state(),
@@ -1870,7 +1855,6 @@ class TestPerAgentScores:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=self._base_state(),
@@ -1886,7 +1870,6 @@ class TestPerAgentScores:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=self._base_state(),
@@ -1900,7 +1883,6 @@ class TestPerAgentScores:
         scores = {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}}
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=self._base_state(),
@@ -1917,7 +1899,6 @@ class TestPerAgentScores:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=self._base_state(),
@@ -1933,7 +1914,6 @@ class TestPerAgentScores:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=self._base_state(),
@@ -1948,114 +1928,9 @@ class TestPerAgentScores:
 # ---------------------------------------------------------------------------
 
 
-def _make_low_score_state(extra=None):
-    """State that triggers T=0 plateau (no transformative changes identified)."""
-    state = {
-        "terminate_action": "vote",
-        "iterate_action": "new_answer",
-        "has_existing_answers": True,
-        "required": 2,
-        "cutoff": 90,  # high cutoff so scores fail → iterate verdict
-    }
-    if extra:
-        state.update(extra)
-    return state
-
-
-def _low_scores():
-    return {
-        "agent1": {"E1": {"score": 40, "reasoning": "poor"}, "E2": {"score": 40, "reasoning": "poor"}},
-        "agent2": {"E1": {"score": 35, "reasoning": "poor"}, "E2": {"score": 38, "reasoning": "poor"}},
-    }
-
-
-def _t0_substantiveness():
-    """Substantiveness with zero transformative changes to trigger novelty guidance."""
-    return {
-        "transformative": [],
-        "structural": [],
-        "incremental": [],
-        "decision_space_exhausted": False,
-        "notes": "",
-    }
-
-
-class TestNoveltyGuidanceInjection:
-    """Novelty guidance: critic removed, adoption language mandatory."""
-
-    def test_critic_not_in_novelty_guidance_when_both_enabled(self):
-        """When both critic+novelty enabled, injected guidance mentions novelty only (not critic)."""
-        state = _make_low_score_state(
-            {
-                "novelty_subagent_enabled": True,
-                "critic_subagent_enabled": True,
-            },
-        )
-        result = evaluate_checklist_submission(
-            scores=_low_scores(),
-            improvements="",
-            report_path="",
-            items=["Check 1", "Check 2"],
-            state=state,
-            substantiveness=_t0_substantiveness(),
-        )
-        explanation = result["explanation"]
-        # Novelty should be mentioned
-        assert "novelty" in explanation.lower()
-        # Critic must NOT appear as a spawn instruction in the plateau-breaking block
-        assert "spawn a `critic`" not in explanation
-        assert "spawn two background" not in explanation
-
-    def test_novelty_adoption_language_is_mandatory(self):
-        """Injected novelty guidance must contain strong mandatory adoption language."""
-        state = _make_low_score_state({"novelty_subagent_enabled": True})
-        result = evaluate_checklist_submission(
-            scores=_low_scores(),
-            improvements="",
-            report_path="",
-            items=["Check 1", "Check 2"],
-            state=state,
-            substantiveness=_t0_substantiveness(),
-        )
-        explanation = result["explanation"]
-        # Must contain gate-based engagement language (anchoring pattern / evaluate each)
-        assert "anchoring" in explanation.lower() or "evaluate each" in explanation.lower()
-
-    def test_no_novelty_guidance_when_novelty_disabled(self):
-        """No novelty guidance injected when novelty subagent is disabled."""
-        state = _make_low_score_state({"novelty_subagent_enabled": False})
-        result = evaluate_checklist_submission(
-            scores=_low_scores(),
-            improvements="",
-            report_path="",
-            items=["Check 1", "Check 2"],
-            state=state,
-            substantiveness=_t0_substantiveness(),
-        )
-        explanation = result["explanation"]
-        assert "novelty subagent" not in explanation.lower()
-
-    def test_novelty_not_injected_when_transformative_count_positive(self):
-        """Novelty guidance only fires when T=0; skip when transformative items exist."""
-        state = _make_low_score_state({"novelty_subagent_enabled": True})
-        substantiveness = {
-            "transformative": ["Full redesign"],
-            "structural": [],
-            "incremental": [],
-            "decision_space_exhausted": False,
-            "notes": "",
-        }
-        result = evaluate_checklist_submission(
-            scores=_low_scores(),
-            improvements="",
-            report_path="",
-            items=["Check 1", "Check 2"],
-            state=state,
-            substantiveness=substantiveness,
-        )
-        explanation = result["explanation"]
-        # novelty guidance should not mention the "plateau" spawn instruction
-        assert "plateau" not in explanation.lower()
+# ---------------------------------------------------------------------------
+# Per-criterion plateau detection
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -2091,7 +1966,6 @@ class TestAvailableAgentLabelsCoverage:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=state,
@@ -2109,7 +1983,6 @@ class TestAvailableAgentLabelsCoverage:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=state,
@@ -2125,7 +1998,6 @@ class TestAvailableAgentLabelsCoverage:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=state,
@@ -2141,7 +2013,6 @@ class TestAvailableAgentLabelsCoverage:
         }
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=state,
@@ -2159,7 +2030,6 @@ class TestAvailableAgentLabelsCoverage:
         scores = {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "great"}}
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements="",
             report_path="",
             items=["Check 1", "Check 2"],
             state=state,

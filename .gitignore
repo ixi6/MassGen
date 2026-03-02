@@ -180,6 +180,7 @@ sync.sh
 .pytest_cache/
 .tox/
 test_workspace/
+test_media_outputs/
 
 # Documentation builds
 docs/_build/

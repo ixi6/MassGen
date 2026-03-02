@@ -21,7 +21,7 @@ Update this when major new features ship.
 
 💾Session continuity — Multi-turn conversations with context compression, session resumption, and evolving skills that persist and improve across sessions. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/tools/skills.html#evolving-skills-code-mode
 
-🖼️Multi-modal support — Agents can understand and generate files, videos, images, and audio collaboratively. Native backend image routing and configurable video frame extraction. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/advanced/multimodal.html
+🖼️Multi-modal support — Agents can understand and generate files, videos, images, and audio collaboratively. Multiple providers (OpenAI, Google, ElevenLabs, Nano Banana 2, Grok Imagine) with multi-turn image editing and reusable media generation skills. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/advanced/multimodal.html
 
 🐳Code execution — Each agent can run commands (with Docker support, if installed) and use code mode for efficient filesystem-discoverable tools with large token reduction. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/tools/code_execution.html
 
@@ -43,7 +43,7 @@ Update this when major new features ship.
 
 💾Session continuity — Multi-turn conversations with context compression, session resumption, and evolving skills that persist and improve across sessions. 👉 More Info: https://lnkd.in/gQuhFtuh
 
-🖼️Multi-modal support — Agents can understand and generate files, videos, images, and audio collaboratively. Native backend image routing and configurable video frame extraction. 👉 More Info: https://lnkd.in/gHNVdTKa
+🖼️Multi-modal support — Agents can understand and generate files, videos, images, and audio collaboratively. Multiple providers (OpenAI, Google, ElevenLabs, Nano Banana 2, Grok Imagine) with multi-turn image editing and reusable media generation skills. 👉 More Info: https://lnkd.in/gHNVdTKa
 
 🐳Code execution — Each agent can run commands (with Docker support, if installed) and use code mode for efficient filesystem-discoverable tools with large token reduction. 👉 More Info: https://lnkd.in/gDy5imFE
 

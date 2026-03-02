@@ -27,7 +27,7 @@ Spec plan mode for formal requirements specification before execution with TUI s
   - ElevenLabs TTS & STT ([#942](https://github.com/massgen/MassGen/issues/942)): High-quality voice synthesis and transcription via `generate_media` and `read_media` tools
   - Nano Banana 2 Image Generation ([#951](https://github.com/massgen/MassGen/issues/951)): New default image generation model with higher quality output
   - Grok Image/Video Generation: Grok multimedia generation support via xAI API
-  - Audio Generation Skills: New skills for audio generation workflows
+  - Media Generation Skills: New reusable skills for image, video, and audio generation workflows
   - Multi-Turn Image Editing: Continuation IDs for iterative image editing sessions
 
 - **Nvidia NIM Backend** ([#962](https://github.com/massgen/MassGen/pull/962)): First-class provider integration for NVIDIA Inference Microservices

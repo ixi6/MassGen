@@ -795,7 +795,7 @@ These features are being actively developed on **separate parallel tracks** and 
 - ElevenLabs TTS & STT integration for high-quality voice synthesis and transcription
 - Nano Banana 2 as default image generation model
 - Grok Imagine image/video generation ([#958](https://github.com/massgen/MassGen/issues/958)) via xAI API
-- Audio generation skills and multi-turn image editing with continuation IDs
+- Media generation skills (image, video, audio) and multi-turn image editing with continuation IDs
 - **Status:** ✅ Completed in v0.1.58
 
 ### Track: Nvidia NIM Backend (@ncrispino, nickcrispino)

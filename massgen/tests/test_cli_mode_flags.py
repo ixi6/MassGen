@@ -479,6 +479,20 @@ class TestCliModeDefaults:
         defaults = build_cli_mode_defaults(args)
         assert defaults["personas"] == "perspective"
 
+    def test_build_cli_mode_defaults_plan(self):
+        """--plan seeds textual defaults with initial plan mode."""
+        from massgen.cli import build_cli_mode_defaults
+
+        args = argparse.Namespace(
+            single_agent=None,
+            coordination_mode=None,
+            personas=None,
+            quick=False,
+            plan=True,
+        )
+        defaults = build_cli_mode_defaults(args)
+        assert defaults["plan_mode"] == "plan"
+
     def test_build_cli_mode_defaults_empty_when_no_flags(self):
         """No mode flags produces empty defaults dict."""
         from massgen.cli import build_cli_mode_defaults

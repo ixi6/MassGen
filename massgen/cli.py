@@ -500,7 +500,7 @@ def get_task_planning_prompt_prefix(
     if target_chunks is not None and target_chunks > 0:
         chunk_target_line = f"- Target chunks: around {target_chunks}"
     else:
-        chunk_target_line = "- Target chunks: around 1 (single-run default unless dependencies require splitting)"
+        chunk_target_line = "- Target chunks: exactly 1 (single-run default unless dependencies require splitting)"
 
     # Subagent research section (only if enabled)
     subagent_section = ""
@@ -861,7 +861,7 @@ def get_spec_creation_prompt_prefix(
     if target_chunks is not None and target_chunks > 0:
         chunk_target_line = f"- Target chunks: around {target_chunks}"
     else:
-        chunk_target_line = "- Target chunks: around 1 " "(single-run default unless complexity requires splitting)"
+        chunk_target_line = "- Target chunks: exactly 1 " "(single-run default unless complexity requires splitting)"
 
     # Scope section reuses the same human vs autonomous pattern as plan mode
     if broadcast_mode == "human":
@@ -2986,6 +2986,11 @@ def build_cli_mode_defaults(args: argparse.Namespace) -> dict[str, Any]:
 
     if getattr(args, "quick", False):
         defaults["refinement_enabled"] = False
+
+    if getattr(args, "plan", False):
+        defaults["plan_mode"] = "plan"
+    elif getattr(args, "spec", False):
+        defaults["plan_mode"] = "spec"
 
     return defaults
 
@@ -6073,6 +6078,8 @@ async def run_textual_interactive_mode(
             display_kwargs["default_selected_agent"] = cli_mode_defaults["selected_agent"]
     if "coordination_mode" in cli_mode_defaults:
         display_kwargs["default_coordination_mode"] = cli_mode_defaults["coordination_mode"]
+    if "plan_mode" in cli_mode_defaults:
+        display_kwargs["default_plan_mode"] = cli_mode_defaults["plan_mode"]
     if "refinement_enabled" in cli_mode_defaults:
         display_kwargs["default_refinement_enabled"] = cli_mode_defaults["refinement_enabled"]
     if "personas" in cli_mode_defaults:
@@ -9404,8 +9411,12 @@ async def main(args):
             # Update orchestrator_cfg with any new context_paths
             orchestrator_cfg = config.get("orchestrator", {})
 
+        # Textual mode handles plan/spec prompt prefixes from mode state at turn time.
+        # For non-textual displays, keep CLI-side prefixing behavior.
+        is_textual_display = ui_config.get("display_type") == "textual_terminal"
+
         # Prepend task planning instructions if --plan mode is active
-        if args.question and getattr(args, "plan", False):
+        if args.question and getattr(args, "plan", False) and not is_textual_display:
             plan_depth = getattr(args, "plan_depth", "dynamic")
             plan_target_steps = getattr(args, "plan_steps", None)
             plan_target_chunks = getattr(args, "plan_chunks", None)
@@ -9446,7 +9457,7 @@ async def main(args):
             )
 
         # Prepend spec creation instructions if --spec mode is active
-        if args.question and getattr(args, "spec", False) and not getattr(args, "plan", False):
+        if args.question and getattr(args, "spec", False) and not getattr(args, "plan", False) and not is_textual_display:
             coordination_cfg = config.get("orchestrator", {}).get("coordination", {})
             plan_target_chunks = getattr(args, "plan_chunks", None)
             if plan_target_chunks is None:

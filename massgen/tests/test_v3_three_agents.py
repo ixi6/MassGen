@@ -20,8 +20,9 @@ from massgen.chat_agent import SingleAgent  # noqa: E402
 from massgen.frontend.coordination_ui import CoordinationUI  # noqa: E402
 from massgen.orchestrator import Orchestrator  # noqa: E402
 
+pytestmark = [pytest.mark.integration, pytest.mark.live_api]
 
-@pytest.mark.live_api
+
 async def test_three_agents_coordination():
     """Test three-agent coordination with diverse expertise areas."""
     print("🚀 MassGen - Three Agents Coordination Test")

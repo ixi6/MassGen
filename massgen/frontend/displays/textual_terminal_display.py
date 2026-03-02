@@ -675,6 +675,10 @@ class TextualTerminalDisplay(TerminalDisplay):
         # CLI mode defaults (set by --single-agent, --quick, --personas, --coordination-mode)
         self.default_agent_mode = kwargs.get("default_agent_mode", "multi")
         self.default_selected_agent = kwargs.get("default_selected_agent", None)
+        default_plan_mode = str(kwargs.get("default_plan_mode", "normal")).strip().lower()
+        if default_plan_mode not in {"normal", "plan", "spec", "execute", "analysis"}:
+            default_plan_mode = "normal"
+        self.default_plan_mode = default_plan_mode
         self.default_refinement_enabled = kwargs.get("default_refinement_enabled", True)
         self.default_personas_enabled = kwargs.get("default_personas_enabled", False)
         self.default_persona_diversity_mode = kwargs.get("default_persona_diversity_mode", "perspective")
@@ -3673,6 +3677,11 @@ if TEXTUAL_AVAILABLE:
 
             # TUI Mode State (plan mode, agent mode, refinement mode, override)
             self._mode_state = TuiModeState()
+            requested_default_plan_mode = getattr(self.coordination_display, "default_plan_mode", "normal")
+            if requested_default_plan_mode in {"plan", "spec"}:
+                # Seed mode state immediately so first submitted turn uses
+                # the requested planning/spec workflow even before first repaint.
+                self._mode_state.plan_mode = requested_default_plan_mode
             self._mode_state.analysis_config.include_previous_session_skills = bool(
                 self.coordination_display.default_load_previous_session_skills,
             )
@@ -4151,6 +4160,11 @@ if TEXTUAL_AVAILABLE:
                 self._mode_bar.set_coordination_mode(self._mode_state.coordination_mode)
                 self._mode_bar.set_coordination_enabled(self._mode_state.agent_mode != "single")
                 self._mode_bar.set_parallel_personas_enabled(self._mode_state.parallel_personas_enabled, self._mode_state.persona_diversity_mode)
+            default_plan_mode = getattr(self.coordination_display, "default_plan_mode", "normal")
+            if default_plan_mode != "normal":
+                self.call_after_refresh(
+                    lambda mode=default_plan_mode: self._handle_plan_mode_change(mode),
+                )
             self._refresh_skills_button_state()
             self._refresh_input_modes_row_layout()
             self._update_running_tools_count()
@@ -9195,7 +9209,7 @@ Type your question and press Enter to ask the agents.
             """Handle plan mode toggle.
 
             Args:
-                mode: "normal", "plan", "execute", or "analysis".
+                mode: "normal", "plan", "spec", "execute", or "analysis".
             """
             tui_log(f"_handle_plan_mode_change: {mode}")
 
@@ -9204,6 +9218,11 @@ Type your question and press Enter to ask the agents.
                 if self._mode_bar:
                     self._mode_bar.set_plan_mode(mode)
                 self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
+            elif mode == "spec":
+                self._mode_state.plan_mode = mode
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode(mode)
+                self.notify("Spec Mode: ON - Submit query to create requirements spec", severity="information", timeout=3)
             elif mode == "execute":
                 # Entering execute mode - use helper which handles plan loading and popover
                 # Note: The mode bar already shows "execute", but _enter_execute_mode
@@ -9435,7 +9454,7 @@ Type your question and press Enter to ask the agents.
 
         @keyboard_action
         def action_toggle_plan_mode(self) -> None:
-            """Toggle mode: normal -> plan -> execute -> analysis -> normal (Shift+Tab)."""
+            """Toggle mode: normal -> plan -> spec -> execute -> analysis -> normal (Shift+Tab)."""
             tui_log("action_toggle_plan_mode")
 
             # Block during execution (keyboard_action decorator handles this,
@@ -9450,34 +9469,19 @@ Type your question and press Enter to ask the agents.
 
             if self._mode_state.plan_mode == "normal":
                 # normal → plan
-                self._mode_state.plan_mode = "plan"
-                if self._mode_bar:
-                    self._mode_bar.set_plan_mode("plan")
-                self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
+                self._handle_plan_mode_change("plan")
             elif self._mode_state.plan_mode == "plan":
                 # plan → spec
-                self._mode_state.plan_mode = "spec"
-                if self._mode_bar:
-                    self._mode_bar.set_plan_mode("spec")
-                self.notify("Spec Mode: ON - Submit query to create requirements spec", severity="information", timeout=3)
+                self._handle_plan_mode_change("spec")
             elif self._mode_state.plan_mode == "spec":
                 # spec → execute (show plan/spec selector if sessions exist)
-                self._enter_execute_mode()
+                self._handle_plan_mode_change("execute")
             elif self._mode_state.plan_mode == "execute":
                 # execute -> analysis
-                self._enter_analysis_mode()
+                self._handle_plan_mode_change("analysis")
             elif self._mode_state.plan_mode == "analysis":
                 # analysis -> normal
-                self._mode_state.reset_plan_state()
-                if self._mode_bar:
-                    self._mode_bar.set_plan_mode("normal")
-                # Hide popover if visible
-                if hasattr(self, "_plan_options_popover") and "visible" in self._plan_options_popover.classes:
-                    self._plan_options_popover.hide()
-                # Reset input placeholder
-                if hasattr(self, "question_input"):
-                    self.question_input.placeholder = "Enter to submit • Shift+Enter for newline • @ for files • Ctrl+G help"
-                self.notify("Plan Mode: OFF", severity="information", timeout=2)
+                self._handle_plan_mode_change("normal")
 
         @keyboard_action
         def action_trigger_override(self) -> None:

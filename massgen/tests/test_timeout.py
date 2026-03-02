@@ -8,6 +8,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+import pytest
+
 from massgen.agent_config import AgentConfig, TimeoutConfig
 from massgen.backend.claude_code import ClaudeCodeBackend
 from massgen.chat_agent import SingleAgent
@@ -17,6 +19,8 @@ from massgen.orchestrator import Orchestrator
 sys.path.insert(0, str(Path(__file__).parent))
 
 
+@pytest.mark.integration
+@pytest.mark.live_api
 async def test_orchestrator_timeout():
     """Test orchestrator-level timeout."""
     print("\n🧪 Testing Orchestrator Timeout Mechanism")

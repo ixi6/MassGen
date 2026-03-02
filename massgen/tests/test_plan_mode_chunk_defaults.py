@@ -2,13 +2,24 @@
 
 import pytest
 
-from massgen.cli import get_task_planning_prompt_prefix, run_plan_and_execute
+from massgen.cli import (
+    get_spec_creation_prompt_prefix,
+    get_task_planning_prompt_prefix,
+    run_plan_and_execute,
+)
 from massgen.frontend.displays.tui_modes import TuiModeState
 
 
 def test_task_planning_prompt_defaults_to_single_chunk_target():
     prefix = get_task_planning_prompt_prefix(plan_depth="dynamic")
-    assert "- Target chunks: around 1" in prefix
+    assert "- Target chunks: exactly 1" in prefix
+    assert "- Target chunks: around 1" not in prefix
+
+
+def test_spec_creation_prompt_defaults_to_single_chunk_target():
+    prefix = get_spec_creation_prompt_prefix()
+    assert "- Target chunks: exactly 1" in prefix
+    assert "- Target chunks: around 1" not in prefix
 
 
 def test_task_planning_prompt_defaults_to_autonomous_broadcast():

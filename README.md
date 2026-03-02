@@ -160,7 +160,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: March 2, 2026**
 
 **What's New in v0.1.58:**
-- **🎨 Comprehensive Multimodal Revamp** - ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, audio generation skills, and multi-turn image editing with continuation IDs.
+- **🎨 Comprehensive Multimodal Revamp** - ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, media generation skills, and multi-turn image editing with continuation IDs.
 - **🟢 Nvidia NIM Backend** - First-class provider integration for NVIDIA Inference Microservices, enabling access to NVIDIA-hosted models.
 - **🔍 Quality Rethinking Subagent** - New `quality_rethinking` subagent type for targeted per-element craft improvements with explicit improve/preserve listings.
 - **✅ Smarter Checklists** - Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults, and hardened subagent parsing.
@@ -1242,7 +1242,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 - **ElevenLabs TTS & STT** ([#942](https://github.com/massgen/MassGen/issues/942)): High-quality voice synthesis and transcription via ElevenLabs API integrated with `generate_media` and `read_media` tools
 - **Nano Banana 2 Image Generation** ([#951](https://github.com/massgen/MassGen/issues/951)): New default image generation model with higher quality output
 - **Grok Image/Video Generation**: Grok multimedia generation support via xAI API
-- **Audio Generation Skills**: New skills for audio generation workflows
+- **Media Generation Skills**: New reusable skills for image, video, and audio generation workflows
 - **Multi-Turn Image Editing**: Continuation IDs for iterative image editing sessions
 
 #### Nvidia NIM Backend

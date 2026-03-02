@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
+We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
 
 ## Install
 
@@ -29,7 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
+We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
 
 **Key Feature: Comprehensive Multimodal Revamp**
 
@@ -38,7 +38,7 @@ MassGen agents can now generate and understand a much wider range of media:
 - **ElevenLabs TTS & STT** (#942): High-quality voice synthesis and transcription integrated with `generate_media` and `read_media` tools — agents can now speak and listen via ElevenLabs
 - **Nano Banana 2** (#951): New default image generation model with significantly higher quality output
 - **Grok Image/Video Generation**: Native Grok multimedia generation via xAI API — images and videos from Grok Imagine
-- **Audio Generation Skills**: New reusable skills for audio generation workflows
+- **Media Generation Skills**: New reusable skills for image, video, and audio generation workflows
 - **Multi-Turn Image Editing**: Continuation IDs enable iterative image editing sessions — agents can refine images across multiple turns
 
 **Also in this release:**

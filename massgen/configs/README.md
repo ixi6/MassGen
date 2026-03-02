@@ -231,7 +231,7 @@ Most configurations use environment variables for API keys:so
 **New Features:** Multimodal Revamp, Nvidia NIM Backend, Quality Rethinking Subagent, Checklist Improvements
 
 **Key Features:**
-- **Multimodal Revamp**: ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, audio generation skills, multi-turn image editing with continuation IDs
+- **Multimodal Revamp**: ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, media generation skills, multi-turn image editing with continuation IDs
 - **Nvidia NIM Backend**: First-class provider integration for NVIDIA Inference Microservices
 - **Quality Rethinking Subagent**: New `quality_rethinking` subagent type for targeted per-element craft improvements
 - **Checklist Improvements**: Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults

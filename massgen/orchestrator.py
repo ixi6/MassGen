@@ -992,8 +992,48 @@ class Orchestrator(ChatAgent):
             "properties": {
                 "improvements": {
                     "type": "object",
-                    "description": ("Map of criterion ID to list of improvements. " "Must cover ALL failing criteria from the last submit_checklist call."),
-                    "additionalProperties": {"type": "array", "items": {"type": "string"}},
+                    "description": (
+                        "Map of criterion ID to list of improvement entries. "
+                        "Each entry has 'plan' (what to do) and 'sources' (which "
+                        "answers to draw from). Plain strings also accepted. "
+                        "Must cover ALL failing criteria."
+                    ),
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": {
+                            "oneOf": [
+                                {"type": "string"},
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "plan": {"type": "string"},
+                                        "sources": {"type": "array", "items": {"type": "string"}},
+                                    },
+                                },
+                            ],
+                        },
+                    },
+                },
+                "preserve": {
+                    "type": "object",
+                    "description": (
+                        "Map of criterion IDs to what must be protected from "
+                        "regression. Each entry has 'what' (strength to protect) "
+                        "and 'source' (which answer). A criterion can appear in "
+                        "both improvements and preserve. Plain strings also accepted."
+                    ),
+                    "additionalProperties": {
+                        "oneOf": [
+                            {"type": "string"},
+                            {
+                                "type": "object",
+                                "properties": {
+                                    "what": {"type": "string"},
+                                    "source": {"type": "string"},
+                                },
+                            },
+                        ],
+                    },
                 },
             },
             "required": ["improvements"],
@@ -1008,7 +1048,7 @@ class Orchestrator(ChatAgent):
         _agent_id = agent_id
 
         # Track last failed criteria for propose_improvements validation
-        _last_checklist_result: dict[str, Any] = {"failed_criteria": [], "items": []}
+        _last_checklist_result: dict[str, Any] = {"failed_criteria": [], "items": [], "all_criteria_ids": []}
 
         @tool(
             name="submit_checklist",
@@ -1069,6 +1109,7 @@ class Orchestrator(ChatAgent):
             )
             _last_checklist_result["failed_criteria"] = result.get("failed_criteria", [])
             _last_checklist_result["items"] = list(items)
+            _last_checklist_result["all_criteria_ids"] = [f"E{i+1}" for i in range(len(items))]
 
             # Only accepted checklist submissions should consume this round's quota.
             # Validation failures (incomplete/malformed payloads or gated rejections)
@@ -1113,8 +1154,10 @@ class Orchestrator(ChatAgent):
             description=(
                 "Propose specific improvements for each failing criterion. "
                 "Must be called after submit_checklist returns an iterate verdict. "
-                "Pass a dict mapping criterion IDs (e.g. 'E2', 'E5') to lists of "
-                "improvement descriptions. All failing criteria must be covered."
+                "Pass 'improvements' mapping criterion IDs to lists of entries "
+                "with 'plan' and 'sources'. Pass 'preserve' mapping criterion IDs "
+                "to entries with 'what' (strength to protect) and 'source'. "
+                "A criterion can appear in both."
             ),
             input_schema=propose_schema,
         )
@@ -1122,10 +1165,13 @@ class Orchestrator(ChatAgent):
             import json as _json
 
             improvements = args.get("improvements", {})
+            preserve = args.get("preserve")
             result = evaluate_proposed_improvements(
                 improvements=improvements,
                 failed_criteria=_last_checklist_result["failed_criteria"],
                 items=_last_checklist_result["items"] or list(items),
+                all_criteria_ids=_last_checklist_result.get("all_criteria_ids"),
+                preserve=preserve,
             )
             return {
                 "content": [

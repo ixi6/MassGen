@@ -156,12 +156,38 @@ def _find_plateaued_criteria(
     return plateaued
 
 
+def _normalize_improvement_entry(entry: Any) -> dict[str, Any]:
+    """Normalize an improvement entry to {"plan": str, "sources": list}."""
+    if isinstance(entry, str):
+        return {"plan": entry, "sources": []}
+    if isinstance(entry, dict):
+        return {
+            "plan": str(entry.get("plan", "")),
+            "sources": list(entry.get("sources", [])),
+        }
+    return {"plan": str(entry), "sources": []}
+
+
+def _normalize_preserve_entry(entry: Any) -> dict[str, str]:
+    """Normalize a preserve entry to {"what": str, "source": str}."""
+    if isinstance(entry, str):
+        return {"what": entry, "source": ""}
+    if isinstance(entry, dict):
+        return {
+            "what": str(entry.get("what", "")),
+            "source": str(entry.get("source", "")),
+        }
+    return {"what": str(entry), "source": ""}
+
+
 def evaluate_proposed_improvements(
     improvements: dict[str, Any],
     failed_criteria: list[str],
     items: list[str],
+    all_criteria_ids: list[str] | None = None,
+    preserve: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Validate that improvements cover all failing criteria."""
+    """Validate that improvements cover all failing criteria and preserve strengths."""
     if not isinstance(improvements, dict):
         return {"valid": False, "error": "improvements must be a dict mapping criterion IDs to lists"}
 
@@ -185,27 +211,86 @@ def evaluate_proposed_improvements(
             "failed_criteria": failed_criteria,
         }
 
-    # Build task plan items from validated improvements
-    task_plan = []
+    # --- Preserve validation (only when all_criteria_ids is provided) ---
+    preserve = preserve or {}
+    normalized_preserve: dict[str, dict[str, str]] = {}
+
+    if all_criteria_ids is not None:
+        # Require at least one preserve entry when criteria exist
+        if all_criteria_ids and not preserve:
+            return {
+                "valid": False,
+                "error": ("Preserve is required: specify what to protect from regression. " f"Criteria available: {', '.join(all_criteria_ids)}"),
+            }
+
+        # Validate each preserve entry
+        for cid, entry in preserve.items():
+            if cid not in all_criteria_ids:
+                return {
+                    "valid": False,
+                    "error": f"Preserve key {cid} is not a valid criterion ID. Valid: {', '.join(all_criteria_ids)}",
+                }
+            norm = _normalize_preserve_entry(entry)
+            if not norm["what"].strip():
+                return {
+                    "valid": False,
+                    "error": f"Preserve entry for {cid} has empty 'what' — describe what to protect.",
+                }
+            normalized_preserve[cid] = norm
+    else:
+        # Backward compat: normalize whatever was passed but don't enforce
+        for cid, entry in preserve.items():
+            normalized_preserve[cid] = _normalize_preserve_entry(entry)
+
+    # --- Build task plan: preserve entries first, then improvements ---
+    task_plan: list[dict[str, Any]] = []
+
+    # Preserve entries first
+    for cid, pentry in normalized_preserve.items():
+        criterion_idx = int(cid[1:]) - 1
+        criterion_text = items[criterion_idx] if criterion_idx < len(items) else cid
+        task_plan.append(
+            {
+                "type": "preserve",
+                "criterion_id": cid,
+                "criterion": criterion_text,
+                "what_to_protect": pentry["what"],
+                "source": pentry["source"],
+            },
+        )
+
+    # Improvement entries
     for cid in failed_criteria:
         criterion_idx = int(cid[1:]) - 1
         criterion_text = items[criterion_idx] if criterion_idx < len(items) else cid
-        for imp_desc in improvements[cid]:
+        for imp_entry in improvements[cid]:
+            norm = _normalize_improvement_entry(imp_entry)
             task_plan.append(
                 {
+                    "type": "improve",
                     "criterion_id": cid,
                     "criterion": criterion_text,
-                    "improvement": str(imp_desc),
+                    "plan": norm["plan"],
+                    "sources": norm["sources"],
+                    # Keep backward-compat "improvement" key
+                    "improvement": norm["plan"],
                 },
             )
 
-    return {
+    result: dict[str, Any] = {
         "valid": True,
         "task_plan": task_plan,
         "message": (
-            f"Improvements validated for {len(failed_criteria)} criteria. " "Add each item from task_plan to your task plan tool, then " "execute them. Do not skip criteria or substitute easier work."
+            f"Improvements validated for {len(failed_criteria)} criteria. "
+            f"{len(normalized_preserve)} criteria marked for preservation. "
+            "Add each item from task_plan to your task plan tool, then "
+            "execute them. Preserve items are guardrails — verify them after "
+            "implementing improvements. Do not skip criteria or substitute easier work."
         ),
     }
+    if normalized_preserve:
+        result["preserve"] = normalized_preserve
+    return result
 
 
 def _resolve_report_file(report_path: str, state: dict[str, Any]) -> tuple[Path | None, str | None]:
@@ -651,7 +736,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
     items = specs.get("items", [])
 
     # Track last failed criteria so propose_improvements can validate coverage
-    _last_result: dict[str, Any] = {"failed_criteria": [], "items": []}
+    _last_result: dict[str, Any] = {"failed_criteria": [], "items": [], "all_criteria_ids": []}
 
     # Create handler that re-reads state on each call.
     async def submit_checklist(
@@ -683,6 +768,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         )
         _last_result["failed_criteria"] = result.get("failed_criteria", [])
         _last_result["items"] = current_items
+        _last_result["all_criteria_ids"] = [f"E{i+1}" for i in range(len(current_items))]
         return json.dumps(result)
 
     submit_checklist.__doc__ = (
@@ -714,7 +800,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
     )(submit_checklist)
 
     # propose_improvements: validate improvement coverage for all failing criteria
-    async def propose_improvements(improvements: dict) -> str:
+    async def propose_improvements(improvements: dict, preserve: dict = None) -> str:
         if isinstance(improvements, str):
             try:
                 improvements = json.loads(improvements)
@@ -722,23 +808,34 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
                 return json.dumps(
                     {"valid": False, "error": "improvements must be a JSON object"},
                 )
+        if isinstance(preserve, str):
+            try:
+                preserve = json.loads(preserve)
+            except (json.JSONDecodeError, TypeError):
+                preserve = None
         result = evaluate_proposed_improvements(
             improvements=improvements,
             failed_criteria=_last_result["failed_criteria"],
             items=_last_result["items"],
+            all_criteria_ids=_last_result.get("all_criteria_ids"),
+            preserve=preserve,
         )
         return json.dumps(result)
 
     propose_improvements.__doc__ = (
         "Propose specific improvements for each failing criterion. "
         "Must be called after submit_checklist returns an iterate verdict. "
-        "Pass a dict mapping criterion IDs (e.g. 'E2', 'E5') to lists of "
-        "improvement descriptions. All failing criteria must be covered."
+        "Pass 'improvements' mapping criterion IDs (e.g. 'E2') to lists of "
+        "entries, each with 'plan' (what to do) and 'sources' (which answers "
+        "to draw from). Pass 'preserve' mapping criterion IDs to entries with "
+        "'what' (strength to protect) and 'source' (which answer). A criterion "
+        "can appear in both improvements and preserve."
     )
 
     propose_sig = inspect.Signature(
         [
             inspect.Parameter("improvements", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("preserve", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None),
         ],
     )
     propose_improvements.__signature__ = propose_sig

@@ -745,6 +745,170 @@ class TestProposeImprovements:
         assert result["valid"] is False
         assert "must be a dict" in result["error"]
 
+    # --- Structured improvements (plan + sources) ---
+
+    def test_structured_improvements_accepted(self):
+        """Structured [{"plan": "...", "sources": [...]}] format accepted."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E2": [{"plan": "rethink feature cards", "sources": ["agent_b.1"]}],
+            },
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+        )
+        assert result["valid"] is True
+
+    def test_string_improvements_backward_compat(self):
+        """Plain string lists auto-wrapped to {"plan": str, "sources": []}."""
+        result = evaluate_proposed_improvements(
+            improvements={"E1": ["fix layout"]},
+            failed_criteria=["E1"],
+            items=["Check 1"],
+        )
+        assert result["valid"] is True
+        improve_entries = [t for t in result["task_plan"] if t.get("type", "improve") == "improve"]
+        assert len(improve_entries) >= 1
+        # Should have plan and sources in task_plan entry
+        assert improve_entries[0]["plan"] == "fix layout"
+        assert improve_entries[0]["sources"] == []
+
+    # --- Preserve parameter ---
+
+    def test_preserve_required_when_criteria_exist(self):
+        """Empty preserve + all_criteria_ids provided → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix layout"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2", "Check 3"],
+            all_criteria_ids=["E1", "E2", "E3"],
+            preserve={},
+        )
+        assert result["valid"] is False
+        assert "preserve" in result["error"].lower()
+
+    def test_preserve_allows_same_criterion_in_both(self):
+        """Same criterion in improvements AND preserve → accepted."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix the cards"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={
+                "E1": {"what": "hero section impact", "source": "agent_a.2"},
+                "E2": {"what": "section header layout", "source": "agent_a.2"},
+            },
+        )
+        assert result["valid"] is True
+
+    def test_preserve_key_must_be_valid_criterion_id(self):
+        """Preserve key not in all_criteria_ids → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E1": ["fix it"]},
+            failed_criteria=["E1"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E99": {"what": "something", "source": "agent_a.1"}},
+        )
+        assert result["valid"] is False
+        assert "E99" in result["error"]
+
+    def test_preserve_value_structured(self):
+        """Preserve value {"what": "...", "source": "..."} accepted."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": {"what": "hero section impact", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is True
+        assert result["preserve"]["E1"]["what"] == "hero section impact"
+        assert result["preserve"]["E1"]["source"] == "agent_a.2"
+
+    def test_preserve_string_value_backward_compat(self):
+        """Plain string preserve value auto-wrapped to {"what": str, "source": ""}."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": "hero section impact"},
+        )
+        assert result["valid"] is True
+        assert result["preserve"]["E1"]["what"] == "hero section impact"
+        assert result["preserve"]["E1"]["source"] == ""
+
+    def test_preserve_empty_what_rejected(self):
+        """Preserve with empty 'what' → error."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": {"what": "", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is False
+        assert "empty" in result["error"].lower()
+
+    def test_task_plan_includes_preserve_entries(self):
+        """Task plan has type: preserve entries BEFORE improve entries."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix cards"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2", "Check 3"],
+            all_criteria_ids=["E1", "E2", "E3"],
+            preserve={
+                "E1": {"what": "hero impact", "source": "agent_a.2"},
+                "E3": {"what": "color palette", "source": "agent_a.2"},
+            },
+        )
+        assert result["valid"] is True
+        types = [t["type"] for t in result["task_plan"]]
+        # Preserve entries come first
+        preserve_indices = [i for i, t in enumerate(types) if t == "preserve"]
+        improve_indices = [i for i, t in enumerate(types) if t == "improve"]
+        assert len(preserve_indices) == 2
+        assert len(improve_indices) >= 1
+        assert max(preserve_indices) < min(improve_indices)
+
+    def test_task_plan_improve_entries_have_sources(self):
+        """Improve entries include plan and sources fields."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "rethink cards", "sources": ["agent_b.1"]}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E2": {"what": "layout", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is True
+        improve = [t for t in result["task_plan"] if t["type"] == "improve"][0]
+        assert improve["plan"] == "rethink cards"
+        assert improve["sources"] == ["agent_b.1"]
+
+    def test_preserve_echoed_in_response(self):
+        """Response includes preserve dict."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix it"]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": {"what": "hero impact", "source": "agent_a.2"}},
+        )
+        assert result["valid"] is True
+        assert "preserve" in result
+        assert "E1" in result["preserve"]
+
+    def test_backward_compat_no_all_criteria_ids(self):
+        """Without all_criteria_ids arg, preserve enforcement skipped."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix fonts"], "E5": ["add timeline"]},
+            failed_criteria=["E2", "E5"],
+            items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+        )
+        assert result["valid"] is True
+
 
 # ---------------------------------------------------------------------------
 # Simplified submit_checklist (no improvements/substantiveness params)

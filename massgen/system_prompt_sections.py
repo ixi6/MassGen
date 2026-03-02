@@ -578,9 +578,9 @@ def _build_checklist_decision(
 
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
-- `{iterate_action}`: build a new answer from scratch, incorporating only the specific
-  elements from existing answers that your scoring identified as genuinely excellent.
-  Default to fresh thinking — do not anchor to any one answer's structure.
+- `{iterate_action}`: build a new answer, drawing the strongest elements from
+  each existing answer. Identify what each answer does well before you start —
+  do not anchor to any single answer as your base.
 - `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
@@ -648,9 +648,9 @@ def _build_checklist_scored_decision(
 
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
-- `{iterate_action}`: build a new answer from scratch, incorporating only the specific
-  elements from existing answers that your scoring identified as genuinely excellent.
-  Default to fresh thinking — do not anchor to any one answer's structure.
+- `{iterate_action}`: build a new answer, drawing the strongest elements from
+  each existing answer. Identify what each answer does well before you start —
+  do not anchor to any single answer as your base.
 - `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
@@ -855,9 +855,9 @@ def _build_checklist_gated_decision(
 
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
-- `{iterate_action}`: build a new answer from scratch, incorporating only the specific
-  elements from existing answers that your scoring identified as genuinely excellent.
-  Default to fresh thinking — do not anchor to any one answer's structure.
+- `{iterate_action}`: build a new answer, drawing the strongest elements from
+  each existing answer. Identify what each answer does well before you start —
+  do not anchor to any single answer as your base.
 - `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 ### Substantiveness Test
@@ -981,15 +981,33 @@ per-agent scores format.
 
 Follow the verdict. Do not call `submit_checklist` again after receiving it.
 
-When verdict is `{iterate_action}`, you MUST call `propose_improvements` with
-improvements for **every** failing criterion before implementing:
+When verdict is `{iterate_action}`, review each existing answer before proposing:
+- What does each existing answer do well for each criterion?
+- Which answer has the strongest element for each failing criterion?
+Use this to fill in the `sources` and `preserve` fields accurately.
+
+You MUST call `propose_improvements` with:
+- **`improvements`**: plans for **every** failing criterion — each entry has a `plan` \
+and `sources` (which answers you're drawing from for that specific change)
+- **`preserve`**: what's already working and must not regress — each entry has `what` \
+(the specific strength) and `source` (which answer it comes from)
 
   propose_improvements(
     improvements={{
-      "E2": ["rethink the feature cards — they look template-assembled, need distinct visual identity and purpose"],
-      "E5": ["the CTA section is just two buttons — needs to feel like a destination with clear next steps"],
+      "E2": [{{"plan": "rethink the feature cards with distinct visual identity", "sources": ["agent_b.1"]}}],
+      "E5": [{{"plan": "build a full signup form CTA", "sources": ["agent_b.1", "agent_a.1"]}}],
+    }},
+    preserve={{
+      "E1": {{"what": "hero section visual impact — gradient animation and typography", "source": "agent_a.2"}},
+      "E2": {{"what": "section header and layout grid — preserve while reworking cards", "source": "agent_a.2"}},
+      "E3": {{"what": "sci-fi color palette coherence — neon-on-dark theme unified", "source": "agent_a.2"}},
     }}
   )
+
+- `improvements`: each entry names a `plan` and its `sources` — which answers \
+you're drawing from. This traces provenance of every change.
+- `preserve` forces you to articulate what's WORKING before changing anything. \
+A criterion can appear in BOTH — fix one part, protect another.
 
 The tool validates all failing criteria are covered and returns a task_plan.
 Add each item to your task plan tool, then proceed to Phase 3.
@@ -2330,7 +2348,7 @@ class CommandExecutionSection(SystemPromptSection):
         parts.append("### Background Tool Execution")
         parts.append("Always run `read_media` and `generate_media` in background.")
         parts.append(
-            "Order matters: create `CONTEXT.md` first, then start any `read_media`/`generate_media` background job.",
+            "Order matters: create `CONTEXT.md` first, then start any `read_media` background job. " "`generate_media` does not require CONTEXT.md.",
         )
         parts.append(
             "Only run them in foreground when the user explicitly needs an immediate blocking result " "(set `background: false` on that call).",
@@ -2973,6 +2991,11 @@ Note: All your other tools are still available to help you evaluate answers. The
         if effective_sensitivity == "strict":
             evaluation_section = """**CRITICAL RUBRIC-BASED EVALUATION (STRICT)**
 
+**Step 0: Per-Answer Strengths**
+For each existing answer, identify its strongest contributions — what does this
+answer do better than the others? This ensures your evaluation draws from all
+available work, not just one.
+
 Before you can vote, you MUST evaluate the best answer against this rubric:
 1. **Correctness & Robustness**: Is the logic sound? Does it handle edge cases and potential errors?
 2. **Completeness & Optimization**: Does it address ALL requirements efficiently without bloat?
@@ -2994,6 +3017,10 @@ List specific gaps in the rubric above.
 You may NOT vote if you can provide a substantively better solution."""
         elif effective_sensitivity == "balanced":
             evaluation_section = """**RUBRIC-BASED EVALUATION (BALANCED)**
+
+**Per-Answer Analysis**: For each existing answer, note its specific strengths
+and weaknesses. Use this to inform whether synthesis would produce
+a better result.
 
 Critically examine existing answers against these criteria:
 1. **Alignment**: Does the answer directly and fully address the user's intent?
@@ -3090,6 +3117,8 @@ Your goal is to iteratively refine answers until they meet the quality bar.
 You are a skeptic. Before voting YES, you MUST perform a 'pre-mortem' on the best answer.
 
 **The Pre-Mortem Challenge:**
+0. Before red-teaming, identify what each answer does uniquely well — a flaw
+   in one answer may already be solved by another.
 1. Imagine the current best answer has been delivered and **FAILED** completely.
 2. What is the most likely cause of that failure? (e.g., hidden edge case, missing dependency, logical flaw, security risk).
 3. If you can identify a plausible failure mode, you MUST provide a `new_answer` that hardens the solution against it.
@@ -3103,6 +3132,8 @@ You are a skeptic. Before voting YES, you MUST perform a 'pre-mortem' on the bes
 Before voting, you MUST independently re-derive the logic of the best answer.
 
 **The Verification Process:**
+0. Before re-deriving, note which answers take different approaches. If multiple
+   approaches exist, evaluate each answer independently before picking one to verify.
 1. **Re-derive**: Without looking at the answer's steps, how would YOU solve this?
 2. **Compare**: Where does the best answer differ from your re-derivation?
 3. **Validate**: Is the difference an improvement, or a potential logical error?
@@ -3129,6 +3160,8 @@ Your goal is to ensure the final solution incorporates the best unique insights 
 Before evaluating, you must explicitly restate and reflect on the user's ultimate goal.
 
 **Reflection Steps:**
+0. **Per-Answer Fit**: Which answers best serve which success criteria? Different
+   answers may excel at different criteria — identify these before judging.
 1. **Restate Intent**: "The user's core intent is..."
 2. **Success Criteria**: Define 3 specific criteria that must be met for the user to be delighted.
 3. **Gap Analysis**: Does the best answer meet all 3 criteria perfectly?
@@ -3615,14 +3648,19 @@ the changedoc as you make it. Update the Implementation fields to reference YOUR
 
 ### Evaluating prior answers
 
-Before building anything, form an honest opinion: **are the existing answers good,
-or just present?** Prior work is evidence of what has been tried, not a foundation
-you must build on. Your job is to produce the best possible answer, which may mean:
+Before building anything, analyze each existing answer independently:
+- What does each answer do uniquely well?
+- What is each answer's weakest aspect?
+- Are there elements in lower-scoring answers that the "best" answer is missing?
 
-- Selectively adopting specific superior elements from a peer into YOUR existing solution
+Prior work is evidence of what has been tried, not a foundation you must build on.
+Your job is to produce the best possible answer, which may mean:
+
+- Synthesizing the best elements from multiple answers (name what from where)
 - Adopting the best elements from multiple answers (synthesis)
 - Taking a completely different approach because current ones are mediocre
-- Keeping most of one answer but replacing its weakest component with something novel
+- Keeping most of one answer but replacing its weakest component with something
+  drawn from another answer or built fresh
 
 **Warning: the copy-as-base trap.** You may see prior deliverables already in your
 workspace. Do NOT default to patching them IF the foundation is weak. Adding features
@@ -3641,7 +3679,8 @@ work gets you there. The DEC Origin fields track per-decision lineage.
 
 For each decision the task requires:
 
-1. **Evaluate all versions** across answers. Pick the strongest, or create a better one. Preserve the FULL Origin chain — do not truncate who first introduced a decision.
+1. For each decision, **compare all answers' versions**. Note what each answer does well — the strongest version may combine elements from multiple answers, \
+not just pick one. Preserve the FULL Origin chain — do not truncate who first introduced a decision.
 2. **Modify decisions** when you can improve them. Append to the Origin chain (e.g., `agent1.1 → agent1.2 (kept) → [SELF] (modified)`). Explain the change in the Deliberation Trail.
 3. **Add genuinely new decisions** with Origin marked as `[SELF] — NEW`. These are ideas not present in any prior answer — novel approaches, new features, or original solutions you introduce.
 4. **Challenge inherited decisions.** If every prior answer made the same choice, ask whether a different choice would produce a better result.
@@ -4930,9 +4969,11 @@ class TaskContextSection(SystemPromptSection):
     def build_content(self) -> str:
         return """## Task Context for Tools and Subagents
 
-**REQUIRED**: Before spawning subagents or using multimodal tools (read_media, generate_media),
+**REQUIRED**: Before spawning subagents or using `read_media`,
 you MUST create a `CONTEXT.md` file in your workspace with task context.
-This ordering is strict even for background jobs: write `CONTEXT.md` first, then start media tools.
+This ordering is strict even for background jobs: write `CONTEXT.md` first, then start `read_media`.
+
+`generate_media` does **not** require CONTEXT.md — it works without it.
 
 ### Why This Matters
 External APIs (like in `read_media`) have no idea what you're working on.
@@ -4968,9 +5009,9 @@ that coordinates parallel AI agents through voting and consensus.
 Create CONTEXT.md **before** your first use of:
 - `spawn_subagents` - subagents will inherit this context
 - `read_media` - image/audio/video analysis will use this context
-- `generate_media` - image/video/audio generation will use this context
 
-The file will be read automatically and injected into external API calls."""
+The file will be read automatically and injected into external API calls.
+`generate_media` does not require CONTEXT.md."""
 
 
 class SystemPromptBuilder:

@@ -365,6 +365,9 @@ class Orchestrator(ChatAgent):
         # before the next safe checkpoint (consumed by enforcement-message injection).
         self._no_hook_pending_background_tool_results: dict[str, list[dict[str, Any]]] = {}
 
+        # Per-agent injection directories for auto-populating planning MCP from propose_improvements
+        self._planning_injection_dirs: dict[str, Path] = {}
+
         # Background subagent configuration (parsed from coordination_config)
         background_subagent_config = {}
         if hasattr(self.config, "coordination_config"):
@@ -937,6 +940,12 @@ class Orchestrator(ChatAgent):
                         False,
                     ),
                 ),
+                # Planning injection dir for auto-populating task plan from propose_improvements
+                "planning_injection_dir": str(getattr(self, "_planning_injection_dirs", {}).get(agent_id, "")),
+                # Whether subagents are enabled (for delegation guidance in propose_improvements message)
+                "subagents_enabled": bool(
+                    hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents") and self.config.coordination_config.enable_subagents,
+                ),
             }
             backend._checklist_state = checklist_state
             backend._checklist_items = list(items)
@@ -1203,6 +1212,29 @@ class Orchestrator(ChatAgent):
                 all_criteria_ids=_last_checklist_result.get("all_criteria_ids"),
                 preserve=preserve,
             )
+            if result.get("valid"):
+                _orchestrator._write_planning_injection(_agent_id, result["task_plan"])
+                result = dict(result)  # Don't mutate original
+                task_count = len(result["task_plan"])
+                result["message"] = (
+                    f"Your task plan has been pre-populated with {task_count} items. "
+                    "Call get_task_plan to see the list and start executing. "
+                    "Preserve items are guardrails — verify after implementing. "
+                    "Do not skip criteria."
+                )
+                # Append subagent delegation hint if subagents are enabled
+                _subagents_enabled = (
+                    hasattr(_orchestrator.config, "coordination_config")
+                    and hasattr(_orchestrator.config.coordination_config, "enable_subagents")
+                    and _orchestrator.config.coordination_config.enable_subagents
+                )
+                if _subagents_enabled:
+                    result["message"] += (
+                        " Review the pre-populated plan for subagent delegation"
+                        " opportunities. Tasks without mutual dependencies can be"
+                        " spawned as parallel background subagents. Mark tasks"
+                        " with subagent_id/subagent_name, then spawn."
+                    )
             return {
                 "content": [
                     {
@@ -1896,6 +1928,21 @@ class Orchestrator(ChatAgent):
                 f"[Orchestrator] Adding --use-two-tier-workspace flag to planning MCP for {agent_id}",
             )
 
+        # Create injection directory for task injection from propose_improvements
+        # Use log session dir (persists for entire run, accessible in Docker)
+        log_dir = get_log_session_dir()
+        if log_dir:
+            injection_dir = log_dir / "planning_injection" / agent_id
+        else:
+            import tempfile as _tempfile
+
+            injection_dir = Path(_tempfile.mkdtemp(prefix=f"massgen_plan_inject_{agent_id}_"))
+        injection_dir.mkdir(parents=True, exist_ok=True)
+        if not hasattr(self, "_planning_injection_dirs"):
+            self._planning_injection_dirs = {}
+        self._planning_injection_dirs[agent_id] = injection_dir
+        args.extend(["--injection-dir", str(injection_dir)])
+
         # Pass hook directory for MCP server-level hook injection (Codex)
         if hasattr(agent, "backend") and hasattr(agent.backend, "supports_mcp_server_hooks") and agent.backend.supports_mcp_server_hooks() and hasattr(agent.backend, "get_hook_dir"):
             hook_dir = agent.backend.get_hook_dir()
@@ -1914,6 +1961,26 @@ class Orchestrator(ChatAgent):
         }
 
         return config
+
+    def _write_planning_injection(self, agent_id: str, task_plan: list[dict]) -> None:
+        """Write inject_tasks.json to agent's planning injection directory.
+
+        Called after propose_improvements returns a valid task_plan. The planning
+        MCP server picks up the file on its next tool call.
+
+        Args:
+            agent_id: Agent whose planning MCP should receive the tasks
+            task_plan: Raw task_plan from evaluate_proposed_improvements
+        """
+        if agent_id not in self._planning_injection_dirs:
+            return
+
+        from .mcp_tools.checklist_tools_server import _write_inject_file
+
+        _write_inject_file(self._planning_injection_dirs[agent_id], task_plan)
+        logger.info(
+            f"[Orchestrator] Wrote planning injection for {agent_id}: {len(task_plan)} tasks",
+        )
 
     def _inject_subagent_tools_for_all_agents(self) -> None:
         """

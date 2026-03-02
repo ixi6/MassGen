@@ -81,7 +81,9 @@ async def create_server() -> fastmcp.FastMCP:
         logger.info("Hook middleware attached (hook_dir=%s)", args.hook_dir)
     specs_path = Path(args.specs)
 
-    _register_checklist_tool(mcp, specs_path)
+    initial_specs = _read_specs(specs_path)
+    injection_dir = initial_specs.get("state", {}).get("planning_injection_dir")
+    _register_checklist_tool(mcp, specs_path, injection_dir=injection_dir)
 
     logger.info(f"Checklist MCP server ready (specs: {specs_path})")
     return mcp
@@ -727,9 +729,78 @@ def evaluate_checklist_submission(
     return result
 
 
-def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
+def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
+    """Convert task_plan items from evaluate_proposed_improvements to injection format.
+
+    Args:
+        task_plan: List of dicts with "type" key ("improve" or "preserve")
+
+    Returns:
+        List of dicts ready for inject_tasks.json consumption by planning MCP
+    """
+    tasks = []
+    for item in task_plan:
+        if item["type"] == "improve":
+            tasks.append(
+                {
+                    "description": f"[{item['criterion_id']}] {item['plan']}",
+                    "verification": item["criterion"],
+                    "priority": "high",
+                    "metadata": {
+                        "criterion_id": item["criterion_id"],
+                        "criterion": item["criterion"],
+                        "type": "improve",
+                        "sources": item.get("sources", []),
+                        "injected": True,
+                    },
+                },
+            )
+        elif item["type"] == "preserve":
+            tasks.append(
+                {
+                    "description": f"[{item['criterion_id']}] Preserve: {item['what_to_protect']}",
+                    "verification": item["criterion"],
+                    "priority": "medium",
+                    "metadata": {
+                        "criterion_id": item["criterion_id"],
+                        "criterion": item["criterion"],
+                        "type": "preserve",
+                        "source": item.get("source", ""),
+                        "injected": True,
+                    },
+                },
+            )
+    return tasks
+
+
+def _write_inject_file(injection_dir: Path | None, task_plan: list[dict]) -> None:
+    """Write inject_tasks.json atomically to injection_dir for planning MCP consumption.
+
+    Args:
+        injection_dir: Path to injection directory, or None (no-op)
+        task_plan: Raw task_plan from evaluate_proposed_improvements
+    """
+    if injection_dir is None:
+        return
+
+    injection_dir = Path(injection_dir)
+    injection_dir.mkdir(parents=True, exist_ok=True)
+    tasks = _convert_task_plan_to_inject_format(task_plan)
+    inject_file = injection_dir / "inject_tasks.json"
+    tmp_file = injection_dir / "inject_tasks.json.tmp"
+
+    tmp_file.write_text(json.dumps(tasks, indent=2))
+    import os
+
+    os.replace(str(tmp_file), str(inject_file))
+
+
+def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_dir: str | None = None) -> None:
     """Register the submit_checklist tool on the FastMCP server."""
     import inspect
+
+    # Resolve injection dir for planning task injection
+    _injection_dir_path: Path | None = Path(injection_dir) if injection_dir else None
 
     # Read specs once at startup just for the tool schema
     specs = _read_specs(specs_path)
@@ -820,6 +891,26 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
             all_criteria_ids=_last_result.get("all_criteria_ids"),
             preserve=preserve,
         )
+        if result.get("valid") and _injection_dir_path:
+            _write_inject_file(_injection_dir_path, result["task_plan"])
+            task_count = len(result["task_plan"])
+            result = dict(result)  # Don't mutate original
+            result["message"] = (
+                f"Your task plan has been pre-populated with {task_count} items. "
+                "Call get_task_plan to see the list and start executing. "
+                "Preserve items are guardrails — verify after implementing. "
+                "Do not skip criteria."
+            )
+            # Append subagent delegation hint if subagents are enabled
+            current = _read_specs(specs_path)
+            state = current.get("state", {})
+            if state.get("subagents_enabled"):
+                result["message"] += (
+                    " Review the pre-populated plan for subagent delegation"
+                    " opportunities. Tasks without mutual dependencies can be"
+                    " spawned as parallel background subagents. Mark tasks"
+                    " with subagent_id/subagent_name, then spawn."
+                )
         return json.dumps(result)
 
     propose_improvements.__doc__ = (

@@ -1009,13 +1009,13 @@ you're drawing from. This traces provenance of every change.
 - `preserve` forces you to articulate what's WORKING before changing anything. \
 A criterion can appear in BOTH — fix one part, protect another.
 
-The tool validates all failing criteria are covered and returns a task_plan.
-Add each item to your task plan tool, then proceed to Phase 3.
+The tool validates all failing criteria are covered and auto-populates your \
+task plan. Call `get_task_plan` to review the items and proceed to Phase 3.
 
 **Phase 3 — Execute improvements (`{iterate_action}` verdict only).**
 
-Your `propose_improvements` call returned a validated `task_plan`. Add these
-tasks to your task plan tool, then execute them.
+Your `propose_improvements` call has pre-populated your task plan. Call \
+`get_task_plan` to review, then execute.
 
 {_phase3_execution}
 
@@ -4072,27 +4072,56 @@ You can spawn **subagents** to execute tasks with fresh context and isolated wor
 
 ## When to Use Subagents
 
-**USING TASK DEPENDENCIES TO IDENTIFY SUBAGENT CANDIDATES:**
-When you create a task plan, tasks with the SAME dependencies (or no dependencies) can potentially run in parallel via subagents. Look at your plan:
-- Tasks that share dependencies → candidates for parallel subagent execution
-- Tasks that depend on each other → must be sequential (do NOT subagent)
-- Simple/quick tasks → do yourself (subagent overhead not worth it)
+**THE GUIDING PRINCIPLE: keep the intelligent work, delegate the mechanical work.**
+You are the most capable agent in this run. Your context window and reasoning should be
+spent on work that genuinely requires it — synthesis, quality judgment, improvement strategy,
+creative decisions. Subagents run on simpler models. Offload the rest to them.
 
-Example task plan analysis:
+Ask yourself: *does this task require my full reasoning, or just execution?*
+- **Requires full reasoning** → do it yourself
+- **Execution with a clear spec** → delegate
+
+**Delegate when ALL of these are true:**
+1. The task is **mechanical** — execution with a clear spec, not open-ended judgment
+2. The task is **self-contained** — a complete spec can be written upfront, with needed \
+   files accessible via `include_parent_workspace` or `context_paths`
+3. The task is **independent** — it does not need the output of another in-flight task to start
+4. The task is **worth the overhead** — roughly 10+ tool calls, reads large docs/files, \
+   or produces a standalone artifact; tiny tasks cost more to spawn than to just do
+
+**Strong delegation signals (delegate these):**
+- Reading large documentation files to discover HOW to do something — mechanical and expensive;
+  let a subagent absorb the docs in its own context, not yours
+- Producing a standalone artifact (complete file, rendered output, full report) you'll integrate later
+- Mechanical tool execution: running tests, rendering, screenshotting, validating, batch checking
+- Parallel data collection: multiple independent lookups or research threads
+
+**Keep inline (these need your full capability):**
+- Quality judgment and improvement strategy — what to fix, in what order, and why
+- Cross-agent synthesis — identifying the best elements across peer answers
+- Creative and architectural decisions — the choices that determine outcome quality
+- Anything where the answer to "what should I do here?" is non-obvious
+- Sequential tasks whose output directly determines your next step
+- Small tasks < ~10 tool calls where spawning overhead exceeds the work saved
+
+Note: a task can be large (many tool calls) and still belong inline if it requires quality
+judgment throughout. Size alone is not the criterion — nature of the work is.
+
+**PLANNING SUBAGENT DELEGATION IN YOUR TASK PLAN:**
+After `propose_improvements` pre-populates your task plan, review each independent task:
+- Does it have documentation-heavy discovery or mechanical execution? → Mark with `subagent_id`
+  and `subagent_name` via `update_task` to flag it for delegation
+- Does it require your judgment, synthesis, or live context? → Keep inline
+- Can it be split into smaller independent deliverables? → Consider splitting first
+
+Tasks that share dependencies (or have none) are parallelizable:
 ```
-Task A: Research biography (no deps)        ← Can parallelize
-Task B: Research discography (no deps)      ← Can parallelize
-Task C: Research quotes (no deps)           ← Can parallelize
-Task D: Build website (deps: A, B, C)       ← Sequential, do yourself after A/B/C
+Task A: Research biography (no deps)        ← Delegate (exploration)
+Task B: Research discography (no deps)      ← Delegate (exploration)
+Task C: Research quotes (no deps)           ← Delegate (exploration)
+Task D: Build website (deps: A, B, C)       ← Do yourself (synthesis + judgment)
 ```
 → Spawn subagents for A, B, C simultaneously. Wait for results. Then do D yourself.
-
-**IDEAL USE CASES:**
-- **Research and exploration** - gathering information, searching, analyzing sources
-- **Parallel data collection** - multiple independent lookups that can run simultaneously
-- **Programmatic evaluation at scale** - batch test runs, Playwright verification, evidence capture sweeps, repetitive scripted checks
-- Complex subtasks that benefit from fresh context (avoid context pollution)
-- Experimental operations you want isolated from your main workspace
 
 **SUBAGENT RELIABILITY:**
 Subagents are useful helpers but have limitations:

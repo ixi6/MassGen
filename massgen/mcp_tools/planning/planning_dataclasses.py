@@ -232,6 +232,8 @@ class TaskPlan:
         verification: str | None = None,
         verification_method: str | None = None,
         skip_verification: bool = False,
+        subagent_id: str | None = None,
+        subagent_name: str | None = None,
     ) -> Task:
         """
         Add a new task to the plan.
@@ -278,6 +280,10 @@ class TaskPlan:
             metadata["verification"] = verification
         if verification_method:
             metadata["verification_method"] = verification_method
+        if subagent_id:
+            metadata["subagent_id"] = subagent_id
+        if subagent_name:
+            metadata["subagent_name"] = subagent_name
 
         # Create task
         task = Task(

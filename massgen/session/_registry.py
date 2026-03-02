@@ -9,13 +9,28 @@ This module provides functionality to:
 
 import json
 import logging
+import os
 import sys
+import threading
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_THREAD_LOCKS: dict[str, threading.RLock] = {}
+_THREAD_LOCKS_GUARD = threading.Lock()
+
+
+def _get_thread_lock(lock_path: Path) -> threading.RLock:
+    """Return a stable in-process lock for a given registry lock path."""
+    key = str(lock_path)
+    with _THREAD_LOCKS_GUARD:
+        lock = _THREAD_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _THREAD_LOCKS[key] = lock
+        return lock
 
 
 @contextmanager
@@ -26,21 +41,26 @@ def _registry_lock(lock_path: Path, exclusive: bool):
         lock_path: Path to the lock sidecar file.
         exclusive: If True, acquire an exclusive write lock; otherwise shared read lock.
     """
-    if sys.platform == "win32":
-        # Windows: no fcntl; accept the risk of concurrent corruption for now.
-        yield
-        return
+    # Protect threads inside the same process regardless of OS-level lock behavior.
+    thread_lock = _get_thread_lock(lock_path)
+    with thread_lock:
+        if sys.platform == "win32":
+            # Windows: no fcntl available in stdlib; thread lock still prevents
+            # in-process corruption.
+            yield
+            return
 
-    import fcntl
+        import fcntl
 
-    lock_file = open(lock_path, "w")
-    try:
-        flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
-        fcntl.flock(lock_file.fileno(), flag)
-        yield
-    finally:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-        lock_file.close()
+        # Use append mode so creating/opening the lock file never truncates it.
+        lock_file = open(lock_path, "a+")
+        try:
+            flag = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+            fcntl.flock(lock_file.fileno(), flag)
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
 
 
 class SessionRegistry:
@@ -114,8 +134,12 @@ class SessionRegistry:
     def _save_registry(self, data: dict[str, list[dict[str, Any]]]) -> None:
         """Save registry to disk (no lock — callers must hold a lock themselves)."""
         try:
-            with open(self.registry_path, "w") as f:
+            tmp_path = self.registry_path.with_suffix(f"{self.registry_path.suffix}.tmp")
+            with open(tmp_path, "w") as f:
                 json.dump(data, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            tmp_path.replace(self.registry_path)
         except OSError as e:
             logger.error(f"Failed to save session registry: {e}")
 

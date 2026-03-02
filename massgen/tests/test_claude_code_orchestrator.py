@@ -101,12 +101,14 @@ async def test_claude_code_with_orchestrator():
     print("\n✅ Orchestrator test completed successfully!")
 
 
+@pytest.mark.integration
+@pytest.mark.live_api
+@pytest.mark.asyncio
 async def test_stateful_behavior():
     """Test the stateful behavior of Claude Code backend."""
 
     if not os.getenv("ANTHROPIC_API_KEY"):
-        print("❌ ANTHROPIC_API_KEY not found - skipping stateful test")
-        return
+        pytest.skip("ANTHROPIC_API_KEY not found in environment")
 
     print("\n" + "=" * 60)
     print("🚀 Testing Stateful Behavior")

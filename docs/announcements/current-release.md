@@ -1,4 +1,4 @@
-# MassGen v0.1.57 Release Announcement
+# MassGen v0.1.58 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,17 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.57, adding Delegated Subagent Protocol & Builder Subagent! 🚀 A new file-based delegation protocol enables container-to-host subagent spawning, and the builder subagent type handles large artifact generation with fresh context. Plus: Claude Code reasoning parameters for the updated SDK, smarter convergence with substantiveness tracking, and diagnostic report gating.
+We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.57
+pip install massgen==0.1.58
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.57
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.58
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -29,34 +29,27 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.57, adding Delegated Subagent Protocol & Builder Subagent! 🚀 A new file-based delegation protocol enables container-to-host subagent spawning, and the builder subagent type handles large artifact generation with fresh context. Plus: Claude Code reasoning parameters for the updated SDK, smarter convergence with substantiveness tracking, and diagnostic report gating.
+We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
 
-**Key Features:**
+**Key Feature: Comprehensive Multimodal Revamp**
 
-**Subagent Delegation Protocol (MAS-325)** - File-based container-to-host subagent spawning:
-- SubagentLaunchWatcher polls shared delegation directory for atomic JSON request/response files
-- Workspace path validation against allowlist for security
-- Enables subagent spawning without Docker API — agents write requests, host picks them up
+MassGen agents can now generate and understand a much wider range of media:
 
-**Builder Subagent** - New subagent type for substantial, pre-specified work:
-- Transformative redesigns, large artifact generation, complex multi-file rewrites
-- Fresh context with no anchoring to prior versions — prevents incremental drift
-- Prescriptive spec with positive goals AND forbidden patterns (negative constraints)
-- Auto-triggered by checklist when transformative changes are identified
+- **ElevenLabs TTS & STT** (#942): High-quality voice synthesis and transcription integrated with `generate_media` and `read_media` tools — agents can now speak and listen via ElevenLabs
+- **Nano Banana 2** (#951): New default image generation model with significantly higher quality output
+- **Grok Image/Video Generation**: Native Grok multimedia generation via xAI API — images and videos from Grok Imagine
+- **Audio Generation Skills**: New reusable skills for audio generation workflows
+- **Multi-Turn Image Editing**: Continuation IDs enable iterative image editing sessions — agents can refine images across multiple turns
 
 **Also in this release:**
-- Claude Code Reasoning Params: Updated SDK with unified `reasoning` config (type, effort, budget_tokens) replacing deprecated `max_thinking_tokens`
-- Substantiveness Tracking: Checklist captures specific planned changes (transformative/structural/incremental) to prevent satisficing and trigger builder/novelty subagents
-- Diagnostic Report Gating: Optional quality gate requiring structured diagnostic reports before checklist passes
-- Simplified Subagent Workspaces: Auto-mounted parent workspace — no more `context_paths: ["./"]` boilerplate
+- Nvidia NIM Backend (#962): First-class provider integration for NVIDIA Inference Microservices
+- Quality Rethinking Subagent (#964): New `quality_rethinking` type for targeted per-element craft improvements
+- Smarter Checklists: Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults
+- CLI Mode Flags: `--quick`, `--single-agent`, `--coordination-mode`, `--personas` mirroring TUI toggles
+- Logging Architecture Refactor: Fixed concurrent logging with LoggingSession isolation
+- Subagent Hardening: Better '@' parsing, error handling, clearer context
 
-**Bug Fixes:**
-- Fixed codex backend subagent spawning
-- Fixed subagent timing and synchronization
-- Fixed temporary workspace directory support
-- Fixed subagent type initialization
-
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.57
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.58
 
 Feature highlights:
 

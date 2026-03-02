@@ -74,7 +74,8 @@ from .dspy_paraphraser import (
     is_dspy_available,
 )
 from .frontend.coordination_ui import CoordinationUI
-from .logger_config import _DEBUG_MODE, logger, save_execution_metadata, setup_logging
+from .logger_config import is_debug_mode as _is_debug_mode
+from .logger_config import logger, save_execution_metadata, setup_logging
 from .orchestrator import Orchestrator
 from .path_handling import AtPathCompleter
 from .utils import get_backend_type_from_model
@@ -1325,7 +1326,7 @@ async def read_multiline_input_async(
     except (EOFError, KeyboardInterrupt):
         raise
     except Exception as e:
-        if _DEBUG_MODE:
+        if _is_debug_mode():
             logger.debug(f"prompt_toolkit async failed; falling back to input(): {e}")
         # Fallback to basic input - run in executor to not block
         loop = asyncio.get_running_loop()
@@ -2172,7 +2173,9 @@ def create_agents_from_config(
         # Add orchestrator context for filesystem setup if available
         if orchestrator_config:
             if "agent_temporary_workspace" in orchestrator_config:
-                backend_config["agent_temporary_workspace"] = orchestrator_config["agent_temporary_workspace"]
+                backend_config["agent_temporary_workspace"] = _scope_agent_temporary_workspace(
+                    orchestrator_config["agent_temporary_workspace"],
+                )
             # Add orchestrator-level context_paths to all agents
             if "context_paths" in orchestrator_config:
                 # Merge orchestrator context_paths with agent-specific ones
@@ -2616,6 +2619,61 @@ def create_dspy_paraphraser_from_config(
         paraphraser_kwargs.get("num_variants", 3),
     )
     return paraphraser
+
+
+def _scope_snapshot_storage(base: str | None) -> str | None:
+    """Scope ``snapshot_storage`` by the current log session root name.
+
+    Two concurrent CLI processes using the same config would otherwise write
+    to the same ``.massgen/snapshots/agent_a/`` directory.  Appending the
+    microsecond-timestamped session root name keeps them isolated.
+
+    Args:
+        base: Raw ``snapshot_storage`` value from YAML config, or None.
+
+    Returns:
+        Scoped path string (e.g., ``.massgen/snapshots/log_20260301_XXX``),
+        or None if *base* is None.
+    """
+    if base is None:
+        return None
+    from pathlib import Path as _Path
+
+    from .logger_config import get_log_session_root as _get_root
+
+    try:
+        session_root_name = _get_root().name
+        return str(_Path(base) / session_root_name)
+    except Exception:
+        return base  # Fallback: return unchanged if session root unavailable
+
+
+def _scope_agent_temporary_workspace(base: str | None) -> str | None:
+    """Scope ``agent_temporary_workspace`` by the current log session root name.
+
+    Two concurrent CLI processes using the same config would otherwise share
+    the same temp workspace parent.  Appending the microsecond-timestamped
+    session root name keeps them isolated -- process B's
+    ``clear_temp_workspace()`` only removes its own scoped subdirectory.
+
+    Args:
+        base: Raw ``agent_temporary_workspace`` value from YAML config,
+            or None.
+
+    Returns:
+        Scoped path string, or None if *base* is None.
+    """
+    if base is None:
+        return None
+    from pathlib import Path as _Path
+
+    from .logger_config import get_log_session_root as _get_root
+
+    try:
+        session_root_name = _get_root().name
+        return str(_Path(base) / session_root_name)
+    except Exception:
+        return base  # Fallback: return unchanged if session root unavailable
 
 
 def create_simple_config(
@@ -3337,8 +3395,10 @@ async def run_question_with_history(
         orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
 
     # Get context sharing parameters
-    snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-    agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
+    snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+    agent_temporary_workspace = _scope_agent_temporary_workspace(
+        orchestrator_cfg.get("agent_temporary_workspace"),
+    )
 
     # Get debug/test parameters
     if orchestrator_cfg.get("skip_coordination_rounds", False):
@@ -3873,8 +3933,10 @@ async def run_single_question(
             orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
 
         # Get context sharing parameters
-        snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-        agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
+        snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+        agent_temporary_workspace = _scope_agent_temporary_workspace(
+            orchestrator_cfg.get("agent_temporary_workspace"),
+        )
 
         # Get debug/test parameters
         if orchestrator_cfg.get("skip_coordination_rounds", False):
@@ -6420,8 +6482,10 @@ async def run_textual_interactive_mode(
             # Build orchestrator config (matching Rich terminal path setup)
             orchestrator_config = AgentConfig()
             # Get context sharing parameters (must be extracted before orchestrator creation)
-            snapshot_storage = orchestrator_cfg.get("snapshot_storage") if orchestrator_cfg else None
-            agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace") if orchestrator_cfg else None
+            snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage") if orchestrator_cfg else None)
+            agent_temporary_workspace = _scope_agent_temporary_workspace(
+                orchestrator_cfg.get("agent_temporary_workspace") if orchestrator_cfg else None,
+            )
             # Get NLIP config (matching Rich terminal path)
             orchestrator_enable_nlip = orchestrator_cfg.get("enable_nlip", False) if orchestrator_cfg else False
             orchestrator_nlip_config = orchestrator_cfg.get("nlip_config", {}) if orchestrator_cfg else {}
@@ -6830,7 +6894,7 @@ async def run_textual_interactive_mode(
             display.begin_turn(turn_num, question)
 
             # Reconfigure logging for the turn (same as Rich mode)
-            setup_logging(debug=_DEBUG_MODE, turn=turn_num)
+            setup_logging(debug=_is_debug_mode(), turn=turn_num)
 
             # Save execution metadata for this turn (same as Rich mode)
             save_execution_metadata(
@@ -7875,7 +7939,7 @@ async def run_interactive_mode(
                     session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
                 # Reconfigure logging for the turn we're about to process
-                setup_logging(debug=_DEBUG_MODE, turn=next_turn)
+                setup_logging(debug=_is_debug_mode(), turn=next_turn)
                 logger.info(f"Starting turn {next_turn}")
 
                 # Save execution metadata for this turn (use raw config to avoid logging secrets)

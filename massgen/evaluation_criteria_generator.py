@@ -703,6 +703,7 @@ Generate evaluation criteria now for the task above."""
         min_criteria: int = 4,
         max_criteria: int = 7,
         on_subagent_started: Callable | None = None,
+        voting_sensitivity: str | None = None,
     ) -> list[GeneratedCriterion]:
         """Generate criteria via a subagent run.
 
@@ -716,6 +717,8 @@ Generate evaluation criteria now for the task above."""
             min_criteria: Minimum criteria count
             max_criteria: Maximum criteria count
             on_subagent_started: Callback when subagent starts
+            voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
 
         Returns:
             List of GeneratedCriterion objects
@@ -757,14 +760,18 @@ Generate evaluation criteria now for the task above."""
                     },
                 )
 
+            coordination = {
+                "enable_subagents": False,
+                "broadcast": False,
+                "checklist_criteria_preset": "evaluation",
+            }
+            if voting_sensitivity:
+                coordination["voting_sensitivity"] = voting_sensitivity
+
             subagent_config = SubagentOrchestratorConfig(
                 enabled=True,
                 agents=simplified,
-                coordination={
-                    "enable_subagents": False,
-                    "broadcast": False,
-                    "checklist_criteria_preset": "evaluation",
-                },
+                coordination=coordination,
             )
 
             manager = SubagentManager(

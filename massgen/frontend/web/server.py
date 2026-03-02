@@ -4449,9 +4449,17 @@ async def run_coordination_with_history(
                 drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
             )
 
-        # Get context sharing parameters
-        snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-        agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
+        # Get context sharing parameters — scope by session to avoid
+        # concurrent WebUI sessions colliding on shared paths.
+        from massgen.cli import (
+            _scope_agent_temporary_workspace,
+            _scope_snapshot_storage,
+        )
+
+        snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+        agent_temporary_workspace = _scope_agent_temporary_workspace(
+            orchestrator_cfg.get("agent_temporary_workspace"),
+        )
 
         # Create orchestrator with history from previous turns
         orchestrator = Orchestrator(
@@ -4858,9 +4866,17 @@ async def run_coordination(
                 drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
             )
 
-        # Get context sharing parameters
-        snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-        agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
+        # Get context sharing parameters — scope by session to avoid
+        # concurrent WebUI sessions colliding on shared paths.
+        from massgen.cli import (
+            _scope_agent_temporary_workspace,
+            _scope_snapshot_storage,
+        )
+
+        snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+        agent_temporary_workspace = _scope_agent_temporary_workspace(
+            orchestrator_cfg.get("agent_temporary_workspace"),
+        )
 
         # Create orchestrator with AgentConfig object
         orchestrator = Orchestrator(

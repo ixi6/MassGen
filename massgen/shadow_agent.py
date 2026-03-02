@@ -128,10 +128,11 @@ class ShadowAgentSpawner:
             )
 
         # 6. Save debug context if --debug flag is enabled
-        from .logger_config import _DEBUG_MODE, _LOG_SESSION_DIR
+        from .logger_config import get_log_session_dir, is_debug_mode
 
+        _log_session_dir = get_log_session_dir() if is_debug_mode() else None
         debug_file_path = None
-        if _DEBUG_MODE and _LOG_SESSION_DIR:
+        if _log_session_dir:
             debug_file_path = self._save_debug_context(
                 shadow_id=shadow_id,
                 parent_agent_id=parent_agent.agent_id,
@@ -140,7 +141,7 @@ class ShadowAgentSpawner:
                 shadow_history=shadow_history,
                 current_turn_context=current_turn_context,
                 parent_agent=parent_agent,
-                log_session_dir=Path(_LOG_SESSION_DIR),
+                log_session_dir=Path(_log_session_dir),
             )
 
         # 7. Generate single-turn response (no tools)
@@ -150,7 +151,7 @@ class ShadowAgentSpawner:
             shadow_id,
         )
         # 8. Save response to debug file if --debug flag is enabled
-        if _DEBUG_MODE and debug_file_path:
+        if is_debug_mode() and debug_file_path:
             self._append_response_to_debug(debug_file_path, response)
 
         logger.info(

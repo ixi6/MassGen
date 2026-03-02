@@ -77,6 +77,8 @@ def _isolate_test_logs(tmp_path_factory: pytest.TempPathFactory):
     try:
         import massgen.logger_config as logger_config
 
+        session = logger_config.LoggingSession.create()
+        logger_config.set_current_session(session)
         logger_config.reset_logging_session()
     except Exception:
         pass
@@ -88,6 +90,7 @@ def _isolate_test_logs(tmp_path_factory: pytest.TempPathFactory):
             import massgen.logger_config as logger_config
 
             logger_config.reset_logging_session()
+            logger_config._current_session.set(None)
         except Exception:
             pass
 

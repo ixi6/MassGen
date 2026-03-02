@@ -649,6 +649,7 @@ Generate personas now:"""
         orchestrator_id: str,
         log_directory: str | None = None,
         on_subagent_started: Callable[[str, str, int, Callable[[str], Any | None], str | None], None] | None = None,
+        voting_sensitivity: str | None = None,
     ) -> dict[str, GeneratedPersona]:
         """Generate all personas via a single subagent call.
 
@@ -667,6 +668,8 @@ Generate personas now:"""
             parent_workspace: Path to parent workspace for subagent workspace creation
             orchestrator_id: ID of the parent orchestrator
             log_directory: Optional path to log directory for subagent logs
+            voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
 
         Returns:
             Dictionary mapping agent_id to GeneratedPersona
@@ -698,15 +701,19 @@ Generate personas now:"""
             # Create simplified agent configs (same models, no tools)
             simplified_configs = self._create_simplified_agent_configs(parent_agent_configs)
 
-            # Configure subagent orchestrator with simplified agents
+            # Configure subagent orchestrator with simplified agents.
+            coordination = {
+                "enable_subagents": False,  # No nested subagents
+                "broadcast": False,  # Keep it simple
+                "checklist_criteria_preset": "persona",
+            }
+            if voting_sensitivity:
+                coordination["voting_sensitivity"] = voting_sensitivity
+
             subagent_orch_config = SubagentOrchestratorConfig(
                 enabled=True,
                 agents=simplified_configs,
-                coordination={
-                    "enable_subagents": False,  # No nested subagents
-                    "broadcast": False,  # Keep it simple
-                    "checklist_criteria_preset": "persona",
-                },
+                coordination=coordination,
             )
 
             manager = SubagentManager(

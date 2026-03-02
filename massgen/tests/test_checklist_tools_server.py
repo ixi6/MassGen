@@ -1546,6 +1546,7 @@ class TestChecklistSdkSubmissionCounting:
             max_checklist_calls_per_round=1,
             checklist_first_answer=False,
         )
+        orchestrator.agents = {"agent_0": None, "agent_1": None}
         orchestrator.agent_states = {"agent_0": AgentState(answer_count=1)}
 
         backend = _MockBackend()

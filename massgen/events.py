@@ -944,11 +944,24 @@ _global_emitter: EventEmitter | None = None
 
 
 def get_event_emitter() -> EventEmitter | None:
-    """Get the global event emitter instance.
+    """Get the event emitter for the current logging session.
+
+    When a ``LoggingSession`` is active in the current context (set via
+    ``massgen.logger_config.set_current_session``), returns that session's
+    emitter so concurrent ``massgen.run()`` calls stay isolated.
+    Falls back to the legacy global emitter for backward compatibility.
 
     Returns:
-        The global EventEmitter, or None if not initialized
+        The session-scoped EventEmitter, or the global one if no session is active
     """
+    try:
+        from .logger_config import get_current_session
+
+        session = get_current_session()
+        if session is not None and session.event_emitter is not None:
+            return session.event_emitter
+    except Exception:
+        pass
     return _global_emitter
 
 
@@ -963,14 +976,15 @@ def set_event_emitter(emitter: EventEmitter) -> None:
 
 
 def emit_event(event_type: str, **kwargs: Any) -> None:
-    """Convenience function to emit an event using the global emitter.
+    """Emit an event using the current session's emitter (or the global fallback).
 
     Args:
         event_type: Type of event
         **kwargs: Event data
     """
-    if _global_emitter:
-        _global_emitter.emit_raw(event_type, **kwargs)
+    emitter = get_event_emitter()
+    if emitter:
+        emitter.emit_raw(event_type, **kwargs)
 
 
 # Export public API

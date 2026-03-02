@@ -10,8 +10,12 @@ Tests cover:
 """
 
 import json
+from types import SimpleNamespace
+
+import pytest
 
 from massgen.evaluation_criteria_generator import (
+    EvaluationCriteriaGenerator,
     EvaluationCriteriaGeneratorConfig,
     get_default_criteria,
 )
@@ -315,3 +319,50 @@ class TestGenerationPrompt:
         assert "do not make this criterion" in prompt.lower() or "always `must`" in prompt.lower()
         # Must say not to merge with craft
         assert "craft" in prompt.lower() and ("separate" in prompt.lower() or "not merge" in prompt.lower())
+
+
+@pytest.mark.asyncio
+async def test_subagent_criteria_generation_passes_voting_sensitivity(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["coordination"] = kwargs["subagent_orchestrator_config"].coordination
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "criteria": [
+                            {"text": "Goal alignment", "category": "must"},
+                            {"text": "No defects", "category": "must"},
+                            {"text": "Depth and completeness", "category": "should"},
+                            {"text": "Intentional craft", "category": "should"},
+                        ],
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = EvaluationCriteriaGenerator()
+    criteria = await generator.generate_criteria_via_subagent(
+        task="Test task",
+        agent_configs=[{"id": "agent_a", "backend": {"type": "openai", "model": "gpt-4o-mini"}}],
+        has_changedoc=False,
+        parent_workspace=str(tmp_path),
+        log_directory=None,
+        orchestrator_id="orch_test",
+        min_criteria=4,
+        max_criteria=7,
+        voting_sensitivity="checklist_gated",
+    )
+
+    assert len(criteria) >= 4
+    assert captured["coordination"]["voting_sensitivity"] == "checklist_gated"

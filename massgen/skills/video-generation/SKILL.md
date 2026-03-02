@@ -92,7 +92,72 @@ When extending videos via `continue_from` with a `veo_vid_*` ID:
 - Each extension adds up to 7 seconds (API limit: 20 extensions, ~141s total)
 - Generated videos are retained for 2 days before expiry
 
+## Producing Longer Videos
+
+Current APIs cap at **15 seconds max per clip** (Grok), with most backends at 4-8s. There is no way to generate a continuous 30+ second video in one call. The proven approach:
+
+1. **Plan a shot list** — break your video into 6-8s segments with specific camera language per shot
+2. **Generate clips in parallel** — launch all segments concurrently using `background=True`
+3. **Assemble and edit with Remotion** (see below) — do NOT use raw ffmpeg for captions, titles, or transitions
+4. **Bridge with audio** — a unified narration or music track smooths over visual cuts between clips
+
+For visual continuity, use the same **style anchor** in every prompt (e.g., "BBC Earth documentary cinematography") and maintain consistent lighting/color descriptions.
+
+**Full production guide with examples, transition types, and duration strategy**: See [references/production.md](references/production.md)
+
+## Post-Production: Always Use Remotion
+
+**Remotion is the default post-production tool for any video that needs editing beyond simple concatenation.** This includes captions, titles, transitions, overlays, motion graphics — essentially any video intended to look professional. Do not use raw ffmpeg `drawtext` or manual filter chains for these tasks; the results look amateur compared to what Remotion produces.
+
+**When you have video clips to assemble, load the Remotion skill and use it.** This is not optional for professional output.
+
+### Loading the Remotion Skill
+
+Load the skill to get detailed rules and code examples:
+- **Local path** (if installed via quickstart): `.agent/skills/remotion/SKILL.md`
+- **Remote repo** (if not installed): https://github.com/remotion-dev/skills
+
+### What Remotion Gives You
+
+| Capability | Remotion | Raw ffmpeg |
+|---|---|---|
+| Styled animated captions | CSS-styled, word-level highlighting, animations | `drawtext` — ugly, painful escaping |
+| Title cards / lower thirds | React components, any font/layout | Manual positioning, limited fonts |
+| Scene transitions | Timing curves, spring animations, custom effects | Basic xfade (fade, wipe) |
+| Motion graphics | Full React/CSS/Three.js/Lottie ecosystem | Not possible |
+| Light leak / overlay effects | Built-in `@remotion/light-leaks` | Complex filter chains |
+| Text animations | Typography effects, per-character animation | Not feasible |
+
+### When ffmpeg Alone Is Sufficient
+
+Only use ffmpeg without Remotion for:
+- Concatenating clips with no captions, titles, or transitions (just hard cuts)
+- Audio mixing / ducking (ffmpeg or Pydub)
+- Color grading via LUT files (`lut3d` filter)
+- Quick format conversion or rescaling
+
+### Workflow
+
+1. **Generate raw clips** with `generate_media` (parallel, background mode)
+2. **Generate audio** (narration, music) with `generate_media(mode="audio")`
+3. **Load the Remotion skill** and set up a Remotion project
+4. **Assemble in Remotion**: import clips as `<Video>` components, add `<Sequence>` blocks for timeline, apply transitions, overlay captions, add title cards
+5. **Render** via Remotion's headless renderer
+
+### Key Remotion Rule Files to Load
+
+When working on a specific task, load the relevant rule files from the Remotion skill:
+- **Captions/subtitles**: `rules/subtitles.md`, `rules/display-captions.md`, `rules/transcribe-captions.md`
+- **Transitions**: `rules/transitions.md`
+- **Text animations**: `rules/text-animations.md`
+- **Light leaks**: `rules/light-leaks.md`
+- **Audio**: `rules/audio.md`, `rules/audio-visualization.md`
+- **Sequencing/timeline**: `rules/sequencing.md`, `rules/trimming.md`
+- **3D motion graphics**: `rules/3d.md`
+- **Animations/timing**: `rules/animations.md`, `rules/timing.md`
+
 ## Need More Control?
 
 - **Per-backend resolution, duration details, and quirks**: See [references/backends.md](references/backends.md)
 - **Video continuation, remix, and image-to-video**: See [references/editing.md](references/editing.md)
+- **Multi-shot production, transitions, and cinematic workflow**: See [references/production.md](references/production.md)

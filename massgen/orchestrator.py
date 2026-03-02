@@ -963,19 +963,26 @@ class Orchestrator(ChatAgent):
 
         # Define tool schema — each score entry requires a reasoning string
         # to force the model to justify every item.
+        _all_agent_ids = sorted(self.agents.keys())
+        _is_multi_agent = len(_all_agent_ids) > 1
+        if _is_multi_agent:
+            _example_entries = ", ".join(f'"{aid}": {{...}}' for aid in _all_agent_ids)
+            _scores_desc = (
+                "Your confidence scores with reasoning for each checklist item. "
+                f"This session has {len(_all_agent_ids)} agents: {_all_agent_ids}. "
+                "Use per-agent format with EXACTLY these agent IDs as keys: "
+                f"{{{_example_entries}}}. "
+                "Each agent entry maps criterion IDs to "
+                '{"score": N, "reasoning": "..."} objects.'
+            )
+        else:
+            _scores_desc = "Your confidence scores with reasoning for each checklist item. " "Use flat format: " '{"E1": {"score": N, "reasoning": "..."}, ...}.'
         input_schema = {
             "type": "object",
             "properties": {
                 "scores": {
                     "type": "object",
-                    "description": (
-                        "Your confidence scores with reasoning for each checklist item. "
-                        "When multiple agents exist, use per-agent format: "
-                        '{"agent1.1": {"E1": {"score": N, "reasoning": "..."}, ...}, '
-                        '"agent2.1": {...}}. '
-                        "For single-agent evaluation, use flat format: "
-                        '{"E1": {"score": N, "reasoning": "..."}, ...}.'
-                    ),
+                    "description": _scores_desc,
                     "additionalProperties": True,
                 },
                 "report_path": {
@@ -2506,6 +2513,7 @@ class Orchestrator(ChatAgent):
                 orchestrator_id=self.orchestrator_id,
                 log_directory=log_directory,
                 on_subagent_started=_on_persona_subagent_started,
+                voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
             )
 
             source = getattr(generator, "last_generation_source", "unknown")
@@ -2682,6 +2690,7 @@ class Orchestrator(ChatAgent):
                 min_criteria=ecg.min_criteria,
                 max_criteria=ecg.max_criteria,
                 on_subagent_started=_on_criteria_subagent_started,
+                voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
             )
 
             self._generated_evaluation_criteria = criteria
@@ -4169,11 +4178,11 @@ Your answer:"""
         # For restarts (attempt 2+), CLI sets this before creating the UI
         # For first attempt, we still need to set it here
         if self.config.coordination_config.max_orchestration_restarts > 0:
-            from massgen.logger_config import _CURRENT_ATTEMPT
+            from massgen.logger_config import get_current_attempt
 
             expected_attempt = self.current_attempt + 1
             # Only set if not already set to the expected value (CLI may have set it for restarts)
-            if _CURRENT_ATTEMPT != expected_attempt:
+            if get_current_attempt() != expected_attempt:
                 set_log_attempt(expected_attempt)
 
         # Track active coordination state for cleanup
@@ -4394,6 +4403,7 @@ Your answer:"""
                     orchestrator_id=self.orchestrator_id,
                     log_directory=log_directory,
                     on_subagent_started=_on_decomposition_subagent_started,
+                    voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
                 )
 
                 source = getattr(decomposer, "last_generation_source", "unknown")
@@ -6659,9 +6669,6 @@ Your answer:"""
             self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
             self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
 
-            # Refresh checklist tool state after injection (streak may have reset)
-            self._refresh_checklist_state_for_agent(agent_id)
-
             # Keep restart pending if additional unseen revisions still remain.
             self.agent_states[agent_id].restart_pending = self._has_unseen_answer_updates(agent_id)
 
@@ -6688,11 +6695,14 @@ Your answer:"""
                     injection_type="mid_stream",
                 )
 
-            # Update agent's context labels
+            # Update agent's context labels first, then refresh checklist state so
+            # available_agent_labels reflects the newly-injected labels (e.g. agent1.2
+            # replacing agent1.1). Refreshing before updating would leave stale labels.
             self.coordination_tracker.update_agent_context_with_new_answers(
                 agent_id,
                 list(selected_answers.keys()),
             )
+            self._refresh_checklist_state_for_agent(agent_id)
 
             return injection
 
@@ -7336,6 +7346,7 @@ Your answer:"""
                 agent_id,
                 list(selected_answers.keys()),
             )
+            self._refresh_checklist_state_for_agent(agent_id)
 
         if runtime_sections:
             injection_parts.extend(runtime_sections)

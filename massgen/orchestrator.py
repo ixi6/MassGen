@@ -408,6 +408,9 @@ class Orchestrator(ChatAgent):
         # Guard to push criteria to TUI display at most once (checklist_gated does it in
         # _init_checklist_tool; non-checklist modes do it on first round).
         self._criteria_pushed_to_display: bool = False
+        # Last resolved criteria payload for display (used when checklist criteria
+        # are initialized before CoordinationUI/display is attached).
+        self._criteria_display_payload: dict[str, Any] | None = None
         if self._evaluation_criteria_generated:
             logger.info(
                 f"📝 Restored {len(self._generated_evaluation_criteria)} evaluation criteria from previous turn",
@@ -781,6 +784,23 @@ class Orchestrator(ChatAgent):
 
         return None, None, None
 
+    def _push_cached_criteria_to_display(self, *, force: bool = False) -> None:
+        """Push cached evaluation criteria to the active display when available."""
+        if getattr(self, "_criteria_pushed_to_display", False) and not force:
+            return
+
+        payload = getattr(self, "_criteria_display_payload", None)
+        if not payload:
+            return
+
+        try:
+            display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+            if display and hasattr(display, "set_evaluation_criteria"):
+                display.set_evaluation_criteria(payload["criteria"], source=payload["source"])
+                self._criteria_pushed_to_display = True
+        except Exception:
+            pass  # TUI notification is non-critical
+
     def _init_checklist_tool(self) -> None:
         """Register submit_checklist MCP tool if voting_sensitivity is checklist_gated.
 
@@ -840,22 +860,20 @@ class Orchestrator(ChatAgent):
         # Push resolved criteria to TUI so users can view them via Ctrl+E.
         # _item_verify_by is only populated when custom_items came from _get_active_criteria.
         _display_verify_by = _item_verify_by if custom_items is not None else {}
-        try:
-            display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
-            if display and hasattr(display, "set_evaluation_criteria"):
-                criteria_dicts = [
-                    {
-                        "id": f"E{i + 1}",
-                        "text": text,
-                        "category": item_categories.get(f"E{i + 1}", "should"),
-                        "verify_by": (_display_verify_by or {}).get(f"E{i + 1}"),
-                    }
-                    for i, text in enumerate(items)
-                ]
-                display.set_evaluation_criteria(criteria_dicts, source=criteria_source)
-                self._criteria_pushed_to_display = True
-        except Exception:
-            pass  # TUI notification is non-critical
+        criteria_dicts = [
+            {
+                "id": f"E{i + 1}",
+                "text": text,
+                "category": item_categories.get(f"E{i + 1}", "should"),
+                "verify_by": (_display_verify_by or {}).get(f"E{i + 1}"),
+            }
+            for i, text in enumerate(items)
+        ]
+        self._criteria_display_payload = {
+            "criteria": criteria_dicts,
+            "source": criteria_source,
+        }
+        self._push_cached_criteria_to_display(force=True)
 
         for agent_id, agent in self.agents.items():
             backend = agent.backend
@@ -1985,6 +2003,9 @@ class Orchestrator(ChatAgent):
 
         # Share subagent message callback with TUI display
         self._share_subagent_message_callback_with_display()
+        # Checklist criteria may have been resolved before the display existed.
+        # Push cached criteria now that CoordinationUI/display is attached.
+        self._push_cached_criteria_to_display()
 
     def _setup_subagent_spawn_callback(self, agent_id: str, agent: Any) -> None:
         """Set up callback to notify TUI when subagent spawning starts.
@@ -2503,6 +2524,14 @@ class Orchestrator(ChatAgent):
                     except Exception:
                         pass
 
+            pre_collab_voting_threshold = getattr(
+                self.config.coordination_config,
+                "pre_collab_voting_threshold",
+                None,
+            )
+            if pre_collab_voting_threshold is None:
+                pre_collab_voting_threshold = getattr(self.config, "voting_threshold", None)
+
             # Generate personas via subagent
             personas = await generator.generate_personas_via_subagent(
                 agent_ids=list(self.agents.keys()),
@@ -2514,6 +2543,7 @@ class Orchestrator(ChatAgent):
                 log_directory=log_directory,
                 on_subagent_started=_on_persona_subagent_started,
                 voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
+                voting_threshold=pre_collab_voting_threshold,
             )
 
             source = getattr(generator, "last_generation_source", "unknown")
@@ -2680,6 +2710,14 @@ class Orchestrator(ChatAgent):
                     except Exception:
                         pass
 
+            pre_collab_voting_threshold = getattr(
+                self.config.coordination_config,
+                "pre_collab_voting_threshold",
+                None,
+            )
+            if pre_collab_voting_threshold is None:
+                pre_collab_voting_threshold = getattr(self.config, "voting_threshold", None)
+
             criteria = await generator.generate_criteria_via_subagent(
                 task=self.current_task or "",
                 agent_configs=parent_configs,
@@ -2691,6 +2729,7 @@ class Orchestrator(ChatAgent):
                 max_criteria=ecg.max_criteria,
                 on_subagent_started=_on_criteria_subagent_started,
                 voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
+                voting_threshold=pre_collab_voting_threshold,
             )
 
             self._generated_evaluation_criteria = criteria
@@ -4394,6 +4433,14 @@ Your answer:"""
                         pass
 
             try:
+                pre_collab_voting_threshold = getattr(
+                    self.config.coordination_config,
+                    "pre_collab_voting_threshold",
+                    None,
+                )
+                if pre_collab_voting_threshold is None:
+                    pre_collab_voting_threshold = getattr(self.config, "voting_threshold", None)
+
                 self._agent_subtasks = await decomposer.generate_decomposition_via_subagent(
                     task=self.current_task or "",
                     agent_ids=list(self.agents.keys()),
@@ -4404,6 +4451,7 @@ Your answer:"""
                     log_directory=log_directory,
                     on_subagent_started=_on_decomposition_subagent_started,
                     voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
+                    voting_threshold=pre_collab_voting_threshold,
                 )
 
                 source = getattr(decomposer, "last_generation_source", "unknown")
@@ -5884,6 +5932,15 @@ Your answer:"""
             logger.warning(
                 f"[Orchestrator._save_agent_snapshot] Failed to save execution trace for {agent_id}: {te}",
             )
+
+        # Increment answer count and reset per-round checklist budget when an
+        # actual answer is being saved.  This must live here (not inside
+        # _archive_agent_memories) because memory archiving early-returns when
+        # the agent has no memory/ directory, which would leave answer_count
+        # stuck at 0 and block submit_checklist in subsequent rounds.
+        if answer_content is not None and agent_id in self.agent_states:
+            self.agent_states[agent_id].answer_count += 1
+            self.agent_states[agent_id].checklist_calls_this_round = 0
 
         # Return the timestamp for tracking
         return timestamp if not is_final else "final"
@@ -14816,10 +14873,6 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             logger.error(
                 f"[Orchestrator] Failed to archive memories for {agent_id}: {e}",
             )
-
-        # Increment answer count and reset per-answer checklist call counter for next round
-        self.agent_states[agent_id].answer_count += 1
-        self.agent_states[agent_id].checklist_calls_this_round = 0
 
     def _get_previous_turns_context_paths(self) -> list[dict[str, Any]]:
         """

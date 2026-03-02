@@ -1014,6 +1014,91 @@ class TestSubagentConfigInheritance:
         assert backend["audio_generation_backend"] == "openai"
         assert backend["audio_generation_model"] == "gpt-4o-mini-tts"
 
+    def test_promotes_voting_settings_from_coordination_to_orchestrator(self, tmp_path):
+        """voting/checklist settings should be top-level orchestrator fields in YAML."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                coordination={
+                    "voting_sensitivity": "checklist_gated",
+                    "voting_threshold": 9,
+                    "checklist_require_gap_report": True,
+                    "gap_report_mode": "separate",
+                    "checklist_criteria_preset": "persona",
+                },
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Generate personas",
+            parent_agent_id="parent-agent",
+            subagent_id="persona-sub",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        coord_cfg = orchestrator_cfg["coordination"]
+
+        assert orchestrator_cfg["voting_sensitivity"] == "checklist_gated"
+        assert orchestrator_cfg["voting_threshold"] == 9
+        assert orchestrator_cfg["checklist_require_gap_report"] is True
+        assert orchestrator_cfg["gap_report_mode"] == "separate"
+
+        # Non-top-level coordination settings should remain in coordination.
+        assert coord_cfg["checklist_criteria_preset"] == "persona"
+        assert "voting_sensitivity" not in coord_cfg
+        assert "voting_threshold" not in coord_cfg
+        assert "checklist_require_gap_report" not in coord_cfg
+        assert "gap_report_mode" not in coord_cfg
+
+    def test_parent_voting_settings_not_promoted_without_subagent_orchestrator(self, tmp_path):
+        """General subagents should not inherit voting/checklist settings from parent coordination."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            parent_coordination_config={
+                "voting_sensitivity": "checklist_gated",
+                "voting_threshold": 13,
+                "checklist_require_gap_report": True,
+                "gap_report_mode": "separate",
+            },
+        )
+
+        config = SubagentConfig.create(
+            task="General subagent task",
+            parent_agent_id="parent-agent",
+            subagent_id="general-sub",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        assert "voting_sensitivity" not in orchestrator_cfg
+        assert "voting_threshold" not in orchestrator_cfg
+        assert "checklist_require_gap_report" not in orchestrator_cfg
+        assert "gap_report_mode" not in orchestrator_cfg
+
 
 class TestSubagentManagerContextNormalization:
     def test_parent_workspace_added_to_context_paths(self, tmp_path):

@@ -234,6 +234,90 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
             "could",
         ),
     ],
+    "planning": [
+        (
+            "The plan captures the user's requested outcome and constraints" " without scope drift. Critical requirements are explicit, and no" " mandatory deliverable expectation is omitted.",
+            "must",
+        ),
+        (
+            "The task graph is executable and internally consistent:" " dependencies are valid, ordering is coherent, and there are no" " contradictory or impossible steps.",
+            "must",
+        ),
+        (
+            "Tasks describe both what to produce AND how to approach it —"
+            " the method, key decisions, and constraints that guide execution."
+            " 'Create the hero section' is insufficient; 'restructure the hero"
+            " section: move value proposition above the fold, use existing brand"
+            " palette, add a single prominent CTA' tells the executor what to"
+            " actually do. Each task should be actionable without requiring the"
+            " executor to infer creative or technical direction.",
+            "must",
+        ),
+        (
+            "Each task has verification guidance matched to its type."
+            " Verification may be deterministic (run tests, validate responses,"
+            " check file structure) or qualitative (render to images and assess"
+            " visual quality, read the output and evaluate tone, watch playback"
+            " and judge pacing). Plans must NOT force numeric thresholds on"
+            " inherently qualitative work — 'visually inspect the rendered page"
+            " for layout balance and readability' is valid verification."
+            " Verification says what to examine and what to look for.",
+            "must",
+        ),
+        (
+            "Technology and tooling choices are explicit and justified."
+            " Frameworks, libraries, APIs, and tools are named — not left for"
+            " the executor to guess. For existing codebases, the plan respects"
+            " the established stack and conventions rather than introducing"
+            " gratuitous alternatives.",
+            "must",
+        ),
+        (
+            "Where tasks connect or produce artifacts consumed by other tasks,"
+            " interface contracts are specified: data shapes, file conventions,"
+            " API signatures, or shared types. Independent execution of tasks"
+            " should not require reverse-engineering unstated agreements.",
+            "should",
+        ),
+        (
+            "Assumptions, boundaries, and trade-offs are documented with" " rationale. Ambiguities are resolved with explicit defaults rather" " than left implicit.",
+            "should",
+        ),
+        (
+            "The plan demonstrates thoughtful sequencing and risk management:"
+            " chunking and prioritization reduce rework, high-risk or"
+            " foundational tasks come first, and quality gates are placed"
+            " where they most improve final output quality.",
+            "should",
+        ),
+    ],
+    "spec": [
+        (
+            "Requirements are complete and unambiguous — each requirement" " describes a single, testable behavior or property. A developer" " reading the spec can implement without guessing intent.",
+            "must",
+        ),
+        (
+            "Each requirement has concrete acceptance criteria: specific" " conditions, inputs, expected outputs, or observable behaviors" " that prove the requirement is met.",
+            "must",
+        ),
+        (
+            "Scope boundaries are explicit — what is in scope and what is"
+            " deliberately out of scope are both stated. The spec does not"
+            " silently omit aspects the user would expect to be covered.",
+            "must",
+        ),
+        (
+            "Requirements are prioritized and internally consistent — no two"
+            " requirements contradict each other, and the priority or"
+            " ordering reflects genuine implementation dependencies and"
+            " user-facing importance.",
+            "should",
+        ),
+        (
+            "Requirements anticipate edge cases, error states, and boundary" " conditions relevant to the domain. The spec does not only" " describe the happy path.",
+            "could",
+        ),
+    ],
 }
 
 # Public constant for validation (used by config_validator and tests)
@@ -704,6 +788,7 @@ Generate evaluation criteria now for the task above."""
         max_criteria: int = 7,
         on_subagent_started: Callable | None = None,
         voting_sensitivity: str | None = None,
+        voting_threshold: int | None = None,
     ) -> list[GeneratedCriterion]:
         """Generate criteria via a subagent run.
 
@@ -718,6 +803,8 @@ Generate evaluation criteria now for the task above."""
             max_criteria: Maximum criteria count
             on_subagent_started: Callback when subagent starts
             voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
+            voting_threshold: Optional voting threshold to pass through to
                 the pre-collaboration subagent coordination config.
 
         Returns:
@@ -767,6 +854,8 @@ Generate evaluation criteria now for the task above."""
             }
             if voting_sensitivity:
                 coordination["voting_sensitivity"] = voting_sensitivity
+            if voting_threshold is not None:
+                coordination["voting_threshold"] = voting_threshold
 
             subagent_config = SubagentOrchestratorConfig(
                 enabled=True,

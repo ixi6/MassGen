@@ -102,6 +102,7 @@ Requirements:
         log_directory: str | None = None,
         on_subagent_started: Callable[[str, str, int, Callable[[str], Any | None], str | None], None] | None = None,
         voting_sensitivity: str | None = None,
+        voting_threshold: int | None = None,
     ) -> dict[str, str]:
         """Generate subtask assignments via a MassGen subagent call.
 
@@ -118,6 +119,8 @@ Requirements:
             orchestrator_id: ID of the parent orchestrator
             log_directory: Optional path to log directory for subagent logs
             voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
+            voting_threshold: Optional voting threshold to pass through to
                 the pre-collaboration subagent coordination config.
 
         Returns:
@@ -198,6 +201,8 @@ Requirements:
             }
             if voting_sensitivity:
                 coordination["voting_sensitivity"] = voting_sensitivity
+            if voting_threshold is not None:
+                coordination["voting_threshold"] = voting_threshold
 
             subagent_orch_config = SubagentOrchestratorConfig(
                 enabled=True,

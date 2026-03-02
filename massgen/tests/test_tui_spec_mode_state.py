@@ -6,9 +6,9 @@ from massgen.frontend.displays.tui_modes import SpecConfig, TuiModeState
 class TestSpecConfig:
     """Test SpecConfig dataclass."""
 
-    def test_default_broadcast_is_human(self):
+    def test_default_broadcast_is_false(self):
         config = SpecConfig()
-        assert config.broadcast == "human"
+        assert config.broadcast is False
 
     def test_broadcast_can_be_set(self):
         config = SpecConfig(broadcast="agents")
@@ -47,7 +47,7 @@ class TestTuiModeStateSpecMode:
             spec_config=SpecConfig(broadcast="agents"),
         )
         state.reset_plan_state()
-        assert state.spec_config.broadcast == "human"
+        assert state.spec_config.broadcast is False
         assert state.plan_mode == "normal"
 
     def test_spec_config_field_exists(self):

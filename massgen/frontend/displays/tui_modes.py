@@ -36,9 +36,9 @@ class PlanConfig:
             - "off": Force refinement OFF during execute turns
         auto_execute: If True, skip approval and auto-execute after planning
         broadcast: Broadcast mode for planning phase
-            - "human": Agents can ask human questions (default)
+            - "human": Agents can ask human questions
             - "agents": Agents debate among themselves
-            - False: Fully autonomous, no questions
+            - False: Fully autonomous, no questions (default)
     """
 
     depth: PlanDepth = "dynamic"
@@ -47,7 +47,7 @@ class PlanConfig:
     execute_auto_continue_chunks: bool = True
     execute_refinement_mode: Literal["inherit", "on", "off"] = "inherit"
     auto_execute: bool = False
-    broadcast: Any = "human"  # "human" | "agents" | False
+    broadcast: Any = False  # "human" | "agents" | False
 
     def get_depth_description(self) -> str:
         """Get human-readable description of current depth."""
@@ -66,12 +66,12 @@ class SpecConfig:
 
     Attributes:
         broadcast: Broadcast mode for spec creation phase
-            - "human": Agents can ask human questions (default)
+            - "human": Agents can ask human questions
             - "agents": Agents debate among themselves
-            - False: Fully autonomous, no questions
+            - False: Fully autonomous, no questions (default)
     """
 
-    broadcast: Any = "human"  # "human" | "agents" | False
+    broadcast: Any = False  # "human" | "agents" | False
 
 
 @dataclass

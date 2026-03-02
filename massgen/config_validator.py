@@ -944,6 +944,15 @@ class ConfigValidator:
                             "Use values like 3, 5, 8, or omit/null for dynamic sizing.",
                         )
 
+                if "pre_collab_voting_threshold" in coordination:
+                    value = coordination["pre_collab_voting_threshold"]
+                    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+                        result.add_error(
+                            "'pre_collab_voting_threshold' must be a positive integer or null",
+                            f"{location}.coordination.pre_collab_voting_threshold",
+                            "Use a positive integer like 5, 10, 15, or omit/null to inherit orchestrator.voting_threshold",
+                        )
+
                 # Validate subagent_round_timeouts if present
                 if "subagent_round_timeouts" in coordination:
                     round_timeouts = coordination["subagent_round_timeouts"]

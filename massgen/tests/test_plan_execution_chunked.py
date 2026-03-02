@@ -452,3 +452,86 @@ async def test_execute_plan_phase_timeout_skips_chunk_and_advances_to_next_chunk
     assert history[0].get("status") == "timed_out"
     assert history[1].get("chunk") == "C02_polish"
     assert history[1].get("status") == "completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_plan_phase_uses_textual_display_when_configured(
+    temp_plans_dir,
+    tmp_path,
+    monkeypatch,
+):
+    """Execution phase should honor textual display type from config."""
+    import massgen.cli as cli_module
+
+    storage = PlanStorage()
+    session = storage.create_plan("planning_session", str(tmp_path / "logs"))
+    _write_frozen_plan(
+        session,
+        {
+            "tasks": [
+                {"id": "T001", "description": "Foundation", "chunk": "C01_build"},
+            ],
+        },
+    )
+
+    agent_workspace = tmp_path / "agent_workspace"
+    agent_workspace.mkdir(parents=True)
+    agents = {"agent_a": _DummyAgent(agent_workspace)}
+
+    monkeypatch.setattr(
+        cli_module,
+        "create_agents_from_config",
+        lambda *args, **kwargs: agents,
+    )
+
+    captured_display_types: list[str] = []
+
+    async def _fake_run_single_question(*args, **kwargs):
+        ui_config = args[2]
+        captured_display_types.append(ui_config.get("display_type"))
+
+        tasks_dir = agent_workspace / "tasks"
+        current_plan = json.loads((tasks_dir / "plan.json").read_text())
+        active_chunk = current_plan.get("execution_scope", {}).get("active_chunk", "C01_build")
+        (tasks_dir / "plan.json").write_text(
+            json.dumps(
+                {
+                    "tasks": [
+                        {
+                            "id": "T001",
+                            "chunk": active_chunk,
+                            "status": "completed",
+                        },
+                    ],
+                    "execution_scope": {"active_chunk": active_chunk},
+                },
+                indent=2,
+            ),
+        )
+        return {
+            "answer": "done",
+            "coordination_result": {
+                "selected_agent": "agent_a",
+                "is_orchestrator_timeout": False,
+                "timeout_reason": None,
+            },
+        }
+
+    monkeypatch.setattr(cli_module, "run_single_question", _fake_run_single_question)
+
+    config = {
+        "agents": [{"type": "mock", "model": "mock-model"}],
+        "orchestrator": {"coordination": {"max_orchestration_restarts": 0}},
+        "timeout": {"orchestrator_timeout_seconds": 30},
+        "ui": {"display_type": "textual_terminal"},
+    }
+
+    final_answer, _ = await cli_module._execute_plan_phase(
+        config=config,
+        plan_session=session,
+        question="Build chunk",
+        automation=False,
+    )
+
+    assert final_answer == "done"
+    assert captured_display_types == ["textual_terminal"]

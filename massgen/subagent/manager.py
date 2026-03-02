@@ -1801,6 +1801,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
         # Build coordination config - disable subagents to prevent nesting
         coord_settings = orch_config.coordination.copy() if orch_config and orch_config.coordination else {}
+        explicit_coord_settings = set(coord_settings.keys())
         coord_settings["enable_subagents"] = False  # CRITICAL: prevent nesting
         # Subagents should not broadcast to humans (e.g., ask_others with broadcast=human)
         if coord_settings.get("broadcast") == "human":
@@ -1833,6 +1834,18 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             "agent_temporary_workspace": str(workspace / "temp"),
             "coordination": coord_settings,
         }
+
+        # Promote top-level orchestrator voting settings if callers provided
+        # them under coordination for convenience/backward compatibility.
+        # The main config parser reads these fields at orchestrator level.
+        for setting in (
+            "voting_sensitivity",
+            "voting_threshold",
+            "checklist_require_gap_report",
+            "gap_report_mode",
+        ):
+            if setting in explicit_coord_settings and setting in coord_settings:
+                orchestrator_config[setting] = coord_settings.pop(setting)
 
         # Apply max_new_answers limit to prevent runaway iterations
         # This must be at the top level of orchestrator config (not inside coordination)

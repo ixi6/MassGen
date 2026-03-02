@@ -366,3 +366,51 @@ async def test_subagent_criteria_generation_passes_voting_sensitivity(monkeypatc
 
     assert len(criteria) >= 4
     assert captured["coordination"]["voting_sensitivity"] == "checklist_gated"
+
+
+@pytest.mark.asyncio
+async def test_subagent_criteria_generation_passes_voting_threshold(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["coordination"] = kwargs["subagent_orchestrator_config"].coordination
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "criteria": [
+                            {"text": "Goal alignment", "category": "must"},
+                            {"text": "No defects", "category": "must"},
+                            {"text": "Depth and completeness", "category": "should"},
+                            {"text": "Intentional craft", "category": "should"},
+                        ],
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = EvaluationCriteriaGenerator()
+    criteria = await generator.generate_criteria_via_subagent(
+        task="Test task",
+        agent_configs=[{"id": "agent_a", "backend": {"type": "openai", "model": "gpt-4o-mini"}}],
+        has_changedoc=False,
+        parent_workspace=str(tmp_path),
+        log_directory=None,
+        orchestrator_id="orch_test",
+        min_criteria=4,
+        max_criteria=7,
+        voting_sensitivity="checklist_gated",
+        voting_threshold=9,
+    )
+
+    assert len(criteria) >= 4
+    assert captured["coordination"]["voting_threshold"] == 9

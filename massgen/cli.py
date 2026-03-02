@@ -286,6 +286,34 @@ def _disable_evaluation_criteria_generation_for_planning(
     return True
 
 
+def _set_planning_checklist_criteria_defaults(
+    coordination_config: Any | None,
+) -> bool:
+    """Set planning-specific checklist preset when no explicit criteria source exists.
+
+    Returns True when checklist_criteria_preset was set to "planning".
+    """
+    if coordination_config is None:
+        return False
+
+    # YAML/dict config path
+    if isinstance(coordination_config, dict):
+        inline = coordination_config.get("checklist_criteria_inline")
+        preset = coordination_config.get("checklist_criteria_preset")
+        if inline or preset:
+            return False
+        coordination_config["checklist_criteria_preset"] = "planning"
+        return True
+
+    # Dataclass/object config path
+    inline = getattr(coordination_config, "checklist_criteria_inline", None)
+    preset = getattr(coordination_config, "checklist_criteria_preset", None)
+    if inline or preset:
+        return False
+    setattr(coordination_config, "checklist_criteria_preset", "planning")
+    return True
+
+
 def _setup_event_streaming() -> None:
     """Configure event streaming to stdout for subprocess-based TUI display.
 
@@ -436,7 +464,7 @@ def get_task_planning_prompt_prefix(
     target_steps: int | None = None,
     target_chunks: int | None = None,
     enable_subagents: bool = False,
-    broadcast_mode: Literal["human", "agents"] | bool = "human",
+    broadcast_mode: Literal["human", "agents"] | bool = False,
 ) -> str:
     """Generate the user prompt prefix for task planning mode.
 
@@ -813,7 +841,7 @@ USER'S REQUEST:
 
 
 def get_spec_creation_prompt_prefix(
-    broadcast_mode: "Literal['human', 'agents'] | bool" = "human",
+    broadcast_mode: "Literal['human', 'agents'] | bool" = False,
     target_chunks: int | None = None,
 ) -> str:
     """Generate the user prompt prefix for spec creation mode.
@@ -3061,6 +3089,7 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
         persona_generator=persona_generator_config,
         evaluation_criteria_generator=eval_criteria_config,
+        pre_collab_voting_threshold=coord_cfg.get("pre_collab_voting_threshold"),
         enable_subagents=coord_cfg.get("enable_subagents", False),
         subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
         subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
@@ -6630,6 +6659,8 @@ async def run_textual_interactive_mode(
                 if _is_planning_turn(mode_state):
                     if _disable_evaluation_criteria_generation_for_planning(orchestrator_config.coordination_config):
                         logger.info("[Textual] Plan mode: disabled evaluation criteria generation for planning turn")
+                    if _set_planning_checklist_criteria_defaults(orchestrator_config.coordination_config):
+                        logger.info("[Textual] Plan mode: defaulted checklist_criteria_preset=planning")
 
                 planning_turn_mode: str | None = None
                 if mode_state.plan_mode == "plan" and mode_state.pending_planning_mode in {"multi", "single"}:
@@ -8202,8 +8233,12 @@ async def _execute_plan_phase(
         )
 
     # Build UI config
+    requested_display_type = None
+    if isinstance(config, dict):
+        requested_display_type = (config.get("ui") or {}).get("display_type")
+    execution_display_type = "silent" if automation else (requested_display_type or "rich_terminal")
     ui_config = {
-        "display_type": "silent" if automation else "rich_terminal",
+        "display_type": execution_display_type,
         "logging_enabled": True,
         "automation_mode": automation,
     }
@@ -8622,7 +8657,7 @@ async def run_plan_and_execute(
     plan_depth: str = "dynamic",
     plan_target_steps: int | None = None,
     plan_target_chunks: int | None = None,
-    broadcast_mode: str = "human",
+    broadcast_mode: str | bool = "false",
     automation: bool = False,
     debug: bool = False,
     config_path: str | None = None,
@@ -8646,6 +8681,7 @@ async def run_plan_and_execute(
     Returns:
         Tuple of (final_answer, plan_session)
     """
+    import os
     import subprocess
     import tempfile
 
@@ -8668,15 +8704,25 @@ async def run_plan_and_execute(
     # Create plan storage
     storage = PlanStorage()
 
+    # Normalize broadcast mode to a CLI-safe string.
+    normalized_broadcast_mode = "false" if broadcast_mode is False else str(broadcast_mode)
+    if normalized_broadcast_mode not in {"human", "agents", "false"}:
+        normalized_broadcast_mode = "false"
+
     # Handle broadcast mode for automation
     # In automation mode, "human" broadcast doesn't work (no human to respond)
     # Auto-switch to "false" for fully autonomous planning
-    effective_broadcast_mode = broadcast_mode
-    if automation and broadcast_mode == "human":
+    effective_broadcast_mode = normalized_broadcast_mode
+    if automation and normalized_broadcast_mode == "human":
         console.print(
             "[yellow]Note: Switching broadcast mode from 'human' to 'false' for automation mode[/yellow]",
         )
         effective_broadcast_mode = "false"
+
+    # For non-automation runs, enable full Textual planning when the config explicitly asks for it.
+    ui_cfg = config.get("ui", {}) if isinstance(config, dict) else {}
+    planning_display_type = ui_cfg.get("display_type")
+    use_interactive_planning_subprocess = not automation and planning_display_type == "textual_terminal"
 
     # Build planning subprocess command
     # Write config to temp file if not provided
@@ -8691,15 +8737,22 @@ async def run_plan_and_execute(
         "uv",
         "run",
         "massgen",
-        "--automation",
-        "--plan",
-        "--plan-depth",
-        plan_depth,
-        "--broadcast",
-        effective_broadcast_mode,
-        "--config",
-        config_path,
     ]
+    if use_interactive_planning_subprocess:
+        cmd.extend(["--display", "textual"])
+    else:
+        cmd.append("--automation")
+    cmd.extend(
+        [
+            "--plan",
+            "--plan-depth",
+            plan_depth,
+            "--broadcast",
+            effective_broadcast_mode,
+            "--config",
+            config_path,
+        ],
+    )
     if plan_target_steps is not None:
         cmd.extend(["--plan-steps", str(plan_target_steps)])
     cmd.extend(["--plan-chunks", str(effective_plan_target_chunks)])
@@ -8714,39 +8767,74 @@ async def run_plan_and_execute(
     logger.info(f"[PlanAndExecute] Starting planning subprocess: {' '.join(cmd)}")
 
     try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr into stdout to avoid deadlock
-            text=True,
-            bufsize=1,  # Line buffered
-        )
-
-        # Parse LOG_DIR, STATUS, and FINAL_DIR from stdout
         log_dir = None
         final_dir = None
 
-        stdout_lines = []
-        for line in process.stdout:
-            stdout_lines.append(line)
-            if line.startswith("LOG_DIR:"):
-                log_dir = line.split(":", 1)[1].strip()
-            elif line.startswith("FINAL_DIR:"):
-                final_dir = Path(line.split(":", 1)[1].strip())
-            # Print output in non-automation mode for visibility
-            if not automation:
-                print(line, end="")
+        if use_interactive_planning_subprocess:
+            # Interactive planning (Textual) needs direct terminal ownership.
+            log_base_dir = Path(os.getenv("MASSGEN_LOG_BASE_DIR", ".massgen/massgen_logs"))
+            existing_log_dirs = {p.name for p in log_base_dir.glob("log_*")} if log_base_dir.exists() else set()
 
-        # Wait for process to complete
-        process.wait()
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                raise RuntimeError(f"Planning subprocess failed with exit code {result.returncode}")
 
-        if process.returncode != 0:
-            # stderr is merged into stdout, so show captured output
-            output = "".join(stdout_lines)
-            raise RuntimeError(f"Planning subprocess failed:\n{output}")
+            if not log_base_dir.exists():
+                raise RuntimeError("Planning completed but no log directory base was found")
 
-        if not log_dir:
-            raise RuntimeError("Planning subprocess did not provide LOG_DIR")
+            created_logs = [p for p in log_base_dir.glob("log_*") if p.name not in existing_log_dirs]
+            if created_logs:
+                log_root = max(created_logs, key=lambda p: p.stat().st_mtime)
+            else:
+                all_logs = list(log_base_dir.glob("log_*"))
+                if not all_logs:
+                    raise RuntimeError("Planning completed but no log session directory was found")
+                log_root = max(all_logs, key=lambda p: p.stat().st_mtime)
+
+            log_dir = str(log_root)
+
+            final_candidates = [
+                log_root / "turn_1" / "final",
+                log_root / "final",
+            ]
+            if not any(path.exists() for path in final_candidates):
+                turn_dirs = sorted(log_root.glob("turn_*"))
+                final_candidates.extend(turn_dir / "final" for turn_dir in turn_dirs)
+            for candidate in final_candidates:
+                if candidate.exists():
+                    final_dir = candidate
+                    break
+        else:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Merge stderr into stdout to avoid deadlock
+                text=True,
+                bufsize=1,  # Line buffered
+            )
+
+            # Parse LOG_DIR, STATUS, and FINAL_DIR from stdout
+            stdout_lines = []
+            for line in process.stdout:
+                stdout_lines.append(line)
+                if line.startswith("LOG_DIR:"):
+                    log_dir = line.split(":", 1)[1].strip()
+                elif line.startswith("FINAL_DIR:"):
+                    final_dir = Path(line.split(":", 1)[1].strip())
+                # Print output in non-automation mode for visibility
+                if not automation:
+                    print(line, end="")
+
+            # Wait for process to complete
+            process.wait()
+
+            if process.returncode != 0:
+                # stderr is merged into stdout, so show captured output
+                output = "".join(stdout_lines)
+                raise RuntimeError(f"Planning subprocess failed:\n{output}")
+
+            if not log_dir:
+                raise RuntimeError("Planning subprocess did not provide LOG_DIR")
 
         logger.info(f"[PlanAndExecute] Planning complete. Log dir: {log_dir}")
 
@@ -9124,6 +9212,10 @@ async def main(args):
             # Override to textual_terminal
             ui_config["display_type"] = "textual_terminal"
 
+        # Persist UI overrides onto config so downstream helpers (for example
+        # plan-and-execute phases) see the same resolved display settings.
+        config["ui"] = ui_config
+
         if args.no_logs:
             ui_config["logging_enabled"] = False
         if args.debug:
@@ -9152,14 +9244,14 @@ async def main(args):
             if "coordination" not in orchestrator_cfg_plan:
                 orchestrator_cfg_plan["coordination"] = {}
 
-            # Broadcast mode: CLI flag wins; otherwise default to "human"
+            # Broadcast mode: CLI flag wins; otherwise default to autonomous ("false")
             broadcast_arg = getattr(args, "broadcast", None)
             if broadcast_arg == "false":
                 orchestrator_cfg_plan["coordination"]["broadcast"] = False
             elif broadcast_arg is not None:
                 orchestrator_cfg_plan["coordination"]["broadcast"] = broadcast_arg
             else:
-                orchestrator_cfg_plan["coordination"].setdefault("broadcast", "human")
+                orchestrator_cfg_plan["coordination"].setdefault("broadcast", False)
 
             # Set plan_depth
             orchestrator_cfg_plan["coordination"]["plan_depth"] = getattr(
@@ -9187,6 +9279,8 @@ async def main(args):
 
             if _disable_evaluation_criteria_generation_for_planning(orchestrator_cfg_plan["coordination"]):
                 logger.info("[Plan Mode] Disabled evaluation criteria generation for planning turn")
+            if _set_planning_checklist_criteria_defaults(orchestrator_cfg_plan["coordination"]):
+                logger.info("[Plan Mode] Defaulted checklist_criteria_preset=planning")
 
             logger.info(
                 "[Plan Mode] Enabled with depth=%s, target_steps=%s, target_chunks=%s, broadcast=%s",
@@ -9352,14 +9446,14 @@ async def main(args):
             if plan_target_chunks is None:
                 plan_target_chunks = 1
 
-            # Broadcast mode priority: CLI arg > config > default "human"
+            # Broadcast mode priority: CLI arg > config > default false
             cli_broadcast = getattr(args, "broadcast", None)
             if cli_broadcast == "false":
                 broadcast_mode = False
             elif cli_broadcast is not None:
                 broadcast_mode = cli_broadcast
             else:
-                broadcast_mode = coordination_cfg.get("broadcast", "human")
+                broadcast_mode = coordination_cfg.get("broadcast", False)
 
             planning_prefix = get_task_planning_prompt_prefix(
                 plan_depth,
@@ -9385,14 +9479,14 @@ async def main(args):
             if plan_target_chunks is None:
                 plan_target_chunks = 1
 
-            # Broadcast mode priority: CLI arg > config > default "human"
+            # Broadcast mode priority: CLI arg > config > default false
             cli_broadcast = getattr(args, "broadcast", None)
             if cli_broadcast == "false":
                 broadcast_mode = False
             elif cli_broadcast is not None:
                 broadcast_mode = cli_broadcast
             else:
-                broadcast_mode = coordination_cfg.get("broadcast", "human")
+                broadcast_mode = coordination_cfg.get("broadcast", False)
 
             spec_prefix = get_spec_creation_prompt_prefix(
                 broadcast_mode=broadcast_mode,
@@ -10338,7 +10432,7 @@ Environment Variables:
         choices=["human", "agents", "false"],
         default=None,
         help="Broadcast mode for --plan mode: 'human' (agents ask critical questions), 'agents' (agents debate), 'false' (fully autonomous). "
-        "If not specified, uses config file value or defaults to 'human'.",
+        "If not specified, uses config file value or defaults to 'false'.",
     )
     parser.add_argument(
         "--plan-and-execute",

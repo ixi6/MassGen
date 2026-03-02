@@ -1,3 +1,8 @@
+---
+name: multimedia-backend-integrator
+description: Reference guide for adding new media generation backends to MassGen's unified generate_media tool.
+---
+
 # Multimedia Backend Integrator
 
 Reference guide for adding new media generation backends to MassGen's unified `generate_media` tool.

@@ -89,7 +89,8 @@ def _get_mime_type(file_path: Path) -> str:
 async def _process_with_gemini(
     video_path: Path,
     prompt: str,
-    model: str = "gemini-3-flash-preview",
+    model: str = "gemini-3.1-pro-preview",
+    system_prompt: str | None = None,
 ) -> str:
     """
     Process video using Gemini's native video understanding.
@@ -98,6 +99,7 @@ async def _process_with_gemini(
         video_path: Path to the video file
         prompt: Prompt for analysis (string or dict with 'question' key)
         model: Gemini model to use
+        system_prompt: Optional system instruction for critical framing
 
     Returns:
         Text analysis from Gemini
@@ -129,10 +131,14 @@ async def _process_with_gemini(
         types.Part.from_bytes(data=video_data, mime_type=mime_type),
     ]
 
+    # Build config with system instruction if provided
+    config = types.GenerateContentConfig(system_instruction=system_prompt) if system_prompt else None
+
     # Make API call
     response = client.models.generate_content(
         model=model,
         contents=contents,
+        config=config,
     )
 
     return response.text
@@ -142,6 +148,7 @@ async def _process_with_openai(
     prompt: str,
     frames_base64: list[str],
     model: str = "gpt-5.2",
+    system_prompt: str | None = None,
 ) -> str:
     """
     Process video using OpenAI's vision API with pre-extracted frames.
@@ -150,6 +157,7 @@ async def _process_with_openai(
         prompt: Prompt for analysis
         frames_base64: Pre-extracted base64-encoded JPEG frames
         model: OpenAI model to use
+        system_prompt: Optional system instruction for critical framing
 
     Returns:
         Text analysis from OpenAI
@@ -178,10 +186,10 @@ async def _process_with_openai(
         )
 
     # Call OpenAI API
-    response = await client.responses.create(
-        model=model,
-        input=[{"role": "user", "content": content}],
-    )
+    kwargs: dict = {"model": model, "input": [{"role": "user", "content": content}]}
+    if system_prompt:
+        kwargs["instructions"] = system_prompt
+    response = await client.responses.create(**kwargs)
 
     return response.output_text if hasattr(response, "output_text") else str(response.output)
 
@@ -190,6 +198,7 @@ async def _process_with_anthropic(
     prompt: str,
     frames_base64: list[str],
     model: str = "claude-sonnet-4-5",
+    system_prompt: str | None = None,
 ) -> str:
     """
     Process video using Anthropic's Claude vision API with pre-extracted frames.
@@ -198,6 +207,7 @@ async def _process_with_anthropic(
         prompt: Prompt for analysis
         frames_base64: Pre-extracted base64-encoded JPEG frames
         model: Claude model to use
+        system_prompt: Optional system instruction for critical framing
 
     Returns:
         Text analysis from Claude
@@ -230,11 +240,14 @@ async def _process_with_anthropic(
     content.append({"type": "text", "text": prompt})
 
     # Call Claude API
-    response = client.messages.create(
-        model=model,
-        max_tokens=4096,
-        messages=[{"role": "user", "content": content}],
-    )
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": 4096,
+        "messages": [{"role": "user", "content": content}],
+    }
+    if system_prompt:
+        kwargs["system"] = system_prompt
+    response = client.messages.create(**kwargs)
 
     return response.content[0].text
 
@@ -243,6 +256,7 @@ async def _process_with_grok(
     prompt: str,
     frames_base64: list[str],
     model: str = "grok-4-1-fast-reasoning",
+    system_prompt: str | None = None,
 ) -> str:
     """
     Process video using Grok's vision API with pre-extracted frames.
@@ -252,6 +266,7 @@ async def _process_with_grok(
         prompt: Prompt for analysis
         frames_base64: Pre-extracted base64-encoded JPEG frames
         model: Grok model to use
+        system_prompt: Optional system instruction for critical framing
 
     Returns:
         Text analysis from Grok
@@ -278,10 +293,16 @@ async def _process_with_grok(
             },
         )
 
+    # Build messages list with optional system prompt
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": content})
+
     # Call Grok API (OpenAI-compatible)
     response = await client.chat.completions.create(
         model=model,
-        messages=[{"role": "user", "content": content}],
+        messages=messages,
     )
 
     return response.choices[0].message.content
@@ -291,6 +312,7 @@ async def _process_with_openrouter(
     prompt: str,
     frames_base64: list[str],
     model: str = "openai/gpt-5.2",
+    system_prompt: str | None = None,
 ) -> str:
     """
     Process video using OpenRouter's API with pre-extracted frames.
@@ -300,6 +322,7 @@ async def _process_with_openrouter(
         prompt: Prompt for analysis
         frames_base64: Pre-extracted base64-encoded JPEG frames
         model: Model to use (with provider prefix)
+        system_prompt: Optional system instruction for critical framing
 
     Returns:
         Text analysis from OpenRouter
@@ -326,10 +349,16 @@ async def _process_with_openrouter(
             },
         )
 
+    # Build messages list with optional system prompt
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": content})
+
     # Call OpenRouter API (OpenAI-compatible)
     response = await client.chat.completions.create(
         model=model,
-        messages=[{"role": "user", "content": content}],
+        messages=messages,
     )
 
     return response.choices[0].message.content
@@ -337,7 +366,7 @@ async def _process_with_openrouter(
 
 async def understand_video(
     video_path: str,
-    prompt: str = "What's happening in this video? Please describe the content, " "actions, and any important details you observe.",
+    prompt: str | None = None,
     num_frames: int | None = None,
     model: str | None = None,
     backend_type: str | None = None,
@@ -345,6 +374,7 @@ async def understand_video(
     agent_cwd: str | None = None,
     task_context: str | None = None,
     video_extraction_config: dict | None = None,
+    system_prompt: str | None = None,
 ) -> ExecutionResult:
     """
     Understand and analyze a video using the best available backend.
@@ -361,11 +391,11 @@ async def understand_video(
         video_path: Path to the video file (MP4, AVI, MOV, etc.)
                    - Relative path: Resolved relative to workspace
                    - Absolute path: Must be within allowed directories
-        prompt: Question or instruction about the video (default: asks for general description)
+        prompt: Question or instruction about the video (default: critical analysis prompt)
         num_frames: Number of key frames to extract (legacy, default: 8).
                    Prefer video_extraction_config for new usage.
         model: Model to use. If not specified, uses default from backend selector:
-               - Gemini: "gemini-3-flash-preview"
+               - Gemini: "gemini-3.1-pro-preview"
                - OpenAI: "gpt-5.2"
         backend_type: Preferred backend ("gemini" or "openai"). If specified and
                       has API key, this backend is used. Otherwise falls through
@@ -501,6 +531,10 @@ async def understand_video(
                 output_blocks=[TextContent(data=json.dumps(result, indent=2))],
             )
 
+        # Apply default prompt if none provided
+        if prompt is None:
+            prompt = "What's happening in this video? Please describe the content, " "actions, and any important details you observe."
+
         # Inject task context into prompt if available
         augmented_prompt = format_prompt_with_context(prompt, task_context)
 
@@ -526,30 +560,35 @@ async def understand_video(
                     video_path=vid_path,
                     prompt=augmented_prompt,
                     model=selected_model,
+                    system_prompt=system_prompt,
                 )
             elif selected_backend == "claude":
                 response_text = await _process_with_anthropic(
                     prompt=augmented_prompt,
                     frames_base64=frames_base64,
                     model=selected_model,
+                    system_prompt=system_prompt,
                 )
             elif selected_backend == "grok":
                 response_text = await _process_with_grok(
                     prompt=augmented_prompt,
                     frames_base64=frames_base64,
                     model=selected_model,
+                    system_prompt=system_prompt,
                 )
             elif selected_backend == "openrouter":
                 response_text = await _process_with_openrouter(
                     prompt=augmented_prompt,
                     frames_base64=frames_base64,
                     model=selected_model,
+                    system_prompt=system_prompt,
                 )
             else:  # openai (default)
                 response_text = await _process_with_openai(
                     prompt=augmented_prompt,
                     frames_base64=frames_base64,
                     model=selected_model,
+                    system_prompt=system_prompt,
                 )
 
             result = {

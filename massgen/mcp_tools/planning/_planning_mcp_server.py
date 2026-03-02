@@ -119,6 +119,9 @@ _workspace_path: Path | None = None
 # Whether two-tier workspace with git versioning is enabled
 _use_two_tier_workspace: bool = False
 
+# Optional injection directory for tasks from checklist propose_improvements
+_injection_dir: Path | None = None
+
 
 def _git_commit_on_task_completion(task_id: str, completion_notes: str | None) -> bool:
     """
@@ -254,6 +257,48 @@ def _load_plan_from_filesystem(agent_id: str) -> TaskPlan | None:
         return None
 
 
+def _check_and_inject_pending_tasks(plan: TaskPlan, injection_dir: Path | None = None) -> list[str]:
+    """Check for and inject pending tasks from propose_improvements.
+
+    Reads inject_tasks.json from the injection directory, adds tasks to the plan,
+    deletes the file to prevent double-injection, and saves the plan.
+
+    Args:
+        plan: TaskPlan to inject tasks into
+        injection_dir: Directory to check for inject_tasks.json, or None
+
+    Returns:
+        List of added task IDs (empty if no injection file or on error)
+    """
+    if injection_dir is None:
+        return []
+    inject_file = injection_dir / "inject_tasks.json"
+    if not inject_file.exists():
+        return []
+    try:
+        tasks = json.loads(inject_file.read_text())
+        added_ids = []
+        for t in tasks:
+            task = plan.add_task(
+                description=t["description"],
+                task_id=t.get("id"),
+                priority=t.get("priority", "medium"),
+                verification=t.get("verification"),
+                verification_method=t.get("verification_method"),
+                skip_verification=True,
+            )
+            # Merge extra metadata (criterion_id, type, sources, etc.)
+            task.metadata.update(t.get("metadata", {}))
+            added_ids.append(task.id)
+        inject_file.unlink()  # Consume — prevent double-add
+        _save_plan_to_filesystem(plan)
+        logger.info(f"[PlanningMCP] Injected {len(added_ids)} tasks from propose_improvements")
+        return added_ids
+    except Exception as e:
+        logger.warning(f"[PlanningMCP] Failed to process injection file: {e}")
+        return []
+
+
 def _get_or_create_plan(agent_id: str, orchestrator_id: str, require_verification: bool = True) -> TaskPlan:
     """
     Get existing plan or create new one for agent.
@@ -281,6 +326,9 @@ def _get_or_create_plan(agent_id: str, orchestrator_id: str, require_verificatio
     else:
         # Update flag on existing plan (in case it changed)
         _task_plans[key].require_verification = require_verification
+
+    # Check for pending task injection from propose_improvements
+    _check_and_inject_pending_tasks(_task_plans[key], _injection_dir)
 
     return _task_plans[key]
 
@@ -400,6 +448,12 @@ async def create_server() -> fastmcp.FastMCP:
         default=None,
         help="Optional path to directory for hook IPC files (PostToolUse injection).",
     )
+    parser.add_argument(
+        "--injection-dir",
+        type=str,
+        default=None,
+        help="Dir for task injection files from checklist propose_improvements",
+    )
     args = parser.parse_args()
 
     # Configure logging to stderr so it appears in MCP server output
@@ -411,7 +465,7 @@ async def create_server() -> fastmcp.FastMCP:
     logger.info(f"[PlanningMCP] Server starting for agent_id={args.agent_id}, orchestrator_id={args.orchestrator_id}")
 
     # Set workspace path if provided
-    global _workspace_path, _use_two_tier_workspace
+    global _workspace_path, _use_two_tier_workspace, _injection_dir
     if args.workspace_path:
         _workspace_path = Path(args.workspace_path)
         logger.info(f"[PlanningMCP] Workspace path set to: {_workspace_path}")
@@ -419,6 +473,11 @@ async def create_server() -> fastmcp.FastMCP:
     # Set two-tier workspace flag for git commits on task completion
     _use_two_tier_workspace = args.use_two_tier_workspace
     logger.info(f"[PlanningMCP] Two-tier workspace flag: {_use_two_tier_workspace}")
+
+    # Set injection directory for task injection from propose_improvements
+    if args.injection_dir:
+        _injection_dir = Path(args.injection_dir)
+        logger.info(f"[PlanningMCP] Injection dir set to: {_injection_dir}")
 
     # Create the FastMCP server
     mcp = fastmcp.FastMCP("Agent Task Planning")
@@ -651,6 +710,8 @@ async def create_server() -> fastmcp.FastMCP:
         priority: str = "medium",
         verification: str | None = None,
         verification_method: str | None = None,
+        subagent_id: str | None = None,
+        subagent_name: str | None = None,
     ) -> dict[str, Any]:
         """
         Add a new task to the plan.
@@ -662,6 +723,8 @@ async def create_server() -> fastmcp.FastMCP:
             priority: Task priority (low/medium/high, defaults to medium)
             verification: What success looks like (acceptance criteria). Required by default unless server runs with --no-require-verification.
             verification_method: How to verify (specific steps, e.g. "screenshot and check with read_media")
+            subagent_id: Optional ID of the subagent you plan to delegate this task to
+            subagent_name: Optional friendly name of the subagent (e.g. 'researcher', 'subagent_2')
 
         Returns:
             Dictionary with new task details
@@ -695,6 +758,8 @@ async def create_server() -> fastmcp.FastMCP:
                 priority=priority,
                 verification=verification,
                 verification_method=verification_method,
+                subagent_id=subagent_id,
+                subagent_name=subagent_name,
             )
 
             # Save to filesystem if configured

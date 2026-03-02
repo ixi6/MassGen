@@ -304,3 +304,147 @@ class TestMultimodalDiagnosticReportGate:
         }
         result = _evaluate_gap_report(str(report), state)
         assert result["passed"] is True
+
+
+# ===========================================================================
+# Video System Prompt Parity
+# ===========================================================================
+
+
+class TestVideoSystemPromptParity:
+    """Video analysis gets the same critical framing as image analysis."""
+
+    def test_understand_video_accepts_system_prompt(self):
+        """understand_video() must accept a system_prompt parameter."""
+        import inspect
+
+        from massgen.tool._multimodal_tools.understand_video import (
+            understand_video,
+        )
+
+        sig = inspect.signature(understand_video)
+        assert "system_prompt" in sig.parameters
+
+    def test_video_default_model_is_pro(self):
+        """Gemini default for video should be gemini-3.1-pro-preview (not flash)."""
+        from massgen.tool._multimodal_tools.backend_selector import GEMINI_VIDEO
+
+        assert GEMINI_VIDEO.model == "gemini-3.1-pro-preview"
+
+    def test_video_gets_same_system_prompt_as_image(self, tmp_path):
+        """read_media passes VISION_SYSTEM_PROMPT to understand_video."""
+        import asyncio
+        import json
+        from unittest.mock import AsyncMock, patch
+
+        from massgen.tool._multimodal_tools.analysis_prompts import (
+            VISION_SYSTEM_PROMPT,
+        )
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        # Create a fake .mp4 file and CONTEXT.md
+        video_file = tmp_path / "test.mp4"
+        video_file.write_bytes(b"\x00" * 100)
+        context_file = tmp_path / "CONTEXT.md"
+        context_file.write_text("Test context for video analysis")
+
+        # Mock understand_video to capture kwargs
+        mock_result_data = json.dumps(
+            {
+                "success": True,
+                "operation": "understand_video",
+                "response": "mock analysis",
+            },
+        )
+        from massgen.tool._result import ExecutionResult, TextContent
+
+        mock_result = ExecutionResult(
+            output_blocks=[TextContent(data=mock_result_data)],
+        )
+        mock_uv = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "massgen.tool._multimodal_tools.understand_video.understand_video",
+            mock_uv,
+        ):
+            asyncio.get_event_loop().run_until_complete(
+                read_media(
+                    file_path="test.mp4",
+                    agent_cwd=str(tmp_path),
+                    task_context="Test context for video analysis",
+                ),
+            )
+
+        mock_uv.assert_called_once()
+        call_kwargs = mock_uv.call_args
+        assert call_kwargs.kwargs.get("system_prompt") == VISION_SYSTEM_PROMPT
+
+    def test_video_default_prompt_is_critical(self, tmp_path):
+        """Video should use DEFAULT_MEDIA_PROMPT_TEMPLATE (not the old descriptive default)."""
+        import asyncio
+        import json
+        from unittest.mock import AsyncMock, patch
+
+        from massgen.tool._multimodal_tools.analysis_prompts import (
+            DEFAULT_MEDIA_PROMPT_TEMPLATE,
+        )
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        # Create a fake .mp4 file and CONTEXT.md
+        video_file = tmp_path / "test.mp4"
+        video_file.write_bytes(b"\x00" * 100)
+        context_file = tmp_path / "CONTEXT.md"
+        context_file.write_text("Test context for video analysis")
+
+        mock_result_data = json.dumps(
+            {
+                "success": True,
+                "operation": "understand_video",
+                "response": "mock analysis",
+            },
+        )
+        from massgen.tool._result import ExecutionResult, TextContent
+
+        mock_result = ExecutionResult(
+            output_blocks=[TextContent(data=mock_result_data)],
+        )
+        mock_uv = AsyncMock(return_value=mock_result)
+
+        with patch(
+            "massgen.tool._multimodal_tools.understand_video.understand_video",
+            mock_uv,
+        ):
+            asyncio.get_event_loop().run_until_complete(
+                read_media(
+                    file_path="test.mp4",
+                    agent_cwd=str(tmp_path),
+                    task_context="Test context for video analysis",
+                ),
+            )
+
+        mock_uv.assert_called_once()
+        call_kwargs = mock_uv.call_args
+        expected_prompt = DEFAULT_MEDIA_PROMPT_TEMPLATE.format(media_type="video")
+        assert call_kwargs.kwargs.get("prompt") == expected_prompt
+
+    def test_video_backend_functions_accept_system_prompt(self):
+        """All _process_with_* video backend functions accept system_prompt."""
+        import inspect
+
+        from massgen.tool._multimodal_tools.understand_video import (
+            _process_with_anthropic,
+            _process_with_gemini,
+            _process_with_grok,
+            _process_with_openai,
+            _process_with_openrouter,
+        )
+
+        for fn in [
+            _process_with_gemini,
+            _process_with_openai,
+            _process_with_anthropic,
+            _process_with_grok,
+            _process_with_openrouter,
+        ]:
+            sig = inspect.signature(fn)
+            assert "system_prompt" in sig.parameters, f"{fn.__name__} missing system_prompt parameter"

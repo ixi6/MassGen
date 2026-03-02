@@ -474,6 +474,7 @@ async def read_media(
                         allowed_paths=allowed_paths,
                         task_context=task_context,
                         video_extraction_config=video_config,
+                        system_prompt=vision_system_prompt,
                     ),
                     timeout=MEDIA_ANALYSIS_TIMEOUT,
                 )
@@ -591,6 +592,7 @@ async def read_media(
                                 allowed_paths=allowed_paths,
                                 task_context=task_context,
                                 video_extraction_config=video_config,
+                                system_prompt=vision_system_prompt,
                             ),
                             timeout=MEDIA_ANALYSIS_TIMEOUT,
                         )

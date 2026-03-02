@@ -389,6 +389,11 @@ class TestSessionRegistryLocking:
 
     def test_session_registry_concurrent_writes_with_noop_flock_still_safe(self, tmp_path, monkeypatch):
         """Thread concurrency must stay safe even if OS flock is ineffective in-process."""
+        import sys
+
+        if sys.platform == "win32":
+            pytest.skip("fcntl is unavailable on Windows")
+
         import fcntl
         import json
         import time

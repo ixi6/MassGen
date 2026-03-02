@@ -2036,3 +2036,161 @@ class TestAvailableAgentLabelsCoverage:
         )
         assert result["verdict"] == "new_answer"
         assert result.get("incomplete_scores") is True
+
+
+# ---------------------------------------------------------------------------
+# _convert_task_plan_to_inject_format
+# ---------------------------------------------------------------------------
+
+
+class TestConvertTaskPlanToInjectFormat:
+    """Tests for _convert_task_plan_to_inject_format helper."""
+
+    def test_convert_improve_item(self):
+        """Improve task_plan item converts to correct injection format."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        task_plan = [
+            {
+                "type": "improve",
+                "criterion_id": "E2",
+                "criterion": "Uses vivid imagery",
+                "plan": "Add more sensory details in stanza 2",
+                "sources": ["agent1.1"],
+            },
+        ]
+
+        result = _convert_task_plan_to_inject_format(task_plan)
+
+        assert len(result) == 1
+        task = result[0]
+        assert task["description"] == "[E2] Add more sensory details in stanza 2"
+        assert task["verification"] == "Uses vivid imagery"
+        assert task["priority"] == "high"
+        assert task["metadata"]["criterion_id"] == "E2"
+        assert task["metadata"]["type"] == "improve"
+        assert task["metadata"]["sources"] == ["agent1.1"]
+        assert task["metadata"]["injected"] is True
+
+    def test_convert_preserve_item(self):
+        """Preserve task_plan item converts to correct injection format."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        task_plan = [
+            {
+                "type": "preserve",
+                "criterion_id": "E4",
+                "criterion": "Tone is consistent",
+                "what_to_protect": "Warm conversational tone in intro",
+                "source": "agent2.1",
+            },
+        ]
+
+        result = _convert_task_plan_to_inject_format(task_plan)
+
+        assert len(result) == 1
+        task = result[0]
+        assert task["description"] == "[E4] Preserve: Warm conversational tone in intro"
+        assert task["verification"] == "Tone is consistent"
+        assert task["priority"] == "medium"
+        assert task["metadata"]["criterion_id"] == "E4"
+        assert task["metadata"]["type"] == "preserve"
+        assert task["metadata"]["source"] == "agent2.1"
+        assert task["metadata"]["injected"] is True
+
+    def test_convert_mixed_items(self):
+        """Both improve and preserve items in a single task_plan convert correctly."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        task_plan = [
+            {
+                "type": "preserve",
+                "criterion_id": "E1",
+                "criterion": "Has strong opening",
+                "what_to_protect": "Hook in first line",
+                "source": "agent1.1",
+            },
+            {
+                "type": "improve",
+                "criterion_id": "E3",
+                "criterion": "Includes examples",
+                "plan": "Add 3 concrete examples",
+                "sources": [],
+            },
+        ]
+
+        result = _convert_task_plan_to_inject_format(task_plan)
+
+        assert len(result) == 2
+        assert result[0]["metadata"]["type"] == "preserve"
+        assert result[1]["metadata"]["type"] == "improve"
+
+
+# ---------------------------------------------------------------------------
+# _write_inject_file
+# ---------------------------------------------------------------------------
+
+
+class TestWriteInjectFile:
+    """Tests for _write_inject_file helper that writes injection files."""
+
+    def test_propose_improvements_writes_inject_file(self, tmp_path):
+        """Valid propose_improvements result + injection_dir → file written with correct format."""
+        from massgen.mcp_tools.checklist_tools_server import _write_inject_file
+
+        task_plan = [
+            {
+                "type": "improve",
+                "criterion_id": "E1",
+                "criterion": "Clear structure",
+                "plan": "Add section headers",
+                "sources": ["agent1.1"],
+            },
+        ]
+
+        _write_inject_file(tmp_path, task_plan)
+
+        inject_file = tmp_path / "inject_tasks.json"
+        assert inject_file.exists()
+
+        data = json.loads(inject_file.read_text())
+        assert len(data) == 1
+        assert data[0]["description"] == "[E1] Add section headers"
+        assert data[0]["metadata"]["injected"] is True
+
+    def test_propose_improvements_creates_missing_dir(self, tmp_path):
+        """_write_inject_file creates the injection directory if it doesn't exist."""
+        from massgen.mcp_tools.checklist_tools_server import _write_inject_file
+
+        missing_dir = tmp_path / "nonexistent" / "nested"
+        assert not missing_dir.exists()
+
+        task_plan = [
+            {
+                "type": "improve",
+                "criterion_id": "E1",
+                "criterion": "Clear structure",
+                "plan": "Add section headers",
+                "sources": ["agent1.1"],
+            },
+        ]
+
+        _write_inject_file(missing_dir, task_plan)
+
+        inject_file = missing_dir / "inject_tasks.json"
+        assert inject_file.exists()
+        data = json.loads(inject_file.read_text())
+        assert len(data) == 1
+
+    def test_propose_improvements_no_inject_when_no_dir(self):
+        """No injection_dir → no file written, no error."""
+        from massgen.mcp_tools.checklist_tools_server import _write_inject_file
+
+        # Should be a safe no-op
+        _write_inject_file(None, [{"type": "improve", "criterion_id": "E1", "criterion": "x", "plan": "y", "sources": []}])

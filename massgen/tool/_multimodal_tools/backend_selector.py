@@ -56,7 +56,7 @@ GEMINI_AUDIO = BackendConfig(
 
 GEMINI_VIDEO = BackendConfig(
     name="gemini",
-    model="gemini-3-flash-preview",
+    model="gemini-3.1-pro-preview",
     api_key_env_vars=["GOOGLE_API_KEY", "GEMINI_API_KEY"],
 )
 

@@ -2549,6 +2549,7 @@ class Orchestrator(ChatAgent):
                 on_subagent_started=_on_persona_subagent_started,
                 voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
                 voting_threshold=pre_collab_voting_threshold,
+                has_planning_spec_context=bool(self._plan_session_id),
             )
 
             source = getattr(generator, "last_generation_source", "unknown")
@@ -2735,6 +2736,7 @@ class Orchestrator(ChatAgent):
                 on_subagent_started=_on_criteria_subagent_started,
                 voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
                 voting_threshold=pre_collab_voting_threshold,
+                has_planning_spec_context=bool(self._plan_session_id),
             )
 
             self._generated_evaluation_criteria = criteria
@@ -4457,6 +4459,7 @@ Your answer:"""
                     on_subagent_started=_on_decomposition_subagent_started,
                     voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
                     voting_threshold=pre_collab_voting_threshold,
+                    has_planning_spec_context=bool(self._plan_session_id),
                 )
 
                 source = getattr(decomposer, "last_generation_source", "unknown")
@@ -10576,6 +10579,7 @@ Your answer:"""
                         )
                 response_text = ""
                 tool_calls = []
+                unknown_tool_calls: list[dict] = []
                 workflow_tool_found = False
                 # Determine internal tool names for this run (uses agent-specific tools to respect vote-only mode).
                 internal_tool_names = {(t.get("function", {}) or {}).get("name") for t in (agent_workflow_tools or []) if isinstance(t, dict)}
@@ -10795,6 +10799,10 @@ Your answer:"""
                                     f"⚠️ Unknown tool: {tool_name} (not registered)",
                                     kind="coordination",
                                 )
+                                # Track this call so enforcement doesn't create an orphaned
+                                # tool_result for it (backends like Claude strip unknown tool_use
+                                # blocks from history, making a tool_result invalid → API 400).
+                                unknown_tool_calls.append(tool_call)
                                 continue
 
                             if tool_name == "new_answer":
@@ -11687,11 +11695,21 @@ Your answer:"""
                         )
 
                         # If there were tool calls, we must provide tool results before continuing
-                        # (Response API requires function_call + function_call_output pairs)
-                        if tool_calls:
+                        # (Response API requires function_call + function_call_output pairs).
+                        # Filter out unknown tool calls first: backends like Claude strip their
+                        # tool_use blocks from history, so a tool_result for them causes a 400.
+                        enforcement_tool_calls = (
+                            agent.backend.filter_enforcement_tool_calls(
+                                tool_calls,
+                                unknown_tool_calls,
+                            )
+                            if tool_calls
+                            else []
+                        )
+                        if enforcement_tool_calls:
                             enforcement_msg = self._create_tool_error_messages(
                                 agent,
-                                tool_calls,
+                                enforcement_tool_calls,
                                 error_msg,
                             )
                         else:

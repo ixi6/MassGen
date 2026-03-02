@@ -364,6 +364,76 @@ class TestSessionRegistryLocking:
         expected = {f"session_{i:03d}" for i in range(write_count)}
         assert session_ids == expected, f"Missing or corrupt sessions. Got {len(session_ids)}, " f"expected {write_count}. Missing: {expected - session_ids}"
 
+    def test_session_registry_init_never_overwrites_existing_file(self, tmp_path, monkeypatch):
+        """Registry init must not clobber existing data, even with stale exists() info."""
+        from massgen.session._registry import SessionRegistry
+
+        registry_path = tmp_path / "sessions.json"
+        reg = SessionRegistry(registry_path=str(registry_path))
+        reg.register_session(session_id="existing_session", model="test-model")
+        before = registry_path.read_text()
+
+        original_exists = Path.exists
+
+        def _stale_exists(path_obj: Path) -> bool:
+            if path_obj == registry_path:
+                return False
+            return original_exists(path_obj)
+
+        monkeypatch.setattr(Path, "exists", _stale_exists)
+
+        SessionRegistry(registry_path=str(registry_path))
+        after = registry_path.read_text()
+
+        assert after == before, "SessionRegistry init should never overwrite an existing registry file"
+
+    def test_session_registry_concurrent_writes_with_noop_flock_still_safe(self, tmp_path, monkeypatch):
+        """Thread concurrency must stay safe even if OS flock is ineffective in-process."""
+        import fcntl
+        import json
+        import time
+
+        from massgen.session._registry import SessionRegistry
+
+        registry_path = tmp_path / "sessions.json"
+        errors: list[Exception] = []
+        write_count = 20
+
+        # Simulate environments where flock does not provide in-process thread serialization.
+        monkeypatch.setattr(fcntl, "flock", lambda *_args, **_kwargs: None)
+
+        def _slow_save(self, data):
+            payload = json.dumps(data, indent=2)
+            midpoint = max(1, len(payload) // 2)
+            with open(self.registry_path, "w") as f:
+                f.write(payload[:midpoint])
+                f.flush()
+                time.sleep(0.002)
+                f.write(payload[midpoint:])
+
+        monkeypatch.setattr(SessionRegistry, "_save_registry", _slow_save)
+
+        def _write_session(i: int):
+            try:
+                reg = SessionRegistry(registry_path=str(registry_path))
+                reg.register_session(session_id=f"session_{i:03d}", model="test-model")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=_write_session, args=(i,)) for i in range(write_count)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors, f"Registry errors during concurrent writes: {errors}"
+
+        reg = SessionRegistry(registry_path=str(registry_path))
+        data = reg._load_registry()
+        session_ids = {s["session_id"] for s in data["sessions"]}
+        expected = {f"session_{i:03d}" for i in range(write_count)}
+        assert session_ids == expected, f"Missing or corrupt sessions. Got {len(session_ids)}, " f"expected {write_count}. Missing: {expected - session_ids}"
+
 
 # ---------------------------------------------------------------------------
 # Multi-process: snapshot storage scoping

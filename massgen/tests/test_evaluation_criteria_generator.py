@@ -281,6 +281,31 @@ class TestGenerationPrompt:
         prompt = self._make_prompt(min_criteria=4, max_criteria=10)
         assert "4" in prompt and "10" in prompt
 
+    def test_prompt_mentions_planning_context_alignment(self):
+        """Prompt should instruct alignment with available planning/spec context."""
+        gen = EvaluationCriteriaGenerator()
+        prompt = gen._build_generation_prompt(
+            task="Build a website",
+            has_changedoc=False,
+            min_criteria=4,
+            max_criteria=10,
+            has_planning_spec_context=True,
+        )
+        prompt_lower = prompt.lower()
+        assert "planning/spec context" in prompt_lower
+        assert "align" in prompt_lower
+
+    def test_prompt_omits_planning_context_guidance_when_flag_false(self):
+        gen = EvaluationCriteriaGenerator()
+        prompt = gen._build_generation_prompt(
+            task="Build a website",
+            has_changedoc=False,
+            min_criteria=4,
+            max_criteria=10,
+            has_planning_spec_context=False,
+        )
+        assert "planning/spec context" not in prompt.lower()
+
     def test_prompt_defines_correctness_dimensions(self):
         """Prompt must define correctness as structural, content, and experiential."""
         prompt = self._make_prompt()
@@ -414,3 +439,62 @@ async def test_subagent_criteria_generation_passes_voting_threshold(monkeypatch,
 
     assert len(criteria) >= 4
     assert captured["coordination"]["voting_threshold"] == 9
+
+
+@pytest.mark.asyncio
+async def test_subagent_criteria_generation_inherits_parent_context_paths_readonly(monkeypatch, tmp_path):
+    captured = {}
+    parent_context = tmp_path / "spec_frozen"
+    parent_context.mkdir()
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["parent_context_paths"] = kwargs.get("parent_context_paths")
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "criteria": [
+                            {"text": "Goal alignment", "category": "must"},
+                            {"text": "No defects", "category": "must"},
+                            {"text": "Depth and completeness", "category": "should"},
+                            {"text": "Intentional craft", "category": "should"},
+                        ],
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = EvaluationCriteriaGenerator()
+    criteria = await generator.generate_criteria_via_subagent(
+        task="Test task",
+        agent_configs=[
+            {
+                "id": "agent_a",
+                "backend": {
+                    "type": "openai",
+                    "model": "gpt-4o-mini",
+                    "context_paths": [{"path": str(parent_context), "permission": "write"}],
+                },
+            },
+        ],
+        has_changedoc=False,
+        parent_workspace=str(tmp_path),
+        log_directory=None,
+        orchestrator_id="orch_test",
+        min_criteria=4,
+        max_criteria=7,
+    )
+
+    assert len(criteria) >= 4
+    assert captured["parent_context_paths"] is not None
+    assert {"path": str(tmp_path.resolve()), "permission": "read"} in captured["parent_context_paths"]
+    assert {"path": str(parent_context.resolve()), "permission": "read"} in captured["parent_context_paths"]

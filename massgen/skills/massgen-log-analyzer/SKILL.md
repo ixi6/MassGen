@@ -752,6 +752,92 @@ Check if agents needed retries due to workflow violations. Key metrics:
 
 See "Enforcement Reliability" in the Key Local Log Files section for the full schema and reason codes.
 
+#### 11. Answer Quality Progression
+
+**Data Sources:** `agent_outputs/agent_*.txt`, `agent_*/*/execution_trace.md`, `agent_*/*/vote.json`
+
+For each agent, trace how answer quality evolved across rounds:
+- What specifically changed between answer N and answer N+1?
+- Were changes **substantive** (new approach, novel feature, structural improvement) or **cosmetic** (minor wording, small style tweak)?
+- Did any agents regress — produce a worse answer after seeing others?
+- Which evaluation criteria improved per round, and which stagnated?
+
+**Score each round-over-round transition:**
+- 🟢 Substantive improvement — meaningfully better on at least one important dimension
+- 🟡 Marginal improvement — polished but no new capability or insight
+- 🔴 No improvement / regression — same or worse despite the cost
+
+#### 12. Improvement Proposal Quality
+
+**Data Sources:** `agent_outputs/agent_*.txt` (look for gap analysis, diagnostic sections, improvement plans), `agent_*/*/vote.json`
+
+Before each new answer, agents (or the coordination system) propose improvements. Analyze each:
+- **Specificity**: Did the proposal identify *why* something fails, or just that it fails? ("Animation timing misaligned with 5-second viewing window" vs "improve animation")
+- **Actionability**: Could a downstream agent implement the proposal without additional reasoning?
+- **Accuracy**: Did the proposal correctly diagnose the root problem, or address symptoms?
+- **Completeness**: Did it cover all the key gaps, or miss the decisive differentiator?
+
+**Rate each proposal:**
+
+| Proposal | Specific? | Actionable? | Accurate? | Was it the right call? |
+|----------|-----------|-------------|-----------|------------------------|
+| [proposal summary] | Yes/No | Yes/No | Yes/No | Yes/No — [why] |
+
+Also note: were improvements proposed by the agent itself (self-reflection), by peer evaluation, or inferred from evaluation criteria gaps?
+
+#### 13. Round ROI ("Was It Worth It?")
+
+**Data Sources:** `metrics_summary.json`, `coordination_events.json`, agent outputs
+
+For each round, evaluate return on investment:
+- **Cost**: tokens × model rate for this round
+- **Time**: wall-clock seconds for this round
+- **Quality delta**: what materially changed vs the prior best answer
+- **Verdict**: Was the round worth its cost and time?
+
+| Round | Agent | Cost | Time | Quality Delta | Verdict |
+|-------|-------|------|------|---------------|---------|
+| R0 | agent_a | $X | Xs | Baseline | — |
+| R1 | agent_a | $X | Xs | [what changed] | 🟢/🟡/🔴 |
+
+**Diminishing returns detection**: At what round did additional iterations stop producing meaningful improvement? Was there a clear stopping point the system missed?
+
+Also flag: did any agent spend expensive rounds just verifying/validating rather than improving?
+
+#### 14. Delegation & Model Allocation Analysis
+
+**Data Sources:** `agent_outputs/agent_*.txt`, `execution_trace.md`, `metrics_summary.json`
+
+Analyze what fraction of each agent's work was mechanical vs required genuine intelligence, and whether the right model tier was used.
+
+**Classify each agent's work per round:**
+
+- **Mechanical** (predictable, templated, a weaker model could do it — AND consumes enough context to be worth delegating):
+  - Structural validation (element counts, dimension checks, format compliance) — especially when it generates lots of shell output
+  - Boilerplate generation (loops, coordinate math, template filling) — large repetitive code blocks
+  - Binary checklist scoring (E1–E4 style: does feature X exist?) — when it involves many tool calls or long output
+  - Evidence collection (running shell commands, parsing output, pixel diffs) — high token cost for low reasoning content
+
+  *Note: protocol steps like task status updates and workflow tool calls are not worth delegating — they're low-context and the main model handles them cheaply inline. The question is whether delegating saves meaningful tokens, not just whether a weaker model could theoretically do it.*
+
+- **Quality / Intelligence** (requires genuine reasoning, synthesis, or creativity):
+  - Root cause diagnosis (connecting symptom to underlying design flaw)
+  - Cross-agent synthesis (identifying best elements from N answers and planning a hybrid)
+  - Novel approach invention (feature or design not present in any prior answer)
+  - Pedagogical or domain reasoning (e.g., "this animation timing misses the 5s attention window")
+  - Tradeoff analysis (why one design choice beats another for a specific goal)
+
+**For each agent/round, estimate:**
+- % mechanical vs % quality reasoning
+- Which specific activities were mechanical vs intelligence-requiring
+- Quote passages: mechanical template-filling vs genuine diagnostic insight
+
+**Overall assessment:**
+- What fraction of total context (tokens) across the run was mechanical?
+- Could a cheaper model (e.g., Haiku) have handled the mechanical fraction without degrading output quality?
+- Were any quality-critical moments handled by a weaker subagent (or should they have been escalated)?
+- Estimated cost savings if mechanical work had been routed to a cheaper model tier
+
 ### Data Sources for Each Question
 
 | Question | Primary Source | Secondary Source |

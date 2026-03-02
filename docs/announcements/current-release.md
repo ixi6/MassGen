@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
+We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (OpenAI GPT Image/Sora, Google Nano Banana 2/Veo 3.1, Grok Imagine, ElevenLabs) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
 
 ## Install
 
@@ -29,7 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (ElevenLabs TTS/STT, Nano Banana 2, Grok Imagine) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
+We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers (OpenAI GPT Image/Sora, Google Nano Banana 2/Veo 3.1, Grok Imagine, ElevenLabs) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
 
 **Key Feature: Comprehensive Multimodal Revamp**
 

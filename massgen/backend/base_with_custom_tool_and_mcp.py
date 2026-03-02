@@ -3316,17 +3316,51 @@ class CustomToolAndMCPBackend(LLMBackend):
                 result.chunks.clear()
 
         # After all tools complete, merge buffered messages into history in API order.
+        all_per_call_messages: list[list[dict[str, Any]]] = []
         for idx, call in enumerate(all_calls):
             result = results_by_index.get(idx)
             if not result:
                 continue
 
             if result.messages:
-                updated_messages.extend(result.messages)
+                all_per_call_messages.append(result.messages)
 
             call_id = call.get("call_id", "")
             if call_id:
                 processed_call_ids.add(call_id)
+
+        self._merge_parallel_tool_results(updated_messages, all_per_call_messages)
+
+    def _merge_parallel_tool_results(
+        self,
+        updated_messages: list[dict[str, Any]],
+        all_per_call_messages: list[list[dict[str, Any]]],
+    ) -> None:
+        """Merge per-call tool result messages into shared history after parallel execution.
+
+        Default implementation: append each per-call message list directly (correct for
+        OpenAI/Gemini, where each tool result is its own message).
+
+        Override in backends that require all tool results for a turn to be in a single
+        message (e.g. Claude, where the API enforces tool_result consolidation).
+        """
+        for msgs in all_per_call_messages:
+            updated_messages.extend(msgs)
+
+    def filter_enforcement_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        unknown_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return the subset of tool_calls that are safe to send tool_result enforcement for.
+
+        Default: return all calls unchanged.  For OpenAI/Gemini the assistant message
+        always preserves the tool_calls field, so every tool_result is valid.
+
+        Override in backends where unknown tool calls are stripped from assistant message
+        history, making tool_result enforcement produce an API error (e.g. Claude).
+        """
+        return tool_calls
 
     async def _stream_tool_execution_via_nlip(
         self,

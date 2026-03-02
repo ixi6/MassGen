@@ -164,6 +164,14 @@ class MockLLMBackend:
             "content": result,
         }
 
+    def filter_enforcement_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        unknown_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Default: return all calls (mock represents a non-Claude backend)."""
+        return tool_calls
+
     async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, **kwargs):
         from massgen.backend.base import StreamChunk
 

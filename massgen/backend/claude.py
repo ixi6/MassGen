@@ -622,6 +622,79 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         async for chunk in self._process_stream(stream, all_params, agent_id):
             yield chunk
 
+    def _merge_parallel_tool_results(
+        self,
+        updated_messages: list[dict[str, Any]],
+        all_per_call_messages: list[list[dict[str, Any]]],
+    ) -> None:
+        """Consolidate parallel tool results into a single user message for Claude API.
+
+        Claude API has two strict requirements (documented):
+          1. All tool_result blocks for a given assistant turn MUST be in ONE user message.
+          2. That message MUST immediately follow the assistant message — no intervening
+             messages of any kind are allowed between the assistant's tool_use blocks and
+             the user's tool_result blocks.
+
+        When tools run in parallel each tool writes to an isolated buffer, producing
+        separate per-call user messages. Post-tool hook reminders (strategy='user_message')
+        also land in those buffers as plain user messages.
+
+        This override collects all tool_result blocks first, writes them as a single
+        consolidated user message immediately after the assistant message, and only then
+        appends any deferred non-tool-result messages (e.g. hook reminders).
+        """
+        tool_result_blocks: list[dict[str, Any]] = []
+        deferred_messages: list[dict[str, Any]] = []  # Hook reminders, etc.
+
+        for msgs in all_per_call_messages:
+            for msg in msgs:
+                if msg.get("role") == "user" and isinstance(msg.get("content"), list) and msg["content"] and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in msg["content"]):
+                    tool_result_blocks.extend(msg["content"])
+                else:
+                    deferred_messages.append(msg)
+
+        # Step 1: consolidated tool_result message IMMEDIATELY after the assistant.
+        if tool_result_blocks:
+            # Merge into an existing tool_result user message that already follows the
+            # last assistant message (e.g. from a prior sequential step), or create one.
+            existing_tr_idx = None
+            for i in range(len(updated_messages) - 1, -1, -1):
+                m = updated_messages[i]
+                if m.get("role") == "assistant":
+                    break
+                if m.get("role") == "user" and isinstance(m.get("content"), list) and m["content"] and isinstance(m["content"][0], dict) and m["content"][0].get("type") == "tool_result":
+                    existing_tr_idx = i
+                    break
+
+            if existing_tr_idx is not None:
+                updated_messages[existing_tr_idx]["content"].extend(tool_result_blocks)
+            else:
+                updated_messages.append({"role": "user", "content": tool_result_blocks})
+
+        # Step 2: deferred messages (hook reminders) go AFTER the tool_result message.
+        updated_messages.extend(deferred_messages)
+
+    def filter_enforcement_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        unknown_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Filter out unknown tool calls from enforcement to avoid Claude API 400 errors.
+
+        Claude requires every tool_result block to reference a tool_use block in the
+        immediately preceding assistant message. Unknown tools (not registered as workflow,
+        MCP, or custom) are silently dropped by the orchestrator and never reach the
+        assistant message history. Sending a tool_result for such a call produces:
+          "messages.N: unexpected `tool_use_id` found in `tool_result` blocks"
+
+        Use object identity (id()) to match — the same dict objects that were appended to
+        the orchestrator's tool_calls list are passed here unchanged.
+        """
+        if not unknown_tool_calls:
+            return tool_calls
+        unknown_ids = {id(tc) for tc in unknown_tool_calls}
+        return [tc for tc in tool_calls if id(tc) not in unknown_ids]
+
     def _append_tool_result_message(
         self,
         updated_messages: list[dict[str, Any]],

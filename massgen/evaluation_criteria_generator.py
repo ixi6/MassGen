@@ -556,6 +556,7 @@ class EvaluationCriteriaGenerator:
         has_changedoc: bool,
         min_criteria: int = 4,
         max_criteria: int = 7,
+        has_planning_spec_context: bool = False,
     ) -> str:
         """Build the prompt for criteria generation.
 
@@ -564,6 +565,8 @@ class EvaluationCriteriaGenerator:
             has_changedoc: Whether changedoc mode is active
             min_criteria: Minimum number of criteria
             max_criteria: Maximum number of criteria
+            has_planning_spec_context: Whether planning/spec context is mounted
+                and should be explicitly referenced by prompt guidance.
 
         Returns:
             The formatted prompt string
@@ -576,10 +579,21 @@ class EvaluationCriteriaGenerator:
   Tag this criterion as "must".
 """
 
+        planning_context_section = ""
+        if has_planning_spec_context:
+            planning_context_section = """
+
+## Planning/Spec Context Alignment
+Read the mounted planning/spec context before generating criteria and align with \
+it so goals, personas, and deliverable expectations stay coherent. Treat planning/spec \
+files as read-only references — do not modify them.
+"""
+
         return f"""You are generating evaluation criteria for a multi-agent AI system.
 
 ## Task Being Evaluated
 {task}
+{planning_context_section}
 
 ## Your Goal
 Generate {min_criteria}-{max_criteria} concrete, verifiable evaluation criteria \
@@ -789,6 +803,7 @@ Generate evaluation criteria now for the task above."""
         on_subagent_started: Callable | None = None,
         voting_sensitivity: str | None = None,
         voting_threshold: int | None = None,
+        has_planning_spec_context: bool = False,
     ) -> list[GeneratedCriterion]:
         """Generate criteria via a subagent run.
 
@@ -806,6 +821,8 @@ Generate evaluation criteria now for the task above."""
                 the pre-collaboration subagent coordination config.
             voting_threshold: Optional voting threshold to pass through to
                 the pre-collaboration subagent coordination config.
+            has_planning_spec_context: Whether planning/spec context is mounted
+                and should be explicitly referenced by prompt guidance.
 
         Returns:
             List of GeneratedCriterion objects
@@ -862,6 +879,10 @@ Generate evaluation criteria now for the task above."""
                 agents=simplified,
                 coordination=coordination,
             )
+            parent_context_paths = self._build_subagent_parent_context_paths(
+                parent_workspace=parent_workspace,
+                agent_configs=agent_configs,
+            )
 
             manager = SubagentManager(
                 parent_workspace=criteria_workspace,
@@ -872,6 +893,7 @@ Generate evaluation criteria now for the task above."""
                 default_timeout=300,
                 subagent_orchestrator_config=subagent_config,
                 log_directory=log_directory,
+                parent_context_paths=parent_context_paths,
             )
 
             prompt = self._build_generation_prompt(
@@ -879,6 +901,7 @@ Generate evaluation criteria now for the task above."""
                 has_changedoc,
                 min_criteria,
                 max_criteria,
+                has_planning_spec_context=has_planning_spec_context,
             )
 
             def _status_callback(subagent_id: str) -> Any | None:
@@ -946,6 +969,51 @@ Generate evaluation criteria now for the task above."""
             logger.error(f"Failed to generate criteria via subagent: {e}")
             self.last_generation_source = "fallback"
             return get_default_criteria(has_changedoc=has_changedoc)
+
+    @staticmethod
+    def _build_subagent_parent_context_paths(
+        parent_workspace: str,
+        agent_configs: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        """Build read-only context paths for pre-collab criteria subagents."""
+        base_workspace = Path(parent_workspace).resolve()
+        context_paths: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        def _add_path(raw_path: str | None) -> None:
+            if not raw_path:
+                return
+            try:
+                path_obj = Path(raw_path)
+                resolved = path_obj.resolve() if path_obj.is_absolute() else (base_workspace / path_obj).resolve()
+            except Exception:
+                return
+
+            path_str = str(resolved)
+            if path_str in seen:
+                return
+            seen.add(path_str)
+            context_paths.append({"path": path_str, "permission": "read"})
+
+        _add_path(str(base_workspace))
+
+        for config in agent_configs:
+            if not isinstance(config, dict):
+                continue
+            backend = config.get("backend", {})
+            if not isinstance(backend, dict):
+                continue
+            inherited_paths = backend.get("context_paths", [])
+            if not isinstance(inherited_paths, list):
+                continue
+            for entry in inherited_paths:
+                if isinstance(entry, str):
+                    _add_path(entry)
+                elif isinstance(entry, dict):
+                    raw_path = entry.get("path")
+                    _add_path(str(raw_path).strip() if raw_path else None)
+
+        return context_paths
 
     def _find_criteria_json(
         self,

@@ -419,6 +419,28 @@ class TestBuildSubagentPrompt:
         )
         assert "You are a security expert" in prompt
 
+    def test_subagent_prompt_mentions_planning_context_alignment(self):
+        gen = self._make_generator()
+        prompt = gen._build_subagent_personas_prompt(
+            agent_ids=["agent_a", "agent_b"],
+            task="Build a website",
+            existing_system_messages={},
+            has_planning_spec_context=True,
+        )
+        prompt_lower = prompt.lower()
+        assert "planning/spec context" in prompt_lower
+        assert "align" in prompt_lower
+
+    def test_subagent_prompt_omits_planning_context_guidance_when_flag_false(self):
+        gen = self._make_generator()
+        prompt = gen._build_subagent_personas_prompt(
+            agent_ids=["agent_a", "agent_b"],
+            task="Build a website",
+            existing_system_messages={},
+            has_planning_spec_context=False,
+        )
+        assert "planning/spec context" not in prompt.lower()
+
     def test_methodology_mode_prompt(self):
         gen = self._make_generator(diversity_mode="methodology")
         prompt = gen._build_subagent_personas_prompt(
@@ -587,3 +609,60 @@ async def test_subagent_persona_generation_passes_voting_threshold(monkeypatch, 
 
     assert "agent_a" in personas
     assert captured["coordination"]["voting_threshold"] == 11
+
+
+@pytest.mark.asyncio
+async def test_subagent_persona_generation_inherits_parent_context_paths_readonly(monkeypatch, tmp_path):
+    captured = {}
+    parent_context = tmp_path / "plan_frozen"
+    parent_context.mkdir()
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["parent_context_paths"] = kwargs.get("parent_context_paths")
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "personas": {
+                            "agent_a": {
+                                "persona_text": "Be rigorous and practical.",
+                                "attributes": {},
+                            },
+                        },
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = PersonaGenerator()
+    personas = await generator.generate_personas_via_subagent(
+        agent_ids=["agent_a"],
+        task="Test task",
+        existing_system_messages={},
+        parent_agent_configs=[
+            {
+                "id": "agent_a",
+                "backend": {
+                    "type": "openai",
+                    "model": "gpt-4o-mini",
+                    "context_paths": [{"path": str(parent_context), "permission": "write"}],
+                },
+            },
+        ],
+        parent_workspace=str(tmp_path),
+        orchestrator_id="orch_test",
+    )
+
+    assert "agent_a" in personas
+    assert captured["parent_context_paths"] is not None
+    assert {"path": str(tmp_path.resolve()), "permission": "read"} in captured["parent_context_paths"]
+    assert {"path": str(parent_context.resolve()), "permission": "read"} in captured["parent_context_paths"]

@@ -72,10 +72,15 @@ class SessionRegistry:
         self._ensure_registry_exists()
 
     def _ensure_registry_exists(self) -> None:
-        """Create registry file if it doesn't exist."""
-        if not self.registry_path.exists():
-            self.registry_path.write_text(json.dumps({"sessions": []}, indent=2))
+        """Create registry file if it doesn't exist, without clobbering existing data."""
+        self.registry_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(self.registry_path, "x") as f:
+                json.dump({"sessions": []}, f, indent=2)
             logger.debug(f"Created session registry at {self.registry_path}")
+        except FileExistsError:
+            # Another thread/process already created the registry.
+            pass
 
     @property
     def _lock_path(self) -> Path:

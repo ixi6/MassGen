@@ -86,7 +86,7 @@ orchestrator:
     learning_capture_mode: final_only  # no evolving skill or mem during coord, only in final pres.
     enable_changedoc: true
     write_mode: auto
-    subagent_types: [evaluator, explorer, researcher, novelty, critic, builder]
+    subagent_types: [evaluator, explorer, researcher, novelty, critic, builder, quality_rethinking]
     enable_subagents: true
     subagent_default_timeout: 600
     subagent_max_concurrent: 3

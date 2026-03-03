@@ -199,8 +199,10 @@ class CoordinationConfig:
     enable_changedoc: bool = True  # Write changedoc.md decision journal during coordination
     drift_conflict_policy: str = "skip"  # "skip" | "prefer_presenter" | "fail"
     subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
-    always_spawn_quality_subagents: bool = False  # Spawn quality_rethinking + novelty subagents every round, not just on plateau
+    enable_quality_rethink_on_iteration: bool = False  # Auto-inject quality_rethinking spawn task on iteration 2+
+    enable_novelty_on_iteration: bool = False  # Auto-inject novelty/quality spawn task on iteration 2+
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
+    improvements: dict[str, Any] = field(default_factory=dict)  # Quality gate config for propose_improvements
     checklist_criteria_preset: str | None = None  # "persona" | "decomposition" | "evaluation" | "prompt" | "analysis"
     checklist_criteria_inline: list[dict[str, str]] | None = None  # [{text: str, category: must|should|could}]
     resume_from_log: dict[str, Any] | None = None  # {log_path: str, round: int}
@@ -214,6 +216,7 @@ class CoordinationConfig:
         self._validate_novelty_injection()
         self._validate_learning_capture_mode()
         self._validate_pre_collab_voting_threshold()
+        self._validate_improvements()
 
     def _validate_timeout_config(self):
         """Validate subagent timeout configuration."""
@@ -295,6 +298,26 @@ class CoordinationConfig:
             raise ValueError(
                 "pre_collab_voting_threshold must be a positive integer or None",
             )
+
+    def _validate_improvements(self):
+        """Validate improvements quality-gate configuration."""
+        if self.improvements is None:
+            self.improvements = {}
+            return
+
+        if not isinstance(self.improvements, dict):
+            raise ValueError(
+                "improvements must be a dictionary",
+            )
+
+        for key in ("min_transformative", "min_structural", "min_non_incremental"):
+            if key not in self.improvements:
+                continue
+            value = self.improvements[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"improvements.{key} must be a non-negative integer",
+                )
 
     def _validate_subagent_runtime_config(self):
         """Validate subagent runtime mode/fallback configuration."""

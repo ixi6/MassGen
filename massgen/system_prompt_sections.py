@@ -373,6 +373,37 @@ fix the failures you identified? Be targeted:
 - "Agent 1's data model is stronger but Agent 3's UI handles edge cases better"
 - Don't just say "combine the best of both" — specify exactly what to take and why.
 
+**For visual deliverables** (websites, screenshots, rendered pages, images,
+diagrams): text descriptions cannot capture visual differentiation — "clean
+modern layout" describes both a mediocre and an excellent design equally.
+Before reasoning about relative quality or what to synthesize, view all
+agents' visual outputs together using `read_media`, with each comparable
+section as a separate named input:
+
+    read_media(inputs=[
+        {{
+            "files": {{
+                "agent1_section": "<shared_ref>/agent1/.../section.png",
+                "agent2_section": "<shared_ref>/agent2/.../section.png"
+            }},
+            "prompt": "Compare these sections head-to-head. Which is stronger
+and why? What does each have that the other lacks?"
+        }},
+        # one input item per comparable section
+    ])
+
+Direct visual comparison is the only reliable basis for judging which
+approach is stronger. Peer image paths: explore the Shared Reference
+agent subdirectories (agent1/, agent2/, ...) shown in your filesystem
+context.
+
+For **video deliverables**: true joint comparison is not yet supported.
+1. Extract representative frames (opening, mid, closing) from each video
+   and compare them as images using the `read_media` pattern above.
+2. When describing your video output, use a consistent structure
+   (appropriate to the task — overall quality, pacing, visual style,
+   etc.) so other agents can compare your output directly with theirs.
+
 ### Approach Challenge
 
 Before scoring, answer honestly: **Is the current approach the right approach,
@@ -507,8 +538,10 @@ fix the failures you identified? Be targeted:
 Classify each planned change as:
 - **TRANSFORMATIVE**: Fundamentally different approach, architecture, or creative direction
 - **STRUCTURAL**: Meaningful redesign of a component, new capability, or significant quality lift —
-  the bar is: *would a user with no knowledge of the implementation notice this as a meaningfully
-  different experience?*
+  the bar is outcome, not degree of change. A rewrite achieving significantly better quality
+  (stronger prose, more compelling argument, more immersive experience) counts as structural
+  even when keeping the same theme or approach. *Quick test: would a demanding user say
+  "much better"? → structural. "Nice touch, barely noticed"? → incremental.*
 - **INCREMENTAL**: Minor polish, formatting, or small additions
 
 The following are INCREMENTAL, not STRUCTURAL — do not upgrade them:
@@ -897,11 +930,15 @@ Classify each planned change as:
   GraphQL, rewriting a synchronous pipeline as event-driven, choosing a completely different
   data model or storage engine.
 - **STRUCTURAL**: Meaningful redesign of a component, new capability, or significant quality
-  lift — the bar is: *would a user with no knowledge of the implementation notice this as a
-  meaningfully different experience?*
+  lift. The bar is outcome-based, not degree of change — a rewrite that achieves significantly
+  better quality (stronger prose, more compelling argument, clearer explanation, more immersive
+  experience) counts as structural even when keeping the same theme, approach, or structure.
+  *Quick test: would a demanding user say "much better"? → structural. "Nice touch, barely
+  noticed"? → incremental.*
   Examples: adding real-time collaboration to a single-user editor, introducing a caching
   layer that changes perceived performance, redesigning navigation to support a new workflow,
-  adding offline support, building a new visualization that reveals patterns previously hidden.
+  adding offline support, building a new visualization that reveals patterns previously hidden,
+  a rewrite that is dramatically more vivid, persuasive, or correct than the prior version.
 - **INCREMENTAL**: Minor polish, formatting, or small additions that do not change the user's
   experience in a meaningful way.
   Examples: CSS tweaks and animation refinements, adding aria labels or alt text to existing
@@ -975,6 +1012,11 @@ while you do qualitative analysis in parallel:
 - Evaluators handle: screenshots + visual observations (for visual artifacts:
   render to images or video first, then view), test runs, completeness checks,
   feature verification. Evaluators observe and report — they do NOT make changes.
+  **When multiple agents have visual outputs**: pass all agents' images in a
+  single `read_media` call using the `files` dict (one input per section,
+  named by agent) — not one image per call. The evaluator must see all
+  outputs simultaneously to make grounded comparative judgments about
+  which is stronger and what to adopt.
 - Split into parallel evaluators only when concerns are truly independent and
   span all answers equally (e.g. "visual quality" vs "link integrity") — never
   split by agent.
@@ -984,6 +1026,11 @@ while you do qualitative analysis in parallel:
   path for files you created this round — those are only archived there after you
   submit, not during execution. For fully isolated research subagents that don't
   need your files, pass `include_parent_workspace: false`.
+- **Peer build verification**: Shared Reference snapshots under `temp_workspaces`
+  are read-only. If verification requires mutable commands (`npm install`,
+  `pip install`, `vite build`, tests that write caches, etc.), copy only the
+  needed files into your workspace scratch first (for example
+  `.massgen_scratch/peer_eval/<agent>/`) and run commands there.
 - You handle: read all agents' answers, identify qualitative gaps, assess
   creative/craft quality. You make the value judgments — evaluator gives you
   evidence to reason from, not scores.
@@ -1015,6 +1062,12 @@ When verdict is `{iterate_action}`, review each existing answer before proposing
 - Which answer has the strongest element for each failing criterion?
 Use this to fill in the `sources` and `preserve` fields accurately.
 
+Output quality takes precedence over documentation quality:
+- Do NOT treat missing/weak changedoc alone as proof an answer is worse.
+- If an answer is materially better for the user but weaker on changedoc,
+  still use its strengths as `sources`; then include explicit changedoc
+  repairs in `improvements`.
+
 You MUST call `propose_improvements` with:
 - **`improvements`**: plans for **every** failing criterion — each entry has a `plan`, \
 `sources` (which answers you're drawing from), and `impact` (how bold the change is)
@@ -1024,29 +1077,38 @@ You MUST call `propose_improvements` with:
 **`impact` levels** (required on every improvement entry):
 - **`transformative`**: fundamentally different approach, architecture, or creative direction
 - **`structural`**: meaningful redesign, new capability, or significant quality lift; \
-fixing a crash or unblocking major functionality also counts as structural
+fixing a crash or unblocking major functionality also counts as structural. \
+The bar is outcome-based: a rewrite achieving significantly better quality counts as \
+structural even with the same theme. *Quick test: "much better"? → structural. \
+"Nice touch"? → incremental.*
 - **`incremental`**: polish, formatting, small additions — important but not round-justifying alone
+
+If your plan for a criterion has multiple independent improvements (e.g., rewrite the copy AND \
+add a new section AND fix the CTA), list them as separate entries — each gets its own impact \
+level and sources.
 
 {impact_requirement}
 
   propose_improvements(
     improvements={{
       "E2": [{{"plan": "rethink the feature cards with distinct visual identity", \
-"sources": ["agent_b.1"], "impact": "structural"}}],
+"sources": ["agent2.1"], "impact": "structural"}}],
       "E5": [{{"plan": "build a full signup form CTA", \
-"sources": ["agent_b.1", "agent_a.1"], "impact": "transformative"}}],
+"sources": ["agent2.1", "agent1.2"], "impact": "transformative"}}],
     }},
     preserve={{
-      "E1": {{"what": "hero section visual impact — gradient animation and typography", "source": "agent_a.2"}},
-      "E2": {{"what": "section header and layout grid — preserve while reworking cards", "source": "agent_a.2"}},
-      "E3": {{"what": "sci-fi color palette coherence — neon-on-dark theme unified", "source": "agent_a.2"}},
+      "E1": {{"what": "hero section visual impact — gradient animation and typography", "source": "agent1.2"}},
+      "E2": {{"what": "section header and layout grid — preserve while reworking cards", "source": "agent1.2"}},
+      "E3": {{"what": "sci-fi color palette coherence — neon-on-dark theme unified", "source": "agent1.2"}},
     }}
   )
 
 - `improvements`: each entry names a `plan`, its `sources`, and an `impact` level. \
 This traces provenance and ambition of every change.
 - `preserve` forces you to articulate what's WORKING before changing anything. \
-A criterion can appear in BOTH — fix one part, protect another.
+A criterion can appear in BOTH — fix one part, protect another. \
+Preserved items are injected as a single verification checkpoint at the END of your \
+task plan — confirm they're intact before submitting.
 
 The tool validates all failing criteria are covered and auto-populates your \
 task plan. Call `get_task_plan` to review the items and proceed to Phase 3.
@@ -2562,6 +2624,11 @@ class FilesystemOperationsSection(SystemPromptSection):
                 "working with.\n"
                 "   - **Selective Copying**: Only copy specific files you'll actually modify or "
                 "use, not entire directories wholesale.\n"
+                "   - **Mutable Commands in Local Scratch**: Shared Reference directories are "
+                "read-only snapshots. To run commands that write files (`npm install`, "
+                "`pip install`, `vite build`, tests creating caches), copy the minimal subset "
+                "into your workspace first (for example `.massgen_scratch/peer_eval/agentX/`) "
+                "and build in your own workspace copy.\n"
                 "   - **Merging Approaches**: If combining work from multiple agents, consider "
                 "merging complementary parts (e.g., one workspace's data model + another's API layer) "
                 "rather than picking one entire solution.\n"
@@ -2739,7 +2806,14 @@ class FilesystemBestPracticesSection(SystemPromptSection):
             "optional context, but it may be incomplete or stale — always verify independently.\n"
             "- **Focus verification**: Prioritize critical functionality and substantial differences "
             "rather than exhaustively reviewing every file\n"
-            "- **Don't rely solely on answer text**: Ensure the actual work matches their claims\n",
+            "- **Don't rely solely on answer text**: Ensure the actual work matches their claims\n"
+            "- **For visual deliverables**: Viewing each agent's output in isolation produces\n"
+            "  evaluations that cannot be grounded against each other. Compare all agents'\n"
+            "  visual outputs in a single `read_media` call, with each comparable section\n"
+            "  as a separate named input using the `files` dict. Peer image paths are in\n"
+            "  the Shared Reference agent subdirectories. This applies to: rendered websites,\n"
+            "  UI screenshots, generated images, diagrams, charts, video frames, etc — treat\n"
+            "  visual artifacts like code: read the actual output, not a description of it.\n",
         )
 
         return "\n".join(parts)
@@ -2893,7 +2967,9 @@ you'll receive reminders to save learnings to memory). Always read tool response
 1. **Create your task plan** with tasks including verification criteria:
    - `{"id": "research", "description": "Research OAuth providers", "verification": "Comparison table with 3+ providers", "verification_method": "Review output table"}`
    - `{"id": "design", "description": "Design auth flow", "depends_on": ["research"], "verification": "Flow diagram renders correctly", "verification_method": "Screenshot and visual check"}`
-   - `{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], "verification": "Endpoints return 200", "verification_method": "curl test each endpoint"}`
+   - `{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], \
+"priority": "high", "subagent_name": "builder", "verification": "Endpoints return 200", \
+"verification_method": "curl test each endpoint"}`
 2. **Update task status** as you work: set status="in_progress", then "completed", then "verified" after confirming
 3. **Add tasks** as you discover new requirements:
    - `description="Write integration tests", depends_on=["implement"], verification="Integration tests pass for auth flow", verification_method="Run integration test suite"`
@@ -2903,6 +2979,22 @@ you'll receive reminders to save learnings to memory). Always read tool response
 Tasks support two dependency styles:
 - **By index** (0-based): `{"description": "Task 2", "depends_on": [0], "verification": "Task 2 output is complete"}` — depends on the first task
 - **By ID** (recommended): `{"id": "api", "description": "Build API", "depends_on": ["auth"], "verification": "API returns expected responses"}` — depends on task with id "auth"
+
+## Delegating Tasks to Subagents
+
+Any task in your plan can be labeled for delegation using two optional fields:
+- **`subagent_name`** — the type of subagent to delegate to (for example `"builder"`, `"evaluator"`, `"novelty"`)
+- **`subagent_id`** — the ID of a specific already-spawned subagent
+
+Add these when creating tasks (`create_task_plan`, `add_task`) to record delegation intent. You can
+also set them later with `edit_task`.
+
+When tasks come from `propose_improvements`, structural and transformative criteria are pre-filled
+with `subagent_name: "builder"` as an advisory signal.
+Scope each builder to exactly one task. Never bundle multiple E{x} criteria into one builder spec.
+
+Novelty/quality tasks (`type: novelty_quality_spawn`) may appear at the top of your plan on
+iteration 2+. Spawn those in background first so they run while you implement improvements.
 
 **IMPORTANT - Including Task Plan in Your Answer:**
 If you created a task plan, include a summary at the end of your `new_answer` showing:

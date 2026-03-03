@@ -199,6 +199,39 @@ class TestCheckAndInjectPendingTasks:
         assert added_ids == ["improve_E1"]
         assert plan.tasks[0].id == "improve_E1"
 
+    def test_injection_forwards_subagent_name(self, tmp_path):
+        """Top-level subagent fields are forwarded to task metadata during injection."""
+        plan = TaskPlan(agent_id="test_agent", require_verification=False)
+
+        tasks = [
+            {
+                "id": "improve_E1",
+                "description": "[E1] Build hero section",
+                "priority": "high",
+                "verification": "Hero renders correctly",
+                "subagent_name": "builder",
+                "subagent_id": "sub_123",
+                "criterion_id": "E1",
+                "impact": "structural",
+                "sources": ["agent1.1"],
+                "type": "improve",
+                "metadata": {
+                    "injected": True,
+                },
+            },
+        ]
+
+        added_ids = self._inject_tasks(plan, tmp_path, tasks)
+        assert added_ids == ["improve_E1"]
+
+        task = plan.tasks[0]
+        assert task.metadata["subagent_name"] == "builder"
+        assert task.metadata["subagent_id"] == "sub_123"
+        assert task.metadata["criterion_id"] == "E1"
+        assert task.metadata["impact"] == "structural"
+        assert task.metadata["sources"] == ["agent1.1"]
+        assert task.metadata["type"] == "improve"
+
     def test_inject_malformed_json_is_safe(self, tmp_path):
         """Malformed inject_tasks.json doesn't crash, returns empty list."""
         from massgen.mcp_tools.planning._planning_mcp_server import (

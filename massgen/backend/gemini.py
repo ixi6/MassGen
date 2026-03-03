@@ -335,6 +335,40 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             self.rate_limiter = None
             logger.info(f"[Gemini] Rate limiting disabled for '{model_name}'")
 
+    def _normalize_and_resolve_tool_name(self, tool_name: str) -> str:
+        """Normalize Gemini tool names and resolve MCP aliases.
+
+        Gemini can emit tool calls in different forms:
+        - API-prefixed names (for example, ``default_api:tool``)
+        - Canonical MCP names (``mcp__server__tool``)
+        - Bare server/tool MCP names (``server__tool``)
+
+        We normalize provider-specific prefixes first, then map bare MCP names to
+        their canonical ``mcp__...`` form when the canonical name is registered.
+        """
+        normalized_name = _normalize_gemini_tool_name(tool_name or "")
+        if not normalized_name:
+            return normalized_name
+
+        # Keep already-known names unchanged.
+        if normalized_name in self._mcp_functions:
+            return normalized_name
+        if normalized_name in self._custom_tool_names:
+            return normalized_name
+
+        # Preserve explicit namespace prefixes when present.
+        if normalized_name.startswith("mcp__"):
+            return normalized_name
+        if normalized_name.startswith("custom_tool__"):
+            return normalized_name
+
+        # Gemini may emit MCP names without the mcp__ prefix.
+        mcp_alias = f"mcp__{normalized_name}"
+        if mcp_alias in self._mcp_functions:
+            return mcp_alias
+
+        return normalized_name
+
     def _get_rate_limiter_context(self):
         """Get rate limiter context manager (or nullcontext if rate limiting is disabled)."""
         if self.rate_limiter is not None:
@@ -767,8 +801,8 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                         for part in candidate.content.parts:
                                             # Check for function_call part
                                             if hasattr(part, "function_call") and part.function_call:
-                                                # Extract call data and normalize tool name (strip prefixes like "default_api:")
-                                                tool_name = _normalize_gemini_tool_name(part.function_call.name)
+                                                # Normalize provider prefixes and map MCP aliases.
+                                                tool_name = self._normalize_and_resolve_tool_name(part.function_call.name)
                                                 tool_args = dict(part.function_call.args) if part.function_call.args else {}
 
                                                 # Create call record with globally unique ID
@@ -1431,8 +1465,8 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                             if hasattr(candidate.content, "parts") and candidate.content.parts:
                                                 for part in candidate.content.parts:
                                                     if hasattr(part, "function_call") and part.function_call:
-                                                        # Normalize tool name (strip prefixes like "default_api:")
-                                                        tool_name = _normalize_gemini_tool_name(part.function_call.name)
+                                                        # Normalize provider prefixes and map MCP aliases.
+                                                        tool_name = self._normalize_and_resolve_tool_name(part.function_call.name)
                                                         tool_args = dict(part.function_call.args) if part.function_call.args else {}
                                                         call_id = f"call_{self._tool_call_counter}"
                                                         self._tool_call_counter += 1

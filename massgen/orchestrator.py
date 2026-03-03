@@ -934,19 +934,26 @@ class Orchestrator(ChatAgent):
                 "builder_subagent_enabled": "builder" in [t.lower() for t in _active_subagent_types],
                 # Quality rethinking subagent: per-element craft improvements
                 "quality_rethinking_subagent_enabled": "quality_rethinking" in [t.lower() for t in _active_subagent_types],
-                # Always spawn quality/novelty subagents every round (not just on plateau)
-                "always_spawn_quality_subagents": bool(
-                    getattr(
-                        getattr(self.config, "coordination_config", None),
-                        "always_spawn_quality_subagents",
-                        False,
-                    ),
-                ),
                 # Planning injection dir for auto-populating task plan from propose_improvements
                 "planning_injection_dir": str(getattr(self, "_planning_injection_dirs", {}).get(agent_id, "")),
                 # Whether subagents are enabled (for delegation guidance in propose_improvements message)
                 "subagents_enabled": bool(
                     hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents") and self.config.coordination_config.enable_subagents,
+                ),
+                "agent_answer_count": len(self.coordination_tracker.answers_by_agent.get(agent_id, [])),
+                "enable_quality_rethink_on_iteration": bool(
+                    getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "enable_quality_rethink_on_iteration",
+                        False,
+                    ),
+                ),
+                "enable_novelty_on_iteration": bool(
+                    getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "enable_novelty_on_iteration",
+                        False,
+                    ),
                 ),
                 # Impact gate config for propose_improvements validation
                 "improvements": dict(
@@ -1370,6 +1377,7 @@ class Orchestrator(ChatAgent):
             {
                 "remaining": _cl_remaining,
                 "has_existing_answers": _has_answers,
+                "agent_answer_count": len(self.coordination_tracker.answers_by_agent.get(agent_id, [])),
                 "required": _checklist_required_true(
                     effective_t,
                     num_items=len(getattr(agent.backend, "_checklist_items", [])) or 4,
@@ -1393,8 +1401,12 @@ class Orchestrator(ChatAgent):
                 "critic_subagent_enabled": state.get("critic_subagent_enabled", False),
                 # Preserve builder gating from initial state
                 "builder_subagent_enabled": state.get("builder_subagent_enabled", False),
-                # Preserve always_spawn_quality_subagents from initial state
-                "always_spawn_quality_subagents": state.get("always_spawn_quality_subagents", False),
+                # Preserve quality_rethinking gating from initial state
+                "quality_rethinking_subagent_enabled": state.get("quality_rethinking_subagent_enabled", False),
+                # Preserve quality-rethinking auto-injection toggle from initial state
+                "enable_quality_rethink_on_iteration": state.get("enable_quality_rethink_on_iteration", False),
+                # Preserve novelty auto-injection toggle from initial state
+                "enable_novelty_on_iteration": state.get("enable_novelty_on_iteration", False),
                 # Update available agent labels so checklist enforces complete coverage.
                 # Includes labels injected mid-stream (updated by update_agent_context_with_new_answers).
                 "available_agent_labels": list(

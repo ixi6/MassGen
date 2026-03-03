@@ -367,7 +367,7 @@ class TestVideoSystemPromptParity:
             "massgen.tool._multimodal_tools.understand_video.understand_video",
             mock_uv,
         ):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 read_media(
                     file_path="test.mp4",
                     agent_cwd=str(tmp_path),
@@ -414,7 +414,7 @@ class TestVideoSystemPromptParity:
             "massgen.tool._multimodal_tools.understand_video.understand_video",
             mock_uv,
         ):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 read_media(
                     file_path="test.mp4",
                     agent_cwd=str(tmp_path),
@@ -448,3 +448,150 @@ class TestVideoSystemPromptParity:
         ]:
             sig = inspect.signature(fn)
             assert "system_prompt" in sig.parameters, f"{fn.__name__} missing system_prompt parameter"
+
+
+class TestReadMediaStringifiedJsonNormalization:
+    """read_media must tolerate `inputs` passed as a stringified JSON list.
+
+    Models (especially via MCP) sometimes serialize list arguments as JSON
+    strings rather than native lists. The tool must detect and parse this
+    rather than returning a Pydantic validation error.
+    """
+
+    def test_stringified_inputs_returns_error_not_type_error(self, tmp_path):
+        """Stringified JSON `inputs` should not raise a Pydantic list_type error.
+
+        It should either successfully process or return a meaningful domain
+        error (e.g. file not found) — not a Pydantic schema validation failure.
+        """
+        import asyncio
+        import json
+
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        fake_path = str(tmp_path / "nonexistent.png")
+        inputs_as_string = json.dumps(
+            [
+                {"files": {"agent1": fake_path}, "prompt": "Compare"},
+            ],
+        )
+
+        result = asyncio.get_event_loop().run_until_complete(
+            read_media(inputs=inputs_as_string),  # type: ignore[arg-type]
+        )
+
+        output = result.output_blocks[0].data
+        # Must NOT be a Pydantic type error
+        assert "list_type" not in output
+        assert "Input should be a valid list" not in output
+        # Should be a domain error (file not found) or success
+        assert "success" in output
+
+    def test_stringified_inputs_with_valid_structure_is_normalized(self, tmp_path):
+        """Stringified JSON inputs with correct structure should parse cleanly.
+
+        After normalization the tool validates the `files` key normally, so
+        a missing-file error is acceptable — it means parsing succeeded.
+        """
+        import asyncio
+        import json
+
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        fake_path = str(tmp_path / "img.png")
+        inputs_as_string = json.dumps(
+            [
+                {"files": {"a": fake_path, "b": fake_path}, "prompt": "Compare"},
+            ],
+        )
+
+        result = asyncio.get_event_loop().run_until_complete(
+            read_media(inputs=inputs_as_string),  # type: ignore[arg-type]
+        )
+        output = result.output_blocks[0].data
+        # Pydantic list_type error must not appear
+        assert "list_type" not in output
+        assert "Input should be a valid list" not in output
+
+    def test_mcp_handler_list_params_accept_string(self):
+        """_json_schema_to_python_type for array schema should allow strings
+        through the MCP registration layer so FastMCP does not reject them."""
+        from massgen.mcp_tools.custom_tools_server import _json_schema_to_python_type
+
+        array_schema = {"anyOf": [{"type": "array"}, {"type": "null"}]}
+        py_type = _json_schema_to_python_type(array_schema)
+        # After fix: should accept str in addition to list (via Any or Union)
+        # We verify by checking the type allows str values at runtime
+        import typing
+
+        # The type should either be Any or include str in its args
+        is_any = py_type is typing.Any
+        allows_str = False
+        if hasattr(py_type, "__args__"):
+            allows_str = str in py_type.__args__ or type(None) not in py_type.__args__
+        assert is_any or allows_str, f"Expected list-type schema to allow string normalization, got {py_type}"
+
+
+class TestReadMediaFilePathsAlias:
+    """read_media should accept `file_paths` (list) as an alias for `files` (dict).
+
+    Models sometimes use `file_paths` (plural of the top-level `file_path`)
+    instead of the correct `files` dict. Normalizing this silently avoids the
+    'inputs[0] missing required files key' error.
+    """
+
+    def test_file_paths_list_is_normalized_to_files_dict(self, tmp_path):
+        """inputs[i]['file_paths'] as a list should be converted to 'files' dict."""
+        import asyncio
+
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        fake_a = str(tmp_path / "a.png")
+        fake_b = str(tmp_path / "b.png")
+
+        result = asyncio.get_event_loop().run_until_complete(
+            read_media(inputs=[{"file_paths": [fake_a, fake_b], "prompt": "Compare"}]),
+        )
+        output = result.output_blocks[0].data
+        # Must NOT return the "missing required 'files' key" error
+        assert "missing required 'files' key" not in output
+
+    def test_file_paths_alias_produces_named_files(self, tmp_path):
+        """After normalization, each path in file_paths becomes a named entry."""
+
+        from massgen.tool._multimodal_tools.read_media import _normalize_inputs_aliases
+
+        fake_a = str(tmp_path / "a.png")
+        fake_b = str(tmp_path / "b.png")
+
+        inputs = [{"file_paths": [fake_a, fake_b], "prompt": "Compare"}]
+        normalized = _normalize_inputs_aliases(inputs)
+
+        assert "files" in normalized[0]
+        assert "file_paths" not in normalized[0]
+        files = normalized[0]["files"]
+        assert isinstance(files, dict)
+        assert set(files.values()) == {fake_a, fake_b}
+
+    def test_files_key_takes_precedence_over_file_paths(self, tmp_path):
+        """If both 'files' and 'file_paths' present, 'files' wins."""
+
+        from massgen.tool._multimodal_tools.read_media import _normalize_inputs_aliases
+
+        real = str(tmp_path / "real.png")
+        other = str(tmp_path / "other.png")
+
+        inputs = [{"files": {"main": real}, "file_paths": [other], "prompt": "x"}]
+        normalized = _normalize_inputs_aliases(inputs)
+
+        assert normalized[0]["files"] == {"main": real}
+
+    def test_non_list_file_paths_is_not_normalized(self, tmp_path):
+        """file_paths that is not a list is left alone (will fail validation normally)."""
+        from massgen.tool._multimodal_tools.read_media import _normalize_inputs_aliases
+
+        inputs = [{"file_paths": "not_a_list.png", "prompt": "x"}]
+        normalized = _normalize_inputs_aliases(inputs)
+
+        # Should not have been converted (will hit normal validation error)
+        assert "files" not in normalized[0]

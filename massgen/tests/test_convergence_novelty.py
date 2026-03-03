@@ -221,6 +221,12 @@ class TestScoreCalibration:
         assert "diagnostic analysis" in lower
         assert "scores are inflated" in lower
 
+    def test_gated_decision_prioritizes_output_over_changedoc(self):
+        """Gated decision should state that output quality outranks docs quality."""
+        decision = _build_checklist_gated_decision(_CHECKLIST_ITEMS_CHANGEDOC)
+        assert "Output quality takes precedence over documentation quality" in decision
+        assert "missing/weak changedoc alone" in decision
+
     def test_scored_decision_has_calibration_anchors(self):
         """Scored decision must also include calibration anchor text."""
         decision = _build_checklist_scored_decision(

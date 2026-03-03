@@ -1014,6 +1014,42 @@ class TestSubagentConfigInheritance:
         assert backend["audio_generation_backend"] == "openai"
         assert backend["audio_generation_model"] == "gpt-4o-mini-tts"
 
+    def test_omits_command_line_execution_mode_when_command_line_mcp_disabled(self, tmp_path):
+        """Subagent backend should omit execution mode when command-line MCP is disabled."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {
+                    "id": "agent_1",
+                    "backend": {
+                        "type": "openai",
+                        "model": "gpt-4o",
+                        "enable_mcp_command_line": False,
+                    },
+                },
+            ],
+        )
+
+        config = SubagentConfig.create(
+            task="Create criteria",
+            parent_agent_id="parent-agent",
+            subagent_id="no-cli-mode",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        backend = yaml_config["agents"][0]["backend"]
+
+        assert backend["enable_mcp_command_line"] is False
+        assert "command_line_execution_mode" not in backend
+
     def test_promotes_voting_settings_from_coordination_to_orchestrator(self, tmp_path):
         """voting/checklist settings should be top-level orchestrator fields in YAML."""
         from massgen.subagent.manager import SubagentManager

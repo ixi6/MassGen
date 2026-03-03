@@ -285,20 +285,38 @@ def evaluate_proposed_improvements(
             ),
         }
 
-    # --- Build task plan: preserve entries first, then improvements ---
+    # --- Build task plan: improvements first, then single verify_preserve checkpoint ---
     task_plan: list[dict[str, Any]] = []
+    answer_count = _state.get("agent_answer_count", 0)
+    try:
+        answer_count = int(answer_count)
+    except (TypeError, ValueError):
+        answer_count = 0
+    spawn_novelty = bool(_state.get("enable_novelty_on_iteration")) and answer_count >= 1
+    spawn_quality_rethinking = bool(_state.get("enable_quality_rethink_on_iteration")) and answer_count >= 1
+    should_inject_iteration_spawn = bool(_state.get("subagents_enabled")) and (spawn_novelty or spawn_quality_rethinking)
 
-    # Preserve entries first
-    for cid, pentry in normalized_preserve.items():
-        criterion_idx = int(cid[1:]) - 1
-        criterion_text = items[criterion_idx] if criterion_idx < len(items) else cid
+    if should_inject_iteration_spawn and failed_criteria:
         task_plan.append(
             {
-                "type": "preserve",
-                "criterion_id": cid,
-                "criterion": criterion_text,
-                "what_to_protect": pentry["what"],
-                "source": pentry["source"],
+                "id": "novelty_quality_spawn",
+                "type": "novelty_quality_spawn",
+                "description": (
+                    "Spawn novelty and/or quality_rethinking subagents in background "
+                    "IMMEDIATELY (before implementing improvements). Give each subagent "
+                    "the failing criteria and ask for materially different approaches. "
+                    "Integrate their output before submitting your new answer. If neither "
+                    "type is available, skip this task."
+                ),
+                "priority": "high",
+                "verification": "Novelty/quality subagents spawned via spawn_subagents(background=True)",
+                "verification_method": "list_subagents() shows spawned novelty/quality subagents",
+                "metadata": {
+                    "type": "novelty_quality_spawn",
+                    "failing_criteria": list(failed_criteria),
+                    "spawn_novelty": spawn_novelty,
+                    "spawn_quality_rethinking": spawn_quality_rethinking,
+                },
             },
         )
 
@@ -308,18 +326,32 @@ def evaluate_proposed_improvements(
         criterion_text = items[criterion_idx] if criterion_idx < len(items) else cid
         for imp_entry in improvements[cid]:
             norm = _normalize_improvement_entry(imp_entry)
-            task_plan.append(
-                {
-                    "type": "improve",
-                    "criterion_id": cid,
-                    "criterion": criterion_text,
-                    "plan": norm["plan"],
-                    "sources": norm["sources"],
-                    "impact": norm["impact"],
-                    # Keep backward-compat "improvement" key
-                    "improvement": norm["plan"],
-                },
-            )
+            task_entry = {
+                "type": "improve",
+                "criterion_id": cid,
+                "criterion": criterion_text,
+                "plan": norm["plan"],
+                "sources": norm["sources"],
+                "impact": norm["impact"],
+                # Keep backward-compat "improvement" key
+                "improvement": norm["plan"],
+            }
+            if norm["impact"] in ("structural", "transformative"):
+                # Advisory delegation signal; agent still chooses whether to delegate.
+                task_entry["subagent_name"] = "builder"
+            task_plan.append(task_entry)
+
+    # Single verify_preserve checkpoint at the END (not N individual preserve rows)
+    if normalized_preserve:
+        preserve_items = [{"criterion_id": cid, "what": p["what"], "source": p["source"]} for cid, p in normalized_preserve.items()]
+        task_plan.append(
+            {
+                "type": "verify_preserve",
+                "description": "Before submitting: verify these strengths haven't regressed",
+                "items": preserve_items,
+                "priority": "high",
+            },
+        )
 
     result: dict[str, Any] = {
         "valid": True,
@@ -328,8 +360,9 @@ def evaluate_proposed_improvements(
             f"Improvements validated for {len(failed_criteria)} criteria. "
             f"{len(normalized_preserve)} criteria marked for preservation. "
             "Add each item from task_plan to your task plan tool, then "
-            "execute them. Preserve items are guardrails — verify them after "
-            "implementing improvements. Do not skip criteria or substitute easier work."
+            "execute them. The verify_preserve item at the end is a final "
+            "guardrail — confirm preserved strengths are intact before submitting. "
+            "Do not skip criteria or substitute easier work."
         ),
     }
     if normalized_preserve:
@@ -651,7 +684,15 @@ def evaluate_checklist_submission(
                 False,
             )
             _novelty_enabled = state.get("novelty_subagent_enabled", False)
-            _always_spawn = state.get("always_spawn_quality_subagents", False)
+            _answer_count = state.get("agent_answer_count", 0)
+            try:
+                _answer_count = int(_answer_count)
+            except (TypeError, ValueError):
+                _answer_count = 0
+            _iter_novelty_enabled = bool(state.get("enable_novelty_on_iteration")) and _answer_count >= 1
+            _iter_quality_enabled = bool(state.get("enable_quality_rethink_on_iteration")) and _answer_count >= 1
+            _spawn_novelty = _novelty_enabled and _iter_novelty_enabled
+            _spawn_quality = _quality_rethinking_enabled and _iter_quality_enabled
 
             if has_existing_answers and plateaued_failing:
                 # Build score trajectory strings like "E5 (should, scores: 5→6→6)"
@@ -688,17 +729,34 @@ def evaluate_checklist_submission(
                         "fundamentally different approaches to break through. "
                     )
 
-            # Always-spawn mode: fire quality/novelty guidance for ALL failing
-            # criteria every round, not just plateaued ones.
-            elif _always_spawn and failed_ids and (_quality_rethinking_enabled or _novelty_enabled):
-                explanation += (
-                    "Spawn a quality_rethinking subagent AND a novelty subagent "
-                    "side-by-side in background \u2014 pass each the "
-                    "failing_criteria_detail from this result (it contains "
-                    "criterion text and category for every failing criterion). "
-                    "Meanwhile, proceed with propose_improvements and start "
-                    "implementing. Integrate subagent proposals when they return. "
-                )
+            # Iteration-trigger mode: fire configured quality/novelty guidance
+            # on round 2+ (not just when criteria plateau).
+            elif failed_ids and (_spawn_quality or _spawn_novelty):
+                if _spawn_quality and _spawn_novelty:
+                    explanation += (
+                        "Spawn a quality_rethinking subagent AND a novelty subagent "
+                        "side-by-side in background \u2014 pass each the "
+                        "failing_criteria_detail from this result (it contains "
+                        "criterion text and category for every failing criterion). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
+                elif _spawn_quality:
+                    explanation += (
+                        "Spawn a quality_rethinking subagent in background \u2014 pass "
+                        "it the failing_criteria_detail from this result (it contains "
+                        "criterion text and category for every failing criterion). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
+                elif _spawn_novelty:
+                    explanation += (
+                        "Spawn a novelty subagent in background \u2014 pass it the "
+                        "failing_criteria_detail from this result (it contains "
+                        "criterion text and category for every failing criterion). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
 
             explanation += "NEXT STEP: Call `propose_improvements` with specific improvements " "for each failing criterion. This is required before implementing."
         else:
@@ -749,10 +807,18 @@ def evaluate_checklist_submission(
     if per_agent_scores is not None:
         result["per_agent_scores"] = per_agent_scores
 
-    # In always-spawn mode, include detail for ALL failing criteria so agents
-    # can pass rich context to quality/novelty subagents every round.
-    _always_spawn = state.get("always_spawn_quality_subagents", False)
-    if _always_spawn and result.get("failed_criteria"):
+    # In iteration-trigger mode, include detail for ALL failing criteria so
+    # agents can pass rich context to quality/novelty subagents on round 2+.
+    _answer_count = state.get("agent_answer_count", 0)
+    try:
+        _answer_count = int(_answer_count)
+    except (TypeError, ValueError):
+        _answer_count = 0
+    _iter_novelty_enabled = bool(state.get("enable_novelty_on_iteration")) and _answer_count >= 1
+    _iter_quality_enabled = bool(state.get("enable_quality_rethink_on_iteration")) and _answer_count >= 1
+    _spawn_novelty = bool(state.get("novelty_subagent_enabled", False)) and _iter_novelty_enabled
+    _spawn_quality = bool(state.get("quality_rethinking_subagent_enabled", False)) and _iter_quality_enabled
+    if (_spawn_novelty or _spawn_quality) and result.get("failed_criteria"):
         _item_cats = state.get("item_categories", {})
         failing_detail = []
         for d in items_detail:
@@ -775,7 +841,7 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
     """Convert task_plan items from evaluate_proposed_improvements to injection format.
 
     Args:
-        task_plan: List of dicts with "type" key ("improve" or "preserve")
+        task_plan: List of dicts with "type" key ("improve" or "verify_preserve")
 
     Returns:
         List of dicts ready for inject_tasks.json consumption by planning MCP
@@ -783,32 +849,64 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
     tasks = []
     for item in task_plan:
         if item["type"] == "improve":
+            task = {
+                "description": f"[{item['criterion_id']}] {item['plan']}",
+                "verification": item["criterion"],
+                "priority": "high",
+                "type": "improve",
+                "criterion_id": item["criterion_id"],
+                "impact": item.get("impact", "incremental"),
+                "sources": item.get("sources", []),
+                "metadata": {
+                    "criterion_id": item["criterion_id"],
+                    "criterion": item["criterion"],
+                    "type": "improve",
+                    "impact": item.get("impact", "incremental"),
+                    "sources": item.get("sources", []),
+                    "injected": True,
+                },
+            }
+            if item.get("subagent_name"):
+                task["subagent_name"] = item["subagent_name"]
+                task["metadata"]["subagent_name"] = item["subagent_name"]
+            if item.get("subagent_id"):
+                task["subagent_id"] = item["subagent_id"]
+                task["metadata"]["subagent_id"] = item["subagent_id"]
+            tasks.append(task)
+        elif item["type"] == "novelty_quality_spawn":
             tasks.append(
                 {
-                    "description": f"[{item['criterion_id']}] {item['plan']}",
-                    "verification": item["criterion"],
-                    "priority": "high",
+                    "id": item.get("id", "novelty_quality_spawn"),
+                    "description": item["description"],
+                    "verification": item.get(
+                        "verification",
+                        "Novelty/quality subagents spawned via spawn_subagents(background=True)",
+                    ),
+                    "verification_method": item.get(
+                        "verification_method",
+                        "list_subagents() shows spawned novelty/quality subagents",
+                    ),
+                    "priority": item.get("priority", "high"),
+                    "type": "novelty_quality_spawn",
                     "metadata": {
-                        "criterion_id": item["criterion_id"],
-                        "criterion": item["criterion"],
-                        "type": "improve",
-                        "impact": item.get("impact", "incremental"),
-                        "sources": item.get("sources", []),
+                        "type": "novelty_quality_spawn",
+                        "failing_criteria": item.get("metadata", {}).get("failing_criteria", []),
+                        "spawn_novelty": item.get("metadata", {}).get("spawn_novelty", True),
+                        "spawn_quality_rethinking": item.get("metadata", {}).get("spawn_quality_rethinking", True),
                         "injected": True,
                     },
                 },
             )
-        elif item["type"] == "preserve":
+        elif item["type"] == "verify_preserve":
+            bullet_list = "; ".join(f"[{p['criterion_id']}] {p['what']} ({p['source']})" for p in item["items"])
             tasks.append(
                 {
-                    "description": f"[{item['criterion_id']}] Preserve: {item['what_to_protect']}",
-                    "verification": item["criterion"],
-                    "priority": "medium",
+                    "description": f"Before submitting: verify preserved strengths haven't regressed — {bullet_list}",
+                    "verification": "All preserved elements still present and intact in your output",
+                    "priority": "high",
                     "metadata": {
-                        "criterion_id": item["criterion_id"],
-                        "criterion": item["criterion"],
-                        "type": "preserve",
-                        "source": item.get("source", ""),
+                        "type": "verify_preserve",
+                        "items": item["items"],
                         "injected": True,
                     },
                 },
@@ -947,13 +1045,21 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
                 "Preserve items are guardrails — verify after implementing. "
                 "Do not skip criteria."
             )
-            # Append subagent delegation hint if subagents are enabled
+            # Append subagent delegation guidance when subagents are enabled
             if state_for_improve.get("subagents_enabled"):
+                builder_criteria_ids: list[str] = []
+                for task in result["task_plan"]:
+                    if task.get("type") == "improve" and task.get("subagent_name") == "builder":
+                        cid = task.get("criterion_id")
+                        if cid and cid not in builder_criteria_ids:
+                            builder_criteria_ids.append(cid)
+                if builder_criteria_ids:
+                    result["message"] += " Builder-suggested criteria: " + ", ".join(builder_criteria_ids) + "."
+                has_novelty_spawn = bool(result["task_plan"]) and result["task_plan"][0].get("type") == "novelty_quality_spawn"
+                if has_novelty_spawn:
+                    result["message"] += " A novelty/quality spawn task is first in your plan —" " spawn it in background before implementing improvements."
                 result["message"] += (
-                    " Review the pre-populated plan for subagent delegation"
-                    " opportunities. Tasks without mutual dependencies can be"
-                    " spawned as parallel background subagents. Mark tasks"
-                    " with subagent_id/subagent_name, then spawn."
+                    " Spawn one builder per task — do NOT bundle multiple E{x}" " into a single builder spec. Each builder task is" " independent — spawn all in a single spawn_subagents()" " call."
                 )
         return json.dumps(result)
 

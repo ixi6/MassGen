@@ -1722,15 +1722,21 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
             # Get first parent backend as fallback for missing values
             fallback_backend = self.parent_agent_configs[0].get("backend", {}) if self.parent_agent_configs else {}
+            enable_mcp_command_line = source_backend.get("enable_mcp_command_line")
+            if enable_mcp_command_line is None:
+                enable_mcp_command_line = fallback_backend.get("enable_mcp_command_line", False)
 
             backend_config = {
                 "type": source_backend.get("type") or fallback_backend.get("type", "openai"),
                 "model": source_backend.get("model") or config.model or fallback_backend.get("model"),
                 "cwd": str(agent_workspace),  # Each agent gets unique workspace
                 # Inherit relevant backend settings from first parent
-                "enable_mcp_command_line": fallback_backend.get("enable_mcp_command_line", False),
-                "command_line_execution_mode": fallback_backend.get("command_line_execution_mode", "local"),
+                "enable_mcp_command_line": enable_mcp_command_line,
             }
+
+            # Only include execution mode when command-line MCP execution is enabled.
+            if enable_mcp_command_line:
+                backend_config["command_line_execution_mode"] = source_backend.get("command_line_execution_mode") or fallback_backend.get("command_line_execution_mode", "local")
 
             # Handle enable_web_search: orchestrator config > inherit from parent
             # Note: This is set in YAML config, not by agents at runtime
@@ -1740,7 +1746,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 backend_config["enable_web_search"] = fallback_backend["enable_web_search"]
 
             # Inherit Docker settings if using docker mode
-            if backend_config["command_line_execution_mode"] == "docker":
+            if backend_config.get("command_line_execution_mode") == "docker":
                 docker_settings = [
                     "command_line_docker_image",
                     "command_line_docker_network_mode",

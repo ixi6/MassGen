@@ -25,6 +25,38 @@ from massgen.tool._result import ExecutionResult, TextContent
 MEDIA_ANALYSIS_TIMEOUT = 600  # 10 minutes
 
 
+def _normalize_inputs_aliases(inputs: list[dict]) -> list[dict]:
+    """Normalize common aliases in each input dict before validation.
+
+    Handles ``file_paths`` (list) as an alias for ``files`` (dict), since
+    models sometimes pluralize the top-level ``file_path`` parameter and
+    produce an array instead of a named mapping.
+
+    Rules:
+    - If ``files`` is already present, leave it unchanged (``file_paths`` ignored).
+    - If ``file_paths`` is a list, convert to ``files`` dict with keys
+      ``image_0``, ``image_1``, ... and remove ``file_paths``.
+    - If ``file_paths`` is not a list, leave it unchanged (validation will fail
+      with a clear error downstream).
+    """
+    result = []
+    for inp in inputs:
+        if not isinstance(inp, dict):
+            result.append(inp)
+            continue
+        if "files" in inp or "file_paths" not in inp:
+            result.append(inp)
+            continue
+        file_paths = inp["file_paths"]
+        if not isinstance(file_paths, list):
+            result.append(inp)
+            continue
+        normalized = {k: v for k, v in inp.items() if k != "file_paths"}
+        normalized["files"] = {f"image_{i}": p for i, p in enumerate(file_paths)}
+        result.append(normalized)
+    return result
+
+
 def _error_result(error: str) -> ExecutionResult:
     """Create an error ExecutionResult."""
     return ExecutionResult(
@@ -269,6 +301,10 @@ async def read_media(
             return _error_result(
                 f"Conversation '{continue_from}' not found. " "The conversation_id may have expired or belongs to a previous session.",
             )
+
+    # Normalize common aliases before validation
+    if inputs:
+        inputs = _normalize_inputs_aliases(inputs)
 
     # Validate inputs structure if provided
     if inputs:

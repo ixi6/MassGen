@@ -742,6 +742,114 @@ class TestProposeImprovements:
         assert first["criterion"] == "Goal alignment"
         assert first["improvement"] == "add mobile nav"
 
+    def test_subagent_name_set_for_structural_impact(self):
+        """Structural impact improvements should suggest builder subagent."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign nav", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1"],
+            state=self._NO_GATE,
+        )
+        assert result["valid"] is True
+        improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
+        assert improve_entry["subagent_name"] == "builder"
+
+    def test_subagent_name_set_for_transformative_impact(self):
+        """Transformative impact improvements should suggest builder subagent."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "switch architecture", "sources": [], "impact": "transformative"}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1"],
+            state=self._NO_GATE,
+        )
+        assert result["valid"] is True
+        improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
+        assert improve_entry["subagent_name"] == "builder"
+
+    def test_no_subagent_name_for_incremental(self):
+        """Incremental impact should not pre-label a builder subagent."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "polish spacing", "sources": [], "impact": "incremental"}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1"],
+            state=self._NO_GATE,
+        )
+        assert result["valid"] is True
+        improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
+        assert "subagent_name" not in improve_entry
+
+    def test_novelty_task_injected_on_round_2_plus(self):
+        """Round 2+ with novelty-on-iteration enabled should prepend novelty task."""
+        state = {
+            **self._NO_GATE,
+            "subagents_enabled": True,
+            "enable_novelty_on_iteration": True,
+            "enable_quality_rethink_on_iteration": False,
+            "agent_answer_count": 1,
+        }
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign", "sources": [], "impact": "structural"}],
+                "E3": [{"plan": "recompose layout", "sources": [], "impact": "transformative"}],
+            },
+            failed_criteria=["E1", "E3"],
+            items=["Check 1", "Check 2", "Check 3"],
+            state=state,
+        )
+        assert result["valid"] is True
+        assert result["task_plan"][0]["type"] == "novelty_quality_spawn"
+        assert result["task_plan"][0]["metadata"]["failing_criteria"] == ["E1", "E3"]
+        assert result["task_plan"][0]["metadata"]["spawn_novelty"] is True
+        assert result["task_plan"][0]["metadata"]["spawn_quality_rethinking"] is False
+
+    def test_quality_rethinking_task_injected_on_round_2_plus(self):
+        """Round 2+ with quality-on-iteration enabled should prepend spawn task."""
+        state = {
+            **self._NO_GATE,
+            "subagents_enabled": True,
+            "enable_novelty_on_iteration": False,
+            "enable_quality_rethink_on_iteration": True,
+            "agent_answer_count": 1,
+        }
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1"],
+            state=state,
+        )
+        assert result["valid"] is True
+        assert result["task_plan"][0]["type"] == "novelty_quality_spawn"
+        assert result["task_plan"][0]["metadata"]["spawn_novelty"] is False
+        assert result["task_plan"][0]["metadata"]["spawn_quality_rethinking"] is True
+
+    def test_no_novelty_task_on_round_1(self):
+        """Round 1 should not inject novelty task even when novelty-on-iteration is enabled."""
+        state = {
+            **self._NO_GATE,
+            "subagents_enabled": True,
+            "enable_novelty_on_iteration": True,
+            "enable_quality_rethink_on_iteration": True,
+            "agent_answer_count": 0,
+        }
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1"],
+            state=state,
+        )
+        assert result["valid"] is True
+        assert all(task["type"] != "novelty_quality_spawn" for task in result["task_plan"])
+
     def test_improvements_must_be_dict(self):
         """Non-dict improvements → error."""
         result = evaluate_proposed_improvements(
@@ -860,41 +968,41 @@ class TestProposeImprovements:
         assert "empty" in result["error"].lower()
 
     def test_task_plan_includes_preserve_entries(self):
-        """Task plan has type: preserve entries BEFORE improve entries."""
+        """Task plan has one verify_preserve row AFTER improve entries."""
         result = evaluate_proposed_improvements(
             improvements={"E2": [{"plan": "fix cards", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2", "Check 3"],
             all_criteria_ids=["E1", "E2", "E3"],
             preserve={
-                "E1": {"what": "hero impact", "source": "agent_a.2"},
-                "E3": {"what": "color palette", "source": "agent_a.2"},
+                "E1": {"what": "hero impact", "source": "agent1.2"},
+                "E3": {"what": "color palette", "source": "agent1.2"},
             },
         )
         assert result["valid"] is True
         types = [t["type"] for t in result["task_plan"]]
-        # Preserve entries come first
-        preserve_indices = [i for i, t in enumerate(types) if t == "preserve"]
+        # Single verify_preserve row at the end, after all improve entries
+        verify_indices = [i for i, t in enumerate(types) if t == "verify_preserve"]
         improve_indices = [i for i, t in enumerate(types) if t == "improve"]
-        assert len(preserve_indices) == 2
+        assert len(verify_indices) == 1, "Exactly one verify_preserve row expected"
         assert len(improve_indices) >= 1
-        assert max(preserve_indices) < min(improve_indices)
+        assert min(improve_indices) < verify_indices[0], "verify_preserve must come after improve rows"
 
     def test_task_plan_improve_entries_have_sources(self):
         """Improve entries include plan and sources fields."""
         result = evaluate_proposed_improvements(
             improvements={
-                "E1": [{"plan": "rethink cards", "sources": ["agent_b.1"], "impact": "structural"}],
+                "E1": [{"plan": "rethink cards", "sources": ["agent2.1"], "impact": "structural"}],
             },
             failed_criteria=["E1"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
-            preserve={"E2": {"what": "layout", "source": "agent_a.2"}},
+            preserve={"E2": {"what": "layout", "source": "agent1.2"}},
         )
         assert result["valid"] is True
         improve = [t for t in result["task_plan"] if t["type"] == "improve"][0]
         assert improve["plan"] == "rethink cards"
-        assert improve["sources"] == ["agent_b.1"]
+        assert improve["sources"] == ["agent2.1"]
 
     def test_preserve_echoed_in_response(self):
         """Response includes preserve dict."""
@@ -903,7 +1011,7 @@ class TestProposeImprovements:
             failed_criteria=["E2"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
-            preserve={"E1": {"what": "hero impact", "source": "agent_a.2"}},
+            preserve={"E1": {"what": "hero impact", "source": "agent1.2"}},
         )
         assert result["valid"] is True
         assert "preserve" in result
@@ -918,6 +1026,76 @@ class TestProposeImprovements:
             state=self._NO_GATE,
         )
         assert result["valid"] is True
+
+    # --- verify_preserve consolidation ---
+
+    def test_verify_preserve_single_row(self):
+        """Multiple preserve entries → exactly one verify_preserve row."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": [{"plan": "fix cards", "sources": [], "impact": "structural"}]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2", "Check 3"],
+            all_criteria_ids=["E1", "E2", "E3"],
+            preserve={
+                "E1": {"what": "hero impact", "source": "agent1.2"},
+                "E3": {"what": "color palette", "source": "agent1.2"},
+            },
+        )
+        assert result["valid"] is True
+        verify_rows = [t for t in result["task_plan"] if t["type"] == "verify_preserve"]
+        assert len(verify_rows) == 1
+
+    def test_verify_preserve_after_improve_rows(self):
+        """verify_preserve row comes after all improve rows."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E2": [{"plan": "fix cards", "sources": [], "impact": "structural"}],
+                "E4": [{"plan": "add animation", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E2", "E4"],
+            items=["Check 1", "Check 2", "Check 3", "Check 4"],
+            all_criteria_ids=["E1", "E2", "E3", "E4"],
+            preserve={"E1": {"what": "hero impact", "source": "agent1.2"}},
+        )
+        assert result["valid"] is True
+        types = [t["type"] for t in result["task_plan"]]
+        verify_idx = next(i for i, t in enumerate(types) if t == "verify_preserve")
+        improve_indices = [i for i, t in enumerate(types) if t == "improve"]
+        assert all(improve_idx < verify_idx for improve_idx in improve_indices)
+
+    def test_verify_preserve_contains_all_items(self):
+        """verify_preserve row lists all preserved criteria in its items list."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": [{"plan": "fix cards", "sources": [], "impact": "structural"}]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2", "Check 3"],
+            all_criteria_ids=["E1", "E2", "E3"],
+            preserve={
+                "E1": {"what": "hero gradient animation", "source": "agent1.2"},
+                "E3": {"what": "sci-fi color palette", "source": "agent2.1"},
+            },
+        )
+        assert result["valid"] is True
+        verify_row = next(t for t in result["task_plan"] if t["type"] == "verify_preserve")
+        items = verify_row["items"]
+        assert len(items) == 2
+        criterion_ids = {item["criterion_id"] for item in items}
+        assert criterion_ids == {"E1", "E3"}
+        e1_item = next(item for item in items if item["criterion_id"] == "E1")
+        assert e1_item["what"] == "hero gradient animation"
+        assert e1_item["source"] == "agent1.2"
+
+    def test_no_preserve_no_verify_row(self):
+        """No preserve entries → no verify_preserve row in task_plan."""
+        result = evaluate_proposed_improvements(
+            improvements={"E2": ["fix fonts"], "E5": ["add timeline"]},
+            failed_criteria=["E2", "E5"],
+            items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+            state=self._NO_GATE,
+        )
+        assert result["valid"] is True
+        verify_rows = [t for t in result["task_plan"] if t["type"] == "verify_preserve"]
+        assert len(verify_rows) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1471,11 +1649,11 @@ class TestBuilderGatedPrompt:
         assert "inline" in prompt.lower()
 
 
-class TestAlwaysSpawnQualitySubagents:
-    """Tests for always_spawn_quality_subagents mode."""
+class TestIterationTriggeredQualitySubagents:
+    """Tests for iteration-triggered novelty/quality subagent guidance mode."""
 
     def test_quality_subagent_guidance_fires_without_plateau(self):
-        """When always_spawn_quality_subagents=True, guidance fires even without plateau."""
+        """When both iteration flags are on in round 2+, guidance mentions both subagents."""
         items = ["Criterion A", "Criterion B"]
         state = {
             "terminate_action": "vote",
@@ -1483,10 +1661,12 @@ class TestAlwaysSpawnQualitySubagents:
             "has_existing_answers": True,
             "required": 2,
             "cutoff": 7,
+            "agent_answer_count": 1,
             "item_categories": {"E1": "should", "E2": "could"},
             "quality_rethinking_subagent_enabled": True,
             "novelty_subagent_enabled": True,
-            "always_spawn_quality_subagents": True,
+            "enable_quality_rethink_on_iteration": True,
+            "enable_novelty_on_iteration": True,
         }
         # No history — so no plateau possible
         result = evaluate_checklist_submission(
@@ -1500,7 +1680,7 @@ class TestAlwaysSpawnQualitySubagents:
         assert "novelty" in explanation
 
     def test_quality_subagent_guidance_includes_failing_criteria_detail(self):
-        """Always mode builds detail for all failing criteria, not just plateaued."""
+        """Iteration-trigger mode builds detail for all failing criteria, not just plateaued."""
         items = ["First criterion text", "Second criterion text"]
         state = {
             "terminate_action": "vote",
@@ -1508,10 +1688,12 @@ class TestAlwaysSpawnQualitySubagents:
             "has_existing_answers": True,
             "required": 2,
             "cutoff": 7,
+            "agent_answer_count": 1,
             "item_categories": {"E1": "should", "E2": "could"},
             "quality_rethinking_subagent_enabled": True,
-            "novelty_subagent_enabled": True,
-            "always_spawn_quality_subagents": True,
+            "novelty_subagent_enabled": False,
+            "enable_quality_rethink_on_iteration": True,
+            "enable_novelty_on_iteration": False,
         }
         result = evaluate_checklist_submission(
             scores={"E1": 5, "E2": 5},
@@ -1528,7 +1710,7 @@ class TestAlwaysSpawnQualitySubagents:
         assert detail[0]["category"] == "should"
 
     def test_no_guidance_without_flag(self):
-        """Without the flag, no quality subagent guidance on non-plateaued criteria."""
+        """Without iteration flags, no quality subagent guidance on non-plateaued criteria."""
         items = ["Criterion A", "Criterion B"]
         state = {
             "terminate_action": "vote",
@@ -1536,9 +1718,10 @@ class TestAlwaysSpawnQualitySubagents:
             "has_existing_answers": True,
             "required": 2,
             "cutoff": 7,
+            "agent_answer_count": 1,
             "quality_rethinking_subagent_enabled": True,
             "novelty_subagent_enabled": True,
-            # No always_spawn_quality_subagents flag
+            # No iteration-trigger flags
         }
         result = evaluate_checklist_submission(
             scores={"E1": 5, "E2": 5},
@@ -1549,6 +1732,31 @@ class TestAlwaysSpawnQualitySubagents:
         explanation = result["explanation"].lower()
         # Without plateau, no subagent guidance
         assert "quality_rethinking" not in explanation
+
+    def test_no_guidance_on_round_1_even_with_flags(self):
+        """Round 1 should not force iteration-trigger guidance even when flags are set."""
+        items = ["Criterion A", "Criterion B"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "agent_answer_count": 0,
+            "quality_rethinking_subagent_enabled": True,
+            "novelty_subagent_enabled": True,
+            "enable_quality_rethink_on_iteration": True,
+            "enable_novelty_on_iteration": True,
+        }
+        result = evaluate_checklist_submission(
+            scores={"E1": 5, "E2": 5},
+            report_path="",
+            items=items,
+            state=state,
+        )
+        explanation = result["explanation"].lower()
+        assert "quality_rethinking" not in explanation
+        assert "novelty" not in explanation
 
 
 class TestBuildServerConfig:
@@ -2264,19 +2472,21 @@ class TestConvertTaskPlanToInjectFormat:
         assert task["metadata"]["sources"] == ["agent1.1"]
         assert task["metadata"]["injected"] is True
 
-    def test_convert_preserve_item(self):
-        """Preserve task_plan item converts to correct injection format."""
+    def test_convert_verify_preserve_item(self):
+        """verify_preserve task_plan item converts to a single consolidated injection task."""
         from massgen.mcp_tools.checklist_tools_server import (
             _convert_task_plan_to_inject_format,
         )
 
         task_plan = [
             {
-                "type": "preserve",
-                "criterion_id": "E4",
-                "criterion": "Tone is consistent",
-                "what_to_protect": "Warm conversational tone in intro",
-                "source": "agent2.1",
+                "type": "verify_preserve",
+                "description": "Before submitting: verify these strengths haven't regressed",
+                "items": [
+                    {"criterion_id": "E1", "what": "Warm conversational tone in intro", "source": "agent2.1"},
+                    {"criterion_id": "E3", "what": "Color palette coherence", "source": "agent1.2"},
+                ],
+                "priority": "high",
             },
         ]
 
@@ -2284,28 +2494,23 @@ class TestConvertTaskPlanToInjectFormat:
 
         assert len(result) == 1
         task = result[0]
-        assert task["description"] == "[E4] Preserve: Warm conversational tone in intro"
-        assert task["verification"] == "Tone is consistent"
-        assert task["priority"] == "medium"
-        assert task["metadata"]["criterion_id"] == "E4"
-        assert task["metadata"]["type"] == "preserve"
-        assert task["metadata"]["source"] == "agent2.1"
+        assert "Before submitting" in task["description"]
+        assert "[E1]" in task["description"]
+        assert "Warm conversational tone" in task["description"]
+        assert "[E3]" in task["description"]
+        assert task["priority"] == "high"
+        assert task["verification"] == "All preserved elements still present and intact in your output"
+        assert task["metadata"]["type"] == "verify_preserve"
+        assert len(task["metadata"]["items"]) == 2
         assert task["metadata"]["injected"] is True
 
     def test_convert_mixed_items(self):
-        """Both improve and preserve items in a single task_plan convert correctly."""
+        """Improve and verify_preserve items in a single task_plan convert correctly."""
         from massgen.mcp_tools.checklist_tools_server import (
             _convert_task_plan_to_inject_format,
         )
 
         task_plan = [
-            {
-                "type": "preserve",
-                "criterion_id": "E1",
-                "criterion": "Has strong opening",
-                "what_to_protect": "Hook in first line",
-                "source": "agent1.1",
-            },
             {
                 "type": "improve",
                 "criterion_id": "E3",
@@ -2313,13 +2518,21 @@ class TestConvertTaskPlanToInjectFormat:
                 "plan": "Add 3 concrete examples",
                 "sources": [],
             },
+            {
+                "type": "verify_preserve",
+                "description": "Before submitting: verify these strengths haven't regressed",
+                "items": [
+                    {"criterion_id": "E1", "what": "Hook in first line", "source": "agent1.1"},
+                ],
+                "priority": "high",
+            },
         ]
 
         result = _convert_task_plan_to_inject_format(task_plan)
 
         assert len(result) == 2
-        assert result[0]["metadata"]["type"] == "preserve"
-        assert result[1]["metadata"]["type"] == "improve"
+        assert result[0]["metadata"]["type"] == "improve"
+        assert result[1]["metadata"]["type"] == "verify_preserve"
 
 
 # ---------------------------------------------------------------------------
@@ -2384,3 +2597,35 @@ class TestWriteInjectFile:
 
         # Should be a safe no-op
         _write_inject_file(None, [{"type": "improve", "criterion_id": "E1", "criterion": "x", "plan": "y", "sources": []}])
+
+    def test_verify_preserve_written_to_inject_file(self, tmp_path):
+        """verify_preserve task_plan row → correct entry in inject_tasks.json."""
+        from massgen.mcp_tools.checklist_tools_server import _write_inject_file
+
+        task_plan = [
+            {
+                "type": "improve",
+                "criterion_id": "E2",
+                "criterion": "Clear structure",
+                "plan": "Add section headers",
+                "sources": ["agent1.1"],
+            },
+            {
+                "type": "verify_preserve",
+                "description": "Before submitting: verify these strengths haven't regressed",
+                "items": [
+                    {"criterion_id": "E1", "what": "Hero animation", "source": "agent2.1"},
+                ],
+                "priority": "high",
+            },
+        ]
+
+        _write_inject_file(tmp_path, task_plan)
+
+        inject_file = tmp_path / "inject_tasks.json"
+        data = json.loads(inject_file.read_text())
+        assert len(data) == 2
+        verify_entry = next(d for d in data if d["metadata"]["type"] == "verify_preserve")
+        assert "Before submitting" in verify_entry["description"]
+        assert "[E1]" in verify_entry["description"]
+        assert verify_entry["priority"] == "high"

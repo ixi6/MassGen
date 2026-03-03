@@ -498,3 +498,52 @@ async def test_subagent_criteria_generation_inherits_parent_context_paths_readon
     assert captured["parent_context_paths"] is not None
     assert {"path": str(tmp_path.resolve()), "permission": "read"} in captured["parent_context_paths"]
     assert {"path": str(parent_context.resolve()), "permission": "read"} in captured["parent_context_paths"]
+
+
+@pytest.mark.asyncio
+async def test_subagent_criteria_generation_keeps_file_operation_mcps_when_command_line_disabled(monkeypatch, tmp_path):
+    captured = {}
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["parent_agent_configs"] = kwargs.get("parent_agent_configs")
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "criteria": [
+                            {"text": "Goal alignment", "category": "must"},
+                            {"text": "No defects", "category": "must"},
+                            {"text": "Depth and completeness", "category": "should"},
+                            {"text": "Intentional craft", "category": "should"},
+                        ],
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = EvaluationCriteriaGenerator()
+    criteria = await generator.generate_criteria_via_subagent(
+        task="Test task",
+        agent_configs=[{"id": "agent_a", "backend": {"type": "openai", "model": "gpt-4o-mini"}}],
+        has_changedoc=False,
+        parent_workspace=str(tmp_path),
+        log_directory=None,
+        orchestrator_id="orch_test",
+        min_criteria=4,
+        max_criteria=7,
+    )
+
+    assert len(criteria) >= 4
+    assert captured["parent_agent_configs"] is not None
+    backend = captured["parent_agent_configs"][0]["backend"]
+    assert backend["enable_mcp_command_line"] is False
+    assert backend["exclude_file_operation_mcps"] is False

@@ -39,6 +39,26 @@ class TestNoveltyInjectionConfig:
         with pytest.raises(ValueError, match="novelty_injection"):
             CoordinationConfig(novelty_injection="extreme")
 
+    def test_enable_novelty_on_iteration_defaults_false(self):
+        """Default should keep novelty-on-iteration auto-trigger disabled."""
+        config = CoordinationConfig()
+        assert config.enable_novelty_on_iteration is False
+
+    def test_enable_novelty_on_iteration_accepts_true(self):
+        """CoordinationConfig should store explicit enable_novelty_on_iteration flag."""
+        config = CoordinationConfig(enable_novelty_on_iteration=True)
+        assert config.enable_novelty_on_iteration is True
+
+    def test_enable_quality_rethink_on_iteration_defaults_false(self):
+        """Default should keep quality-rethink-on-iteration auto-trigger disabled."""
+        config = CoordinationConfig()
+        assert config.enable_quality_rethink_on_iteration is False
+
+    def test_enable_quality_rethink_on_iteration_accepts_true(self):
+        """CoordinationConfig should store explicit enable_quality_rethink_on_iteration flag."""
+        config = CoordinationConfig(enable_quality_rethink_on_iteration=True)
+        assert config.enable_quality_rethink_on_iteration is True
+
     def test_config_validator_accepts_valid(self):
         """Config validator should accept valid novelty_injection values."""
         from massgen.config_validator import ConfigValidator
@@ -110,6 +130,20 @@ class TestNoveltyInjectionConfigParsing:
         for level in ("none", "gentle", "moderate", "aggressive"):
             result = _parse_coordination_config({"novelty_injection": level})
             assert result.novelty_injection == level, f"Expected {level}, got {result.novelty_injection}"
+
+    def test_parse_coordination_config_passes_enable_novelty_on_iteration(self):
+        """_parse_coordination_config should pass enable_novelty_on_iteration through."""
+        from massgen.cli import _parse_coordination_config
+
+        result = _parse_coordination_config({"enable_novelty_on_iteration": True})
+        assert result.enable_novelty_on_iteration is True
+
+    def test_parse_coordination_config_passes_enable_quality_rethink_on_iteration(self):
+        """_parse_coordination_config should pass enable_quality_rethink_on_iteration through."""
+        from massgen.cli import _parse_coordination_config
+
+        result = _parse_coordination_config({"enable_quality_rethink_on_iteration": True})
+        assert result.enable_quality_rethink_on_iteration is True
 
 
 # ---------------------------------------------------------------------------

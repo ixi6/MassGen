@@ -285,10 +285,15 @@ def _check_and_inject_pending_tasks(plan: TaskPlan, injection_dir: Path | None =
                 priority=t.get("priority", "medium"),
                 verification=t.get("verification"),
                 verification_method=t.get("verification_method"),
+                subagent_name=t.get("subagent_name"),
+                subagent_id=t.get("subagent_id"),
                 skip_verification=True,
             )
             # Merge extra metadata (criterion_id, type, sources, etc.)
             task.metadata.update(t.get("metadata", {}))
+            for key in ("criterion_id", "impact", "sources", "type"):
+                if key in t and key not in task.metadata:
+                    task.metadata[key] = t[key]
             added_ids.append(task.id)
         inject_file.unlink()  # Consume — prevent double-add
         _save_plan_to_filesystem(plan)

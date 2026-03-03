@@ -859,7 +859,8 @@ Generate evaluation criteria now for the task above."""
                             "base_url": backend.get("base_url"),
                             "enable_mcp_command_line": False,
                             "enable_code_based_tools": False,
-                            "exclude_file_operation_mcps": True,
+                            # Without command-line MCP execution, keep file-operation MCPs available.
+                            "exclude_file_operation_mcps": False,
                         },
                     },
                 )

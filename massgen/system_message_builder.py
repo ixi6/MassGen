@@ -273,6 +273,14 @@ class SystemMessageBuilder:
             answer_novelty_requirement = self.message_templates._answer_novelty_requirement
             round_number = len(previous_turns) + 1 if previous_turns else 1
 
+            improvements_cfg = dict(
+                getattr(
+                    getattr(self.config, "coordination_config", None),
+                    "improvements",
+                    {},
+                )
+                or {},
+            )
             builder.add_section(
                 EvaluationSection(
                     voting_sensitivity=voting_sensitivity,
@@ -290,6 +298,7 @@ class SystemMessageBuilder:
                     item_verify_by=item_verify_by,
                     has_existing_answers=bool(answers),
                     builder_enabled=builder_enabled,
+                    improvements_cfg=improvements_cfg,
                 ),
             )
 

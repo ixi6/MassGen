@@ -200,22 +200,44 @@ For results beyond what raw ffmpeg can achieve — styled captions, cinematic tr
 | Title cards / lower thirds | Manual | Native (React components) |
 | Motion graphics / text animations | Not possible | Native (full React/CSS/Three.js) |
 | Light leak / overlay effects | Complex filter chains | Built-in (`@remotion/light-leaks`) |
+| AI footage with programmatic overlays | Not feasible at quality | Native — `<Video>` + React layers |
 | Color grading via LUTs | Good (`lut3d` filter) | Use ffmpeg for this |
 | Audio mixing / ducking | Good | Use ffmpeg or Pydub for this |
 
 **Rule of thumb**: Use ffmpeg for raw clip assembly and audio mixing. Use Remotion when the output needs to look professionally edited — captions, titles, transitions with timing curves, motion graphics overlays.
 
+### Hybrid Composition: AI Footage + Remotion Animation
+
+The highest-quality videos combine AI-generated footage (photorealistic, cinematic) with Remotion's programmatic animation (precise typography, motion graphics, overlays). Neither alone produces the best result.
+
+**Composition structure for each shot:**
+```
+Layer 3 (top):    Text overlays, captions, motion graphics (Remotion React components)
+Layer 2 (middle): Light leaks, color overlays, vignettes (Remotion effects)
+Layer 1 (bottom): AI-generated video clip (<Video> or <OffthreadVideo>)
+```
+
+**Shot types in a typical video:**
+- **AI-backed shots**: Generated footage as background, Remotion elements composited on top (e.g., product demo with animated text overlay)
+- **Pure animation shots**: Title cards, data visualizations, logo reveals — no AI footage needed, 100% Remotion
+- **Transition shots**: Animated motion graphics bridging between AI-backed segments
+
+**Handling imperfect AI clips**: Generated clips may have minor artifacts (slight distortion, repeated patterns). Do NOT discard them — instead, mask issues with overlays, motion graphics, or light leaks in Remotion. The cinematic quality of AI footage underneath still elevates the result above pure programmatic rendering.
+
 ### Recommended Workflow
 
-1. **Generate raw clips** with `generate_media` (parallel, background mode)
-2. **Generate audio** (narration, music) with `generate_media(mode="audio")`
-3. **Assemble and polish in Remotion**:
-   - Import raw clips as `<Video>` components
+1. **Plan which shots need AI footage** — not every shot does. Title cards, logo reveals, and motion-graphics-heavy segments are better as pure Remotion animation.
+2. **Generate only the clips you need** with `generate_media` (parallel, background mode). Each generation costs money — don't speculatively over-generate.
+3. **Review generated clips** with `read_media` — assess quality and plan your composition around what you actually have.
+4. **Generate audio** (narration, music) with `generate_media(mode="audio")`
+5. **Assemble and composite in Remotion**:
+   - Import AI clips as `<Video>` or `<OffthreadVideo>` background layers
    - Add `<Sequence>` blocks for timeline composition
+   - Layer typography, motion graphics, and captions on top of footage
    - Apply transitions between scenes (`rules/transitions.md`)
    - Overlay styled captions (`rules/subtitles.md`, `rules/display-captions.md`)
-   - Add title cards with text animations (`rules/text-animations.md`)
+   - Add pure-animation segments for title cards (`rules/text-animations.md`)
    - Apply light leak effects for cinematic feel (`rules/light-leaks.md`)
-4. **Render** via Remotion's headless renderer (works in Docker)
+6. **Render** via Remotion's headless renderer (works in Docker)
 
 Load the Remotion skill's individual rule files for detailed code examples and API usage.

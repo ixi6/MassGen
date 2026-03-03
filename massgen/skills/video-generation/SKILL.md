@@ -98,12 +98,47 @@ Current APIs cap at **15 seconds max per clip** (Grok), with most backends at 4-
 
 1. **Plan a shot list** — break your video into 6-8s segments with specific camera language per shot
 2. **Generate clips in parallel** — launch all segments concurrently using `background=True`
-3. **Assemble and edit with Remotion** (see below) — do NOT use raw ffmpeg for captions, titles, or transitions
+3. **Composite in Remotion** (see below) — layer programmatic animation on top of generated footage
 4. **Bridge with audio** — a unified narration or music track smooths over visual cuts between clips
 
 For visual continuity, use the same **style anchor** in every prompt (e.g., "BBC Earth documentary cinematography") and maintain consistent lighting/color descriptions.
 
 **Full production guide with examples, transition types, and duration strategy**: See [references/production.md](references/production.md)
+
+## Hybrid Workflow: AI Footage + Remotion Animation
+
+**The best results come from combining AI-generated footage with Remotion's programmatic animation — not choosing one or the other.**
+
+AI video generation produces photorealistic, cinematic footage that pure programmatic rendering cannot match. Remotion produces precise typography, motion graphics, overlays, and transitions that AI generation cannot reliably control. Use both together.
+
+### The Rule: Generate First, Composite Second
+
+1. **Generate AI clips** for cinematic/photorealistic shots (environments, product demos, atmospheric footage)
+2. **Use those clips as visual foundations** in Remotion — import them as `<Video>` or `<OffthreadVideo>` background layers
+3. **Composite programmatic elements on top** — typography, motion graphics, logos, data overlays, transitions, captions
+4. **Fill gaps with pure Remotion animation** — title cards, intro sequences, motion-graphics-only segments where AI footage isn't needed
+
+### Do NOT Discard Generated Clips
+
+**Every AI-generated clip costs real money and time. Do not abandon generated footage and fall back to purely programmatic rendering.** This is a common failure mode — agents generate clips, notice minor artifacts (e.g., repeated patterns, slight distortion), then pivot entirely to OpenCV/PIL/moviepy rendering, wasting all the generation budget.
+
+Instead:
+
+| Situation | Wrong Approach | Right Approach |
+|---|---|---|
+| Minor artifacts in generated clip | Discard clip, render from scratch with OpenCV | Use clip as background, mask artifacts with overlays/motion graphics |
+| Generated clip doesn't match vision exactly | Regenerate or abandon | Composite typography/effects on top to guide the viewer's attention |
+| Need precise text/logo placement | Skip AI generation, use pure programmatic | Generate atmospheric footage, overlay text in Remotion |
+| Some shots need AI footage, others don't | Use one approach for everything | Mix: AI-backed shots + pure Remotion animation shots |
+
+### Cost Awareness
+
+Each `generate_media(mode="video")` call is expensive. Plan before generating:
+
+- **Decide which shots need AI footage** before generating anything — not every shot needs it
+- **Generate only what you'll use** — don't speculatively generate 8 clips hoping some work out
+- **Review and use what you generate** — analyze each clip with `read_media`, then plan your Remotion composition around actual footage
+- **One good clip composited well beats five unused clips** — invest in composition quality over generation quantity
 
 ## Post-Production: Always Use Remotion
 
@@ -127,6 +162,7 @@ Load the skill to get detailed rules and code examples:
 | Motion graphics | Full React/CSS/Three.js/Lottie ecosystem | Not possible |
 | Light leak / overlay effects | Built-in `@remotion/light-leaks` | Complex filter chains |
 | Text animations | Typography effects, per-character animation | Not feasible |
+| **AI footage + overlays** | **Import clips as `<Video>`, layer React components on top** | **Not feasible at quality** |
 
 ### When ffmpeg Alone Is Sufficient
 
@@ -138,11 +174,12 @@ Only use ffmpeg without Remotion for:
 
 ### Workflow
 
-1. **Generate raw clips** with `generate_media` (parallel, background mode)
-2. **Generate audio** (narration, music) with `generate_media(mode="audio")`
-3. **Load the Remotion skill** and set up a Remotion project
-4. **Assemble in Remotion**: import clips as `<Video>` components, add `<Sequence>` blocks for timeline, apply transitions, overlay captions, add title cards
-5. **Render** via Remotion's headless renderer
+1. **Generate AI clips** with `generate_media` (parallel, background mode) — for shots that need cinematic/photorealistic quality
+2. **Review clips** with `read_media` — assess what you have, plan composition around actual footage
+3. **Generate audio** (narration, music) with `generate_media(mode="audio")`
+4. **Load the Remotion skill** and set up a Remotion project
+5. **Composite in Remotion**: import AI clips as `<Video>` background layers, overlay typography/motion graphics/captions, add pure-animation segments for title cards and transitions
+6. **Render** via Remotion's headless renderer
 
 ### Key Remotion Rule Files to Load
 

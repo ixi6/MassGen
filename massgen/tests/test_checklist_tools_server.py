@@ -685,12 +685,16 @@ class TestCriterionPlateau:
 class TestProposeImprovements:
     """Tests for evaluate_proposed_improvements function."""
 
+    # Disable impact gate for tests focused on other validation logic.
+    _NO_GATE = {"improvements": {"min_transformative": 0, "min_structural": 0, "min_non_incremental": 0}}
+
     def test_valid_improvements_all_criteria_covered(self):
         """All failing criteria covered → valid."""
         result = evaluate_proposed_improvements(
             improvements={"E2": ["fix fonts"], "E5": ["add timeline"]},
             failed_criteria=["E2", "E5"],
             items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+            state=self._NO_GATE,
         )
         assert result["valid"] is True
         assert "task_plan" in result
@@ -702,6 +706,7 @@ class TestProposeImprovements:
             improvements={"E2": ["fix fonts"]},
             failed_criteria=["E2", "E5"],
             items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+            state=self._NO_GATE,
         )
         assert result["valid"] is False
         assert "E5" in result["error"]
@@ -713,6 +718,7 @@ class TestProposeImprovements:
             improvements={"E2": ["fix fonts"], "E5": []},
             failed_criteria=["E2", "E5"],
             items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+            state=self._NO_GATE,
         )
         assert result["valid"] is False
         assert "E5" in result["empty_criteria"]
@@ -726,6 +732,7 @@ class TestProposeImprovements:
             },
             failed_criteria=["E1", "E3"],
             items=["Goal alignment", "Correctness", "Depth"],
+            state=self._NO_GATE,
         )
         assert result["valid"] is True
         assert len(result["task_plan"]) == 3
@@ -755,15 +762,17 @@ class TestProposeImprovements:
             },
             failed_criteria=["E2"],
             items=["Check 1", "Check 2"],
+            state=self._NO_GATE,
         )
         assert result["valid"] is True
 
     def test_string_improvements_backward_compat(self):
-        """Plain string lists auto-wrapped to {"plan": str, "sources": []}."""
+        """Plain string lists auto-wrapped to {"plan": str, "sources": [], "impact": "incremental"}."""
         result = evaluate_proposed_improvements(
             improvements={"E1": ["fix layout"]},
             failed_criteria=["E1"],
             items=["Check 1"],
+            state=self._NO_GATE,
         )
         assert result["valid"] is True
         improve_entries = [t for t in result["task_plan"] if t.get("type", "improve") == "improve"]
@@ -777,7 +786,7 @@ class TestProposeImprovements:
     def test_preserve_required_when_criteria_exist(self):
         """Empty preserve + all_criteria_ids provided → error."""
         result = evaluate_proposed_improvements(
-            improvements={"E2": ["fix layout"]},
+            improvements={"E2": [{"plan": "fix layout", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2", "Check 3"],
             all_criteria_ids=["E1", "E2", "E3"],
@@ -789,7 +798,7 @@ class TestProposeImprovements:
     def test_preserve_allows_same_criterion_in_both(self):
         """Same criterion in improvements AND preserve → accepted."""
         result = evaluate_proposed_improvements(
-            improvements={"E2": ["fix the cards"]},
+            improvements={"E2": [{"plan": "fix the cards", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
@@ -803,7 +812,7 @@ class TestProposeImprovements:
     def test_preserve_key_must_be_valid_criterion_id(self):
         """Preserve key not in all_criteria_ids → error."""
         result = evaluate_proposed_improvements(
-            improvements={"E1": ["fix it"]},
+            improvements={"E1": [{"plan": "fix it", "sources": [], "impact": "structural"}]},
             failed_criteria=["E1"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
@@ -815,7 +824,7 @@ class TestProposeImprovements:
     def test_preserve_value_structured(self):
         """Preserve value {"what": "...", "source": "..."} accepted."""
         result = evaluate_proposed_improvements(
-            improvements={"E2": ["fix it"]},
+            improvements={"E2": [{"plan": "fix it", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
@@ -828,7 +837,7 @@ class TestProposeImprovements:
     def test_preserve_string_value_backward_compat(self):
         """Plain string preserve value auto-wrapped to {"what": str, "source": ""}."""
         result = evaluate_proposed_improvements(
-            improvements={"E2": ["fix it"]},
+            improvements={"E2": [{"plan": "fix it", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
@@ -841,7 +850,7 @@ class TestProposeImprovements:
     def test_preserve_empty_what_rejected(self):
         """Preserve with empty 'what' → error."""
         result = evaluate_proposed_improvements(
-            improvements={"E2": ["fix it"]},
+            improvements={"E2": [{"plan": "fix it", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
@@ -853,7 +862,7 @@ class TestProposeImprovements:
     def test_task_plan_includes_preserve_entries(self):
         """Task plan has type: preserve entries BEFORE improve entries."""
         result = evaluate_proposed_improvements(
-            improvements={"E2": ["fix cards"]},
+            improvements={"E2": [{"plan": "fix cards", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2", "Check 3"],
             all_criteria_ids=["E1", "E2", "E3"],
@@ -875,7 +884,7 @@ class TestProposeImprovements:
         """Improve entries include plan and sources fields."""
         result = evaluate_proposed_improvements(
             improvements={
-                "E1": [{"plan": "rethink cards", "sources": ["agent_b.1"]}],
+                "E1": [{"plan": "rethink cards", "sources": ["agent_b.1"], "impact": "structural"}],
             },
             failed_criteria=["E1"],
             items=["Check 1", "Check 2"],
@@ -890,7 +899,7 @@ class TestProposeImprovements:
     def test_preserve_echoed_in_response(self):
         """Response includes preserve dict."""
         result = evaluate_proposed_improvements(
-            improvements={"E2": ["fix it"]},
+            improvements={"E2": [{"plan": "fix it", "sources": [], "impact": "structural"}]},
             failed_criteria=["E2"],
             items=["Check 1", "Check 2"],
             all_criteria_ids=["E1", "E2"],
@@ -906,8 +915,189 @@ class TestProposeImprovements:
             improvements={"E2": ["fix fonts"], "E5": ["add timeline"]},
             failed_criteria=["E2", "E5"],
             items=["Check 1", "Check 2", "Check 3", "Check 4", "Check 5"],
+            state=self._NO_GATE,
         )
         assert result["valid"] is True
+
+
+# ---------------------------------------------------------------------------
+# Impact gate tests
+# ---------------------------------------------------------------------------
+
+
+class TestImpactGate:
+    """Tests for the min_non_incremental impact validation gate."""
+
+    _ITEMS = ["Check 1", "Check 2", "Check 3"]
+    _DEFAULT_STATE = {}  # uses default min_structural=1, min_non_incremental=1
+
+    def test_propose_improvements_rejects_all_incremental(self):
+        """All entries with impact: incremental (default) → fails gate."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "polish layout", "sources": [], "impact": "incremental"}],
+                "E2": [{"plan": "tweak colors", "sources": [], "impact": "incremental"}],
+            },
+            failed_criteria=["E1", "E2"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is False
+        assert "impact requirements not met" in result["error"]
+
+    def test_propose_improvements_accepts_one_structural(self):
+        """One structural improvement → passes (meets min_structural=1)."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign navigation", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is True
+
+    def test_propose_improvements_accepts_one_transformative(self):
+        """One transformative improvement → passes (meets min_non_incremental=1)."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "switch to 3D engine", "sources": [], "impact": "transformative"}],
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is True
+
+    def test_propose_improvements_default_impact_is_incremental(self):
+        """Entry with no impact field → treated as incremental, fails gate."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "fix typo", "sources": []}],  # no impact key
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is False
+        assert "impact requirements not met" in result["error"]
+
+    def test_propose_improvements_min_transformative_gate(self):
+        """min_transformative: 1, only structural provided → fails."""
+        state = {"improvements": {"min_transformative": 1, "min_structural": 0, "min_non_incremental": 0}}
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign nav", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=state,
+        )
+        assert result["valid"] is False
+        assert "transformative" in result["error"]
+
+    def test_propose_improvements_all_gates_disabled(self):
+        """All gates set to 0 → all-incremental passes."""
+        state = {"improvements": {"min_transformative": 0, "min_structural": 0, "min_non_incremental": 0}}
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "polish layout", "sources": [], "impact": "incremental"}],
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=state,
+        )
+        assert result["valid"] is True
+
+    def test_propose_improvements_combined_floor_fails_with_one(self):
+        """min_non_incremental: 2, only one structural → fails."""
+        state = {"improvements": {"min_transformative": 0, "min_structural": 0, "min_non_incremental": 2}}
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign", "sources": [], "impact": "structural"}],
+                "E2": [{"plan": "polish", "sources": [], "impact": "incremental"}],
+            },
+            failed_criteria=["E1", "E2"],
+            items=self._ITEMS,
+            state=state,
+        )
+        assert result["valid"] is False
+        assert "non-incremental combined" in result["error"]
+
+    def test_propose_improvements_combined_floor_passes_with_two(self):
+        """min_non_incremental: 2, two structural → passes."""
+        state = {"improvements": {"min_transformative": 0, "min_structural": 0, "min_non_incremental": 2}}
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign", "sources": [], "impact": "structural"}],
+                "E2": [{"plan": "rethink", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1", "E2"],
+            items=self._ITEMS,
+            state=state,
+        )
+        assert result["valid"] is True
+
+    def test_propose_improvements_error_suggests_novelty_subagent(self):
+        """Error message mentions novelty and quality_rethinking subagents."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "tweak", "sources": [], "impact": "incremental"}],
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is False
+        assert "novelty" in result["error"]
+        assert "quality_rethinking" in result["error"]
+
+    def test_propose_improvements_unknown_impact_coerced_to_incremental(self):
+        """Unknown impact value is coerced to incremental, which fails gate."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "do something", "sources": [], "impact": "revolutionary"}],
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is False
+        assert "impact requirements not met" in result["error"]
+
+    def test_propose_improvements_impact_passed_through_task_plan(self):
+        """impact field is included in task_plan improve entries."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is True
+        improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
+        assert improve_entry["impact"] == "structural"
+
+    def test_propose_improvements_string_entry_treated_as_incremental(self):
+        """Plain string improvement → incremental → fails gate."""
+        result = evaluate_proposed_improvements(
+            improvements={"E1": ["fix layout"]},
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=self._DEFAULT_STATE,
+        )
+        assert result["valid"] is False
+
+    def test_propose_improvements_no_state_uses_defaults(self):
+        """No state passed → default min_structural=1, all-incremental fails."""
+        result = evaluate_proposed_improvements(
+            improvements={"E1": [{"plan": "polish", "sources": [], "impact": "incremental"}]},
+            failed_criteria=["E1"],
+            items=self._ITEMS,
+            state=None,
+        )
+        assert result["valid"] is False
 
 
 # ---------------------------------------------------------------------------

@@ -158,16 +158,23 @@ def _find_plateaued_criteria(
     return plateaued
 
 
+_VALID_IMPACTS = {"transformative", "structural", "incremental"}
+
+
 def _normalize_improvement_entry(entry: Any) -> dict[str, Any]:
-    """Normalize an improvement entry to {"plan": str, "sources": list}."""
+    """Normalize an improvement entry to {"plan": str, "sources": list, "impact": str}."""
     if isinstance(entry, str):
-        return {"plan": entry, "sources": []}
+        return {"plan": entry, "sources": [], "impact": "incremental"}
     if isinstance(entry, dict):
+        impact = entry.get("impact", "incremental")
+        if impact not in _VALID_IMPACTS:
+            impact = "incremental"
         return {
             "plan": str(entry.get("plan", "")),
             "sources": list(entry.get("sources", [])),
+            "impact": impact,
         }
-    return {"plan": str(entry), "sources": []}
+    return {"plan": str(entry), "sources": [], "impact": "incremental"}
 
 
 def _normalize_preserve_entry(entry: Any) -> dict[str, str]:
@@ -188,6 +195,7 @@ def evaluate_proposed_improvements(
     items: list[str],
     all_criteria_ids: list[str] | None = None,
     preserve: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate that improvements cover all failing criteria and preserve strengths."""
     if not isinstance(improvements, dict):
@@ -244,6 +252,39 @@ def evaluate_proposed_improvements(
         for cid, entry in preserve.items():
             normalized_preserve[cid] = _normalize_preserve_entry(entry)
 
+    # --- Impact gate: require at least min_non_incremental (structural/transformative) ---
+    _state = state or {}
+    improvements_cfg = _state.get("improvements", {})
+    min_transformative = improvements_cfg.get("min_transformative", 0)
+    min_structural = improvements_cfg.get("min_structural", 0)
+    min_non_incremental = improvements_cfg.get("min_non_incremental", 1)
+
+    all_entries = [_normalize_improvement_entry(e) for entries in improvements.values() for e in entries]
+    transformative_count = sum(1 for e in all_entries if e.get("impact") == "transformative")
+    structural_count = sum(1 for e in all_entries if e.get("impact") == "structural")
+    non_incremental_count = transformative_count + structural_count
+
+    impact_failures = []
+    if transformative_count < min_transformative:
+        impact_failures.append(f"transformative: {transformative_count}/{min_transformative}")
+    if structural_count < min_structural:
+        impact_failures.append(f"structural: {structural_count}/{min_structural}")
+    if non_incremental_count < min_non_incremental:
+        impact_failures.append(
+            f"non-incremental combined: {non_incremental_count}/{min_non_incremental}",
+        )
+
+    if impact_failures:
+        return {
+            "valid": False,
+            "error": (
+                f"Improvement impact requirements not met ({', '.join(impact_failures)}). "
+                "A round at this cost needs bolder changes. Consider spawning a novelty or "
+                "quality_rethinking subagent in background to generate stronger directions, "
+                "then revise your proposal."
+            ),
+        }
+
     # --- Build task plan: preserve entries first, then improvements ---
     task_plan: list[dict[str, Any]] = []
 
@@ -274,6 +315,7 @@ def evaluate_proposed_improvements(
                     "criterion": criterion_text,
                     "plan": norm["plan"],
                     "sources": norm["sources"],
+                    "impact": norm["impact"],
                     # Keep backward-compat "improvement" key
                     "improvement": norm["plan"],
                 },
@@ -750,6 +792,7 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
                         "criterion_id": item["criterion_id"],
                         "criterion": item["criterion"],
                         "type": "improve",
+                        "impact": item.get("impact", "incremental"),
                         "sources": item.get("sources", []),
                         "injected": True,
                     },
@@ -884,12 +927,15 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
                 preserve = json.loads(preserve)
             except (json.JSONDecodeError, TypeError):
                 preserve = None
+        current_for_improve = _read_specs(specs_path)
+        state_for_improve = current_for_improve.get("state", {})
         result = evaluate_proposed_improvements(
             improvements=improvements,
             failed_criteria=_last_result["failed_criteria"],
             items=_last_result["items"],
             all_criteria_ids=_last_result.get("all_criteria_ids"),
             preserve=preserve,
+            state=state_for_improve,
         )
         if result.get("valid") and _injection_dir_path:
             _write_inject_file(_injection_dir_path, result["task_plan"])
@@ -902,9 +948,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
                 "Do not skip criteria."
             )
             # Append subagent delegation hint if subagents are enabled
-            current = _read_specs(specs_path)
-            state = current.get("state", {})
-            if state.get("subagents_enabled"):
+            if state_for_improve.get("subagents_enabled"):
                 result["message"] += (
                     " Review the pre-populated plan for subagent delegation"
                     " opportunities. Tasks without mutual dependencies can be"

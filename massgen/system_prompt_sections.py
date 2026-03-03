@@ -704,6 +704,32 @@ Rate your confidence on each item, count how many meet the {cutoff} cutoff,
 then apply the decision rule above."""
 
 
+def _build_impact_requirement(improvements_cfg: dict | None) -> str:
+    """Build a dynamic sentence describing the impact gate requirements."""
+    cfg = improvements_cfg or {}
+    min_t = cfg.get("min_transformative", 0)
+    min_s = cfg.get("min_structural", 0)
+    min_ni = cfg.get("min_non_incremental", 1)
+
+    constraints: list[str] = []
+    if min_t > 0:
+        word = "improvement" if min_t == 1 else "improvements"
+        constraints.append(f"at least {min_t} transformative {word}")
+    if min_s > 0:
+        word = "improvement" if min_s == 1 else "improvements"
+        constraints.append(f"at least {min_s} structural {word}")
+    # Only add combined floor if it isn't already implied by the individual floors.
+    if min_ni > 0 and (min_t + min_s) < min_ni:
+        word = "improvement" if min_ni == 1 else "improvements"
+        constraints.append(f"at least {min_ni} structural or transformative {word} combined")
+
+    if not constraints:
+        return "**`impact` is informational for this run** — use it to communicate " "ambition, but no specific level is enforced."
+
+    req = "; ".join(constraints).capitalize() + "."
+    return f"**Impact requirement: {req}** " "All-incremental proposals will be rejected — a round at this cost needs bolder changes."
+
+
 def _build_checklist_gated_decision(
     checklist_items: list,
     terminate_action: str = "vote",
@@ -711,6 +737,7 @@ def _build_checklist_gated_decision(
     require_gap_report: bool = True,
     gap_report_mode: str = "changedoc",
     builder_enabled: bool = True,
+    improvements_cfg: dict | None = None,
 ) -> str:
     """Build checklist_gated decision section (tool-gated, hidden threshold).
 
@@ -756,6 +783,8 @@ def _build_checklist_gated_decision(
     else:
         # "none" — no report instructions
         report_requirement = ""
+
+    impact_requirement = _build_impact_requirement(improvements_cfg)
 
     # Phase 3 execution guidance — conditional on builder availability
     if builder_enabled:
@@ -987,15 +1016,25 @@ When verdict is `{iterate_action}`, review each existing answer before proposing
 Use this to fill in the `sources` and `preserve` fields accurately.
 
 You MUST call `propose_improvements` with:
-- **`improvements`**: plans for **every** failing criterion — each entry has a `plan` \
-and `sources` (which answers you're drawing from for that specific change)
+- **`improvements`**: plans for **every** failing criterion — each entry has a `plan`, \
+`sources` (which answers you're drawing from), and `impact` (how bold the change is)
 - **`preserve`**: what's already working and must not regress — each entry has `what` \
 (the specific strength) and `source` (which answer it comes from)
 
+**`impact` levels** (required on every improvement entry):
+- **`transformative`**: fundamentally different approach, architecture, or creative direction
+- **`structural`**: meaningful redesign, new capability, or significant quality lift; \
+fixing a crash or unblocking major functionality also counts as structural
+- **`incremental`**: polish, formatting, small additions — important but not round-justifying alone
+
+{impact_requirement}
+
   propose_improvements(
     improvements={{
-      "E2": [{{"plan": "rethink the feature cards with distinct visual identity", "sources": ["agent_b.1"]}}],
-      "E5": [{{"plan": "build a full signup form CTA", "sources": ["agent_b.1", "agent_a.1"]}}],
+      "E2": [{{"plan": "rethink the feature cards with distinct visual identity", \
+"sources": ["agent_b.1"], "impact": "structural"}}],
+      "E5": [{{"plan": "build a full signup form CTA", \
+"sources": ["agent_b.1", "agent_a.1"], "impact": "transformative"}}],
     }},
     preserve={{
       "E1": {{"what": "hero section visual impact — gradient animation and typography", "source": "agent_a.2"}},
@@ -1004,8 +1043,8 @@ and `sources` (which answers you're drawing from for that specific change)
     }}
   )
 
-- `improvements`: each entry names a `plan` and its `sources` — which answers \
-you're drawing from. This traces provenance of every change.
+- `improvements`: each entry names a `plan`, its `sources`, and an `impact` level. \
+This traces provenance and ambition of every change.
 - `preserve` forces you to articulate what's WORKING before changing anything. \
 A criterion can appear in BOTH — fix one part, protect another.
 
@@ -2936,6 +2975,7 @@ class EvaluationSection(SystemPromptSection):
         item_verify_by: dict[str, str] | None = None,
         has_existing_answers: bool = True,
         builder_enabled: bool = True,
+        improvements_cfg: dict | None = None,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -2957,6 +2997,7 @@ class EvaluationSection(SystemPromptSection):
         self.item_verify_by = item_verify_by
         self.has_existing_answers = has_existing_answers
         self.builder_enabled = builder_enabled
+        self.improvements_cfg = improvements_cfg
 
     def build_content(self) -> str:
         # Vote-only mode: agent has exhausted their answer limit
@@ -3107,6 +3148,7 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                     require_gap_report=self.checklist_require_gap_report,
                     gap_report_mode=self.gap_report_mode,
                     builder_enabled=self.builder_enabled,
+                    improvements_cfg=self.improvements_cfg,
                 )
                 evaluation_section = f"""{analysis}
 
@@ -3270,6 +3312,7 @@ class DecompositionSection(SystemPromptSection):
         custom_checklist_items: list[str] | None = None,
         item_categories: dict[str, str] | None = None,
         item_verify_by: dict[str, str] | None = None,
+        improvements_cfg: dict | None = None,
     ):
         super().__init__(
             title="MassGen Decomposition Coordination",
@@ -3287,6 +3330,7 @@ class DecompositionSection(SystemPromptSection):
         self.custom_checklist_items = custom_checklist_items
         self.item_categories = item_categories
         self.item_verify_by = item_verify_by
+        self.improvements_cfg = improvements_cfg
 
     def _build_decision_block(self) -> str:
         """Build the new_answer vs stop decision block, threshold-aware if set."""
@@ -3338,7 +3382,8 @@ Both are terminal actions that end your round.
                     iterate_action="new_answer",
                     require_gap_report=self.checklist_require_gap_report,
                     gap_report_mode=self.gap_report_mode,
-                    builder_enabled=self.builder_enabled,
+                    builder_enabled=getattr(self, "builder_enabled", True),
+                    improvements_cfg=self.improvements_cfg,
                 )
                 return f"""**CHOOSING THE RIGHT TOOL — `new_answer` vs `stop`:**
 Both are terminal actions that end your round.

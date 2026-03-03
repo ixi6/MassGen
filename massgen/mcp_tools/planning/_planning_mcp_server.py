@@ -299,7 +299,7 @@ def _check_and_inject_pending_tasks(plan: TaskPlan, injection_dir: Path | None =
         return []
 
 
-def _get_or_create_plan(agent_id: str, orchestrator_id: str, require_verification: bool = True) -> TaskPlan:
+def _get_or_create_plan(agent_id: str, orchestrator_id: str, require_verification: bool = True, workspace_token: str | None = None) -> TaskPlan:
     """
     Get existing plan or create new one for agent.
 
@@ -309,23 +309,27 @@ def _get_or_create_plan(agent_id: str, orchestrator_id: str, require_verificatio
         agent_id: Agent identifier
         orchestrator_id: Orchestrator identifier
         require_verification: Whether to require verification fields on new tasks
+        workspace_token: Anonymous token for plan serialization to hide real agent_id (MAS-338)
 
     Returns:
         TaskPlan for the agent
     """
     key = f"{orchestrator_id}:{agent_id}"
+    display_key = f"{orchestrator_id}:{workspace_token}" if workspace_token else key
 
     if key not in _task_plans:
         # Try loading from filesystem if configured
         loaded_plan = _load_plan_from_filesystem(key)
         if loaded_plan is not None:
             loaded_plan.require_verification = require_verification
+            loaded_plan.display_id = display_key
             _task_plans[key] = loaded_plan
         else:
-            _task_plans[key] = TaskPlan(agent_id=key, require_verification=require_verification)
+            _task_plans[key] = TaskPlan(agent_id=key, display_id=display_key, require_verification=require_verification)
     else:
         # Update flag on existing plan (in case it changed)
         _task_plans[key].require_verification = require_verification
+        _task_plans[key].display_id = display_key
 
     # Check for pending task injection from propose_improvements
     _check_and_inject_pending_tasks(_task_plans[key], _injection_dir)
@@ -454,6 +458,12 @@ async def create_server() -> fastmcp.FastMCP:
         default=None,
         help="Dir for task injection files from checklist propose_improvements",
     )
+    parser.add_argument(
+        "--workspace-token",
+        type=str,
+        default=None,
+        help="Anonymous token for plan serialization to hide real agent_id (MAS-338)",
+    )
     args = parser.parse_args()
 
     # Configure logging to stderr so it appears in MCP server output
@@ -491,6 +501,7 @@ async def create_server() -> fastmcp.FastMCP:
     # Store agent and orchestrator IDs
     mcp.agent_id = args.agent_id
     mcp.orchestrator_id = args.orchestrator_id
+    mcp.workspace_token = args.workspace_token  # Anonymous token for plan serialization (MAS-338)
 
     # Store feature flags for auto-inserting discovery tasks
     mcp.skills_enabled = args.skills_enabled
@@ -560,7 +571,7 @@ async def create_server() -> fastmcp.FastMCP:
         """
         try:
             # Get or create plan for this agent
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
 
             # Check if plan already has tasks - error to prevent duplicate work after recovery
             if plan.tasks:
@@ -749,7 +760,7 @@ async def create_server() -> fastmcp.FastMCP:
                     "error": f"Invalid priority '{priority}'. Must be one of: {', '.join(valid_priorities)}",
                 }
 
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
 
             task = plan.add_task(
                 description=description,
@@ -814,7 +825,7 @@ async def create_server() -> fastmcp.FastMCP:
                     f"Invalid status '{status}'. Must be one of: {valid_statuses}",
                 )
 
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
             result = plan.update_task_status(task_id, status, completion_notes)
 
             # Save to filesystem if configured
@@ -864,7 +875,7 @@ async def create_server() -> fastmcp.FastMCP:
             edit_task("research_oauth", "Research OAuth 2.0 providers and best practices")
         """
         try:
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
             task = plan.edit_task(task_id, description)
 
             # Save to filesystem if configured
@@ -898,7 +909,7 @@ async def create_server() -> fastmcp.FastMCP:
             print(f"Awaiting verification: {plan['summary']['awaiting_verification']}")
         """
         try:
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
 
             ready_tasks = plan.get_ready_tasks()
             blocked_tasks = plan.get_blocked_tasks()
@@ -945,7 +956,7 @@ async def create_server() -> fastmcp.FastMCP:
             delete_task("obsolete_task_id")
         """
         try:
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
             plan.delete_task(task_id)
 
             # Save to filesystem if configured
@@ -984,7 +995,7 @@ async def create_server() -> fastmcp.FastMCP:
                 print(f"Ready: {task['description']}")
         """
         try:
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
             ready_tasks = plan.get_ready_tasks()
 
             return {
@@ -1022,7 +1033,7 @@ async def create_server() -> fastmcp.FastMCP:
                 print(f"  Waiting on: {task['blocking_task_ids']}")
         """
         try:
-            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False))
+            plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id, getattr(mcp, "require_verification", False), getattr(mcp, "workspace_token", None))
             blocked_tasks = plan.get_blocked_tasks()
 
             # Add blocking task info for each blocked task

@@ -539,6 +539,7 @@ class Orchestrator(ChatAgent):
                             f"[Orchestrator] Added Docker mount for delegation dir: {del_resolved}",
                         )
 
+            workspace_token = self.coordination_tracker.get_path_token(agent_id)
             agent.backend.filesystem_manager.setup_orchestration_paths(
                 agent_id=agent_id,
                 snapshot_storage=self._snapshot_storage,
@@ -546,6 +547,7 @@ class Orchestrator(ChatAgent):
                 skills_directory=skills_directory,
                 massgen_skills=massgen_skills,
                 load_previous_session_skills=load_previous_session_skills,
+                workspace_token=workspace_token,
             )
             # Setup workspace directories for massgen skills
             if hasattr(self.config, "coordination_config") and hasattr(
@@ -1883,6 +1885,11 @@ class Orchestrator(ChatAgent):
                     logger.info(
                         f"[Orchestrator] Enabling filesystem mode for task planning: {workspace_path}",
                     )
+                    # Pass anonymous workspace token so plan.json doesn't reveal real agent_id
+                    _tracker = getattr(self, "coordination_tracker", None)
+                    if _tracker is not None and hasattr(_tracker, "get_path_token"):
+                        workspace_token = _tracker.get_path_token(agent_id)
+                        args.extend(["--workspace-token", workspace_token])
                 else:
                     logger.warning(
                         f"[Orchestrator] Agent {agent_id} filesystem_manager.cwd is None",

@@ -407,6 +407,7 @@ class FilesystemManager:
         skills_directory: str | None = None,
         massgen_skills: list[str] | None = None,
         load_previous_session_skills: bool = False,
+        workspace_token: str | None = None,
     ) -> None:
         """
         Setup orchestration-specific paths for snapshots and temporary workspace.
@@ -418,21 +419,24 @@ class FilesystemManager:
             agent_temporary_workspace: Base path for temporary workspace during context sharing
             skills_directory: Path to skills directory to mount in Docker (e.g., .agent/skills)
             load_previous_session_skills: If True, include evolving skills from previous sessions
+            workspace_token: Anonymous token for temp workspace path to hide real agent_id (MAS-338)
         """
         logger.info(
             f"[FilesystemManager.setup_orchestration_paths] Called for agent_id={agent_id}, snapshot_storage={snapshot_storage}, "
             f"agent_temporary_workspace={agent_temporary_workspace}, skills_directory={skills_directory}",
         )
         self.agent_id = agent_id
+        # Use token for temp workspace path to avoid leaking real agent_id (MAS-338)
+        self.workspace_token = workspace_token or agent_id
 
         # Setup snapshot storage if provided
         if snapshot_storage and self.agent_id:
             self.snapshot_storage = Path(snapshot_storage) / self.agent_id
             self.snapshot_storage.mkdir(parents=True, exist_ok=True)
 
-        # Setup temporary workspace for context sharing
+        # Setup temporary workspace for context sharing (uses token to hide real agent_id)
         if agent_temporary_workspace and self.agent_id:
-            self.agent_temporary_workspace = self._setup_workspace(self.agent_temporary_workspace_parent / self.agent_id)
+            self.agent_temporary_workspace = self._setup_workspace(self.agent_temporary_workspace_parent / self.workspace_token)
 
         # Note: Agent log directories are created on-demand when save_snapshot() is called,
         # not preemptively here. This avoids creating empty directories for agents that

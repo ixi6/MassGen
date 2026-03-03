@@ -11,6 +11,7 @@ us exactly what occurred and when.
 """
 
 import json
+import secrets
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -224,6 +225,9 @@ class CoordinationTracker:
         self.user_prompt = user_prompt
         self.log_path = log_path  # Store for later use (MAS-199)
 
+        # Generate stable anonymous path tokens for each agent (MAS-338)
+        self._path_tokens: dict[str, str] = {agent_id: secrets.token_hex(4) for agent_id in agent_ids}  # 8-char hex = 4 bytes
+
         # Initialize per-agent round tracking
         self.agent_rounds = {aid: 0 for aid in agent_ids}
         self.agent_round_context = {aid: {0: []} for aid in agent_ids}  # Each agent starts in round 0 with empty context
@@ -259,6 +263,15 @@ class CoordinationTracker:
         """Get anonymous ID (agent1, agent2) for a full agent ID."""
         agent_num = self._get_agent_number(agent_id)
         return f"agent{agent_num}" if agent_num else agent_id
+
+    def get_path_token(self, agent_id: str) -> str:
+        """Get stable anonymous path token for this agent's workspace directories.
+
+        Returns an 8-character hex string that is stable within a session but
+        does not reveal the real agent_id. Falls back to generating a new token
+        if the agent_id was not registered at session initialization.
+        """
+        return self._path_tokens.get(agent_id, secrets.token_hex(4))
 
     def _get_agent_number(self, agent_id: str) -> int | None:
         """Get the 1-based number for an agent (1, 2, 3, etc.)."""

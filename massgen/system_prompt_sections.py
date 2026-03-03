@@ -2548,7 +2548,7 @@ class FilesystemOperationsSection(SystemPromptSection):
                     for i, agent_id in enumerate(sorted(self.agent_answers.keys()), 1):
                         agent_mapping[agent_id] = f"agent{i}"
 
-                workspace_tree += "   Available agent workspaces:\n"
+                workspace_tree += "   Workspaces from other agents (more may appear as other agents complete " "their work):\n"
                 # Sort by anon ID to ensure consistent display order
                 agent_items = sorted(agent_mapping.items(), key=lambda x: x[1])
                 for idx, (agent_id, anon_id) in enumerate(agent_items):
@@ -2563,10 +2563,10 @@ class FilesystemOperationsSection(SystemPromptSection):
                 "   - **Selective Copying**: Only copy specific files you'll actually modify or "
                 "use, not entire directories wholesale.\n"
                 "   - **Merging Approaches**: If combining work from multiple agents, consider "
-                "merging complementary parts (e.g., agent1's data model + agent2's API layer) "
+                "merging complementary parts (e.g., one workspace's data model + another's API layer) "
                 "rather than picking one entire solution.\n"
                 "   - **Attribution**: Be explicit in your answer about what you built on (e.g., "
-                "'Extended agent1's parser.py to handle edge cases').\n"
+                "'Extended the parser from a peer workspace to handle edge cases').\n"
                 "   - **Verify Files**: Not all workspaces may have matching answers in CURRENT "
                 "ANSWERS section (restart scenarios). Check actual files in Shared Reference.\n"
             )
@@ -2685,7 +2685,7 @@ class FilesystemBestPracticesSection(SystemPromptSection):
             "**Workspace Management**: \n"
             "- **Selective Copying**: When building on other agents' work, only copy the specific "
             "files you need to modify or use. Do not copy entire workspaces wholesale. Be explicit "
-            "about what you're building on (e.g., 'Using agent1's parser.py with "
+            "about what you're building on (e.g., 'Using a peer workspace's parser.py with "
             "modifications').\n"
             "- **Never Copy Gitignored Files**: Do NOT copy files/directories that are typically "
             "gitignored: `node_modules/`, `__pycache__/`, `.git/`, `venv/`, `env/`, `.env`, "
@@ -3266,7 +3266,7 @@ When calling `new_answer`, your content should be HIGH-LEVEL and concise:
 EXAMPLE FORMAT:
 ```
 I created a Snake game with mobile support and saved it to deliverable/.
-Workspace: /workspace/agent1/
+Workspace: /workspace/my-workspace/
 Files created:
 - deliverable/index.html (main game)
 - deliverable/README.md (instructions)
@@ -3472,7 +3472,7 @@ Your `new_answer` content should be HIGH-LEVEL and concise:
 EXAMPLE:
 ```
 I completed the authentication module and saved it to deliverable/auth/.
-Workspace: /workspace/agent2/
+Workspace: /workspace/my-workspace/
 Files created:
 - deliverable/auth/login.py (JWT-based auth)
 - deliverable/auth/middleware.py (request validation)
@@ -3481,8 +3481,8 @@ How to use:
 - Import AuthMiddleware in your app
 - Add JWT_SECRET to environment
 Integration points:
-- Exports authenticate() function for agent1's API
-- Uses database models from agent3
+- Exports authenticate() function for the API layer
+- Uses database models from the data layer
 Tests: 12/12 passing
 ```
 Remember: Other agents need to understand what you delivered and how to integrate with it, not HOW you implemented it.

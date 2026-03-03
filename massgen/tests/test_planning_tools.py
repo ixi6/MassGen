@@ -900,3 +900,16 @@ class TestAddTaskSubagentMetadata:
         )
         assert "subagent_id" not in task.metadata
         assert task.metadata["subagent_name"] == "writer"
+
+    def test_plan_serialization_uses_display_id_when_set(self):
+        """to_dict should use display_id instead of agent_id when display_id is set."""
+        plan = TaskPlan(agent_id="orchestrator:agent_a", display_id="orchestrator:a3f9b2")
+        d = plan.to_dict()
+        assert d["agent_id"] == "orchestrator:a3f9b2"
+        assert "agent_a" not in d["agent_id"]
+
+    def test_plan_serialization_falls_back_to_agent_id(self):
+        """to_dict should use agent_id when display_id is not set."""
+        plan = TaskPlan(agent_id="orchestrator:agent_a")
+        d = plan.to_dict()
+        assert d["agent_id"] == "orchestrator:agent_a"

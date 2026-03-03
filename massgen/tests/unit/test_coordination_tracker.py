@@ -146,3 +146,25 @@ def test_anonymous_mapping_uses_sorted_agent_ids():
     assert real_to_anon["agent_a"] == "agent1"
     assert real_to_anon["agent_b"] == "agent2"
     assert real_to_anon["agent_c"] == "agent3"
+
+
+def test_path_tokens_are_random_hex():
+    tracker = CoordinationTracker()
+    tracker.initialize_session(["agent_a", "agent_b"])
+    token_a = tracker.get_path_token("agent_a")
+    token_b = tracker.get_path_token("agent_b")
+    assert token_a != token_b
+    assert len(token_a) == 8
+    assert all(c in "0123456789abcdef" for c in token_a)
+
+
+def test_path_tokens_stable_within_session():
+    tracker = CoordinationTracker()
+    tracker.initialize_session(["agent_a"])
+    assert tracker.get_path_token("agent_a") == tracker.get_path_token("agent_a")
+
+
+def test_path_tokens_not_equal_to_agent_id():
+    tracker = CoordinationTracker()
+    tracker.initialize_session(["agent_a", "agent_b"])
+    assert tracker.get_path_token("agent_a") not in ["agent_a", "agent1", "agent2"]

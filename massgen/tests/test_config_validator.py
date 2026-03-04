@@ -15,6 +15,7 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
 import yaml
 
 from massgen.config_validator import ConfigValidator, ValidationResult
@@ -1188,13 +1189,20 @@ class TestCommonBadConfigs:
         assert not result.is_valid()
         assert any("max_midstream_injections_per_round" in error.location for error in result.errors)
 
-    def test_valid_learning_capture_mode(self):
+    @pytest.mark.parametrize(
+        "mode",
+        [
+            "final_only",
+            "verification_and_final_only",
+        ],
+    )
+    def test_valid_learning_capture_mode(self, mode):
         """Test learning_capture_mode accepts supported values."""
         config = {
             "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
             "orchestrator": {
                 "coordination": {
-                    "learning_capture_mode": "final_only",
+                    "learning_capture_mode": mode,
                 },
             },
         }
@@ -1221,6 +1229,41 @@ class TestCommonBadConfigs:
 
         assert not result.is_valid()
         assert any("learning_capture_mode" in error.location for error in result.errors)
+
+    @pytest.mark.parametrize("value", [True, False])
+    def test_valid_disable_final_only_round_capture_fallback(self, value):
+        """Test disable_final_only_round_capture_fallback accepts booleans."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {
+                "coordination": {
+                    "disable_final_only_round_capture_fallback": value,
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid()
+        assert not result.has_errors()
+
+    def test_invalid_disable_final_only_round_capture_fallback(self):
+        """Test disable_final_only_round_capture_fallback rejects non-boolean values."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {
+                "coordination": {
+                    "disable_final_only_round_capture_fallback": "yes",
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("disable_final_only_round_capture_fallback" in error.location for error in result.errors)
 
     def test_v1_max_rounds(self):
         """Test V1 max_rounds parameter is rejected."""

@@ -165,7 +165,11 @@ class ConfigValidator:
     VALID_NOVELTY_INJECTION = {"none", "gentle", "moderate", "aggressive"}
     VALID_SUBAGENT_RUNTIME_MODES = {"isolated", "inherited"}
     VALID_SUBAGENT_RUNTIME_FALLBACK_MODES = {"inherited"}
-    VALID_LEARNING_CAPTURE_MODES = {"round", "final_only"}
+    VALID_LEARNING_CAPTURE_MODES = {
+        "round",
+        "verification_and_final_only",
+        "final_only",
+    }
 
     # Valid gap report modes
     VALID_GAP_REPORT_MODES = {"changedoc", "separate", "none"}
@@ -1107,6 +1111,15 @@ class ConfigValidator:
                             f"{location}.coordination.learning_capture_mode",
                             f"Use one of: {valid_values}",
                         )
+                if "disable_final_only_round_capture_fallback" in coordination and not isinstance(
+                    coordination["disable_final_only_round_capture_fallback"],
+                    bool,
+                ):
+                    result.add_error(
+                        "'disable_final_only_round_capture_fallback' must be a boolean",
+                        f"{location}.coordination.disable_final_only_round_capture_fallback",
+                        "Use true or false",
+                    )
 
                 if "subagent_types" in coordination:
                     st = coordination["subagent_types"]

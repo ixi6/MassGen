@@ -451,11 +451,13 @@ def test_subagent_section_includes_evaluator_task_brief_details():
     content = section.build_content().lower()
 
     assert "for `evaluator` tasks, explicitly include" in content
+    assert "evaluation criteria verbatim" in content
     assert "what to run" in content
     assert "how to set it up" in content
     assert "exact commands" in content
     assert "what evidence to capture" in content
-    assert "pass/fail format" in content
+    # observations per criterion, not pass/fail verdicts
+    assert "observations" in content or "per criterion" in content
 
 
 def test_subagent_section_includes_builder_novelty_delegation_guidance():

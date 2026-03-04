@@ -405,6 +405,61 @@ async def test_background_tool_manager_wait_returns_interrupt_payload_from_signa
 
 
 @pytest.mark.asyncio
+async def test_background_tool_manager_wait_returns_delegate_subagent_completion(monkeypatch):
+    """wait_for_next_completion should return completed subagent delegate jobs immediately."""
+    manager = BackgroundToolManager(
+        tool_manager=ToolManager(),
+        execution_context={"agent_id": "agent_x"},
+    )
+
+    class _FakeMCPClient:
+        def __init__(self):
+            self.tools = {
+                "mcp__subagent_agent_x__list_subagents": SimpleNamespace(inputSchema={"type": "object"}),
+            }
+
+        async def call_tool(self, name, arguments):
+            assert name == "mcp__subagent_agent_x__list_subagents"
+            assert arguments == {}
+            payload = {
+                "success": True,
+                "operation": "list_subagents",
+                "subagents": [
+                    {
+                        "subagent_id": "eval_agent1",
+                        "status": "completed",
+                        "created_at": "2026-03-03T22:58:00",
+                        "task": "Evaluate E1-E7",
+                        "result": {
+                            "status": "completed",
+                            "answer": "Evaluation complete with findings.",
+                        },
+                    },
+                ],
+                "count": 1,
+            }
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+    async def fake_get_client():
+        return _FakeMCPClient()
+
+    monkeypatch.setattr(manager, "_get_mcp_client", fake_get_client)
+
+    waited = await manager.wait_for_next_completion(timeout_seconds=0.2)
+    assert waited["success"] is True
+    assert waited["ready"] is True
+    assert waited["job_id"] == "eval_agent1"
+    assert waited["status"] == "completed"
+    assert "Evaluation complete" in waited.get("result", "")
+
+    # Completion should be consumed as "seen" and not re-surface on a second wait.
+    second = await manager.wait_for_next_completion(timeout_seconds=0.02)
+    assert second["success"] is True
+    assert second["ready"] is False
+    assert second["timed_out"] is True
+
+
+@pytest.mark.asyncio
 async def test_background_tool_manager_list_defaults_to_running_only():
     """list_jobs should return running jobs by default and include_all when requested."""
     tool_manager = ToolManager()

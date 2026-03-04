@@ -853,6 +853,15 @@ class TestEvaluationDelegation:
         assert "send_message_to_subagent" in lower
         assert "continue_subagent" in lower
 
+    def test_background_lifecycle_discourages_finish_now_nudges(self):
+        """Steering guidance should discourage 'finish now' / 'complete now' messaging."""
+        content = _subagent_content()
+        lower = content.lower()
+        assert "finish now" in lower
+        assert "complete now" in lower
+        assert "only use" in lower
+        assert "send_message_to_subagent" in lower
+
     def test_subagent_section_documents_workspace_access(self):
         """Subagent guidance must document workspace access model."""
         content = _subagent_content()

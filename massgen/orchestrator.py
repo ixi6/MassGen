@@ -1828,8 +1828,28 @@ class Orchestrator(ChatAgent):
         if learning_capture_mode == "round":
             return True
         if learning_capture_mode == "final_only":
+            disable_fallback = getattr(
+                coordination_config,
+                "disable_final_only_round_capture_fallback",
+                False,
+            )
+            if disable_fallback is True:
+                return False
             return bool(getattr(self.config, "skip_final_presentation", False))
         return False
+
+    def _is_round_verification_capture_enabled(self) -> bool:
+        """Return whether round-time verification replay capture should be enabled."""
+        if self._is_round_learning_capture_enabled():
+            return True
+
+        coordination_config = getattr(self.config, "coordination_config", None)
+        learning_capture_mode = getattr(
+            coordination_config,
+            "learning_capture_mode",
+            "round",
+        )
+        return learning_capture_mode == "verification_and_final_only"
 
     def _create_planning_mcp_config(self, agent_id: str, agent: Any) -> dict[str, Any]:
         """
@@ -1937,6 +1957,8 @@ class Orchestrator(ChatAgent):
         )
         if memory_enabled and round_learning_capture_enabled:
             args.append("--memory-enabled")
+        if memory_enabled and self._is_round_verification_capture_enabled() and not round_learning_capture_enabled:
+            args.append("--verification-memory-enabled")
 
         # Enable git commits on task completion if two-tier workspace is enabled
         # Suppressed when write_mode is active (write_mode replaces the old two-tier structure)
@@ -14990,6 +15012,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                 symlinks=True,
                 ignore_dangling_symlinks=True,
             )
+            self._namespace_verification_memory_files(archive_path, agent_id)
             logger.info(
                 f"[Orchestrator] Archived memories for {agent_id} answer {answer_num} to {archive_path}",
             )
@@ -14997,6 +15020,24 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             logger.error(
                 f"[Orchestrator] Failed to archive memories for {agent_id}: {e}",
             )
+
+    @staticmethod
+    def _namespace_verification_memory_files(archive_path: Path, agent_id: str) -> None:
+        """Namespace verification_latest memories so per-agent files never collide."""
+        namespaced_name = f"verification_latest__{agent_id}.md"
+        for tier in ("short_term", "long_term"):
+            tier_dir = archive_path / tier
+            if not tier_dir.exists():
+                continue
+
+            legacy_file = tier_dir / "verification_latest.md"
+            if not legacy_file.exists():
+                continue
+
+            namespaced_file = tier_dir / namespaced_name
+            if namespaced_file.exists():
+                namespaced_file.unlink()
+            legacy_file.rename(namespaced_file)
 
     def _get_previous_turns_context_paths(self) -> list[dict[str, Any]]:
         """

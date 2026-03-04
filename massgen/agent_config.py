@@ -84,9 +84,17 @@ class CoordinationConfig:
                                        memories auto-inject into all agents' system prompts. Long-term
                                        memories are read on-demand. Inspired by Letta's context hierarchy.
         learning_capture_mode: Controls when evolving-skill + memory capture is produced.
+            - "round": full round-time capture (evolving skills + memory reminders/tasks)
+            - "verification_and_final_only": round-time verification replay memo only;
+              full consolidation remains presenter/final-time
+            - "final_only": defer all learning capture to presenter/final-time
                               - "round": Existing behavior. Capture can be produced in coordination rounds.
                               - "final_only" (default): Keep changedoc behavior, but defer evolving-skill + memory production
                                 to the final presenter stage. Coordination rounds remain read-focused.
+        disable_final_only_round_capture_fallback: If True, final_only mode remains read-focused
+                                                  even when skip_final_presentation is enabled.
+                                                  This disables the default fallback that re-enables
+                                                  round-time learning capture when there is no presenter stage.
         compression_target_ratio: Target ratio for reactive compression when context limit is exceeded.
                                  Value between 0 and 1, where 0.2 means preserve 20% of messages and
                                  summarize the remaining 80%. Lower values = more aggressive compression.
@@ -170,7 +178,8 @@ class CoordinationConfig:
     max_broadcasts_per_agent: int = 10
     task_planning_filesystem_mode: bool = False
     enable_memory_filesystem_mode: bool = False
-    learning_capture_mode: str = "final_only"  # "round" | "final_only"
+    learning_capture_mode: str = "verification_and_final_only"  # "round" | "verification_and_final_only" | "final_only"
+    disable_final_only_round_capture_fallback: bool = False
     compression_target_ratio: float = 0.20  # Preserve 20% of messages on context overflow
     use_skills: bool = False
     massgen_skills: list[str] = field(default_factory=list)
@@ -283,7 +292,7 @@ class CoordinationConfig:
 
     def _validate_learning_capture_mode(self):
         """Validate learning_capture_mode setting."""
-        valid_values = {"round", "final_only"}
+        valid_values = {"round", "verification_and_final_only", "final_only"}
         if self.learning_capture_mode not in valid_values:
             raise ValueError(
                 f"Invalid learning_capture_mode: '{self.learning_capture_mode}'. " f"Must be one of: {sorted(valid_values)}",

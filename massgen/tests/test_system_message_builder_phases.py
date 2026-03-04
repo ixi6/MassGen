@@ -313,6 +313,64 @@ class TestBuildCoordinationMessage:
         assert "Use `tasks/changedoc.md` as the canonical decision log for your evolving skill" in msg
         assert "Before writing memory files, review `tasks/changedoc.md`" in msg
 
+    def test_final_only_with_skip_final_presentation_respects_fallback_opt_out(self):
+        """Subagent opt-out should keep final_only read-focused even when final presentation is skipped."""
+        builder = _make_builder(
+            enable_memory=True,
+            learning_capture_mode="final_only",
+        )
+        builder.config.skip_final_presentation = True
+        builder.config.coordination_config.disable_final_only_round_capture_fallback = True
+        agent = _make_agent(auto_discover_custom_tools=True)
+
+        with (
+            patch.object(builder, "_get_all_memories", return_value=([], ["Long-term pattern A"])),
+            patch.object(builder, "_load_temp_workspace_memories", return_value=[]),
+            patch.object(builder, "_load_archived_memories", return_value={"short_term": {}, "long_term": {}}),
+        ):
+            msg = builder.build_coordination_message(
+                agent=agent,
+                agent_id="agent_a",
+                answers=None,
+                planning_mode_enabled=False,
+                use_skills=False,
+                enable_memory=True,
+                enable_task_planning=True,
+                previous_turns=[],
+            )
+
+        assert "## Evolving Skills" not in msg
+        assert "Saving Memories" not in msg
+
+    def test_verification_and_final_only_allows_verification_memo_only(self):
+        """verification_and_final_only should keep read-only memory mode but allow verification memo updates."""
+        builder = _make_builder(
+            enable_memory=True,
+            learning_capture_mode="verification_and_final_only",
+        )
+        agent = _make_agent(auto_discover_custom_tools=True)
+
+        with (
+            patch.object(builder, "_get_all_memories", return_value=([], ["Long-term pattern A"])),
+            patch.object(builder, "_load_temp_workspace_memories", return_value=[]),
+            patch.object(builder, "_load_archived_memories", return_value={"short_term": {}, "long_term": {}}),
+        ):
+            msg = builder.build_coordination_message(
+                agent=agent,
+                agent_id="agent_a",
+                answers=None,
+                planning_mode_enabled=False,
+                use_skills=False,
+                enable_memory=True,
+                enable_task_planning=True,
+                previous_turns=[],
+            )
+
+        assert "## Evolving Skills" not in msg
+        assert "Saving Memories" not in msg
+        assert "Round-time memory capture is disabled" in msg
+        assert "memory/short_term/verification_latest.md" in msg
+
 
 # ---------------------------------------------------------------------------
 # build_presentation_message
@@ -517,6 +575,80 @@ class TestLoadArchivedMemories:
         # Let's verify the directory structure is correct
         assert (archive_base / "agent_a_answer_0" / "short_term" / "insight.md").exists()
         assert (archive_base / "agent_b_answer_1" / "short_term" / "insight.md").exists()
+
+    def test_verification_memories_are_kept_per_agent(self, tmp_path):
+        """Legacy verification_latest files from multiple agents should be namespaced per agent."""
+        import os
+        import time
+
+        session_id = "test_session"
+        archive_base = tmp_path / ".massgen" / "sessions" / session_id / "archived_memories"
+
+        a0 = archive_base / "agent_a_answer_0" / "short_term"
+        a0.mkdir(parents=True)
+        old_a = a0 / "verification_latest.md"
+        old_a.write_text("agent_a old memo")
+
+        a1 = archive_base / "agent_a_answer_1" / "short_term"
+        a1.mkdir(parents=True)
+        new_a = a1 / "verification_latest.md"
+        new_a.write_text("agent_a latest memo")
+        os.utime(new_a, (time.time() + 1, time.time() + 1))
+
+        b0 = archive_base / "agent_b_answer_0" / "short_term"
+        b0.mkdir(parents=True)
+        b_mem = b0 / "verification_latest.md"
+        b_mem.write_text("agent_b latest memo")
+        os.utime(b_mem, (time.time() + 2, time.time() + 2))
+
+        builder = _make_builder()
+        builder.session_id = session_id
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = builder._load_archived_memories()
+        finally:
+            os.chdir(old_cwd)
+
+        assert "verification_latest__agent_a" in result["short_term"]
+        assert "verification_latest__agent_b" in result["short_term"]
+        assert result["short_term"]["verification_latest__agent_a"]["content"] == "agent_a latest memo"
+        assert result["short_term"]["verification_latest__agent_b"]["content"] == "agent_b latest memo"
+
+    def test_archived_memory_paths_are_normalized_to_temp_workspace_tokens(self, tmp_path):
+        """Absolute workspace paths in archived memories should map to current temp workspace paths."""
+        import os
+
+        session_id = "test_session"
+        archive_base = tmp_path / ".massgen" / "sessions" / session_id / "archived_memories"
+        source_workspace = tmp_path / "workspaces" / "agent_a"
+        temp_workspace = tmp_path / "temp_workspaces"
+
+        (archive_base / "agent_a_answer_0" / "short_term").mkdir(parents=True)
+        raw_path = source_workspace / ".massgen_scratch" / "verification" / "ui.png"
+        (archive_base / "agent_a_answer_0" / "short_term" / "verification_latest.md").write_text(
+            f"artifact_path: {raw_path}",
+        )
+
+        builder = _make_builder(has_filesystem=True)
+        builder.session_id = session_id
+        builder.agent_temporary_workspace = str(temp_workspace)
+
+        fs = builder.agents["agent_a"].backend.filesystem_manager
+        fs.cwd = str(source_workspace)
+        fs.workspace_token = "agent1"
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            result = builder._load_archived_memories()
+        finally:
+            os.chdir(old_cwd)
+
+        normalized_content = result["short_term"]["verification_latest__agent_a"]["content"]
+        expected_path = temp_workspace / "agent1" / ".massgen_scratch" / "verification" / "ui.png"
+        assert str(expected_path) in normalized_content
 
 
 # ---------------------------------------------------------------------------

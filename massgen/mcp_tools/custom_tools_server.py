@@ -799,6 +799,78 @@ class BackgroundToolManager:
         )
         return candidates[0]
 
+    @staticmethod
+    def _coerce_job_sort_timestamp(value: Any) -> float:
+        """Best-effort conversion of job timestamp fields to unix epoch seconds."""
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        if not isinstance(value, str):
+            return 0.0
+
+        text = value.strip()
+        if not text:
+            return 0.0
+
+        try:
+            return float(text)
+        except ValueError:
+            pass
+
+        if text.endswith("Z"):
+            text = f"{text[:-1]}+00:00"
+
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except ValueError:
+            return 0.0
+
+    @classmethod
+    def _wait_sort_key_for_payload(cls, payload: dict[str, Any]) -> tuple[float, float]:
+        """Sort terminal jobs by completion time, then creation time."""
+        completed_ts = cls._coerce_job_sort_timestamp(payload.get("completed_at"))
+        created_ts = cls._coerce_job_sort_timestamp(payload.get("created_at"))
+        primary_ts = completed_ts if completed_ts > 0 else created_ts
+        return (primary_ts, created_ts)
+
+    async def _next_waitable_delegate_job(self) -> dict[str, Any] | None:
+        """Get next unseen terminal delegate job (for subagent-backed background work)."""
+        delegate = await self._get_subagent_delegate()
+        if not delegate:
+            return None
+
+        try:
+            jobs = await delegate.list_jobs(include_all=True)
+        except Exception:  # noqa: BLE001
+            logger.debug("Subagent delegate list_jobs failed during wait", exc_info=True)
+            return None
+
+        candidates: list[dict[str, Any]] = []
+        for job in jobs:
+            if not isinstance(job, dict):
+                continue
+            job_id = str(job.get("job_id") or "").strip()
+            if not job_id or job_id in self._wait_seen_job_ids:
+                continue
+            status = str(job.get("status") or "").strip().lower()
+            if status not in BACKGROUND_TOOL_TERMINAL_STATUSES:
+                continue
+            normalized = dict(job)
+            normalized["job_id"] = job_id
+            candidates.append(normalized)
+
+        if not candidates:
+            return None
+
+        candidates.sort(
+            key=lambda payload: (
+                self._wait_sort_key_for_payload(payload),
+                str(payload.get("job_id") or ""),
+            ),
+        )
+        return candidates[0]
+
     def _consume_wait_interrupt_signal(self) -> dict[str, Any] | None:
         """Read and clear a pending wait interrupt signal from disk."""
         signal_path = self._wait_interrupt_file
@@ -845,6 +917,21 @@ class BackgroundToolManager:
             if ready_job is not None:
                 self._wait_seen_job_ids.add(ready_job.job_id)
                 payload = self._serialize_job(ready_job, include_result=True)
+                payload.update(
+                    {
+                        "success": True,
+                        "ready": True,
+                        "waited_seconds": round(time.time() - started_at, 3),
+                    },
+                )
+                return payload
+
+            delegate_ready_job = await self._next_waitable_delegate_job()
+            if delegate_ready_job is not None:
+                delegate_job_id = str(delegate_ready_job.get("job_id") or "").strip()
+                if delegate_job_id:
+                    self._wait_seen_job_ids.add(delegate_job_id)
+                payload = dict(delegate_ready_job)
                 payload.update(
                     {
                         "success": True,

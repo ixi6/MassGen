@@ -64,6 +64,27 @@ class TestAnswerCountIncrementWithoutMemoryDir:
         # (after the fix, it no longer does — the caller does)
         assert orch.agent_states["agent_a"].answer_count == 0
 
+    def test_archive_memories_namespaces_verification_latest_by_agent(self, tmp_path):
+        """Archived verification_latest memo should be namespaced per agent to avoid collisions."""
+        import os
+
+        orch = _build_orchestrator_with_agent(tmp_path)
+        ws = tmp_path / "workspace" / "agent_a"
+        mem_dir = ws / "memory" / "short_term"
+        mem_dir.mkdir(parents=True)
+        (mem_dir / "verification_latest.md").write_text("latest verification memo")
+
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(tmp_path)
+            orch._archive_agent_memories("agent_a", ws)
+        finally:
+            os.chdir(old_cwd)
+
+        archived_file = tmp_path / ".massgen" / "sessions" / "test-session" / "archived_memories" / "agent_a_answer_0" / "short_term" / "verification_latest__agent_a.md"
+        assert archived_file.exists()
+        assert archived_file.read_text() == "latest verification memo"
+
     @pytest.mark.asyncio
     async def test_save_agent_snapshot_increments_answer_count_without_memory_dir(
         self,

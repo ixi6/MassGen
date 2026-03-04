@@ -1834,6 +1834,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # Subagents always use final_only learning capture: capturing per-round learnings
         # is wasteful overhead for short-lived tasks.
         coord_settings["learning_capture_mode"] = "final_only"
+        # Keep subagents read-focused in final_only mode even when quick-mode sets
+        # skip_final_presentation=True (no evolving-skill/memory capture in rounds).
+        coord_settings["disable_final_only_round_capture_fallback"] = True
 
         orchestrator_config = {
             "snapshot_storage": str(workspace / "snapshots"),

@@ -9,7 +9,10 @@ Tests cover:
 """
 
 import json
+import sys
 from pathlib import Path
+
+import pytest
 
 from massgen.mcp_tools.planning.planning_dataclasses import TaskPlan
 
@@ -244,3 +247,405 @@ class TestCheckAndInjectPendingTasks:
         plan = TaskPlan(agent_id="test_agent", require_verification=False)
         added = _check_and_inject_pending_tasks(plan, tmp_path)
         assert added == []
+
+    def test_append_terminal_verification_memory_task(self):
+        """Terminal verification memo task should be appended with full-plan deps."""
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _append_terminal_verification_memory_task,
+        )
+
+        tasks = [
+            {
+                "id": "implement",
+                "description": "Implement feature",
+                "verification": "Feature works end-to-end",
+            },
+            {
+                "id": "test",
+                "description": "Run tests",
+                "depends_on": ["implement"],
+                "verification": "All tests pass",
+            },
+        ]
+
+        out = _append_terminal_verification_memory_task(tasks)
+        assert out[-1]["id"] == "write_verification_memo"
+        assert set(out[-1]["depends_on"]) == {"implement", "test"}
+        assert "memory/short_term/verification_latest.md" in out[-1]["description"]
+        assert "workspace path" in out[-1]["description"]
+        assert "artifact under test" in out[-1]["description"]
+        assert "generated this run" in out[-1]["description"]
+        assert "concrete assertion extracted" not in out[-1]["description"].lower()
+
+    @pytest.mark.asyncio
+    async def test_create_task_plan_memory_mode_appends_terminal_verification_task(self, monkeypatch, tmp_path):
+        """create_task_plan should auto-append terminal verification memo task in memory mode."""
+        from massgen.mcp_tools.planning import _planning_mcp_server as server
+
+        server._task_plans.clear()
+        server._workspace_path = None
+        server._injection_dir = None
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "planning-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_verification_memory",
+                "--workspace-path",
+                str(tmp_path),
+                "--memory-enabled",
+            ],
+        )
+        mcp = await server.create_server()
+
+        create_task_plan = None
+        for tool in mcp._tool_manager._tools.values():
+            if tool.name == "create_task_plan":
+                create_task_plan = tool.fn
+                break
+        assert create_task_plan is not None
+
+        result = create_task_plan(
+            tasks=[
+                {
+                    "id": "build",
+                    "description": "Build feature",
+                    "verification": "Feature is implemented",
+                    "verification_method": "Inspect output files",
+                },
+            ],
+        )
+
+        assert result["success"] is True
+        task_ids = [task["id"] for task in result["tasks"]]
+        assert task_ids[-1] == "write_verification_memo"
+        assert set(result["tasks"][-1]["dependencies"]) == set(task_ids[:-1])
+
+    @pytest.mark.asyncio
+    async def test_create_task_plan_verification_memory_mode_only_adds_terminal_verification_task(self, monkeypatch, tmp_path):
+        """verification-memory mode should append only write_verification_memo (no prep/save memory tasks)."""
+        from massgen.mcp_tools.planning import _planning_mcp_server as server
+
+        server._task_plans.clear()
+        server._workspace_path = None
+        server._injection_dir = None
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "planning-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_verification_only",
+                "--workspace-path",
+                str(tmp_path),
+                "--verification-memory-enabled",
+            ],
+        )
+        mcp = await server.create_server()
+
+        create_task_plan = None
+        for tool in mcp._tool_manager._tools.values():
+            if tool.name == "create_task_plan":
+                create_task_plan = tool.fn
+                break
+        assert create_task_plan is not None
+
+        result = create_task_plan(
+            tasks=[
+                {
+                    "id": "build",
+                    "description": "Build feature",
+                    "verification": "Feature is implemented",
+                    "verification_method": "Inspect output files",
+                },
+            ],
+        )
+
+        assert result["success"] is True
+        task_ids = [task["id"] for task in result["tasks"]]
+        assert "prep_memory" not in task_ids
+        assert "save_memories" not in task_ids
+        assert task_ids[-1] == "write_verification_memo"
+        assert set(result["tasks"][-1]["dependencies"]) == {"build"}
+
+
+class TestVerificationMemoSinksToEnd:
+    """write_verification_memo must stay the last task after propose_improvements injects new tasks."""
+
+    def _make_plan_with_memo(self) -> "TaskPlan":
+        """Create a plan with 3 framework tasks + write_verification_memo appended at end."""
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _append_terminal_verification_memory_task,
+        )
+
+        plan = TaskPlan(agent_id="test_agent", require_verification=False)
+        for tid in ("build", "evaluate", "final_decision"):
+            plan.add_task(description=f"Task {tid}", task_id=tid, skip_verification=True)
+
+        memo_specs = _append_terminal_verification_memory_task([{"id": t.id} for t in plan.tasks])
+        memo = memo_specs[-1]
+        plan.add_task(
+            description=memo["description"],
+            task_id=memo["id"],
+            depends_on=memo.get("depends_on", []),
+            skip_verification=True,
+        )
+        return plan
+
+    def test_verification_memo_is_last_after_injection(self, tmp_path):
+        """After propose_improvements injects improvement tasks, write_verification_memo is still last."""
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _check_and_inject_pending_tasks,
+        )
+
+        plan = self._make_plan_with_memo()
+        assert plan.tasks[-1].id == "write_verification_memo"  # sanity
+
+        improvement_tasks = [
+            {
+                "id": f"e{i}",
+                "description": f"[E{i}] Improve something",
+                "priority": "high",
+                "metadata": {"type": "improve", "injected": True},
+            }
+            for i in range(1, 4)
+        ]
+        (tmp_path / "inject_tasks.json").write_text(json.dumps(improvement_tasks))
+        _check_and_inject_pending_tasks(plan, tmp_path)
+
+        task_ids = [t.id for t in plan.tasks]
+        assert task_ids[-1] == "write_verification_memo", f"write_verification_memo should be last, got order: {task_ids}"
+
+    def test_verification_memo_depends_on_injected_tasks(self, tmp_path):
+        """After injection, write_verification_memo depends on the newly injected improvement tasks."""
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _check_and_inject_pending_tasks,
+        )
+
+        plan = self._make_plan_with_memo()
+
+        improvement_tasks = [
+            {
+                "id": f"e{i}",
+                "description": f"[E{i}] Improve something",
+                "priority": "high",
+                "metadata": {"type": "improve", "injected": True},
+            }
+            for i in range(1, 4)
+        ]
+        (tmp_path / "inject_tasks.json").write_text(json.dumps(improvement_tasks))
+        _check_and_inject_pending_tasks(plan, tmp_path)
+
+        memo = next(t for t in plan.tasks if t.id == "write_verification_memo")
+        for imp_id in ("e1", "e2", "e3"):
+            assert imp_id in memo.dependencies, f"write_verification_memo should depend on {imp_id}, got deps: {memo.dependencies}"
+
+    def test_no_memo_in_plan_injection_is_no_op_for_memo(self, tmp_path):
+        """If verification_memory is disabled, injection into a non-empty plan never creates memo."""
+        from massgen.mcp_tools.planning import _planning_mcp_server as server
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _check_and_inject_pending_tasks,
+        )
+
+        orig = server._verification_memory_enabled
+        server._verification_memory_enabled = False
+        try:
+            plan = TaskPlan(agent_id="test_agent", require_verification=False)
+            plan.add_task(description="Build feature", task_id="build", skip_verification=True)
+
+            (tmp_path / "inject_tasks.json").write_text(
+                json.dumps(
+                    [
+                        {"id": "e1", "description": "[E1] Improve", "priority": "high", "metadata": {"injected": True}},
+                    ],
+                ),
+            )
+            _check_and_inject_pending_tasks(plan, tmp_path)
+
+            task_ids = [t.id for t in plan.tasks]
+            assert "write_verification_memo" not in task_ids
+            assert task_ids == ["build", "e1"]
+        finally:
+            server._verification_memory_enabled = orig
+
+    def test_injection_into_empty_plan_appends_memo_when_enabled(self, tmp_path):
+        """When plan is empty before injection and verification_memory is enabled, memo is appended last."""
+        from massgen.mcp_tools.planning import _planning_mcp_server as server
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _check_and_inject_pending_tasks,
+        )
+
+        orig = server._verification_memory_enabled
+        server._verification_memory_enabled = True
+        try:
+            plan = TaskPlan(agent_id="test_agent", require_verification=False)
+            improvement_tasks = [
+                {
+                    "id": "e1",
+                    "description": "[E1] Improve X",
+                    "priority": "high",
+                    "metadata": {"injected": True},
+                },
+                {
+                    "id": "e2",
+                    "description": "[E2] Improve Y",
+                    "priority": "high",
+                    "metadata": {"injected": True},
+                },
+            ]
+            (tmp_path / "inject_tasks.json").write_text(json.dumps(improvement_tasks))
+            _check_and_inject_pending_tasks(plan, tmp_path)
+
+            task_ids = [t.id for t in plan.tasks]
+            assert task_ids[-1] == "write_verification_memo", f"Got: {task_ids}"
+            memo = plan.tasks[-1]
+            assert "e1" in memo.dependencies
+            assert "e2" in memo.dependencies
+        finally:
+            server._verification_memory_enabled = orig
+
+    def test_injection_into_nonempty_plan_does_not_append_memo(self, tmp_path):
+        """When plan already has tasks before injection, memo is NOT auto-created by injection."""
+        from massgen.mcp_tools.planning import _planning_mcp_server as server
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _check_and_inject_pending_tasks,
+        )
+
+        orig = server._verification_memory_enabled
+        server._verification_memory_enabled = True
+        try:
+            plan = TaskPlan(agent_id="test_agent", require_verification=False)
+            plan.add_task(description="Existing task", task_id="existing", skip_verification=True)
+
+            (tmp_path / "inject_tasks.json").write_text(
+                json.dumps(
+                    [
+                        {
+                            "id": "e1",
+                            "description": "[E1] Improve X",
+                            "priority": "high",
+                            "metadata": {"injected": True},
+                        },
+                    ],
+                ),
+            )
+            _check_and_inject_pending_tasks(plan, tmp_path)
+
+            task_ids = [t.id for t in plan.tasks]
+            assert "write_verification_memo" not in task_ids
+            assert task_ids == ["existing", "e1"]
+        finally:
+            server._verification_memory_enabled = orig
+
+
+class TestCreateTaskPlanSubagentMetadata:
+    """create_task_plan should preserve subagent delegation metadata."""
+
+    @pytest.mark.asyncio
+    async def test_create_task_plan_preserves_top_level_subagent_fields(self, monkeypatch):
+        """Top-level subagent_id/subagent_name should be kept in task metadata."""
+        from massgen.mcp_tools.planning import _planning_mcp_server as server
+
+        server._task_plans.clear()
+        server._workspace_path = None
+        server._injection_dir = None
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "planning-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_subagent_meta_top_level",
+            ],
+        )
+        mcp = await server.create_server()
+
+        create_task_plan = None
+        for tool in mcp._tool_manager._tools.values():
+            if tool.name == "create_task_plan":
+                create_task_plan = tool.fn
+                break
+        assert create_task_plan is not None
+
+        result = create_task_plan(
+            tasks=[
+                {
+                    "id": "initial_eval",
+                    "description": "Run initial evaluation checks",
+                    "verification": "Evaluation report is generated",
+                    "verification_method": "Review produced report",
+                    "subagent_id": "eval_subagent_1",
+                    "subagent_name": "evaluator",
+                },
+            ],
+        )
+
+        assert result["success"] is True
+        created = result["tasks"][0]
+        assert created["id"] == "initial_eval"
+        assert created["metadata"]["subagent_id"] == "eval_subagent_1"
+        assert created["metadata"]["subagent_name"] == "evaluator"
+
+    @pytest.mark.asyncio
+    async def test_create_task_plan_preserves_subagent_fields_from_metadata(self, monkeypatch):
+        """metadata.subagent_id/subagent_name should be honored in create_task_plan."""
+        from massgen.mcp_tools.planning import _planning_mcp_server as server
+
+        server._task_plans.clear()
+        server._workspace_path = None
+        server._injection_dir = None
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "planning-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_subagent_meta_nested",
+            ],
+        )
+        mcp = await server.create_server()
+
+        create_task_plan = None
+        for tool in mcp._tool_manager._tools.values():
+            if tool.name == "create_task_plan":
+                create_task_plan = tool.fn
+                break
+        assert create_task_plan is not None
+
+        result = create_task_plan(
+            tasks=[
+                {
+                    "id": "initial_eval_meta",
+                    "description": "Run initial evaluation checks with metadata-only delegation",
+                    "metadata": {
+                        "verification": "Evaluation report is generated",
+                        "verification_method": "Review produced report",
+                        "verification_group": "initial_eval",
+                        "subagent_id": "eval_subagent_2",
+                        "subagent_name": "evaluator",
+                        "custom_tag": "initial-eval",
+                    },
+                },
+            ],
+        )
+
+        assert result["success"] is True
+        created = result["tasks"][0]
+        assert created["id"] == "initial_eval_meta"
+        assert created["metadata"]["subagent_id"] == "eval_subagent_2"
+        assert created["metadata"]["subagent_name"] == "evaluator"
+        assert created["metadata"]["verification_group"] == "initial_eval"
+        assert created["metadata"]["custom_tag"] == "initial-eval"

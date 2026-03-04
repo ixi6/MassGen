@@ -440,6 +440,7 @@ class TestPlanningMcpConfigHooks:
         coord_cfg.use_skills = False
         coord_cfg.enable_memory_filesystem_mode = False
         coord_cfg.learning_capture_mode = "round"
+        coord_cfg.disable_final_only_round_capture_fallback = False
         coord_cfg.use_two_tier_workspace = False
 
         orch.config = MagicMock(spec=[])
@@ -506,6 +507,21 @@ class TestPlanningMcpConfigHooks:
         assert "--auto-discovery-enabled" not in args
         assert "--memory-enabled" not in args
 
+    def test_planning_mcp_config_verification_and_final_only_adds_verification_flag(self, tmp_path):
+        """verification_and_final_only should inject only verification replay capture tasks."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.config.coordination_config.enable_memory_filesystem_mode = True
+        orch.config.coordination_config.learning_capture_mode = "verification_and_final_only"
+        agent.backend.config = {"auto_discover_custom_tools": True}
+        agent.backend.supports_mcp_server_hooks = MagicMock(return_value=False)
+
+        config = orch._create_planning_mcp_config("agent_a", agent)
+        args = config["args"]
+
+        assert "--auto-discovery-enabled" not in args
+        assert "--memory-enabled" not in args
+        assert "--verification-memory-enabled" in args
+
     def test_planning_mcp_config_keeps_learning_flags_when_final_is_skipped(self, tmp_path):
         """final_only should fall back to round flags when skip_final_presentation is active."""
         orch, agent = self._make_orchestrator_and_agent(tmp_path)
@@ -520,3 +536,19 @@ class TestPlanningMcpConfigHooks:
 
         assert "--auto-discovery-enabled" in args
         assert "--memory-enabled" in args
+
+    def test_planning_mcp_config_omits_learning_flags_when_fallback_is_disabled(self, tmp_path):
+        """Subagent opt-out should keep final_only read-focused even when final presentation is skipped."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.config.coordination_config.enable_memory_filesystem_mode = True
+        orch.config.coordination_config.learning_capture_mode = "final_only"
+        orch.config.coordination_config.disable_final_only_round_capture_fallback = True
+        orch.config.skip_final_presentation = True
+        agent.backend.config = {"auto_discover_custom_tools": True}
+        agent.backend.supports_mcp_server_hooks = MagicMock(return_value=False)
+
+        config = orch._create_planning_mcp_config("agent_a", agent)
+        args = config["args"]
+
+        assert "--auto-discovery-enabled" not in args
+        assert "--memory-enabled" not in args

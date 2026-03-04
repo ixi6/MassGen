@@ -122,6 +122,7 @@ class TestKnownInternalParamsExcluded:
         "write_mode",
         "drift_conflict_policy",
         "learning_capture_mode",
+        "disable_final_only_round_capture_fallback",
         "context_paths",
         "context_write_access_enabled",
         "enable_mcp_command_line",

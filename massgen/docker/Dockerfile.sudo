@@ -140,6 +140,11 @@ RUN mkdir -p /workspace /context /temp_workspaces
 # Set workspace as default working directory
 WORKDIR /workspace
 
+# Install Node.js Playwright globally (as root) so `npx playwright` is available system-wide.
+# Agents frequently use `npm install playwright` or `npx playwright@...` which needs a matching
+# Chromium binary.  Pin to 1.52.0 to match the version agents request via `npx -y playwright@1.52.0`.
+RUN npm install -g playwright@1.52.0
+
 # Setup non-root user with sudo access
 # User can use sudo for package installation within container
 RUN useradd -m -u 1000 -s /bin/bash massgen && \
@@ -154,9 +159,10 @@ USER massgen
 # Keep Playwright browser binaries in the image-owned cache directory.
 ENV PLAYWRIGHT_BROWSERS_PATH="/home/massgen/.cache/ms-playwright"
 
-# Install Playwright browser binaries as massgen user
-# This puts browsers in /home/massgen/.cache/ms-playwright/ where the user can access them
-RUN python -m playwright install
+# Install Playwright browser binaries as massgen user so they land in /home/massgen/.cache/.
+# Run both python and node playwright browser installs — they may require different revisions.
+RUN python -m playwright install && \
+    npx playwright install chromium
 
 # Install Agent Browser browser bundle and default skill.
 RUN agent-browser install && \

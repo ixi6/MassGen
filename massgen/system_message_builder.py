@@ -8,6 +8,7 @@ This was extracted from orchestrator.py to improve separation of concerns and
 reduce coupling between orchestration logic and prompt construction.
 """
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -107,8 +108,23 @@ class SystemMessageBuilder:
         if self._learning_capture_mode == "round":
             return True
         if self._learning_capture_mode == "final_only":
+            coord = getattr(self.config, "coordination_config", None)
+            disable_fallback = getattr(
+                coord,
+                "disable_final_only_round_capture_fallback",
+                False,
+            )
+            if disable_fallback is True:
+                return False
             return bool(getattr(self.config, "skip_final_presentation", False))
         return False
+
+    @property
+    def _round_verification_capture_enabled(self) -> bool:
+        """Return True when round-time verification replay capture should be enabled."""
+        if self._round_learning_capture_enabled:
+            return True
+        return self._learning_capture_mode == "verification_and_final_only"
 
     @staticmethod
     def _filter_skills_by_enabled_names(
@@ -383,6 +399,7 @@ class SystemMessageBuilder:
                 MemorySection(
                     memory_config,
                     read_only=not self._round_learning_capture_enabled,
+                    allow_verification_capture=self._round_verification_capture_enabled,
                 ),
             )
             archived_count = len(archived_memories.get("short_term", {})) + len(archived_memories.get("long_term", {}))
@@ -538,7 +555,16 @@ class SystemMessageBuilder:
                 and agent.backend.filesystem_manager
                 and agent.backend.filesystem_manager.cwd
             )
-            builder.add_section(TaskPlanningSection(filesystem_mode=filesystem_mode, decomposition_mode=is_decomposition))
+            # specialized_subagents is only defined when enable_subagents is True;
+            # ternary is safe here because Python short-circuits on the False branch.
+            _tp_subagents = specialized_subagents if enable_subagents else []
+            builder.add_section(
+                TaskPlanningSection(
+                    filesystem_mode=filesystem_mode,
+                    decomposition_mode=is_decomposition,
+                    specialized_subagents=_tp_subagents,
+                ),
+            )
 
         # PRIORITY 10 (MEDIUM): Evolving Skills (when auto-discovery AND task planning are both enabled)
         # Both gates must be true: evolving skills are structured work plans that complement task planning
@@ -1023,8 +1049,8 @@ This makes the work reusable for similar future tasks."""
 
                 for mem_file in tier_dir.glob("*.md"):
                     try:
-                        filename = mem_file.stem
-                        content = mem_file.read_text()
+                        filename = self._get_archived_memory_key(mem_file.stem, dir_name)
+                        content = self._normalize_memory_content_paths(mem_file.read_text())
                         timestamp = mem_file.stat().st_mtime
 
                         # Initialize list for this filename if needed
@@ -1056,6 +1082,59 @@ This makes the work reusable for similar future tasks."""
                 }
 
         return deduplicated
+
+    @staticmethod
+    def _get_archived_memory_key(filename: str, archive_dir_name: str) -> str:
+        """Return a dedupe key for archived memory files.
+
+        Verification replay memories must remain distinct per agent even when they
+        share the same canonical filename (`verification_latest.md`).
+        """
+        normalized = filename.strip()
+        if normalized.startswith("verification_latest__"):
+            return normalized
+        if normalized != "verification_latest":
+            return normalized
+
+        match = re.match(r"^(?P<agent>.+)_answer_\d+$", archive_dir_name)
+        if not match:
+            return normalized
+        return f"{normalized}__{match.group('agent')}"
+
+    def _get_workspace_path_replacements(self) -> list[tuple[str, str]]:
+        """Map agent workspace roots to temp workspace token paths."""
+        if not self.agent_temporary_workspace:
+            return []
+
+        temp_base = Path(self.agent_temporary_workspace)
+        replacements: list[tuple[str, str]] = []
+
+        for agent in self.agents.values():
+            backend = getattr(agent, "backend", None)
+            filesystem_manager = getattr(backend, "filesystem_manager", None)
+            if not filesystem_manager:
+                continue
+
+            source_workspace = getattr(filesystem_manager, "cwd", None)
+            workspace_token = getattr(filesystem_manager, "workspace_token", None)
+            if not source_workspace or not workspace_token:
+                continue
+
+            source_root = str(Path(source_workspace).resolve())
+            temp_root = str((temp_base / workspace_token).resolve())
+            if source_root != temp_root:
+                replacements.append((source_root, temp_root))
+
+        # Longest-first avoids partial-prefix replacement mismatches.
+        replacements.sort(key=lambda pair: len(pair[0]), reverse=True)
+        return replacements
+
+    def _normalize_memory_content_paths(self, content: str) -> str:
+        """Normalize absolute workspace paths in memory content for current context."""
+        normalized = content
+        for source_root, temp_root in self._get_workspace_path_replacements():
+            normalized = normalized.replace(source_root, temp_root)
+        return normalized
 
     def _load_temp_workspace_memories(self) -> list[dict[str, Any]]:
         """Load all memories from temp workspace directories.
@@ -1095,12 +1174,15 @@ This makes the work reusable for similar future tasks."""
                     try:
                         memory_data = self._parse_memory_file(mem_file)
                         if memory_data:
+                            memory_data["content"] = self._normalize_memory_content_paths(
+                                str(memory_data.get("content", "")),
+                            )
                             memories["short_term"][mem_file.stem] = memory_data
                         else:
                             # Fallback to raw content if parsing fails
                             memories["short_term"][mem_file.stem] = {
                                 "name": mem_file.stem,
-                                "content": mem_file.read_text(),
+                                "content": self._normalize_memory_content_paths(mem_file.read_text()),
                             }
                     except Exception as e:
                         logger.warning(f"[SystemMessageBuilder] Failed to read temp workspace memory {mem_file}: {e}")
@@ -1112,12 +1194,15 @@ This makes the work reusable for similar future tasks."""
                     try:
                         memory_data = self._parse_memory_file(mem_file)
                         if memory_data:
+                            memory_data["content"] = self._normalize_memory_content_paths(
+                                str(memory_data.get("content", "")),
+                            )
                             memories["long_term"][mem_file.stem] = memory_data
                         else:
                             # Fallback to raw content if parsing fails
                             memories["long_term"][mem_file.stem] = {
                                 "name": mem_file.stem,
-                                "content": mem_file.read_text(),
+                                "content": self._normalize_memory_content_paths(mem_file.read_text()),
                             }
                     except Exception as e:
                         logger.warning(f"[SystemMessageBuilder] Failed to read temp workspace memory {mem_file}: {e}")

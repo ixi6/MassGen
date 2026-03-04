@@ -4438,6 +4438,10 @@ async def run_coordination_with_history(
                     False,
                 ),
                 learning_capture_mode=coord_cfg.get("learning_capture_mode", "round"),
+                disable_final_only_round_capture_fallback=coord_cfg.get(
+                    "disable_final_only_round_capture_fallback",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
@@ -4855,6 +4859,10 @@ async def run_coordination(
                     False,
                 ),
                 learning_capture_mode=coord_cfg.get("learning_capture_mode", "round"),
+                disable_final_only_round_capture_fallback=coord_cfg.get(
+                    "disable_final_only_round_capture_fallback",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),

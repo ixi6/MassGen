@@ -122,6 +122,10 @@ _use_two_tier_workspace: bool = False
 # Optional injection directory for tasks from checklist propose_improvements
 _injection_dir: Path | None = None
 
+# Whether to append write_verification_memo when injection populates an otherwise-empty plan.
+# Set from --verification-memory-enabled / --memory-enabled args in create_server().
+_verification_memory_enabled: bool = False
+
 
 def _git_commit_on_task_completion(task_id: str, completion_notes: str | None) -> bool:
     """
@@ -277,6 +281,7 @@ def _check_and_inject_pending_tasks(plan: TaskPlan, injection_dir: Path | None =
         return []
     try:
         tasks = json.loads(inject_file.read_text())
+        plan_was_empty = len(plan.tasks) == 0
         added_ids = []
         for t in tasks:
             task = plan.add_task(
@@ -296,6 +301,32 @@ def _check_and_inject_pending_tasks(plan: TaskPlan, injection_dir: Path | None =
                     task.metadata[key] = t[key]
             added_ids.append(task.id)
         inject_file.unlink()  # Consume — prevent double-add
+
+        # Sink write_verification_memo to the end: it was appended during create_task_plan
+        # before propose_improvements existed, so injected tasks land after it.
+        # Move it to the tail and update its dependencies to include the new tasks.
+        memo_tasks = [t for t in plan.tasks if t.id.startswith("write_verification_memo")]
+        for memo_task in memo_tasks:
+            plan.tasks.remove(memo_task)
+            memo_task.dependencies = [t.id for t in plan.tasks]
+            plan.tasks.append(memo_task)
+
+        # If injection was the sole populator of an empty plan (i.e. create_task_plan was not
+        # called first), the framework never got a chance to append write_verification_memo.
+        # Append it now so R1+ plans always end with the memo task.
+        if plan_was_empty and _verification_memory_enabled and not memo_tasks:
+            memo_specs = _append_terminal_verification_memory_task(
+                [{"id": t.id} for t in plan.tasks],
+            )
+            memo_spec = memo_specs[-1]
+            memo_task = plan.add_task(
+                description=memo_spec["description"],
+                task_id=memo_spec["id"],
+                depends_on=memo_spec.get("depends_on", []),
+                skip_verification=True,
+            )
+            memo_task.metadata.update(memo_spec.get("metadata", {}))
+
         _save_plan_to_filesystem(plan)
         logger.info(f"[PlanningMCP] Injected {len(added_ids)} tasks from propose_improvements")
         return added_ids
@@ -403,6 +434,48 @@ def _resolve_dependency_references(
     return normalized_tasks
 
 
+def _append_terminal_verification_memory_task(task_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Append a terminal task to capture verification replay memory details.
+
+    The appended task depends on all prior task IDs so it naturally executes at the
+    end of the plan.
+
+    Args:
+        task_list: Existing normalized task dictionaries.
+
+    Returns:
+        A new task list including the terminal verification-memory task.
+    """
+    existing_ids = [t.get("id") for t in task_list if isinstance(t, dict) and t.get("id")]
+    existing_id_set = {task_id for task_id in existing_ids if isinstance(task_id, str)}
+
+    task_id = "write_verification_memo"
+    if task_id in existing_id_set:
+        task_id = f"{task_id}_{uuid.uuid4().hex[:8]}"
+
+    verification_task = {
+        "id": task_id,
+        "description": (
+            "Write/update memory/short_term/verification_latest.md with a replayable verification summary for the "
+            "answer you are about to submit. Requirements: (1) Include environment context: workspace path, "
+            "artifact under test, and tools used. (2) List the exact commands or script paths used to verify "
+            "(e.g. `python .massgen_scratch/verification/check.py` or the npx playwright command), not just a "
+            "description of what was checked. (3) List every artifact path produced (screenshots, logs, scripts) "
+            "under .massgen_scratch/verification/ with relative paths. (4) Note freshness: 'generated this run' "
+            "or 'reused from prior run'. Absolute paths are allowed; "
+            "they are normalized on injection."
+        ),
+        "depends_on": existing_ids,
+        "priority": "medium",
+        "metadata": {
+            "type": "verification_replay_capture",
+            "injected": True,
+        },
+    }
+
+    return [*task_list, verification_task]
+
+
 async def create_server() -> fastmcp.FastMCP:
     """Factory function to create and configure the planning MCP server."""
     global _workspace_path
@@ -440,6 +513,11 @@ async def create_server() -> fastmcp.FastMCP:
         "--memory-enabled",
         action="store_true",
         help="Enable memory discovery and saving task reminders",
+    )
+    parser.add_argument(
+        "--verification-memory-enabled",
+        action="store_true",
+        help="Enable terminal verification replay memory capture task",
     )
     parser.add_argument(
         "--use-two-tier-workspace",
@@ -480,7 +558,7 @@ async def create_server() -> fastmcp.FastMCP:
     logger.info(f"[PlanningMCP] Server starting for agent_id={args.agent_id}, orchestrator_id={args.orchestrator_id}")
 
     # Set workspace path if provided
-    global _workspace_path, _use_two_tier_workspace, _injection_dir
+    global _workspace_path, _use_two_tier_workspace, _injection_dir, _verification_memory_enabled
     if args.workspace_path:
         _workspace_path = Path(args.workspace_path)
         logger.info(f"[PlanningMCP] Workspace path set to: {_workspace_path}")
@@ -493,6 +571,11 @@ async def create_server() -> fastmcp.FastMCP:
     if args.injection_dir:
         _injection_dir = Path(args.injection_dir)
         logger.info(f"[PlanningMCP] Injection dir set to: {_injection_dir}")
+
+    # Mirror the verification memory flag so _check_and_inject_pending_tasks can append
+    # write_verification_memo when injection is the sole populator of an empty plan.
+    _verification_memory_enabled = args.verification_memory_enabled or args.memory_enabled
+    logger.info(f"[PlanningMCP] Verification memory enabled: {_verification_memory_enabled}")
 
     # Create the FastMCP server
     mcp = fastmcp.FastMCP("Agent Task Planning")
@@ -512,9 +595,16 @@ async def create_server() -> fastmcp.FastMCP:
     mcp.skills_enabled = args.skills_enabled
     mcp.auto_discovery_enabled = args.auto_discovery_enabled
     mcp.memory_enabled = args.memory_enabled
+    mcp.verification_memory_enabled = args.verification_memory_enabled
     mcp.require_verification = not args.no_require_verification
 
-    logger.debug(f"[PlanningMCP] Server configured - skills={args.skills_enabled}, auto_discovery={args.auto_discovery_enabled}, memory={args.memory_enabled}")
+    logger.debug(
+        "[PlanningMCP] Server configured - skills=%s, auto_discovery=%s, memory=%s, verification_memory=%s",
+        args.skills_enabled,
+        args.auto_discovery_enabled,
+        args.memory_enabled,
+        args.verification_memory_enabled,
+    )
 
     @mcp.tool()
     def create_task_plan(tasks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -648,28 +738,49 @@ async def create_server() -> fastmcp.FastMCP:
 
             # Combine: prep + user tasks + cleanup
             all_tasks = preparation_tasks + tasks + cleanup_tasks
+            framework_tasks = preparation_tasks + cleanup_tasks
+
+            # Ensure a terminal verification replay capture task is always present
+            # in memory mode so round-N evaluation setup can be reused in round N+1.
+            if mcp.memory_enabled:
+                all_tasks = _append_terminal_verification_memory_task(all_tasks)
+                framework_tasks.append(all_tasks[-1])
+            elif mcp.verification_memory_enabled:
+                all_tasks = _append_terminal_verification_memory_task(all_tasks)
+                framework_tasks.append(all_tasks[-1])
 
             # Validate and resolve dependencies
             normalized_tasks = _resolve_dependency_references(all_tasks)
             plan.validate_dependencies(normalized_tasks)
 
             # Collect framework-injected task IDs so we can exempt them from verification
-            framework_task_ids = {t["id"] for t in preparation_tasks + cleanup_tasks if isinstance(t, dict) and "id" in t}
+            framework_task_ids = {t["id"] for t in framework_tasks if isinstance(t, dict) and "id" in t}
 
             # Create tasks
             created_tasks = []
             for task_spec in normalized_tasks:
                 is_framework = task_spec.get("id") in framework_task_ids
+                metadata = task_spec.get("metadata")
+                task_metadata = metadata if isinstance(metadata, dict) else {}
+                subagent_id = task_spec.get("subagent_id") or task_metadata.get("subagent_id")
+                subagent_name = task_spec.get("subagent_name") or task_metadata.get("subagent_name")
 
                 task = plan.add_task(
                     description=task_spec["description"],
                     task_id=task_spec["id"],
                     depends_on=task_spec.get("depends_on", []),
                     priority=task_spec.get("priority", "medium"),
-                    verification=task_spec.get("verification") or task_spec.get("metadata", {}).get("verification"),
-                    verification_method=task_spec.get("verification_method") or task_spec.get("metadata", {}).get("verification_method"),
+                    verification=task_spec.get("verification") or task_metadata.get("verification"),
+                    verification_method=task_spec.get("verification_method") or task_metadata.get("verification_method"),
+                    subagent_id=subagent_id,
+                    subagent_name=subagent_name,
                     skip_verification=is_framework,
                 )
+                # Preserve caller metadata for create_task_plan parity with injected-task path.
+                if task_metadata:
+                    task.metadata.update(task_metadata)
+                if "verification_group" in task_spec and "verification_group" not in task.metadata:
+                    task.metadata["verification_group"] = task_spec["verification_group"]
                 created_tasks.append(task.to_dict())
 
             # Save to filesystem if configured

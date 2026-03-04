@@ -3087,6 +3087,10 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
         enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
         learning_capture_mode=coord_cfg.get("learning_capture_mode", "round"),
+        disable_final_only_round_capture_fallback=coord_cfg.get(
+            "disable_final_only_round_capture_fallback",
+            False,
+        ),
         compression_target_ratio=coord_cfg.get("compression_target_ratio", 0.20),
         use_skills=coord_cfg.get("use_skills", False),
         massgen_skills=coord_cfg.get("massgen_skills", []),

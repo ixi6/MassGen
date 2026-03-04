@@ -224,6 +224,7 @@ Documentation
    .. grid-item-card:: 📖 User Guide
 
       * :doc:`user_guide/concepts`
+      * :doc:`user_guide/coordination_scrollytelling`
       * :doc:`user_guide/webui`
       * :doc:`user_guide/tools/index`
       * :doc:`user_guide/integration/index`
@@ -250,6 +251,7 @@ Documentation
    :caption: User Guide
 
    user_guide/concepts
+   user_guide/coordination_scrollytelling
    user_guide/task_planning
    user_guide/backends
    user_guide/webui

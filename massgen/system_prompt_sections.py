@@ -1139,7 +1139,16 @@ After all tasks complete:
    output with fewer features is always better than a broken output with more.
 2. Confirm you implemented the full scope of identified improvements, not just some.
    Each round is expensive — deliver everything you identified, not just the easiest item.
-3. Call `{iterate_action}` to submit your improved answer and end this round.
+3. Write/update `memory/short_term/verification_latest.md` with a **verification replay**
+   summary for this answer. This memo must be replayable — a future agent should be able to
+   re-run verification from it without guessing. Required fields:
+   - **Environment**: workspace path, artifact under test, tools used (e.g. Playwright Python)
+   - **Pipeline**: exact commands or script paths used (e.g. `python .massgen_scratch/verification/check.py`
+     or `npx -y playwright@1.52.0 screenshot ...`). Scripts must live under `.massgen_scratch/verification/`.
+   - **Artifacts**: list every file produced (screenshots, logs, scripts) with paths relative to workspace
+   - **Freshness**: state whether artifacts were generated this run or reused from a prior run
+   Absolute paths are allowed; they are normalized when replay memories are auto-injected in later rounds.
+4. Call `{iterate_action}` to submit your improved answer and end this round.
 
 Your answer MUST be **obviously and substantially better** than the prior round —
 not just marginally different. A user should immediately notice the improvement.
@@ -1886,9 +1895,17 @@ class MemorySection(SystemPromptSection):
         memory_config: Dictionary containing memory system configuration
                       including short-term and long-term memory content
         read_only: If True, show memory context without write/reminder instructions.
+        allow_verification_capture: If True, explicitly allow round-time updates to
+            `memory/short_term/verification_latest.md` while keeping other memory
+            writes read-only.
     """
 
-    def __init__(self, memory_config: dict[str, Any], read_only: bool = False):
+    def __init__(
+        self,
+        memory_config: dict[str, Any],
+        read_only: bool = False,
+        allow_verification_capture: bool = False,
+    ):
         super().__init__(
             title="Memory System",
             priority=Priority.HIGH,
@@ -1896,10 +1913,20 @@ class MemorySection(SystemPromptSection):
         )
         self.memory_config = memory_config
         self.read_only = read_only
+        self.allow_verification_capture = allow_verification_capture
 
     def build_content(self) -> str:
         """Build memory system instructions."""
         content_parts = []
+
+        def _is_verification_replay_name(mem_name: str) -> bool:
+            normalized = mem_name.strip().lower()
+            return normalized == "verification_latest" or normalized.startswith("verification_latest__")
+
+        def _extract_memory_content(mem_data: Any) -> str:
+            if isinstance(mem_data, dict):
+                return str(mem_data.get("content", "")).strip()
+            return str(mem_data).strip()
 
         # Header - concise overview
         content_parts.append(
@@ -1958,30 +1985,52 @@ class MemorySection(SystemPromptSection):
 
         # Show current memories from temp workspaces (all agents' current work)
         temp_workspace_memories = self.memory_config.get("temp_workspace_memories", [])
+        verification_replay_entries: list[dict[str, str]] = []
         if temp_workspace_memories:
-            content_parts.append("\n### Current Agent Memories (For Comparison)\n")
-            content_parts.append(
-                "These are the current memories from all agents working on this task. " "Review to compare approaches and avoid duplicating work.\n",
-            )
-
+            has_non_verification_memories = False
             for agent_mem in temp_workspace_memories:
                 agent_label = agent_mem.get("agent_label", "unknown")
                 memories = agent_mem.get("memories", {})
+                short_term_memories = memories.get("short_term", {})
+                long_term_memories = memories.get("long_term", {})
+
+                non_verification_short_term = {}
+                for mem_name, mem_data in short_term_memories.items():
+                    if _is_verification_replay_name(mem_name):
+                        verification_replay_entries.append(
+                            {
+                                "source": agent_label,
+                                "name": f"{mem_name}.md",
+                                "content": _extract_memory_content(mem_data),
+                            },
+                        )
+                    else:
+                        non_verification_short_term[mem_name] = mem_data
+
+                if not non_verification_short_term and not long_term_memories:
+                    continue
+
+                if not has_non_verification_memories:
+                    content_parts.append("\n### Current Agent Memories (For Comparison)\n")
+                    content_parts.append(
+                        "These are the current non-verification memories from all agents working on this task. " "Review to compare approaches and avoid duplicating work.\n",
+                    )
+                    has_non_verification_memories = True
 
                 content_parts.append(f"\n**{agent_label}:**")
 
                 # Show short_term memories (full content)
-                if memories.get("short_term"):
+                if non_verification_short_term:
                     content_parts.append("\n*short_term:*")
-                    for mem_name, mem_data in memories["short_term"].items():
+                    for mem_name, mem_data in non_verification_short_term.items():
                         content = mem_data.get("content", mem_data) if isinstance(mem_data, dict) else mem_data
                         content_parts.append(f"- `{mem_name}.md`")
-                        content_parts.append(f"  ```\n  {content.strip()}\n  ```")
+                        content_parts.append(f"  ```\n  {str(content).strip()}\n  ```")
 
                 # Show long_term memories (name + description only)
-                if memories.get("long_term"):
+                if long_term_memories:
                     content_parts.append("\n*long_term:*")
-                    for mem_name, mem_data in memories["long_term"].items():
+                    for mem_name, mem_data in long_term_memories.items():
                         if isinstance(mem_data, dict):
                             description = mem_data.get("description", "No description")
                             content_parts.append(f"- `{mem_name}.md`: {description}")
@@ -1989,21 +2038,45 @@ class MemorySection(SystemPromptSection):
                             # Fallback if not parsed
                             content_parts.append(f"- `{mem_name}.md`")
 
-                if not memories.get("short_term") and not memories.get("long_term"):
-                    content_parts.append("  *No memories*")
-
         # Show archived memories (deduplicated historical context)
         archived = self.memory_config.get("archived_memories", {})
-        if archived and (archived.get("short_term") or archived.get("long_term")):
+        archived_short_term = archived.get("short_term", {}) if archived else {}
+        archived_short_term_non_verification = {}
+        for mem_name, mem_data in archived_short_term.items():
+            if _is_verification_replay_name(mem_name):
+                verification_replay_entries.append(
+                    {
+                        "source": str(mem_data.get("source", "Archived")) if isinstance(mem_data, dict) else "Archived",
+                        "name": f"{mem_name}.md",
+                        "content": _extract_memory_content(mem_data),
+                    },
+                )
+            else:
+                archived_short_term_non_verification[mem_name] = mem_data
+
+        if verification_replay_entries:
+            content_parts.append("\n### Verification Replay Memories (Auto-Injected)\n")
+            content_parts.append(
+                "These memories capture how prior answers were verified. Reuse the pipeline directly when still valid, " "or rerun and refresh if artifacts are stale.\n",
+            )
+            for entry in verification_replay_entries:
+                source = entry.get("source", "unknown")
+                mem_name = entry.get("name", "verification_latest.md")
+                mem_content = entry.get("content", "")
+                content_parts.append(f"\n- **{source}** → `{mem_name}`")
+                if mem_content:
+                    content_parts.append(f"  ```\n  {mem_content}\n  ```")
+
+        if archived and (archived_short_term_non_verification or archived.get("long_term")):
             content_parts.append("\n### Archived Memories (Historical - Deduplicated)\n")
             content_parts.append(
                 "These are historical memories from previous answers. Duplicate names have been resolved " "(showing only the most recent version of each memory). This is read-only context.\n",
             )
 
             # Show short_term archived memories (full content)
-            if archived.get("short_term"):
+            if archived_short_term_non_verification:
                 content_parts.append("\n**Short-term (full content):**")
-                for mem_name, mem_data in archived["short_term"].items():
+                for mem_name, mem_data in archived_short_term_non_verification.items():
                     content = mem_data.get("content", "")
                     content_parts.append(f"\n- `{mem_name}.md`")
                     content_parts.append(f"  ```\n  {content.strip()}\n  ```")
@@ -2032,6 +2105,10 @@ class MemorySection(SystemPromptSection):
                 "Round-time memory capture is disabled for this run. Use the memory context above as read-only guidance "
                 "during coordination. Consolidation can happen at final presentation.\n",
             )
+            if self.allow_verification_capture:
+                content_parts.append(
+                    "Exception: you may still write/update `memory/short_term/verification_latest.md` at the end of each " "answer so verification can be replayed in the next round.\n",
+                )
             return "\n".join(content_parts)
 
         # File operations - simple and direct
@@ -2041,6 +2118,10 @@ class MemorySection(SystemPromptSection):
             "Save memories by writing markdown files to the memory directory:\n"
             "- **Short-term** → `memory/short_term/{name}.md` (auto-loaded every turn)\n"
             "- **Long-term** → `memory/long_term/{name}.md` (load manually when needed)\n\n"
+            "- **Verification replay** → `memory/short_term/verification_latest.md` "
+            "(required before checklist-gated `new_answer` submissions; must include: environment context "
+            "(workspace path, artifact under test, tools used), exact commands/script paths under "
+            "`.massgen_scratch/verification/`, artifact paths, and freshness status)\n\n"
             "**File Format (REQUIRED YAML Frontmatter):**\n"
             "```markdown\n"
             "---\n"
@@ -2055,7 +2136,8 @@ class MemorySection(SystemPromptSection):
             "**Important:** You are stateless - you don't have a persistent identity across restarts. "
             "When you call `new_answer`, your workspace is cleared and archived. The system shows you:\n"
             "1. Current memories from all agents (for comparing approaches)\n"
-            "2. Historical archived memories (deduplicated - newest version of each name)\n\n"
+            "2. Verification Replay Memories (auto-injected)\n"
+            "3. Historical archived memories (deduplicated - newest version of each name)\n\n"
             "If the same memory name appears multiple times, only the most recent version is shown.\n",
         )
 
@@ -2903,7 +2985,12 @@ class TaskPlanningSection(SystemPromptSection):
         filesystem_mode: If True, includes guidance about filesystem-based task storage
     """
 
-    def __init__(self, filesystem_mode: bool = False, decomposition_mode: bool = False):
+    def __init__(
+        self,
+        filesystem_mode: bool = False,
+        decomposition_mode: bool = False,
+        specialized_subagents=None,
+    ):
         super().__init__(
             title="Task Planning",
             priority=Priority.MEDIUM,
@@ -2911,43 +2998,75 @@ class TaskPlanningSection(SystemPromptSection):
         )
         self.filesystem_mode = filesystem_mode
         self.decomposition_mode = decomposition_mode
+        self.specialized_subagents = specialized_subagents or []
+
+    def _build_subagent_classification_step(self) -> str:
+        """Build STEP 2 only when subagents are available, listing actual types."""
+        if not self.specialized_subagents:
+            return ""
+        type_names = [t.name for t in self.specialized_subagents]
+        types_str = ", ".join(f'`"{n}"` ' for n in type_names)
+        step_number_note = "## STEP 2 — Classify Every Task for Delegation or Inline Execution\n"
+        return (
+            step_number_note + "\n"
+            "**Immediately after creating or reviewing your task plan, classify each task** "
+            "before starting any execution. This is a required planning step, not an afterthought.\n"
+            "\n"
+            "For each task, decide:\n"
+            "- **Delegate to subagent** — mechanical execution, large file reads, standalone "
+            "artifact generation, parallel independent work (documentation research, batch testing, "
+            "rendering)\n"
+            "- **Do inline** — quality judgment, synthesis, architectural decisions, anything "
+            "needing your full reasoning, tasks with live dependencies on in-flight work\n"
+            "\n"
+            f"Available subagent types: {types_str}\n"
+            "\n"
+            "Label each delegated task using `subagent_name` when creating tasks "
+            "(`create_task_plan`, `add_task`) or later with `edit_task`:\n"
+            '- `subagent_name` — e.g., `"builder"`, `"evaluator"`, `"novelty"`\n'
+            "- `subagent_id` — the ID of a specific already-spawned subagent\n"
+            "\n"
+            "**Spawn all independent delegated tasks in a single call** — they run in parallel. "
+            "While they run, execute your inline tasks.\n"
+            "\n"
+            "When tasks come from `propose_improvements`, structural and transformative criteria "
+            'are pre-filled with `subagent_name: "builder"` as an advisory signal. '
+            "Scope each builder to exactly one task. Never bundle multiple criteria into one "
+            "builder spec.\n"
+            "\n"
+            "Novelty/quality tasks (`type: novelty_quality_spawn`) may appear at the top of "
+            "your plan on iteration 2+. Spawn those in background first so they run while you "
+            "implement improvements.\n"
+            "\n"
+        )
 
     def build_content(self) -> str:
-        base_guidance = """
-# Task Planning and Management
+        subagent_step = self._build_subagent_classification_step()
+        has_subagents = bool(self.specialized_subagents)
+        # Execution step number shifts depending on whether subagent step is present
+        execute_step = "STEP 3" if has_subagents else "STEP 2"
+        summary_step = "STEP 4" if has_subagents else "STEP 3"
+        # Flow line varies too
+        if has_subagents:
+            flow_line = "propose_improvements → get_task_plan → classify → spawn delegated tasks " "→ execute inline tasks\n→ collect subagent results → verify each task → submit"
+        else:
+            flow_line = "propose_improvements → get_task_plan → execute each task " "→ verify each task → submit"
 
-You have access to task planning tools to organize complex work.
+        base_guidance = f"""
+# Task Planning and Management (REQUIRED)
 
-**IMPORTANT WORKFLOW - Plan Before Executing:**
+MassGen is built for complex, multi-step tasks. **A task plan is REQUIRED for all substantive
+work.** This is not optional guidance — it is the core execution discipline of this system.
 
-When working on multi-step tasks:
-1. **Think first** - Understand the requirements (some initial research/analysis is fine)
-2. **Create your task plan EARLY** - Use the task plan tool BEFORE executing file operations or major
-   actions
-3. **Execute tasks** - Work through your plan systematically
-4. **Update as you go** - Use the **add_task** tool to capture new requirements you discover
+**When do you need a task plan?**
+Almost always. The only exceptions are purely conversational responses (answering a question
+with no execution) or a single atomic operation. If you are writing files, calling tools,
+building things, or making improvements — you need a task plan.
 
-**DO NOT:**
-- ❌ Jump straight into creating files without planning first
-- ❌ Start executing complex work without a clear task breakdown
-- ❌ Ignore the planning tools for multi-step work
-
-**DO:**
-- ✅ Create a task plan early, even if it's just 3-4 high-level tasks
-- ✅ Refine your plan as you learn more (tasks can be added/edited/deleted)
-- ✅ Brief initial analysis is OK before planning (e.g., reading docs, checking existing code)
-
-**When to create a task plan:**
-- Multi-step tasks with dependencies (most common)
-- Multiple files or components to create
-- Complex features requiring coordination
-- Work that needs to be tracked or broken down
-- Any task where you'd benefit from a checklist
-
-**Skip task planning ONLY for:**
-- Trivial single-step tasks
-- Simple questions/analysis with no execution
-- Quick one-off operations
+- ✅ Create a task plan even for "simple" tasks — you'll discover the work is larger than expected
+- ✅ Create a task plan even when `propose_improvements` populates it for you — review it before executing
+- ❌ Do NOT start writing files or making changes without first having a task plan
+- ❌ Do NOT submit your answer with tasks marked pending or in_progress — address them all
 
 **Tools available:**
 - **create_task_plan** - Create a plan with tasks, dependencies, and verification criteria
@@ -2963,48 +3082,66 @@ When working on multi-step tasks:
 Tool responses may include important reminders and guidance (e.g., when completing high-priority tasks,
 you'll receive reminders to save learnings to memory). Always read tool response messages carefully.
 
-**Recommended workflow:**
-1. **Create your task plan** with tasks including verification criteria:
-   - `{"id": "research", "description": "Research OAuth providers", "verification": "Comparison table with 3+ providers", "verification_method": "Review output table"}`
-   - `{"id": "design", "description": "Design auth flow", "depends_on": ["research"], "verification": "Flow diagram renders correctly", "verification_method": "Screenshot and visual check"}`
-   - `{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], \
+---
+
+## STEP 1 — Create Your Task Plan (before any execution)
+
+Brief initial research is fine (reading docs, checking existing code), but create your plan
+BEFORE making any changes or writing any files.
+
+Create tasks with verification criteria:
+- `{{"id": "research", "description": "Research OAuth providers", "verification": "Comparison table with 3+ providers", "verification_method": "Review output table"}}`
+- `{{"id": "design", "description": "Design auth flow", "depends_on": ["research"], "verification": "Flow diagram renders correctly", "verification_method": "Screenshot and visual check"}}`
+- `{{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], \
 "priority": "high", "subagent_name": "builder", "verification": "Endpoints return 200", \
-"verification_method": "curl test each endpoint"}`
-2. **Update task status** as you work: set status="in_progress", then "completed", then "verified" after confirming
-3. **Add tasks** as you discover new requirements:
-   - `description="Write integration tests", depends_on=["implement"], verification="Integration tests pass for auth flow", verification_method="Run integration test suite"`
-4. **Check ready tasks** to see what's unblocked next
+"verification_method": "curl test each endpoint"}}`
 
 **Dependency formats:**
-Tasks support two dependency styles:
-- **By index** (0-based): `{"description": "Task 2", "depends_on": [0], "verification": "Task 2 output is complete"}` — depends on the first task
-- **By ID** (recommended): `{"id": "api", "description": "Build API", "depends_on": ["auth"], "verification": "API returns expected responses"}` — depends on task with id "auth"
+- **By index** (0-based): `{{"description": "Task 2", "depends_on": [0]}}` — depends on the first task
+- **By ID** (recommended): `{{"id": "api", "description": "Build API", "depends_on": ["auth"]}}` \
+  — depends on task with id "auth"
 
-## Delegating Tasks to Subagents
+---
 
-Any task in your plan can be labeled for delegation using two optional fields:
-- **`subagent_name`** — the type of subagent to delegate to (for example `"builder"`, `"evaluator"`, `"novelty"`)
-- **`subagent_id`** — the ID of a specific already-spawned subagent
+{subagent_step}---
 
-Add these when creating tasks (`create_task_plan`, `add_task`) to record delegation intent. You can
-also set them later with `edit_task`.
+## {execute_step} — Execute Every Task. Track Status As You Go.
 
-When tasks come from `propose_improvements`, structural and transformative criteria are pre-filled
-with `subagent_name: "builder"` as an advisory signal.
-Scope each builder to exactly one task. Never bundle multiple E{x} criteria into one builder spec.
+**For EACH task in your plan:**
+1. Call `update_task_status(status="in_progress")` when you start it
+2. Do the work
+3. Call `update_task_status(status="completed")` when done
+4. Verify it actually works, then call `update_task_status(status="verified")`
 
-Novelty/quality tasks (`type: novelty_quality_spawn`) may appear at the top of your plan on
-iteration 2+. Spawn those in background first so they run while you implement improvements.
+**CRITICAL — When `propose_improvements` populates your task plan:**
+Every criterion added to the plan MUST be addressed before you submit. Do not cherry-pick the
+easy improvements and skip the hard ones. Call `get_task_plan` to see all items, then work
+through them one by one. If a task is truly infeasible this round, explicitly mark it `[skip]`
+in the description with a reason — do not silently leave it pending.
 
-**IMPORTANT - Including Task Plan in Your Answer:**
-If you created a task plan, include a summary at the end of your `new_answer` showing:
+The flow is:
+```
+{flow_line}
+```
+
+**Add tasks** as you discover new requirements:
+- `description="Write integration tests", depends_on=["implement"], verification="Tests pass"`
+
+**Check ready tasks** to see what's unblocked:
+- `get_ready_tasks()` — shows tasks whose dependencies are satisfied
+
+---
+
+## {summary_step} — Include Task Summary in Your Answer
+
+Always include a task execution summary at the end of your `new_answer`:
 1. Each task name
-2. Status: ✓ (verified), ◐ (completed but unverified), ✗ (not done)
+2. Status: ✓ (verified), ◐ (completed but unverified), ✗ (not done / skipped)
 3. Brief description of what you did
 
-**Verification is required.** When you mark a task `completed`, you must then verify it
-actually works (screenshots, tests, visual inspection) and mark it `verified`. Tasks left
-at `completed` without verification are unverified — they will show as ◐ in your summary.
+**Verification is required.** When you mark a task `completed`, verify it actually works
+(screenshots, tests, visual inspection) and mark it `verified`. Tasks left at `completed`
+without verification are unfinished — they will show as ◐ in your summary.
 
 Example format:
 ```
@@ -3015,12 +3152,12 @@ Example format:
 ✓ Research OAuth providers - Analyzed OAuth 2.0 spec and compared providers
 ✓ Design auth flow - Created flow diagram with PKCE and token refresh (verified: diagram renders correctly)
 ◐ Implement endpoints - Built /auth/login, /auth/callback, /auth/refresh (unverified: no test run yet)
-✗ Write tests - Not started
+✗ Write tests - [skip: no test infra available this round]
 
 Status: 2/4 verified, 1/4 completed (unverified), 1/4 not done
 ```
 
-This helps other agents understand your approach and evaluate your work."""
+This helps other agents evaluate your work and continue where you left off."""
 
         if self.filesystem_mode:
             filesystem_guidance = """
@@ -4121,10 +4258,10 @@ class SubagentSection(SystemPromptSection):
         if not self.specialized_subagents:
             return ""
 
-        # All subagent types default to background=True — they do substantial work
-        # that should not block the main agent's context. Override only when a type
-        # genuinely must be blocking (e.g., a quick synchronous check).
-        background_by_type: dict[str, bool] = {}
+        # Most types run background=True (fire-and-forget while main agent keeps working).
+        # evaluator is blocking (background=False) so the main agent waits for evidence
+        # before scoring — scores without evidence are meaningless.
+        background_by_type: dict[str, bool] = {"evaluator": False}
 
         lines = [
             "",
@@ -4198,11 +4335,15 @@ class SubagentSection(SystemPromptSection):
             if "evaluator" in specialized_names:
                 evaluator_guidance = """
 **FOR `EVALUATOR` TASKS, EXPLICITLY INCLUDE:**
+- **Evaluation criteria verbatim** — paste the full E1..EN criterion text (and `verify_by` \
+instructions where present) from your checklist directly into the task. The evaluator has \
+no other way to know what each criterion means. Without this, it guesses.
 - What to run (tests, scripts, flows, URLs, targets)
 - How to set it up (install/build/start steps, ports, env vars, prerequisites)
 - Exact commands (copy-pastable command list in order)
-- What evidence to capture (screenshots, video recordings, audio samples, logs, timings, failing cases, artifact paths)
-- Pass/fail format (explicit rubric or required report sections)
+- What evidence to capture per criterion (screenshots, logs, timings, artifact paths)
+- Output format: detailed observations keyed to each criterion ID — NOT pass/fail verdicts \
+or scores (those are the main agent's job)
 """
             specialized_guidance = f"""
 **WHEN WRITING A `TASK` FOR SPECIALIZED SUBAGENTS:**
@@ -4459,6 +4600,9 @@ they will complete on their own. If one appears to be going in the wrong directi
 only as a last resort when the subagent is clearly going nowhere and redirecting won't
 help. Finding partial files in the workspace is normal while a subagent runs — that
 alone is not a reason to cancel.
+Only use `send_message_to_subagent` when you see execution-direction problems
+(wrong scope, wrong target, wrong method). Do not send "finish now" or
+"complete now" nudges — they add noise and usually do not improve outcomes.
 
 **Monitoring a running subagent's progress:**
 Use `list_subagents()` to get the workspace path, then:

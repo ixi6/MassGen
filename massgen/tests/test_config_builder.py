@@ -505,6 +505,16 @@ class TestQuickstartDecompositionSettings:
 
         assert config["orchestrator"]["max_new_answers_global"] == 7
 
+    @pytest.mark.parametrize("use_docker", [False, True])
+    def test_quickstart_sets_verification_and_final_learning_capture_mode(self, builder, use_docker):
+        """Quickstart sets safer learning capture timing by default."""
+        config = builder._generate_quickstart_config(
+            agents_config=self._agents(),
+            use_docker=use_docker,
+        )
+
+        assert config["orchestrator"]["coordination"]["learning_capture_mode"] == "verification_and_final_only"
+
 
 class TestQuickstartReasoningSettings:
     """Test quickstart reasoning selector behavior and config output."""

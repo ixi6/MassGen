@@ -5136,6 +5136,7 @@ class ConfigBuilder:
                 "audio_generation_backend": "openai",  # OpenAI TTS
                 "coordination": {
                     "max_orchestration_restarts": 0,  # Disabled pending MAS-268 fix
+                    "learning_capture_mode": "verification_and_final_only",
                     "use_skills": True,
                     "skills_directory": ".agent/skills",
                     "enable_agent_task_planning": True,
@@ -5162,6 +5163,7 @@ class ConfigBuilder:
                 "audio_generation_backend": "openai",  # OpenAI TTS
                 "coordination": {
                     "max_orchestration_restarts": 0,  # Disabled pending MAS-268 fix
+                    "learning_capture_mode": "verification_and_final_only",
                     "enable_agent_task_planning": True,
                     "task_planning_filesystem_mode": True,
                     "enable_memory_filesystem_mode": True,
@@ -5214,6 +5216,8 @@ class ConfigBuilder:
             orchestrator_config["fairness_lead_cap_answers"] = coordination_settings["fairness_lead_cap_answers"]
         if coordination_settings.get("max_midstream_injections_per_round") is not None:
             orchestrator_config["max_midstream_injections_per_round"] = coordination_settings["max_midstream_injections_per_round"]
+        if coordination_settings.get("learning_capture_mode"):
+            orchestrator_config["coordination"]["learning_capture_mode"] = coordination_settings["learning_capture_mode"]
         if coordination_settings.get("enable_subagents"):
             orchestrator_config["coordination"]["enable_subagents"] = True
             orchestrator_config["coordination"]["subagent_default_timeout"] = 300  # 5 minutes

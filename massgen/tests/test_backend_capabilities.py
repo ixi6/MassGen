@@ -220,6 +220,14 @@ class TestSpecificBackends:
         assert caps.env_var == "ANTHROPIC_API_KEY"
         assert len(caps.builtin_tools) > 0
 
+    def test_claude_code_models_include_sonnet_46_after_opus_46(self):
+        """Claude Code quickstart models should list Sonnet 4.6 right after Opus 4.6."""
+        caps = get_capabilities("claude_code")
+        assert caps is not None
+        assert "claude-opus-4-6" in caps.models
+        assert "claude-sonnet-4-6" in caps.models
+        assert caps.models.index("claude-sonnet-4-6") == caps.models.index("claude-opus-4-6") + 1
+
     def test_gemini_capabilities(self):
         """Test Gemini backend capabilities."""
         caps = get_capabilities("gemini")

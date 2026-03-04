@@ -476,7 +476,7 @@ class TestReadMediaStringifiedJsonNormalization:
             ],
         )
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             read_media(inputs=inputs_as_string),  # type: ignore[arg-type]
         )
 
@@ -505,7 +505,7 @@ class TestReadMediaStringifiedJsonNormalization:
             ],
         )
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             read_media(inputs=inputs_as_string),  # type: ignore[arg-type]
         )
         output = result.output_blocks[0].data
@@ -549,7 +549,7 @@ class TestReadMediaFilePathsAlias:
         fake_a = str(tmp_path / "a.png")
         fake_b = str(tmp_path / "b.png")
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = asyncio.run(
             read_media(inputs=[{"file_paths": [fake_a, fake_b], "prompt": "Compare"}]),
         )
         output = result.output_blocks[0].data

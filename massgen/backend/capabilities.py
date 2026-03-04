@@ -236,6 +236,7 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         models=[
             # Alias notation (recommended for experimentation)
             "claude-opus-4-6",
+            "claude-sonnet-4-6",
             "claude-sonnet-4-5",
             "claude-opus-4-5",
             "claude-opus-4",

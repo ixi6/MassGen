@@ -37,7 +37,7 @@
 </p>
 
 <p align="center">
-  <i>Scaling AI with collaborative, continuously improving agents</i>
+  <i>Scaling AI with collaborative, continuously improving agents (4x speed)</i>
 </p>
 
 MassGen is a cutting-edge multi-agent framework that coordinates AI agents to solve complex tasks through redundancy and iterative refinement. Every agent tackles the full problem, observing, critiquing, and building on each other's work across cycles of refinement and restarts. When agents believe there is a strong enough answer, they vote, and the best collectively validated answer wins. This approach to parallel refinement and collective validation lays the groundwork for principled multi-agent scaling, where the system continuously improves its outputs by leveraging diverse agent perspectives and enforcing quality through consensus.

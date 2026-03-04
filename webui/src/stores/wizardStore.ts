@@ -239,7 +239,7 @@ export const useWizardStore = create<WizardState>()((set, get) => ({
     if (currentStep === 'agentCount' && agentCount === 1) {
       // Initialize single agent
       set({
-        setupMode: 'different',
+        setupMode: 'same',
         agents: [{ id: 'agent_a', provider: '', model: '' }],
         currentStep: 'agentConfig',
       });

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -159,6 +160,84 @@ def _find_plateaued_criteria(
 
 
 _VALID_IMPACTS = {"transformative", "structural", "incremental"}
+_MAX_DIAGNOSTIC_ARTIFACT_PATHS = 20
+
+
+def _extract_absolute_paths_from_text(text: str, max_paths: int = _MAX_DIAGNOSTIC_ARTIFACT_PATHS) -> list[str]:
+    """Extract unique absolute Unix paths from free-form text.
+
+    This is used to surface artifact/report paths already captured by evaluator
+    reports so novelty/quality subagents can inspect evidence directly instead
+    of re-running evaluation.
+    """
+    if not text or max_paths <= 0:
+        return []
+
+    # Match path-like tokens beginning with "/" while avoiding URL "//" segments.
+    raw_tokens = re.findall(r"(?<![:/])(/[^\s`\"'<>|]+)", text)
+    seen: set[str] = set()
+    extracted: list[str] = []
+    for token in raw_tokens:
+        cleaned = token.rstrip(".,;:!?)]}\"'")
+        if not cleaned:
+            continue
+        if cleaned.startswith("//"):
+            continue
+        if not Path(cleaned).is_absolute():
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        extracted.append(cleaned)
+        if len(extracted) >= max_paths:
+            break
+    return extracted
+
+
+def _normalize_evaluation_input_packet(
+    latest_evaluation: dict[str, Any] | None,
+    failed_criteria: list[str],
+) -> dict[str, Any]:
+    """Return a stable, JSON-serializable evaluation packet for subagent handoff."""
+    source = latest_evaluation if isinstance(latest_evaluation, dict) else {}
+    packet: dict[str, Any] = {
+        "failed_criteria": list(source.get("failed_criteria") or failed_criteria or []),
+        "failing_criteria_detail": list(source.get("failing_criteria_detail") or []),
+        "plateaued_criteria": list(source.get("plateaued_criteria") or []),
+        "checklist_explanation": str(source.get("checklist_explanation") or ""),
+        "diagnostic_report_path": str(source.get("diagnostic_report_path") or ""),
+        "diagnostic_report_artifact_paths": [],
+    }
+    raw_paths = source.get("diagnostic_report_artifact_paths") or []
+    if isinstance(raw_paths, list):
+        clean_paths: list[str] = []
+        for path_value in raw_paths:
+            path_text = str(path_value).strip()
+            if not path_text:
+                continue
+            if path_text not in clean_paths:
+                clean_paths.append(path_text)
+            if len(clean_paths) >= _MAX_DIAGNOSTIC_ARTIFACT_PATHS:
+                break
+        packet["diagnostic_report_artifact_paths"] = clean_paths
+    return packet
+
+
+def _build_novelty_quality_task_templates(evaluation_input: dict[str, Any]) -> dict[str, str]:
+    """Create copy-ready task templates for novelty and quality_rethinking subagents."""
+    payload = json.dumps(evaluation_input, indent=2, ensure_ascii=False)
+    shared_preamble = (
+        "Use the Evaluation Input (verbatim) block below as source of truth. "
+        "Do NOT re-evaluate, re-score, or repeat checklist analysis.\n"
+        "If diagnostic report/artifact paths are present, inspect them first and ground your proposals in that evidence.\n\n"
+        "Evaluation Input (verbatim):\n"
+    )
+    novelty_template = "You are the novelty subagent. Propose 2-3 fundamentally different directions to break the plateau.\n" + shared_preamble + payload
+    quality_template = "You are the quality_rethinking subagent. Propose 3-5 targeted craft upgrades within current structure.\n" + shared_preamble + payload
+    return {
+        "novelty_task_template": novelty_template,
+        "quality_rethinking_task_template": quality_template,
+    }
 
 
 def _normalize_improvement_entry(entry: Any) -> dict[str, Any]:
@@ -196,6 +275,7 @@ def evaluate_proposed_improvements(
     all_criteria_ids: list[str] | None = None,
     preserve: dict[str, Any] | None = None,
     state: dict[str, Any] | None = None,
+    latest_evaluation: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Validate that improvements cover all failing criteria and preserve strengths."""
     if not isinstance(improvements, dict):
@@ -297,16 +377,18 @@ def evaluate_proposed_improvements(
     should_inject_iteration_spawn = bool(_state.get("subagents_enabled")) and (spawn_novelty or spawn_quality_rethinking)
 
     if should_inject_iteration_spawn and failed_criteria:
+        evaluation_input = _normalize_evaluation_input_packet(latest_evaluation, failed_criteria)
         task_plan.append(
             {
                 "id": "novelty_quality_spawn",
                 "type": "novelty_quality_spawn",
                 "description": (
                     "Spawn novelty and/or quality_rethinking subagents in background "
-                    "IMMEDIATELY (before implementing improvements). Give each subagent "
-                    "the failing criteria and ask for materially different approaches. "
-                    "Integrate their output before submitting your new answer. If neither "
-                    "type is available, skip this task."
+                    "IMMEDIATELY (before implementing improvements). Use the provided "
+                    "`subagent_task_templates` and paste `evaluation_input` verbatim so "
+                    "subagents can propose improvements without re-evaluating. Integrate "
+                    "their output before submitting your new answer. If neither type is "
+                    "available, skip this task."
                 ),
                 "priority": "high",
                 "verification": "Novelty/quality subagents spawned via spawn_subagents(background=True)",
@@ -316,6 +398,8 @@ def evaluate_proposed_improvements(
                     "failing_criteria": list(failed_criteria),
                     "spawn_novelty": spawn_novelty,
                     "spawn_quality_rethinking": spawn_quality_rethinking,
+                    "evaluation_input": evaluation_input,
+                    "subagent_task_templates": _build_novelty_quality_task_templates(evaluation_input),
                 },
             },
         )
@@ -466,6 +550,7 @@ def _evaluate_gap_report(report_path: str, state: dict[str, Any]) -> dict[str, A
 
     result["file_exists"] = True
     result["content"] = report_text
+    result["artifact_paths"] = _extract_absolute_paths_from_text(report_text)
 
     has_multimodal = bool(state.get("has_multimodal_tools", False))
     min_length = 300 if has_multimodal else _DIAGNOSTIC_REPORT_MIN_LENGTH
@@ -874,6 +959,17 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
                 task["metadata"]["subagent_id"] = item["subagent_id"]
             tasks.append(task)
         elif item["type"] == "novelty_quality_spawn":
+            metadata = {
+                "type": "novelty_quality_spawn",
+                "failing_criteria": item.get("metadata", {}).get("failing_criteria", []),
+                "spawn_novelty": item.get("metadata", {}).get("spawn_novelty", True),
+                "spawn_quality_rethinking": item.get("metadata", {}).get("spawn_quality_rethinking", True),
+                "injected": True,
+            }
+            if "evaluation_input" in item.get("metadata", {}):
+                metadata["evaluation_input"] = item.get("metadata", {}).get("evaluation_input")
+            if "subagent_task_templates" in item.get("metadata", {}):
+                metadata["subagent_task_templates"] = item.get("metadata", {}).get("subagent_task_templates")
             tasks.append(
                 {
                     "id": item.get("id", "novelty_quality_spawn"),
@@ -888,13 +984,7 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
                     ),
                     "priority": item.get("priority", "high"),
                     "type": "novelty_quality_spawn",
-                    "metadata": {
-                        "type": "novelty_quality_spawn",
-                        "failing_criteria": item.get("metadata", {}).get("failing_criteria", []),
-                        "spawn_novelty": item.get("metadata", {}).get("spawn_novelty", True),
-                        "spawn_quality_rethinking": item.get("metadata", {}).get("spawn_quality_rethinking", True),
-                        "injected": True,
-                    },
+                    "metadata": metadata,
                 },
             )
         elif item["type"] == "verify_preserve":
@@ -948,7 +1038,16 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
     items = specs.get("items", [])
 
     # Track last failed criteria so propose_improvements can validate coverage
-    _last_result: dict[str, Any] = {"failed_criteria": [], "items": [], "all_criteria_ids": []}
+    _last_result: dict[str, Any] = {
+        "failed_criteria": [],
+        "items": [],
+        "all_criteria_ids": [],
+        "failing_criteria_detail": [],
+        "plateaued_criteria": [],
+        "checklist_explanation": "",
+        "diagnostic_report_path": "",
+        "diagnostic_report_artifact_paths": [],
+    }
 
     # Create handler that re-reads state on each call.
     async def submit_checklist(
@@ -978,9 +1077,17 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
             items=current_items,
             state=state,
         )
+        report_data = result.get("report") if isinstance(result.get("report"), dict) else {}
+        resolved_path = str(report_data.get("resolved_path") or "")
+        fallback_path = str(report_data.get("path") or "")
         _last_result["failed_criteria"] = result.get("failed_criteria", [])
         _last_result["items"] = current_items
         _last_result["all_criteria_ids"] = [f"E{i+1}" for i in range(len(current_items))]
+        _last_result["failing_criteria_detail"] = list(result.get("failing_criteria_detail", []))
+        _last_result["plateaued_criteria"] = list(result.get("plateaued_criteria", []))
+        _last_result["checklist_explanation"] = str(result.get("explanation", ""))
+        _last_result["diagnostic_report_path"] = resolved_path or fallback_path
+        _last_result["diagnostic_report_artifact_paths"] = list(report_data.get("artifact_paths", []))
         return json.dumps(result)
 
     submit_checklist.__doc__ = (
@@ -1034,6 +1141,14 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
             all_criteria_ids=_last_result.get("all_criteria_ids"),
             preserve=preserve,
             state=state_for_improve,
+            latest_evaluation={
+                "failed_criteria": _last_result.get("failed_criteria", []),
+                "failing_criteria_detail": _last_result.get("failing_criteria_detail", []),
+                "plateaued_criteria": _last_result.get("plateaued_criteria", []),
+                "checklist_explanation": _last_result.get("checklist_explanation", ""),
+                "diagnostic_report_path": _last_result.get("diagnostic_report_path", ""),
+                "diagnostic_report_artifact_paths": _last_result.get("diagnostic_report_artifact_paths", []),
+            },
         )
         if result.get("valid") and _injection_dir_path:
             _write_inject_file(_injection_dir_path, result["task_plan"])

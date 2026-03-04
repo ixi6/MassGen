@@ -57,6 +57,16 @@ def test_checklist_gated_decision_evaluator_guidance_includes_visual_comparison(
     assert "visual" in content.lower()
 
 
+def test_checklist_gated_decision_requires_blocking_evaluator_execution():
+    """Checklist gated flow should require blocking evaluator execution before scoring."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+    )
+    lower = content.lower()
+    assert "background=false, refine=false" in lower
+    assert "required before scoring" in lower
+
+
 def test_checklist_gated_decision_includes_peer_build_copy_guidance():
     """Checklist workflow should explain how to evaluate peer build outputs
     without mutating read-only shared snapshots."""

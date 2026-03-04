@@ -1002,8 +1002,9 @@ to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
 
 **Phase 1 — Gather evidence. Do this BEFORE calling `submit_checklist`.**
 
-Spawn **one evaluator** that sees **all candidate answers together**,
-while you do qualitative analysis in parallel:
+Spawn **one evaluator** that sees **all candidate answers together**.
+Run it in blocking mode (`background=False, refine=False`) because its evidence
+is required before scoring:
 
 - Give the evaluator paths to all agents' answers. Instruct it to compare
   cross-agent: what does each answer have that the others lack? What gaps appear
@@ -4332,6 +4333,7 @@ class SubagentSection(SystemPromptSection):
         specialized_guidance = ""
         if specialized_names:
             evaluator_guidance = ""
+            novelty_quality_guidance = ""
             if "evaluator" in specialized_names:
                 evaluator_guidance = """
 **FOR `EVALUATOR` TASKS, EXPLICITLY INCLUDE:**
@@ -4344,6 +4346,16 @@ no other way to know what each criterion means. Without this, it guesses.
 - What evidence to capture per criterion (screenshots, logs, timings, artifact paths)
 - Output format: detailed observations keyed to each criterion ID — NOT pass/fail verdicts \
 or scores (those are the main agent's job)
+"""
+            if "novelty" in specialized_names or "quality_rethinking" in specialized_names:
+                novelty_quality_guidance = """
+**FOR `NOVELTY` AND `QUALITY_RETHINKING` TASKS, EXPLICITLY INCLUDE:**
+- **Evaluation Input (verbatim)** — paste the full structured evaluation packet from your \
+task metadata (`evaluation_input`) directly into the subagent task.
+- **Evidence/report paths** — include `diagnostic_report_path` and \
+`diagnostic_report_artifact_paths` when present so subagents can ground proposals in evidence.
+- **Constraint**: Do NOT ask them to re-evaluate or re-score. They must use your provided \
+evaluation packet and focus only on generating stronger directions/proposals.
 """
             specialized_guidance = f"""
 **WHEN WRITING A `TASK` FOR SPECIALIZED SUBAGENTS:**
@@ -4359,6 +4371,7 @@ Read the "Expected input for this type" bullets in ATTACHED SUBAGENTS and adapt 
 If that checklist is present, treat it as required inputs for your task brief.
 
 {evaluator_guidance}
+{novelty_quality_guidance}
 """
         return f"""{attached}
 # Subagent Delegation
@@ -4427,10 +4440,10 @@ Subagents are useful helpers but have limitations:
 
 {specialized_guidance}
 
-**EVALUATION DELEGATION (background pattern):**
+**EVALUATION DELEGATION (blocking evaluator pattern):**
 When your output needs testing or evaluation that involves procedural tool use, delegate it
-to a background subagent so you can keep working on implementation. Spawn with
-`background=True, refine=False` — the subagent evaluates while you continue building.
+to an evaluator subagent and wait for its report before scoring or proposing improvements.
+Spawn with `background=False, refine=False` for evaluator tasks.
 
 Subagent handles (procedural observations):
 - High-volume batch workflows where execution is mostly mechanical and repeatable
@@ -4479,10 +4492,12 @@ quality and priorities, since you have the full context and the subagent may run
 **DO NOT submit your answer until ALL subagents have returned results.**
 
 When you spawn subagents:
-1. **Use `background=True` (default)** — the tool returns immediately with subagent IDs.
-   Continue your own work while subagents run. Results are auto-injected or retrievable via `list_subagents()`.
-2. **Do NOT say "I will now run subagents"** and submit an answer before collecting results.
-3. **Only after receiving results** should you integrate outputs and submit your answer.
+1. **Use `background=False` for prerequisite tasks (default)** — especially `evaluator`,
+   where downstream scoring and iteration depend on returned evidence.
+2. **Use `background=True` only for independent work** where you can keep making
+   meaningful progress without those results.
+3. **Do NOT say "I will now run subagents"** and submit an answer before collecting results.
+4. **Only after receiving results** should you integrate outputs and submit your answer.
 
 **BAD**: "I spawned 5 subagents. I will now wait for them and report back." (submitting answer before results)
 **GOOD**: Wait for spawn tool to return → read results → integrate → then submit answer with completed work
@@ -4556,7 +4571,7 @@ spawn_subagents(
         {{"task": "Create discography table in discography.md", "subagent_id": "discog"}},
         {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs"}}
     ],
-    background=True,  # default: run async, continue working; set False only when you must block
+    background=True,  # optional async mode for independent tasks; default is False (blocking)
     refine=False,  # default: single-pass, fast/cheap; set True only when quality justifies cost
 )
 
@@ -4567,12 +4582,12 @@ spawn_subagents(
 # ])
 ```
 
-**background parameter (async mode):**
-- `background=True` **(default)**: Spawn in background and continue working asynchronously.
-  Results are often auto-injected on a later tool call. Use `list_subagents()` to check
-  status and discover workspace paths.
-- `background=False`: Wait for results before proceeding. Only use when you genuinely
-  cannot continue any meaningful work until the subagent completes.
+**background parameter:**
+- `background=False` **(default)**: Blocking mode. Wait for results before proceeding.
+  Use this for evaluator/precondition tasks whose outputs are required for your next step.
+- `background=True`: Spawn in background and continue working asynchronously.
+  Use this only for independent tasks; results are often auto-injected on a later tool call.
+  Use `list_subagents()` to check status and discover workspace paths.
 
 **refine parameter:**
 - `refine=False` **(default)**: Single-pass execution. Faster and cheaper. Use for most tasks.

@@ -14,12 +14,28 @@ def test_task_planning_prompt_defaults_to_single_chunk_target():
     prefix = get_task_planning_prompt_prefix(plan_depth="dynamic")
     assert "- Target chunks: exactly 1" in prefix
     assert "- Target chunks: around 1" not in prefix
+    assert "single-run default unless" not in prefix
 
 
 def test_spec_creation_prompt_defaults_to_single_chunk_target():
     prefix = get_spec_creation_prompt_prefix()
     assert "- Target chunks: exactly 1" in prefix
     assert "- Target chunks: around 1" not in prefix
+    assert "single-run default unless" not in prefix
+
+
+def test_task_planning_prompt_explicit_single_chunk_target_is_strict():
+    prefix = get_task_planning_prompt_prefix(plan_depth="dynamic", target_chunks=1)
+    assert "- Target chunks: exactly 1" in prefix
+    assert "- Target chunks: around 1" not in prefix
+    assert "single-run default unless" not in prefix
+
+
+def test_spec_creation_prompt_explicit_single_chunk_target_is_strict():
+    prefix = get_spec_creation_prompt_prefix(target_chunks=1)
+    assert "- Target chunks: exactly 1" in prefix
+    assert "- Target chunks: around 1" not in prefix
+    assert "single-run default unless" not in prefix
 
 
 def test_task_planning_prompt_defaults_to_autonomous_broadcast():

@@ -137,6 +137,22 @@ def test_create_container_skills_writable_creates_missing_dir(docker_manager, tm
     assert skills_dir.exists()
 
 
+def test_create_container_sets_node_path_for_global_npm_modules(docker_manager, tmp_path):
+    """Container env should expose global npm module paths for Node require() resolution."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    docker_manager.create_container(
+        agent_id="agent_env",
+        workspace_path=workspace,
+    )
+
+    call_kwargs = docker_manager.client.containers.run.call_args
+    environment = call_kwargs.kwargs.get("environment") or call_kwargs[1].get("environment")
+    assert environment is not None
+    assert environment.get("NODE_PATH") == "/usr/lib/node_modules:/usr/local/lib/node_modules"
+
+
 # ---------------------------------------------------------------------------
 # create_container: default (skills_writable=False) unchanged
 # ---------------------------------------------------------------------------

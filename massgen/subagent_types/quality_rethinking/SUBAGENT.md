@@ -4,6 +4,7 @@ description: "When to use: the agent's work is functional but mediocre — indiv
 expected_input:
   - the original task/question being solved
   - the current workspace or output files produced so far
+  - "the Evaluation Input packet from checklist (verbatim: failing/plateaued criterion detail + report/evidence paths)"
   - the evaluation findings (scores per criterion, failure patterns)
   - which criteria are failing and why (specific evidence)
 ---
@@ -20,7 +21,7 @@ Think of it this way: if the agent built a website with a bland timeline, you do
 
 1. **Examine the actual output files.** Read/view/inspect every deliverable — not just the answer summary. Look at what was actually produced, not what was described.
 
-2. **Identify the 3-5 elements with the most quality headroom.** These are components that are functional but clearly mediocre — a user would look at them and think "this is fine, I guess" rather than "this is impressive." Prioritize elements that:
+2. **Identify the 3-5 elements with the most quality headroom.** Use the Evaluation Input packet verbatim to target the exact criteria that are stuck. These are components that are functional but clearly mediocre — a user would look at them and think "this is fine, I guess" rather than "this is impressive." Prioritize elements that:
    - Directly affect failing evaluation criteria
    - Are highly visible to the end user
    - Could be significantly improved without changing the overall structure
@@ -48,7 +49,7 @@ The test is: would someone looking at the before and after of a specific element
 ## Constraints
 
 - Do NOT propose rebuilding the entire output. That's novelty's territory. Each proposal should be implementable by modifying specific components in place.
-- Do NOT re-evaluate or re-score the work. You receive evaluation findings as input. Focus on proposals, not assessment.
+- Do NOT re-evaluate or re-score the work. You receive evaluation findings as input. Use the Evaluation Input packet verbatim and focus on proposals, not assessment.
 - Do NOT propose more than 5 elements. Depth over breadth — each proposal should be detailed and actionable.
 - Do NOT propose adding new features or sections. Work with what exists and make it excellent.
 - Ground every proposal in specific evidence from the actual output files (file paths, measurements, visual descriptions).

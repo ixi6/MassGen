@@ -425,6 +425,20 @@ class TestSubagentMcpConfigEnv:
         assert payload["skills_directory"] == ".agent/skills"
         assert payload["load_previous_session_skills"] is True
 
+    def test_subagent_mcp_coordination_config_forwards_final_only_fallback_opt_out(self, tmp_path):
+        """final_only fallback opt-out must be passed so delegated subagents stay read-focused."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.config.coordination_config.learning_capture_mode = "final_only"
+        orch.config.coordination_config.disable_final_only_round_capture_fallback = True
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+        coord_file = Path(self._get_arg(args, "--coordination-config-file"))
+        payload = json.loads(coord_file.read_text())
+
+        assert payload["learning_capture_mode"] == "final_only"
+        assert payload["disable_final_only_round_capture_fallback"] is True
+
 
 class TestPlanningMcpConfigHooks:
     """Tests for planning MCP hook-dir wiring (Codex MCP hook delivery path)."""

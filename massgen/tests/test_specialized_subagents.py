@@ -460,6 +460,22 @@ def test_subagent_section_includes_evaluator_task_brief_details():
     assert "observations" in content or "per criterion" in content
 
 
+def test_subagent_section_evaluator_uses_blocking_mode():
+    """Evaluator workflow should be blocking because later steps depend on its evidence."""
+    from massgen.subagent.models import SpecializedSubagentConfig
+    from massgen.system_prompt_sections import SubagentSection
+
+    types = [
+        SpecializedSubagentConfig(name="evaluator", description="Checks features"),
+    ]
+    section = SubagentSection("/workspace", max_concurrent=3, specialized_subagents=types)
+    content = section.build_content().lower()
+
+    assert "blocking evaluator pattern" in content
+    assert "background=false, refine=false" in content
+    assert "`background=false` **(default)**" in content
+
+
 def test_subagent_section_includes_builder_novelty_delegation_guidance():
     """Builder section must tell agents to list novelty proposals as transformative, not defer them."""
     from massgen.subagent.models import SpecializedSubagentConfig
@@ -476,6 +492,24 @@ def test_subagent_section_includes_builder_novelty_delegation_guidance():
     assert "transformative" in content
     # Must steer agents away from deferring
     assert "defer" in content or "inline" in content
+
+
+def test_subagent_section_requires_verbatim_eval_packet_for_novelty_quality():
+    """Novelty/quality brief guidance should require passing evaluation input verbatim."""
+    from massgen.subagent.models import SpecializedSubagentConfig
+    from massgen.system_prompt_sections import SubagentSection
+
+    types = [
+        SpecializedSubagentConfig(name="novelty", description="Break plateaus"),
+        SpecializedSubagentConfig(name="quality_rethinking", description="Raise craft without rebuild"),
+    ]
+    section = SubagentSection("/workspace", max_concurrent=3, specialized_subagents=types)
+    content = section.build_content().lower()
+
+    assert "for `novelty` and `quality_rethinking` tasks" in content
+    assert "evaluation input" in content
+    assert "verbatim" in content
+    assert "do not ask them to re-evaluate" in content
 
 
 def test_subagent_section_builder_guidance_not_shown_without_builder():

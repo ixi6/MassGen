@@ -1,6 +1,9 @@
 """Tests for plan-review refinement prompt composition."""
 
-from massgen.cli import build_plan_review_refinement_appendix
+from massgen.cli import (
+    build_plan_review_refinement_appendix,
+    should_include_quick_edit_hint,
+)
 
 
 def test_refinement_appendix_avoids_duplicate_feedback_block_when_already_in_question():
@@ -35,3 +38,9 @@ def test_quick_edit_hint_does_not_explicitly_call_out_single_agent():
 
     assert "## Quick Edit Planning Turn" in appendix
     assert "single-agent" not in appendix.lower()
+
+
+def test_quick_edit_hint_requires_explicit_single_turn_mode():
+    assert should_include_quick_edit_hint("single") is True
+    assert should_include_quick_edit_hint("multi") is False
+    assert should_include_quick_edit_hint(None) is False

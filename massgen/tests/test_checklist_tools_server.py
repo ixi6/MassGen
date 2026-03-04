@@ -830,6 +830,70 @@ class TestProposeImprovements:
         assert result["task_plan"][0]["metadata"]["spawn_novelty"] is False
         assert result["task_plan"][0]["metadata"]["spawn_quality_rethinking"] is True
 
+    def test_novelty_spawn_includes_verbatim_evaluation_packet_and_templates(self):
+        """Spawn task should carry exact evaluation packet plus copy-ready task templates."""
+        state = {
+            **self._NO_GATE,
+            "subagents_enabled": True,
+            "enable_novelty_on_iteration": True,
+            "enable_quality_rethink_on_iteration": True,
+            "agent_answer_count": 1,
+        }
+        latest_evaluation = {
+            "failed_criteria": ["E1", "E2"],
+            "failing_criteria_detail": [
+                {
+                    "id": "E1",
+                    "text": "Hero clarity",
+                    "category": "must",
+                    "current_score": 5,
+                },
+            ],
+            "plateaued_criteria": [
+                {
+                    "id": "E1",
+                    "text": "Hero clarity",
+                    "category": "must",
+                    "score_history": [5, 5, 5],
+                    "current_score": 5,
+                },
+            ],
+            "checklist_explanation": "E1 plateaued and E2 still weak.",
+            "diagnostic_report_path": "/tmp/report.md",
+            "diagnostic_report_artifact_paths": [
+                "/tmp/screenshots/hero.png",
+                "/tmp/screenshots/cta.png",
+            ],
+        }
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign hero", "sources": [], "impact": "structural"}],
+                "E2": [{"plan": "rewrite CTA", "sources": [], "impact": "transformative"}],
+            },
+            failed_criteria=["E1", "E2"],
+            items=["Hero clarity", "CTA clarity"],
+            state=state,
+            latest_evaluation=latest_evaluation,
+        )
+        assert result["valid"] is True
+        spawn_task = result["task_plan"][0]
+        assert spawn_task["type"] == "novelty_quality_spawn"
+        metadata = spawn_task["metadata"]
+        assert metadata["evaluation_input"]["failed_criteria"] == ["E1", "E2"]
+        assert metadata["evaluation_input"]["plateaued_criteria"][0]["score_history"] == [5, 5, 5]
+        assert metadata["evaluation_input"]["diagnostic_report_path"] == "/tmp/report.md"
+        assert metadata["evaluation_input"]["diagnostic_report_artifact_paths"] == [
+            "/tmp/screenshots/hero.png",
+            "/tmp/screenshots/cta.png",
+        ]
+        assert "subagent_task_templates" in metadata
+        novelty_template = metadata["subagent_task_templates"]["novelty_task_template"]
+        quality_template = metadata["subagent_task_templates"]["quality_rethinking_task_template"]
+        assert "Evaluation Input (verbatim)" in novelty_template
+        assert "Evaluation Input (verbatim)" in quality_template
+        assert "Do NOT re-evaluate" in novelty_template
+        assert "Do NOT re-evaluate" in quality_template
+
     def test_no_novelty_task_on_round_1(self):
         """Round 1 should not inject novelty task even when novelty-on-iteration is enabled."""
         state = {
@@ -1999,6 +2063,105 @@ class TestChecklistSdkSubmissionCounting:
         assert blocked_result["isError"] is True
         assert "already called 1 time(s)" in blocked_result["content"][0]["text"]
 
+    @pytest.mark.asyncio
+    async def test_sdk_propose_improvements_includes_evaluation_input_packet(self, monkeypatch, tmp_path):
+        """SDK path should thread checklist evaluation packet into novelty/quality spawn metadata."""
+        from massgen.orchestrator import AgentState, Orchestrator
+
+        self._install_fake_claude_agent_sdk(monkeypatch)
+
+        class _MockBackend:
+            def __init__(self):
+                self.config = {}
+
+        report_path = tmp_path / "diagnostic_report.md"
+        report_path.write_text(
+            (
+                "Failure Patterns\n"
+                "- Hero message is vague\n"
+                "Root Causes\n"
+                "- Missing concrete product behavior\n"
+                "Goal Alignment\n"
+                "- Path evidence: /tmp/screenshots/hero.png and /tmp/screenshots/cta.png\n"
+            ),
+            encoding="utf-8",
+        )
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.config = SimpleNamespace(
+            max_checklist_calls_per_round=2,
+            checklist_first_answer=False,
+            coordination_config=SimpleNamespace(enable_subagents=True),
+        )
+        orchestrator.agents = {"agent_0": None}
+        orchestrator.agent_states = {"agent_0": AgentState(answer_count=1)}
+        orchestrator._planning_injection_dirs = {}
+
+        backend = _MockBackend()
+        checklist_state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "workspace_path": str(tmp_path),
+            "subagents_enabled": True,
+            "enable_novelty_on_iteration": True,
+            "enable_quality_rethink_on_iteration": True,
+            "agent_answer_count": 1,
+            "item_categories": {"E1": "must", "E2": "should"},
+            "quality_rethinking_subagent_enabled": True,
+            "novelty_subagent_enabled": True,
+        }
+        items = ["Hero clarity", "CTA clarity"]
+
+        orchestrator._init_checklist_tool_sdk(
+            "agent_0",
+            backend,
+            checklist_state,
+            items,
+        )
+        submit_checklist = backend.config["mcp_servers"]["massgen_checklist"]["tools"][0]
+        propose_improvements = backend.config["mcp_servers"]["massgen_checklist"]["tools"][1]
+
+        checklist_result = await submit_checklist(
+            {
+                "scores": {
+                    "E1": {"score": 5, "reasoning": "hero vague"},
+                    "E2": {"score": 8, "reasoning": "cta clear"},
+                },
+                "report_path": str(report_path),
+            },
+        )
+        checklist_payload = json.loads(checklist_result["content"][0]["text"])
+        assert checklist_payload["verdict"] == "new_answer"
+
+        propose_result = await propose_improvements(
+            {
+                "improvements": {
+                    "E1": [
+                        {"plan": "rewrite hero around one concrete product flow", "sources": [], "impact": "structural"},
+                    ],
+                },
+                "preserve": {
+                    "E2": {"what": "clear CTA and conversion copy", "source": "agent1.1"},
+                },
+            },
+        )
+        propose_payload = json.loads(propose_result["content"][0]["text"])
+        assert propose_payload["valid"] is True
+        spawn_task = propose_payload["task_plan"][0]
+        assert spawn_task["type"] == "novelty_quality_spawn"
+        metadata = spawn_task["metadata"]
+        assert "evaluation_input" in metadata
+        assert metadata["evaluation_input"]["failed_criteria"] == ["E1"]
+        assert metadata["evaluation_input"]["diagnostic_report_path"] == str(report_path)
+        assert metadata["evaluation_input"]["diagnostic_report_artifact_paths"] == [
+            "/tmp/screenshots/hero.png",
+            "/tmp/screenshots/cta.png",
+        ]
+        assert "subagent_task_templates" in metadata
+
 
 @pytest.mark.asyncio
 async def test_checklist_create_server_standalone_with_hook_dir(
@@ -2533,6 +2696,48 @@ class TestConvertTaskPlanToInjectFormat:
         assert len(result) == 2
         assert result[0]["metadata"]["type"] == "improve"
         assert result[1]["metadata"]["type"] == "verify_preserve"
+
+    def test_convert_novelty_quality_spawn_preserves_evaluation_metadata(self):
+        """Spawn conversion should preserve evaluation packet and template metadata."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        task_plan = [
+            {
+                "id": "novelty_quality_spawn",
+                "type": "novelty_quality_spawn",
+                "description": "Spawn novelty/quality in background",
+                "priority": "high",
+                "metadata": {
+                    "type": "novelty_quality_spawn",
+                    "failing_criteria": ["E1"],
+                    "spawn_novelty": True,
+                    "spawn_quality_rethinking": True,
+                    "evaluation_input": {
+                        "failed_criteria": ["E1"],
+                        "failing_criteria_detail": [
+                            {"id": "E1", "text": "Hero clarity", "category": "must", "current_score": 5},
+                        ],
+                        "diagnostic_report_path": "/tmp/report.md",
+                        "diagnostic_report_artifact_paths": ["/tmp/screenshots/hero.png"],
+                    },
+                    "subagent_task_templates": {
+                        "novelty_task_template": "Evaluation Input (verbatim): ...",
+                        "quality_rethinking_task_template": "Evaluation Input (verbatim): ...",
+                    },
+                },
+            },
+        ]
+
+        result = _convert_task_plan_to_inject_format(task_plan)
+        assert len(result) == 1
+        metadata = result[0]["metadata"]
+        assert metadata["evaluation_input"]["failed_criteria"] == ["E1"]
+        assert metadata["evaluation_input"]["diagnostic_report_path"] == "/tmp/report.md"
+        assert metadata["subagent_task_templates"]["novelty_task_template"].startswith(
+            "Evaluation Input (verbatim):",
+        )
 
 
 # ---------------------------------------------------------------------------

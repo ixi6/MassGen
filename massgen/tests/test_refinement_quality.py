@@ -279,6 +279,26 @@ class TestNoveltySubagentQualityRevamp:
         content = novelty_md.read_text()
         assert "rebuild" in content.lower() or "foundation" in content.lower()
 
+    def test_novelty_requires_verbatim_evaluation_input_packet(self):
+        """Novelty subagent should require verbatim evaluation input and avoid re-evaluation."""
+        novelty_md = Path(__file__).parent.parent / "subagent_types" / "novelty" / "SUBAGENT.md"
+        content = novelty_md.read_text().lower()
+        assert "evaluation input" in content
+        assert "verbatim" in content
+        assert "do not re-evaluate" in content
+
+
+class TestQualityRethinkingInputContract:
+    """Tests for quality_rethinking subagent evaluation-input contract."""
+
+    def test_quality_rethinking_requires_verbatim_evaluation_input_packet(self):
+        """Quality rethinking subagent should consume evaluation packet verbatim and not re-score."""
+        quality_md = Path(__file__).parent.parent / "subagent_types" / "quality_rethinking" / "SUBAGENT.md"
+        content = quality_md.read_text().lower()
+        assert "evaluation input" in content
+        assert "verbatim" in content
+        assert "do not re-evaluate" in content
+
 
 class TestCriticChecklistGuidance:
     """Tests for parallel critic + novelty spawning guidance."""

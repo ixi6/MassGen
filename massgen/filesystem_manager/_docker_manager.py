@@ -639,6 +639,17 @@ class DockerManager:
         # Node.js tools
         env_vars["npm_config_cache"] = f"{workspace_cache}/npm"
         env_vars["PNPM_HOME"] = f"{workspace_data}/pnpm"
+        # Ensure Node can resolve globally installed modules (e.g., Playwright CLI package).
+        global_node_paths = ["/usr/lib/node_modules", "/usr/local/lib/node_modules"]
+        existing_node_path = env_vars.get("NODE_PATH", "")
+        if existing_node_path:
+            node_path_entries = [entry for entry in existing_node_path.split(":") if entry]
+            for path in global_node_paths:
+                if path not in node_path_entries:
+                    node_path_entries.append(path)
+            env_vars["NODE_PATH"] = ":".join(node_path_entries)
+        else:
+            env_vars["NODE_PATH"] = ":".join(global_node_paths)
 
         # Rust tools
         env_vars["CARGO_HOME"] = f"{workspace_data}/cargo"

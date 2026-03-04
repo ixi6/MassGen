@@ -1105,7 +1105,16 @@ class Orchestrator(ChatAgent):
         _agent_id = agent_id
 
         # Track last failed criteria for propose_improvements validation
-        _last_checklist_result: dict[str, Any] = {"failed_criteria": [], "items": [], "all_criteria_ids": []}
+        _last_checklist_result: dict[str, Any] = {
+            "failed_criteria": [],
+            "items": [],
+            "all_criteria_ids": [],
+            "failing_criteria_detail": [],
+            "plateaued_criteria": [],
+            "checklist_explanation": "",
+            "diagnostic_report_path": "",
+            "diagnostic_report_artifact_paths": [],
+        }
 
         @tool(
             name="submit_checklist",
@@ -1164,9 +1173,17 @@ class Orchestrator(ChatAgent):
                 state=_state,
                 checklist_history=agent_state.checklist_history if agent_state else None,
             )
+            report_data = result.get("report") if isinstance(result.get("report"), dict) else {}
+            resolved_path = str(report_data.get("resolved_path") or "")
+            fallback_path = str(report_data.get("path") or "")
             _last_checklist_result["failed_criteria"] = result.get("failed_criteria", [])
             _last_checklist_result["items"] = list(items)
             _last_checklist_result["all_criteria_ids"] = [f"E{i+1}" for i in range(len(items))]
+            _last_checklist_result["failing_criteria_detail"] = list(result.get("failing_criteria_detail", []))
+            _last_checklist_result["plateaued_criteria"] = list(result.get("plateaued_criteria", []))
+            _last_checklist_result["checklist_explanation"] = str(result.get("explanation", ""))
+            _last_checklist_result["diagnostic_report_path"] = resolved_path or fallback_path
+            _last_checklist_result["diagnostic_report_artifact_paths"] = list(report_data.get("artifact_paths", []))
 
             # Only accepted checklist submissions should consume this round's quota.
             # Validation failures (incomplete/malformed payloads or gated rejections)
@@ -1229,6 +1246,15 @@ class Orchestrator(ChatAgent):
                 items=_last_checklist_result["items"] or list(items),
                 all_criteria_ids=_last_checklist_result.get("all_criteria_ids"),
                 preserve=preserve,
+                state=_state,
+                latest_evaluation={
+                    "failed_criteria": _last_checklist_result.get("failed_criteria", []),
+                    "failing_criteria_detail": _last_checklist_result.get("failing_criteria_detail", []),
+                    "plateaued_criteria": _last_checklist_result.get("plateaued_criteria", []),
+                    "checklist_explanation": _last_checklist_result.get("checklist_explanation", ""),
+                    "diagnostic_report_path": _last_checklist_result.get("diagnostic_report_path", ""),
+                    "diagnostic_report_artifact_paths": _last_checklist_result.get("diagnostic_report_artifact_paths", []),
+                },
             )
             if result.get("valid"):
                 _orchestrator._write_planning_injection(_agent_id, result["task_plan"])
@@ -2298,6 +2324,8 @@ class Orchestrator(ChatAgent):
                 parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
             if hasattr(coord_cfg, "learning_capture_mode"):
                 parent_coordination_config["learning_capture_mode"] = coord_cfg.learning_capture_mode
+            if hasattr(coord_cfg, "disable_final_only_round_capture_fallback"):
+                parent_coordination_config["disable_final_only_round_capture_fallback"] = coord_cfg.disable_final_only_round_capture_fallback
             use_skills = getattr(coord_cfg, "use_skills", False)
             enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
             if use_skills or enabled_skill_names is not None:

@@ -4,6 +4,7 @@ description: "When to use: the agent's refinement has stalled with only incremen
 expected_input:
   - the original task/question being solved
   - the current workspace or output files produced so far
+  - "the Evaluation Input packet from checklist (verbatim: failing_criteria_detail, plateaued_criteria, report/evidence paths)"
   - the evaluation findings (diagnostic analysis, failure patterns, scores, substantiveness classification)
   - what incremental changes have already been identified (to avoid repeating them)
 ---
@@ -16,7 +17,7 @@ The main agent has been iterating on a task but is stuck in incremental-only ter
 
 ## What to do
 
-1. **Review the current work and evaluation findings.** Understand the diagnostic analysis, failure patterns, and scores. Identify what the current approach does well and where it is structurally limited.
+1. **Review the current work and Evaluation Input findings.** The Evaluation Input (verbatim) is your source of truth for what failed and why. Understand the diagnostic analysis, failure patterns, and scores. Identify what the current approach does well and where it is structurally limited.
 
 2. **Identify why incremental refinement is stalling.** Name the specific anchoring pattern: is the agent locked into a particular architecture, creative direction, problem decomposition, or mental model? Articulate what assumption is constraining the solution space.
 
@@ -33,7 +34,7 @@ The main agent has been iterating on a task but is stuck in incremental-only ter
 
 ## Constraints
 
-- Do NOT re-evaluate the work. The evaluation has already been done — you receive those findings as input. Your job is purely generative: propose new directions.
+- Do NOT re-evaluate the work. The evaluation has already been done — you receive those findings as input. Use the Evaluation Input packet verbatim and focus purely on generating new directions.
 - Do NOT propose incremental improvements. Fixing spacing or tweaking existing elements is not your role. If it could be described as "more of the same but slightly better," it does not belong here.
 - Do NOT default to "add more features/sections/content." Feature accumulation on a weak foundation is the most common failure mode. A direction that says "rebuild the core to be excellent" is more transformative than "add three new sections."
 - Do NOT propose more than 3 directions. Quality over quantity — each suggestion should be well-reasoned and actionable.

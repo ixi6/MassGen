@@ -431,10 +431,18 @@ Checklist mode is policy, not the core coordination primitive:
 - common flow:
   1. implement + verify
   2. call `submit_checklist`
-  3. if iterate verdict, call `propose_improvements`
-  4. implement plan
-  5. write/update `memory/short_term/verification_latest.md` with replayable verification steps/artifacts
-  6. submit via `new_answer` (or terminal action)
+  3. if checklist returns `status=validation_error`, fix payload/report and call `submit_checklist` again
+  4. if accepted iterate verdict, call `propose_improvements`
+  5. implement plan
+  6. write/update `memory/short_term/verification_latest.md` with replayable verification steps/artifacts
+  7. submit via `new_answer` (or terminal action)
+- checklist result contract:
+  - accepted path: `status=accepted` + `verdict`
+  - invalid path: `status=validation_error`, `requires_resubmission=true`, no `verdict`
+- `propose_improvements` is only valid after the latest accepted iterate checklist result
+- after injection updates arrive post-checklist, one bounded recheck is allowed:
+  - preferred: score only newly injected labels (delta recheck)
+  - also allowed: score all latest context labels
 
 Verification replay notes:
 
@@ -443,7 +451,7 @@ Verification replay notes:
 - replay memos should include environment context, exact verification commands/scripts, exhaustive artifact paths, and freshness notes
 - absolute artifact paths are normalized to current `temp_workspaces/<agent_token>/...` paths during injection
 
-`max_checklist_calls_per_round` prevents in-round checklist loops.
+`max_checklist_calls_per_round` prevents in-round checklist loops, with an exception for post-injection rechecks when newer labels are pending.
 
 Checklist state is backend-bound (`backend._checklist_state`) and refreshed per round/injection so answer labels and remaining budgets stay consistent.
 

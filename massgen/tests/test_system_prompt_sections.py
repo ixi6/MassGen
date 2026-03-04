@@ -5,6 +5,7 @@ from massgen.system_prompt_sections import (
     FilesystemBestPracticesSection,
     FilesystemOperationsSection,
     MemorySection,
+    OutputFirstVerificationSection,
     TaskPlanningSection,
     _build_checklist_analysis,
     _build_checklist_gated_decision,
@@ -229,6 +230,18 @@ def test_checklist_gated_decision_output_file_format():
     assert "output:" in lower
     # Must specify the output_<name>.txt naming convention
     assert "output_" in content
+
+
+def test_output_first_verification_requires_capture_coverage_before_diagnosis():
+    """Output-first guidance should require checking capture completeness before
+    concluding an answer is broken."""
+    content = OutputFirstVerificationSection().build_content()
+    lower = content.lower()
+
+    assert "capture the full artifact" in lower
+    assert "scroll through long pages" in lower
+    assert "capture artifacts" in lower
+    assert "verification issue first" in lower
 
 
 def test_filesystem_best_practices_evaluator_uses_prior_outputs_as_starting_point():

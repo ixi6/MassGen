@@ -5118,6 +5118,14 @@ A single static observation (screenshot, one test run) is often not sufficient. 
 | Visual document / static artifact | File generates without error | Render to image(s) and **view each page/slide** — does layout, imagery, colors, and content actually look right? \
 Render to images using available tools, then read_media each one. |
 
+### Coverage Check Before Diagnosis
+
+Before concluding an answer is broken, first confirm your evidence capture is complete:
+- **Capture the full artifact** — all pages, sections, states, and outputs (not just one viewport/hero/frame slice)
+- Check for **capture artifacts**: blank/empty regions from timing/iframe/canvas/export/cropping/etc issues, clipped sections, or cut-off content
+- If the code suggests there is more to the output and it conflicts with captured evidence, treat it as a **verification issue first** and fix capture before judging the answer \
+or determining the code is the problem
+
 **Match evidence to how the output is experienced:**
 - **Static visual** (documents, images, layouts) → render to images and view them; \
   generating a file without error says nothing about what it looks like

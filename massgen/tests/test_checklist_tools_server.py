@@ -101,6 +101,11 @@ def _make_specs_file(tmp_path, items, state):
 
 def _build_handler(specs_path):
     """Build the submit_checklist handler by extracting it from registration."""
+    return _build_handlers(specs_path)["submit_checklist"]
+
+
+def _build_handlers(specs_path):
+    """Build checklist tool handlers keyed by tool name."""
     import fastmcp
 
     mcp = fastmcp.FastMCP("test_checklist")
@@ -108,12 +113,12 @@ def _build_handler(specs_path):
 
     _register_checklist_tool(mcp, specs_path)
 
-    # Extract the registered tool's handler
-    # FastMCP stores tools internally; we access the handler directly
+    handlers = {}
     for tool in mcp._tool_manager._tools.values():
-        if tool.name == "submit_checklist":
-            return tool.fn
-    raise RuntimeError("submit_checklist tool not found after registration")
+        handlers[tool.name] = tool.fn
+    if "submit_checklist" not in handlers:
+        raise RuntimeError("submit_checklist tool not found after registration")
+    return handlers
 
 
 class TestSubmitChecklistVerdict:
@@ -237,8 +242,10 @@ class TestSubmitChecklistVerdict:
                 scores={"E1": {"score": 8, "reasoning": "good"}},
             ),
         )
-        assert result["verdict"] == "new_answer"
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result["incomplete_scores"] is True
+        assert "verdict" not in result
         assert "E2" in result["explanation"]
 
     @pytest.mark.asyncio
@@ -309,8 +316,10 @@ class TestIncompleteScoreRejection:
             items=items,
             state=state,
         )
-        assert result["verdict"] == "new_answer"
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result["incomplete_scores"] is True
+        assert "verdict" not in result
         assert "E2" in result["explanation"]
         assert "E3" in result["explanation"]
 
@@ -352,8 +361,10 @@ class TestIncompleteScoreRejection:
             items=items,
             state=state,
         )
-        assert result["verdict"] == "new_answer"
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result["incomplete_scores"] is True
+        assert "verdict" not in result
 
     def test_first_answer_not_rejected_for_missing_scores(self):
         """First answer (no existing answers) should not be rejected for missing scores."""
@@ -2039,6 +2050,9 @@ class TestChecklistSdkSubmissionCounting:
         }
         invalid_result = await submit_checklist(invalid_args)
         invalid_payload = json.loads(invalid_result["content"][0]["text"])
+        assert invalid_payload["status"] == "validation_error"
+        assert invalid_payload["requires_resubmission"] is True
+        assert "verdict" not in invalid_payload
         assert invalid_payload.get("incomplete_scores") is True
         assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 0
 
@@ -2056,12 +2070,329 @@ class TestChecklistSdkSubmissionCounting:
         }
         valid_result = await submit_checklist(valid_args)
         valid_payload = json.loads(valid_result["content"][0]["text"])
+        assert valid_payload["status"] == "accepted"
         assert valid_payload.get("incomplete_scores") is not True
         assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 1
 
         blocked_result = await submit_checklist(valid_args)
         assert blocked_result["isError"] is True
         assert "already called 1 time(s)" in blocked_result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_injection_recheck_allows_delta_or_full_without_consuming_invalid_attempts(self, monkeypatch):
+        """After accepted checklist + injection, one extra recheck allows delta-only or full payloads."""
+        from massgen.orchestrator import AgentState, Orchestrator
+
+        self._install_fake_claude_agent_sdk(monkeypatch)
+
+        class _MockBackend:
+            def __init__(self):
+                self.config = {}
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.config = SimpleNamespace(
+            max_checklist_calls_per_round=1,
+            checklist_first_answer=False,
+        )
+        orchestrator.agents = {"agent_0": None, "agent_1": None}
+        orchestrator.agent_states = {"agent_0": AgentState(answer_count=1)}
+
+        backend = _MockBackend()
+        checklist_state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "available_agent_labels": ["agent1.1", "agent2.1"],
+        }
+        items = ["Check 1", "Check 2"]
+
+        orchestrator._init_checklist_tool_sdk(
+            "agent_0",
+            backend,
+            checklist_state,
+            items,
+        )
+        submit_checklist = backend.config["mcp_servers"]["massgen_checklist"]["tools"][0]
+
+        first_result = await submit_checklist(
+            {
+                "scores": {
+                    "agent1.1": {"E1": {"score": 9, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "good"}},
+                    "agent2.1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 8, "reasoning": "good"}},
+                },
+            },
+        )
+        first_payload = json.loads(first_result["content"][0]["text"])
+        assert first_payload["status"] == "accepted"
+        assert first_payload["verdict"] == "vote"
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 1
+
+        # Simulate mid-round injection after first accepted checklist.
+        checklist_state["available_agent_labels"] = ["agent1.1", "agent2.2"]
+        orchestrator.agent_states["agent_0"].pending_checklist_recheck_labels = {"agent2.2"}
+
+        # Invalid recheck payload should not consume the exception budget.
+        invalid_recheck = await submit_checklist(
+            {
+                "scores": {
+                    "E1": {"score": 8, "reasoning": "flat format invalid"},
+                    "E2": {"score": 8, "reasoning": "flat format invalid"},
+                },
+            },
+        )
+        invalid_payload = json.loads(invalid_recheck["content"][0]["text"])
+        assert invalid_payload["status"] == "validation_error"
+        assert invalid_payload["requires_resubmission"] is True
+        assert "verdict" not in invalid_payload
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 1
+
+        # Delta-only recheck accepted.
+        delta_recheck = await submit_checklist(
+            {
+                "scores": {
+                    "agent2.2": {"E1": {"score": 8, "reasoning": "updated"}, "E2": {"score": 8, "reasoning": "updated"}},
+                },
+            },
+        )
+        delta_payload = json.loads(delta_recheck["content"][0]["text"])
+        assert delta_payload["status"] == "accepted"
+        assert delta_payload["verdict"] == "vote"
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 2
+
+        # New injection can re-open allowance; full payload should also be accepted.
+        checklist_state["available_agent_labels"] = ["agent1.1", "agent2.3"]
+        orchestrator.agent_states["agent_0"].pending_checklist_recheck_labels = {"agent2.3"}
+
+        full_recheck = await submit_checklist(
+            {
+                "scores": {
+                    "agent1.1": {"E1": {"score": 9, "reasoning": "stable"}, "E2": {"score": 9, "reasoning": "stable"}},
+                    "agent2.3": {"E1": {"score": 7, "reasoning": "new"}, "E2": {"score": 8, "reasoning": "new"}},
+                },
+            },
+        )
+        full_payload = json.loads(full_recheck["content"][0]["text"])
+        assert full_payload["status"] == "accepted"
+        assert full_payload["verdict"] == "vote"
+        assert orchestrator.agent_states["agent_0"].checklist_calls_this_round == 3
+
+        # With no pending injection updates, extra call is blocked again.
+        blocked_result = await submit_checklist(
+            {
+                "scores": {
+                    "agent1.1": {"E1": {"score": 9, "reasoning": "stable"}, "E2": {"score": 9, "reasoning": "stable"}},
+                    "agent2.3": {"E1": {"score": 7, "reasoning": "new"}, "E2": {"score": 8, "reasoning": "new"}},
+                },
+            },
+        )
+        assert blocked_result["isError"] is True
+        assert "already called 3 time(s)" in blocked_result["content"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_propose_improvements_requires_latest_accepted_iterate(self, monkeypatch):
+        """propose_improvements is blocked unless latest checklist result is accepted+iterate and recheck is not pending."""
+        from massgen.orchestrator import AgentState, Orchestrator
+
+        self._install_fake_claude_agent_sdk(monkeypatch)
+
+        class _MockBackend:
+            def __init__(self):
+                self.config = {}
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.config = SimpleNamespace(
+            max_checklist_calls_per_round=4,
+            checklist_first_answer=False,
+            coordination_config=SimpleNamespace(enable_subagents=False),
+        )
+        orchestrator.agents = {"agent_0": None, "agent_1": None}
+        orchestrator.agent_states = {"agent_0": AgentState(answer_count=1)}
+        orchestrator._planning_injection_dirs = {}
+        orchestrator._write_planning_injection = lambda *_args, **_kwargs: None
+
+        backend = _MockBackend()
+        checklist_state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "available_agent_labels": ["agent1.1", "agent2.1"],
+        }
+        items = ["Hero clarity", "CTA clarity"]
+
+        orchestrator._init_checklist_tool_sdk(
+            "agent_0",
+            backend,
+            checklist_state,
+            items,
+        )
+        submit_checklist = backend.config["mcp_servers"]["massgen_checklist"]["tools"][0]
+        propose_improvements = backend.config["mcp_servers"]["massgen_checklist"]["tools"][1]
+
+        # 1) Validation error: propose_improvements must be blocked.
+        invalid_submit = await submit_checklist(
+            {
+                "scores": {
+                    "E1": {"score": 8, "reasoning": "flat format"},
+                    "E2": {"score": 8, "reasoning": "flat format"},
+                },
+            },
+        )
+        invalid_payload = json.loads(invalid_submit["content"][0]["text"])
+        assert invalid_payload["status"] == "validation_error"
+        blocked_after_invalid = await propose_improvements(
+            {
+                "improvements": {"E1": [{"plan": "rewrite hero", "sources": ["agent1.1"], "impact": "structural"}]},
+                "preserve": {"E2": {"what": "cta clarity", "source": "agent1.1"}},
+            },
+        )
+        blocked_invalid_payload = json.loads(blocked_after_invalid["content"][0]["text"])
+        assert blocked_invalid_payload["valid"] is False
+        assert "submit_checklist" in blocked_invalid_payload["error"].lower()
+        assert "resubmit" in blocked_invalid_payload["error"].lower()
+
+        # 2) Accepted terminate: propose_improvements must be blocked.
+        accepted_terminate = await submit_checklist(
+            {
+                "scores": {
+                    "agent1.1": {"E1": {"score": 9, "reasoning": "good"}, "E2": {"score": 9, "reasoning": "good"}},
+                    "agent2.1": {"E1": {"score": 8, "reasoning": "good"}, "E2": {"score": 8, "reasoning": "good"}},
+                },
+            },
+        )
+        accepted_terminate_payload = json.loads(accepted_terminate["content"][0]["text"])
+        assert accepted_terminate_payload["status"] == "accepted"
+        assert accepted_terminate_payload["verdict"] == "vote"
+        blocked_after_terminate = await propose_improvements(
+            {
+                "improvements": {"E1": [{"plan": "rewrite hero", "sources": ["agent1.1"], "impact": "structural"}]},
+                "preserve": {"E2": {"what": "cta clarity", "source": "agent1.1"}},
+            },
+        )
+        blocked_terminate_payload = json.loads(blocked_after_terminate["content"][0]["text"])
+        assert blocked_terminate_payload["valid"] is False
+        assert "iterate" in blocked_terminate_payload["error"].lower()
+
+        # 3) Accepted iterate on current labels.
+        checklist_state["available_agent_labels"] = ["agent1.1", "agent2.2"]
+        orchestrator.agent_states["agent_0"].pending_checklist_recheck_labels = {"agent2.2"}
+        accepted_iterate = await submit_checklist(
+            {
+                "scores": {
+                    "agent1.1": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                    "agent2.2": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                },
+            },
+        )
+        accepted_iterate_payload = json.loads(accepted_iterate["content"][0]["text"])
+        assert accepted_iterate_payload["status"] == "accepted"
+        assert accepted_iterate_payload["verdict"] == "new_answer"
+
+        # 4) New injection arrives after accepted iterate -> pending recheck blocks propose_improvements.
+        checklist_state["available_agent_labels"] = ["agent1.1", "agent2.3"]
+        orchestrator.agent_states["agent_0"].pending_checklist_recheck_labels = {"agent2.3"}
+        blocked_pending_recheck = await propose_improvements(
+            {
+                "improvements": {"E1": [{"plan": "rewrite hero", "sources": ["agent2.3"], "impact": "structural"}]},
+                "preserve": {"E2": {"what": "cta clarity", "source": "agent1.1"}},
+            },
+        )
+        blocked_pending_payload = json.loads(blocked_pending_recheck["content"][0]["text"])
+        assert blocked_pending_payload["valid"] is False
+        assert "submit_checklist" in blocked_pending_payload["error"].lower()
+        assert "agent2.3" in blocked_pending_payload["error"]
+
+        # 5) After re-running checklist on newest labels, propose_improvements is allowed.
+        accepted_recheck = await submit_checklist(
+            {
+                "scores": {
+                    "agent1.1": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                    "agent2.3": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                },
+            },
+        )
+        accepted_recheck_payload = json.loads(accepted_recheck["content"][0]["text"])
+        assert accepted_recheck_payload["status"] == "accepted"
+        assert accepted_recheck_payload["verdict"] == "new_answer"
+
+        allowed_propose = await propose_improvements(
+            {
+                "improvements": {"E1": [{"plan": "rewrite hero", "sources": ["agent2.3"], "impact": "structural"}]},
+                "preserve": {"E2": {"what": "cta clarity", "source": "agent2.3"}},
+            },
+        )
+        allowed_payload = json.loads(allowed_propose["content"][0]["text"])
+        assert allowed_payload["valid"] is True
+
+    @pytest.mark.asyncio
+    async def test_stdio_propose_improvements_requires_recheck_after_injection(self, tmp_path):
+        """Stdio checklist path must block propose_improvements when newer injected labels are pending recheck."""
+        items = ["Hero clarity", "CTA clarity"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "available_agent_labels": ["agent1.1", "agent2.1"],
+        }
+        specs_path = _make_specs_file(tmp_path, items, state)
+        handlers = _build_handlers(specs_path)
+        submit_checklist = handlers["submit_checklist"]
+        propose_improvements = handlers["propose_improvements"]
+
+        accepted_iterate = json.loads(
+            await submit_checklist(
+                scores={
+                    "agent1.1": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                    "agent2.1": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                },
+            ),
+        )
+        assert accepted_iterate["status"] == "accepted"
+        assert accepted_iterate["verdict"] == "new_answer"
+
+        state["available_agent_labels"] = ["agent1.1", "agent2.2"]
+        state["pending_checklist_recheck_labels"] = ["agent2.2"]
+        write_checklist_specs(items, state, specs_path)
+
+        blocked_pending = json.loads(
+            await propose_improvements(
+                improvements={"E1": [{"plan": "rewrite hero", "sources": ["agent2.2"], "impact": "structural"}]},
+                preserve={"E2": {"what": "cta clarity", "source": "agent1.1"}},
+            ),
+        )
+        assert blocked_pending["valid"] is False
+        assert "submit_checklist" in blocked_pending["error"].lower()
+        assert "agent2.2" in blocked_pending["error"]
+
+        accepted_recheck = json.loads(
+            await submit_checklist(
+                scores={
+                    "agent1.1": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                    "agent2.2": {"E1": {"score": 5, "reasoning": "weak hero"}, "E2": {"score": 8, "reasoning": "strong cta"}},
+                },
+            ),
+        )
+        assert accepted_recheck["status"] == "accepted"
+        assert accepted_recheck["verdict"] == "new_answer"
+
+        specs_after_recheck = _read_specs(specs_path)
+        assert specs_after_recheck.get("state", {}).get("pending_checklist_recheck_labels") in ([], None)
+
+        allowed_after_recheck = json.loads(
+            await propose_improvements(
+                improvements={"E1": [{"plan": "rewrite hero", "sources": ["agent2.2"], "impact": "structural"}]},
+                preserve={"E2": {"what": "cta clarity", "source": "agent2.2"}},
+            ),
+        )
+        assert allowed_after_recheck["valid"] is True
 
     @pytest.mark.asyncio
     async def test_sdk_propose_improvements_includes_evaluation_input_packet(self, monkeypatch, tmp_path):
@@ -2248,8 +2579,10 @@ class TestDiagnosticReportGate:
             items=["Check 1", "Check 2"],
             state=state,
         )
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result["report_gate_triggered"] is True
-        assert result["verdict"] == "new_answer"
+        assert "verdict" not in result
 
     def test_empty_report_rejected(self, tmp_path):
         """Empty report file -> rejected."""
@@ -2262,8 +2595,10 @@ class TestDiagnosticReportGate:
             items=["Check 1", "Check 2"],
             state=state,
         )
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result["report_gate_triggered"] is True
-        assert result["verdict"] == "new_answer"
+        assert "verdict" not in result
 
     def test_too_short_report_rejected(self, tmp_path):
         """Report with < 100 chars -> rejected as lacking substance."""
@@ -2276,8 +2611,10 @@ class TestDiagnosticReportGate:
             items=["Check 1", "Check 2"],
             state=state,
         )
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result["report_gate_triggered"] is True
-        assert result["verdict"] == "new_answer"
+        assert "verdict" not in result
 
     def test_substantial_report_accepted(self, tmp_path):
         """Report with real diagnostic content -> gate passes, scores determine verdict."""
@@ -2479,9 +2816,10 @@ class TestPerAgentScores:
             items=["Check 1", "Check 2"],
             state=self._base_state(),
         )
-        assert result["verdict"] == "new_answer"
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result.get("incomplete_scores") is True
-        assert result["verdict"] == "new_answer"
+        assert "verdict" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -2531,8 +2869,10 @@ class TestAvailableAgentLabelsCoverage:
             items=["Check 1", "Check 2"],
             state=state,
         )
-        assert result["verdict"] == "new_answer"
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result.get("incomplete_scores") is True
+        assert "verdict" not in result
         assert "agent2" in result.get("explanation", "").lower()
 
     def test_all_available_agents_scored_passes(self):
@@ -2578,8 +2918,10 @@ class TestAvailableAgentLabelsCoverage:
             items=["Check 1", "Check 2"],
             state=state,
         )
-        assert result["verdict"] == "new_answer"
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result.get("incomplete_scores") is True
+        assert "verdict" not in result
         explanation = result.get("explanation", "").lower()
         assert "agent2" in explanation
         assert "agent3" in explanation
@@ -2595,8 +2937,10 @@ class TestAvailableAgentLabelsCoverage:
             items=["Check 1", "Check 2"],
             state=state,
         )
-        assert result["verdict"] == "new_answer"
+        assert result["status"] == "validation_error"
+        assert result["requires_resubmission"] is True
         assert result.get("incomplete_scores") is True
+        assert "verdict" not in result
 
 
 # ---------------------------------------------------------------------------

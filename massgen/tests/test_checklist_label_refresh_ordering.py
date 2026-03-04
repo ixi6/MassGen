@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from massgen.coordination_tracker import AgentAnswer, CoordinationTracker
 
 # ---------------------------------------------------------------------------
@@ -163,3 +165,68 @@ class TestChecklistLabelRefreshOrdering:
         assert "agent2.3" in labels, f"Expected agent2.3 in labels, got: {labels}"
         assert "agent2.2" not in labels, f"Stale agent2.2 should be replaced, got: {labels}"
         assert "agent1.4" in labels, f"agent1.4 (own prior) should still be present, got: {labels}"
+
+
+@pytest.mark.asyncio
+async def test_stream_setup_tracks_context_before_checklist_refresh(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """Round setup must refresh checklist labels only after tracker context is updated."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    orchestrator.current_task = "Test ordering"
+    orchestrator.config.disable_injection = True
+    orchestrator.config.voting_sensitivity = "checklist_gated"
+
+    agent = orchestrator.agents[agent_id]
+    agent.backend._checklist_state = {
+        "threshold": 5,
+        "total": 5,
+        "iterate_action": "new_answer",
+        "terminate_action": "vote",
+        "has_existing_answers": False,
+        "required": 2,
+        "cutoff": 7,
+        "available_agent_labels": [],
+    }
+    agent.backend._checklist_items = ["Check 1", "Check 2"]
+    agent.backend.tool_call_responses = [
+        [{"name": "new_answer", "arguments": {"content": "answer one"}}],
+    ]
+
+    events: list[str] = []
+    original_track = orchestrator.coordination_tracker.track_agent_context
+
+    def track_wrapper(*args, **kwargs):
+        events.append("track")
+        return original_track(*args, **kwargs)
+
+    monkeypatch.setattr(
+        orchestrator.coordination_tracker,
+        "track_agent_context",
+        track_wrapper,
+    )
+
+    original_refresh = orchestrator._refresh_checklist_state_for_agent
+
+    def refresh_wrapper(target_agent_id: str):
+        events.append("refresh")
+        return original_refresh(target_agent_id)
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_refresh_checklist_state_for_agent",
+        refresh_wrapper,
+    )
+
+    async for _ in orchestrator._stream_agent_execution(
+        agent_id,
+        orchestrator.current_task,
+        {},
+    ):
+        pass
+
+    assert "track" in events, f"Expected track event, got: {events}"
+    assert "refresh" in events, f"Expected refresh event, got: {events}"
+    assert events.index("track") < events.index("refresh"), f"Expected track before refresh, got: {events}"

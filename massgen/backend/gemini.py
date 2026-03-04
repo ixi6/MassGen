@@ -69,7 +69,7 @@ logging.getLogger("google_genai.types").addFilter(NoFunctionCallWarning())
 
 # Gemini API prefixes that should be stripped from tool names
 # Gemini sometimes returns tool names with prefixes like "default_api:" or other namespace qualifiers
-GEMINI_TOOL_NAME_PREFIXES = ("default_api:",)
+GEMINI_TOOL_NAME_PREFIXES = ("default_api:", "default_api__")
 
 
 def _normalize_gemini_tool_name(tool_name: str) -> str:

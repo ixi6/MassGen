@@ -94,6 +94,8 @@ Errors are caught and logged but don't abort (fail-open), unless a hook has `fai
 | `HumanInputHook` | `*` | Delivers runtime human input from TUI/WebUI broadcast to agents mid-stream. |
 | `RoundTimeoutPostHook` | `*` | Soft timeout: injects a time-limit warning once, then starts a grace period. |
 
+Mid-stream answer injection messages include explicit answer-label transitions (for example `agent2.1 -> agent2.2`) so checklist scoring can target newest labels. In checklist-gated mode, injected guidance routes agents through `submit_checklist` re-evaluation first, then `propose_improvements` only after accepted iterate results.
+
 ### PreToolUse Hooks
 
 | Hook | Matcher | Purpose |

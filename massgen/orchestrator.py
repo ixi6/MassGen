@@ -134,6 +134,8 @@ class AgentState:
     checklist_history: list[dict[str, Any]] = field(default_factory=list)
     # Per-answer checklist call tracking (reset when agent submits new_answer)
     checklist_calls_this_round: int = 0
+    # Latest injected answer labels pending checklist recheck allowance.
+    pending_checklist_recheck_labels: set[str] = field(default_factory=set)
     # Decomposition mode fields
     stop_summary: str | None = None  # Summary from stop tool
     stop_status: str | None = None  # "complete" or "blocked"
@@ -926,6 +928,8 @@ class Orchestrator(ChatAgent):
                 "cutoff": _checklist_confidence_cutoff(effective_t),
                 # E-prefix for evaluation items (replaces legacy T-prefix)
                 "item_prefix": "E",
+                # Latest injected labels that must be re-scored before improvements can be proposed.
+                "pending_checklist_recheck_labels": [],
                 # Dynamic core/stretch categories for convergence off-ramp
                 "item_categories": item_categories,
                 # Novelty subagent guidance only when novelty type is available
@@ -1108,6 +1112,8 @@ class Orchestrator(ChatAgent):
 
         # Track last failed criteria for propose_improvements validation
         _last_checklist_result: dict[str, Any] = {
+            "status": "none",
+            "verdict": None,
             "failed_criteria": [],
             "items": [],
             "all_criteria_ids": [],
@@ -1136,6 +1142,10 @@ class Orchestrator(ChatAgent):
             agent_state = _orchestrator.agent_states.get(_agent_id)
             max_calls = getattr(_orchestrator.config, "max_checklist_calls_per_round", 1)
             checklist_first_answer = getattr(_orchestrator.config, "checklist_first_answer", False)
+            raw_scores = args.get("scores", {})
+            submitted_agent_labels = _orchestrator._extract_submitted_agent_labels(raw_scores)
+            state_for_eval = _state
+            using_recheck_exception = False
 
             # Block on first answer unless explicitly opted in — no prior answers to compare
             if not checklist_first_answer and agent_state is not None and agent_state.answer_count == 0:
@@ -1155,29 +1165,47 @@ class Orchestrator(ChatAgent):
 
             # Block repeat calls after a new_answer verdict has already been issued this round
             if agent_state is not None and agent_state.checklist_calls_this_round >= max_calls:
-                blocked_msg = (
-                    f"submit_checklist already called {agent_state.checklist_calls_this_round} time(s) "
-                    f"this round (max: {max_calls}). You already have your improvement plan. "
-                    "Implement those improvements, verify your changes (screenshots, file checks, "
-                    "confirming changes landed correctly), then call the `new_answer` workflow tool "
-                    "to submit your completed work. Do not call `submit_checklist` again."
-                )
-                return {
-                    "content": [{"type": "text", "text": blocked_msg}],
-                    "isError": True,
-                }
+                pending_recheck_labels = set(getattr(agent_state, "pending_checklist_recheck_labels", set()) or set())
+                if not pending_recheck_labels:
+                    blocked_msg = (
+                        f"submit_checklist already called {agent_state.checklist_calls_this_round} time(s) "
+                        f"this round (max: {max_calls}). You already have your improvement plan. "
+                        "Implement those improvements, verify your changes (screenshots, file checks, "
+                        "confirming changes landed correctly), then call the `new_answer` workflow tool "
+                        "to submit your completed work. Do not call `submit_checklist` again."
+                    )
+                    return {
+                        "content": [{"type": "text", "text": blocked_msg}],
+                        "isError": True,
+                    }
 
-            raw_scores = args.get("scores", {})
+                # Injection exception: allow one post-injection recheck. Prefer delta-only labels,
+                # but allow full latest context labels for model robustness.
+                using_recheck_exception = True
+                available_labels = set(_state.get("available_agent_labels") or [])
+                submitted_covers_full = bool(submitted_agent_labels) and (not available_labels or available_labels.issubset(submitted_agent_labels))
+                submitted_covers_delta = bool(submitted_agent_labels) and pending_recheck_labels.issubset(
+                    submitted_agent_labels,
+                )
+                if submitted_covers_delta and not submitted_covers_full:
+                    state_for_eval = dict(_state)
+                    state_for_eval["available_agent_labels"] = sorted(pending_recheck_labels)
+
             result = evaluate_checklist_submission(
                 scores=raw_scores,
                 report_path=args.get("report_path", ""),
                 items=items,
-                state=_state,
+                state=state_for_eval,
                 checklist_history=agent_state.checklist_history if agent_state else None,
+            )
+            result_status = str(
+                result.get("status", "accepted" if result.get("verdict") else "validation_error"),
             )
             report_data = result.get("report") if isinstance(result.get("report"), dict) else {}
             resolved_path = str(report_data.get("resolved_path") or "")
             fallback_path = str(report_data.get("path") or "")
+            _last_checklist_result["status"] = result_status
+            _last_checklist_result["verdict"] = result.get("verdict")
             _last_checklist_result["failed_criteria"] = result.get("failed_criteria", [])
             _last_checklist_result["items"] = list(items)
             _last_checklist_result["all_criteria_ids"] = [f"E{i+1}" for i in range(len(items))]
@@ -1191,7 +1219,7 @@ class Orchestrator(ChatAgent):
             # Validation failures (incomplete/malformed payloads or gated rejections)
             # must allow the agent to resubmit within the same round.
             submission_has_validation_error = bool(
-                result.get("error") or result.get("incomplete_scores") or result.get("report_gate_triggered"),
+                (result_status != "accepted") or result.get("error") or result.get("incomplete_scores") or result.get("report_gate_triggered"),
             )
 
             # Store accepted checklist results for convergence detection and increment call counter.
@@ -1205,12 +1233,20 @@ class Orchestrator(ChatAgent):
                     },
                 )
                 agent_state.checklist_calls_this_round += 1
+                if (
+                    getattr(agent_state, "pending_checklist_recheck_labels", set())
+                    and submitted_agent_labels
+                    and getattr(agent_state, "pending_checklist_recheck_labels", set()).issubset(submitted_agent_labels)
+                ):
+                    setattr(agent_state, "pending_checklist_recheck_labels", set())
+                elif using_recheck_exception and getattr(agent_state, "pending_checklist_recheck_labels", set()):
+                    setattr(agent_state, "pending_checklist_recheck_labels", set())
 
             # When verdict is new_answer, append explicit next-step guidance so the agent
             # implements improvements and submits via the workflow tool rather than looping
             # back to submit_checklist.
             iterate_action = _state.get("iterate_action", "new_answer")
-            if result.get("verdict") == iterate_action:
+            if result_status == "accepted" and result.get("verdict") == iterate_action:
                 result = dict(result)
                 result["explanation"] = (
                     result.get("explanation", "") + " NEXT: Call `propose_improvements` with specific improvements for each " "failing criterion. Then implement your plan and call `new_answer`."
@@ -1239,6 +1275,59 @@ class Orchestrator(ChatAgent):
         )
         async def propose_improvements_handler(args, _state=state):
             import json as _json
+
+            iterate_action = _state.get("iterate_action", "new_answer")
+            last_status = str(_last_checklist_result.get("status", "none"))
+            last_verdict = _last_checklist_result.get("verdict")
+            agent_state = _orchestrator.agent_states.get(_agent_id)
+            if last_status != "accepted":
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": _json.dumps(
+                                {
+                                    "valid": False,
+                                    "error": ("propose_improvements is unavailable because your latest " "submit_checklist result was a validation error. " "Fix and resubmit submit_checklist first."),
+                                },
+                            ),
+                        },
+                    ],
+                }
+            if last_verdict != iterate_action:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": _json.dumps(
+                                {
+                                    "valid": False,
+                                    "error": ("propose_improvements is only available after " f"submit_checklist returns an iterate verdict ({iterate_action})."),
+                                },
+                            ),
+                        },
+                    ],
+                }
+            pending_recheck_labels = set(getattr(agent_state, "pending_checklist_recheck_labels", set()) or set())
+            if pending_recheck_labels:
+                pending_labels_text = ", ".join(sorted(pending_recheck_labels))
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": _json.dumps(
+                                {
+                                    "valid": False,
+                                    "error": (
+                                        "propose_improvements is unavailable because newer injected answer labels "
+                                        f"still require checklist re-evaluation: {pending_labels_text}. "
+                                        "Re-run submit_checklist on the newest labels first."
+                                    ),
+                                },
+                            ),
+                        },
+                    ],
+                }
 
             improvements = args.get("improvements", {})
             preserve = args.get("preserve")
@@ -1401,6 +1490,30 @@ class Orchestrator(ChatAgent):
             _cl_remaining,
             state.get("total", 5),
         )
+        pending_recheck_labels: list[str] = []
+        if bool(getattr(agent.backend, "supports_sdk_mcp", False)):
+            sdk_pending = getattr(self.agent_states.get(agent_id), "pending_checklist_recheck_labels", set()) or set()
+            pending_recheck_labels = sorted(
+                {str(label).strip() for label in sdk_pending if str(label).strip()},
+            )
+        else:
+            raw_pending: Any = None
+            specs_path = getattr(agent.backend, "_checklist_specs_path", None)
+            if specs_path:
+                try:
+                    with open(specs_path, encoding="utf-8") as f:
+                        specs_payload = json.load(f)
+                    raw_pending = (specs_payload.get("state") or {}).get("pending_checklist_recheck_labels")
+                except Exception:
+                    raw_pending = None
+            if raw_pending is None:
+                raw_pending = state.get("pending_checklist_recheck_labels", [])
+            if isinstance(raw_pending, str):
+                pending_recheck_labels = [raw_pending.strip()] if raw_pending.strip() else []
+            elif isinstance(raw_pending, (list, tuple, set)):
+                pending_recheck_labels = sorted(
+                    {str(label).strip() for label in raw_pending if str(label).strip()},
+                )
         agent.backend._checklist_state.update(
             {
                 "remaining": _cl_remaining,
@@ -1440,6 +1553,7 @@ class Orchestrator(ChatAgent):
                 "available_agent_labels": list(
                     self.coordination_tracker.get_agent_context_labels(agent_id),
                 ),
+                "pending_checklist_recheck_labels": pending_recheck_labels,
             },
         )
         # Re-write specs file for stdio backends so the MCP server sees updated state
@@ -6096,6 +6210,7 @@ Your answer:"""
         if answer_content is not None and agent_id in self.agent_states:
             self.agent_states[agent_id].answer_count += 1
             self.agent_states[agent_id].checklist_calls_this_round = 0
+            self.agent_states[agent_id].pending_checklist_recheck_labels = set()
 
         # Return the timestamp for tracking
         return timestamp if not is_final else "final"
@@ -6414,11 +6529,15 @@ Your answer:"""
 
         # Create anonymous mapping (consistent with CURRENT ANSWERS format across all agents)
         agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
+        context_labels = self.coordination_tracker.get_agent_context_labels(agent_id)
 
         # Format answers with workspace paths
         lines = []
         updated_agents = []
         new_agents = []
+        updated_header_entries = []
+        new_header_entries = []
+        transition_lines = []
 
         for aid, answer in normalized.items():
             anon_id = agent_mapping.get(aid, f"agent_{aid}")
@@ -6428,6 +6547,30 @@ Your answer:"""
                 updated_agents.append(anon_id)
             else:
                 new_agents.append(anon_id)
+
+            # Build explicit answer-label transitions so agents can score newest labels.
+            latest_revisions = self.coordination_tracker.answers_by_agent.get(aid, [])
+            latest_label = str(getattr(latest_revisions[-1], "label", "")) if latest_revisions else ""
+            old_label = ""
+            if latest_label and "." in latest_label:
+                label_prefix = latest_label.split(".", 1)[0] + "."
+                old_label = next((lbl for lbl in context_labels if lbl.startswith(label_prefix)), "")
+
+            if is_update and old_label and latest_label and old_label != latest_label:
+                updated_header_entries.append(f"{anon_id} ({old_label} -> {latest_label})")
+                transition_lines.append(
+                    f"  - {anon_id}: {old_label} -> {latest_label}",
+                )
+            elif not is_update and latest_label:
+                new_header_entries.append(f"{anon_id} ({latest_label})")
+                transition_lines.append(
+                    f"  - {anon_id}: now available as {latest_label}",
+                )
+            elif is_update:
+                # Fallback if labels are unavailable in edge cases
+                updated_header_entries.append(anon_id)
+            else:
+                new_header_entries.append(anon_id)
 
             # Truncate long answers for injection context
             truncated = answer[:500] + "..." if len(answer) > 500 else answer
@@ -6450,14 +6593,15 @@ Your answer:"""
 
         # Build header based on what changed
         if updated_agents and new_agents:
-            header = f"[UPDATE: {', '.join(new_agents)} submitted new answer(s); {', '.join(updated_agents)} updated their answer(s)]"
+            header = f"[UPDATE: {', '.join(new_header_entries)} submitted new answer(s); " f"{', '.join(updated_header_entries)} updated their answer(s)]"
         elif updated_agents:
-            header = f"[UPDATE: {', '.join(updated_agents)} updated their answer(s)]"
+            header = f"[UPDATE: {', '.join(updated_header_entries)} updated their answer(s)]"
         else:
-            header = f"[UPDATE: {', '.join(new_agents)} submitted new answer(s)]"
+            header = f"[UPDATE: {', '.join(new_header_entries)} submitted new answer(s)]"
 
         # Use different framing for decomposition mode vs voting mode
         is_decomposition = getattr(self.config, "coordination_mode", "voting") == "decomposition"
+        is_checklist_mode = getattr(self.config, "voting_sensitivity", "balanced") == "checklist_gated"
 
         if is_decomposition:
             injection_parts = [
@@ -6467,6 +6611,9 @@ Your answer:"""
                 "=" * 60,
                 "",
                 header,
+                "",
+                "ANSWER LABEL UPDATES:",
+                *(transition_lines or ["  - (no label change details available)"]),
                 "",
                 *lines,
                 "=" * 60,
@@ -6491,26 +6638,51 @@ Your answer:"""
                 "",
                 header,
                 "",
+                "ANSWER LABEL UPDATES:",
+                *(transition_lines or ["  - (no label change details available)"]),
+                "",
                 *lines,
                 "=" * 60,
-                "REQUIRED ACTION - You MUST do one of the following:",
-                "=" * 60,
-                "",
-                "1. **ADD A TASK** to your plan: 'Evaluate agent answer(s) and decide next action'",
-                "   - Use update_task_status or create a new task to track this evaluation",
-                "   - Read their workspace files (paths above) to understand their solution",
-                "   - Read their execution_trace.md to see their full tool usage and reasoning",
-                "   - Compare their approach to yours",
-                "",
-                "2. **THEN CHOOSE ONE**:",
-                "   a) VOTE for their answer if it's complete and correct (use vote tool)",
-                "   b) BUILD on their work - improve/extend it and submit YOUR enhanced answer",
-                "   c) MERGE approaches - combine the best parts of their work with yours",
-                "   d) CONTINUE your own approach if you believe it's better",
-                "",
-                "DO NOT ignore this update - you must explicitly evaluate and decide!",
-                "=" * 60,
             ]
+            if is_checklist_mode:
+                injection_parts.extend(
+                    [
+                        "CHECKLIST-GATED ACTIONS (REQUIRED):",
+                        "=" * 60,
+                        "",
+                        "1. Add a task: 'Evaluate injected answer label updates and re-run checklist'",
+                        "2. Read injected workspace files, then compare to your current work",
+                        "3. Use submit_checklist with the newest labels shown above",
+                        "4. If checklist was already accepted this round and this update is new:",
+                        "   - Preferred: submit only the injected newest labels (delta recheck)",
+                        "   - Also allowed: submit all latest labels in your current context",
+                        "5. If submit_checklist returns a validation error, fix payload/report and call submit_checklist again",
+                        "6. If checklist returns iterate (new_answer), call propose_improvements, implement, then call new_answer",
+                        "DO NOT ignore this update - checklist flow must be re-run on newest labels.",
+                        "=" * 60,
+                    ],
+                )
+            else:
+                injection_parts.extend(
+                    [
+                        "REQUIRED ACTION - You MUST do one of the following:",
+                        "=" * 60,
+                        "",
+                        "1. **ADD A TASK** to your plan: 'Evaluate agent answer(s) and decide next action'",
+                        "   - Use update_task_status or create a new task to track this evaluation",
+                        "   - Read their workspace files (paths above) to understand their solution",
+                        "   - Compare their approach to yours",
+                        "",
+                        "2. **THEN CHOOSE ONE**:",
+                        "   a) VOTE for their answer if it's complete and correct (use vote tool)",
+                        "   b) BUILD on their work - improve/extend it and submit YOUR enhanced answer",
+                        "   c) MERGE approaches - combine the best parts of their work with yours",
+                        "   d) CONTINUE your own approach if you believe it's better",
+                        "",
+                        "DO NOT ignore this update - you must explicitly evaluate and decide!",
+                        "=" * 60,
+                    ],
+                )
 
         return "\n".join(injection_parts)
 
@@ -6873,6 +7045,7 @@ Your answer:"""
             # Update known_answer_ids so vote validation knows this agent has seen these
             self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
             self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
+            self._mark_pending_checklist_recheck_labels(agent_id, list(selected_answers.keys()))
 
             # Keep restart pending if additional unseen revisions still remain.
             self.agent_states[agent_id].restart_pending = self._has_unseen_answer_updates(agent_id)
@@ -7172,6 +7345,7 @@ Your answer:"""
                             answers.update(selected_answers)
                             self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
                             self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
+                            self._mark_pending_checklist_recheck_labels(agent_id, list(selected_answers.keys()))
                             # Update context labels BEFORE refreshing checklist state so
                             # available_agent_labels reflects the newly-injected labels
                             # (e.g. agent1.2 replacing agent1.1). Same ordering as the
@@ -7537,6 +7711,7 @@ Your answer:"""
             # Mark the selected source revisions as seen by this agent.
             self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
             self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
+            self._mark_pending_checklist_recheck_labels(agent_id, list(selected_answers.keys()))
 
             _inj_emitter = get_event_emitter()
             if _inj_emitter:
@@ -8505,6 +8680,7 @@ Your answer:"""
             # Update known_answer_ids so vote validation knows this agent has seen these
             self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
             self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
+            self._mark_pending_checklist_recheck_labels(agent_id, list(selected_answers.keys()))
 
             # Update context labels BEFORE refreshing checklist state so
             # available_agent_labels reflects the newly-injected labels
@@ -9134,6 +9310,85 @@ Your answer:"""
 
         selected_answers = {source_agent_id: answer for source_agent_id, answer, _ in selected_candidates}
         return (selected_answers, True)
+
+    @staticmethod
+    def _extract_submitted_agent_labels(scores_payload: Any) -> set[str]:
+        """Extract first-level agent labels from a submit_checklist scores payload."""
+        if not isinstance(scores_payload, dict):
+            return set()
+        if not scores_payload:
+            return set()
+
+        # Flat format (E1/E2/...) is not per-agent.
+        top_level_keys = {str(k) for k in scores_payload.keys()}
+        if any(k.startswith("E") or k.startswith("T") for k in top_level_keys):
+            return set()
+        return top_level_keys
+
+    def _mark_pending_checklist_recheck_labels(
+        self,
+        agent_id: str,
+        source_agent_ids: list[str],
+    ) -> None:
+        """Record injected latest labels so one post-injection checklist recheck is allowed."""
+        state = self.agent_states.get(agent_id)
+        if not state or not source_agent_ids:
+            return
+
+        agent = self.agents.get(agent_id)
+        backend = getattr(agent, "backend", None) if agent is not None else None
+        supports_sdk = bool(getattr(backend, "supports_sdk_mcp", False))
+
+        pending: set[str] = set()
+        if supports_sdk:
+            pending = set(getattr(state, "pending_checklist_recheck_labels", set()) or set())
+        else:
+            raw_pending: Any = None
+            specs_path = getattr(backend, "_checklist_specs_path", None) if backend is not None else None
+            if specs_path:
+                try:
+                    with open(specs_path, encoding="utf-8") as f:
+                        specs_payload = json.load(f)
+                    raw_pending = (specs_payload.get("state") or {}).get("pending_checklist_recheck_labels")
+                except Exception:
+                    raw_pending = None
+            if raw_pending is None and backend is not None and hasattr(backend, "_checklist_state"):
+                raw_pending = getattr(backend, "_checklist_state", {}).get("pending_checklist_recheck_labels", [])
+            if isinstance(raw_pending, str):
+                label = raw_pending.strip()
+                if label:
+                    pending.add(label)
+            elif isinstance(raw_pending, (list, tuple, set)):
+                for raw in raw_pending:
+                    label = str(raw).strip()
+                    if label:
+                        pending.add(label)
+
+        for source_agent_id in source_agent_ids:
+            revisions = self.coordination_tracker.answers_by_agent.get(source_agent_id, [])
+            if not revisions:
+                continue
+            latest_label = getattr(revisions[-1], "label", None)
+            if latest_label:
+                pending.add(str(latest_label))
+        setattr(state, "pending_checklist_recheck_labels", pending)
+        if backend is not None and hasattr(backend, "_checklist_state"):
+            backend._checklist_state["pending_checklist_recheck_labels"] = sorted(pending)
+            if not supports_sdk and hasattr(backend, "_checklist_specs_path"):
+                try:
+                    from .mcp_tools.checklist_tools_server import write_checklist_specs
+
+                    write_checklist_specs(
+                        items=getattr(backend, "_checklist_items", []),
+                        state=backend._checklist_state,
+                        output_path=backend._checklist_specs_path,
+                    )
+                except Exception:
+                    logger.debug(
+                        "[Orchestrator] Unable to persist pending checklist recheck labels for %s",
+                        agent_id,
+                        exc_info=True,
+                    )
 
     def _register_injected_answer_updates(self, agent_id: str, source_agent_ids: list[str]) -> None:
         """Apply per-agent state updates after mid-stream answer injection."""
@@ -10259,7 +10514,6 @@ Your answer:"""
                         "report_cutoff": 7,
                     },
                 )
-                self._refresh_checklist_state_for_agent(agent_id)
 
             # Inject phase-appropriate persona if enabled.
             # Use peer-only visibility (exclude the agent's own prior answer) so
@@ -10371,6 +10625,7 @@ Your answer:"""
                 conversation.get("conversation_history", []),
                 conversation,
             )
+            self._refresh_checklist_state_for_agent(agent_id)
 
             # Notify display of context received (for TUI to show context labels)
             if answers:
@@ -15092,6 +15347,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             state.injection_count = 0
             state.midstream_injections_this_round = 0
             state.checklist_calls_this_round = 0
+            state.pending_checklist_recheck_labels = set()
             state.restart_count = 0
             state.known_answer_ids = set()
             state.decomposition_answer_streak = 0

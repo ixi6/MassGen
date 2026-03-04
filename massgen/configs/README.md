@@ -227,7 +227,16 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.58 - Latest
+### v0.1.59 - Latest
+**New Features:** Quality Round Improvements — Planning, Evaluation, Subagents, Media Fixes
+
+**Key Features:**
+- **Planning Improvements**: Auto-add improvements to task plan, plan review enhancements
+- **Checklist & Evaluation**: Better eval gen config, checklist fixes, Gemini tool name normalization for MCP
+- **Subagent Improvements**: Adjusted subagent behavior, subagent manager enhancements, Docker skill write access fixes
+- **Media Generation Fixes**: Video gen skill adjustments, video understanding criticality, impact metric restoration
+
+### v0.1.58
 **New Features:** Multimodal Revamp, Nvidia NIM Backend, Quality Rethinking Subagent, Checklist Improvements
 
 **Key Features:**

@@ -1,4 +1,4 @@
-# MassGen v0.1.58 Release Announcement
+# MassGen v0.1.59 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,17 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers for comprehensive set (OpenAI GPT Image/Sora, Google Nano Banana 2/Veo 3.1, Grok Imagine, ElevenLabs) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
+We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Better planning with auto-added improvements and plan review enhancements. Checklist and evaluation improvements including better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and Docker skill write access fixes. Media generation fixes for video gen skills and impact metric restoration.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.58
+pip install massgen==0.1.59
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.58
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.59
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -29,27 +29,25 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.58 — a Comprehensive Multimodal Revamp! 🚀 Three new media providers for comprehensive set (OpenAI GPT Image/Sora, Google Nano Banana 2/Veo 3.1, Grok Imagine, ElevenLabs) give agents more choices for voice, image, and video generation. New image, video, and audio generation skills provide reusable workflows, and multi-turn image editing lets agents iteratively refine visuals across rounds. Plus: Nvidia NIM backend, quality rethinking subagent, and new CLI mode flags.
+We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Better planning with auto-added improvements and plan review enhancements. Checklist and evaluation improvements including better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and Docker skill write access fixes. Media generation fixes for video gen skills and impact metric restoration.
 
-**Key Feature: Comprehensive Multimodal Revamp**
+**Key Improvements:**
 
-MassGen agents can now generate and understand a much wider range of media:
+**Planning Improvements** - Smarter quality rounds:
+- Auto-add improvements to task plan for better iteration tracking
+- Plan review enhancements for more thorough quality evaluation
 
-- **ElevenLabs TTS & STT** (#942): High-quality voice synthesis and transcription integrated with `generate_media` and `read_media` tools — agents can now speak and listen via ElevenLabs
-- **Nano Banana 2** (#951): New default image generation model with significantly higher quality output
-- **Grok Image/Video Generation**: Native Grok multimedia generation via xAI API — images and videos from Grok Imagine
-- **Media Generation Skills**: New reusable skills for image, video, and audio generation workflows
-- **Multi-Turn Image Editing**: Continuation IDs enable iterative image editing sessions — agents can refine images across multiple turns
+**Checklist & Evaluation Enhancements** - More reliable evaluations:
+- Better eval gen config for more accurate quality assessments
+- Checklist fixes for consistent behavior across rounds
+- Gemini tool name normalization for MCP compatibility
 
 **Also in this release:**
-- Nvidia NIM Backend (#962): First-class provider integration for NVIDIA Inference Microservices
-- Quality Rethinking Subagent (#964): New `quality_rethinking` type for targeted per-element craft improvements
-- Smarter Checklists: Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults
-- CLI Mode Flags: `--quick`, `--single-agent`, `--coordination-mode`, `--personas` mirroring TUI toggles
-- Logging Architecture Refactor: Fixed concurrent logging with LoggingSession isolation
-- Subagent Hardening: Better '@' parsing, error handling, clearer context
+- Subagent Improvements: Adjusted subagent behavior, subagent manager enhancements, Docker skill write access fixes
+- Media Generation Fixes: Video gen skill adjustments (no fallback to animated on errors), video understanding criticality, impact metric restoration
+- Bug Fixes: Answer anonymization fix, quickstart and test updates, plan/Docker small fixes
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.58
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.59
 
 Feature highlights:
 

@@ -9,16 +9,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.59 (March 4, 2026)** - Quality Round Improvements
+Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and media generation fixes.
+
 **v0.1.58 (March 2, 2026)** - Multimodal Revamp, Nvidia NIM Backend & Quality Rethinking
 Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image generation, and Grok multimedia. Nvidia NIM backend for NVIDIA Inference Microservices. Quality rethinking subagent for per-element craft improvements. Smarter checklists with improve/preserve listings. Logging architecture refactor and CLI mode flags.
 
 **v0.1.57 (February 27, 2026)** - Delegated Subagent Protocol & Builder Subagent
 File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Claude Code reasoning parameters for updated SDK. Smarter convergence with substantiveness tracking and diagnostic report gating.
 
-**v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
-Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
-
 ---
+
+## [0.1.59] - 2026-03-04
+
+### Added
+- **Planning Improvements** ([#969](https://github.com/massgen/MassGen/pull/969)): Smarter quality rounds with improved planning
+  - Auto-add improvements to task plan for better iteration tracking
+  - Plan review enhancements for more thorough quality evaluation
+
+- **Checklist & Evaluation Enhancements** ([#969](https://github.com/massgen/MassGen/pull/969)): More reliable evaluation pipeline
+  - Better eval gen config for more accurate quality assessments
+  - Checklist fixes for consistent behavior across rounds
+  - Gemini tool name normalization for MCP compatibility (ease for MCP)
+
+### Changed
+- **Subagent Behavior** ([#969](https://github.com/massgen/MassGen/pull/969)): Adjusted subagent behavior and manager enhancements
+  - Improved subagent coordination and task delegation
+  - Docker skill write access fixes for containerized execution
+- **Video Generation Skills** ([#969](https://github.com/massgen/MassGen/pull/969)): Adjusted video gen skill behavior
+  - No fallback to animated on errors — fail cleanly instead
+  - Video understanding criticality improvements
+  - Impact metric restoration for quality assessment
+
+### Fixed
+- **Answer Anonymization** ([#969](https://github.com/massgen/MassGen/pull/969)): Fixed answer anonymization during evaluation
+- **Quickstart & Tests** ([#969](https://github.com/massgen/MassGen/pull/969)): Updated quickstart flow and test suite
+- **Plan & Docker Fixes** ([#969](https://github.com/massgen/MassGen/pull/969)): Small fixes for plan mode and Docker execution
+
+### Technical Details
+- **Major Focus**: Quality round improvements — planning, evaluation, subagents, media fixes
+- **PRs Merged**: [#969](https://github.com/massgen/MassGen/pull/969) (improve_quality_rounds)
+- **Contributors**: @ncrispino (7 commits), @HenryQi (1 commit)
 
 ## [0.1.58] - 2026-03-02
 

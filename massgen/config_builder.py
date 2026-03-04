@@ -51,6 +51,37 @@ def _get_provider_capabilities(provider_id: str) -> dict[str, bool]:
 
 
 DEFAULT_QUICKSTART_CONFIG_FILENAME = "config.yaml"
+QUICKSTART_PROVIDER_PRIORITY = (
+    "claude_code",
+    "codex",
+    "gemini",
+)
+
+
+def sort_quickstart_provider_ids(provider_ids: list[str]) -> list[str]:
+    """Return provider IDs with quickstart defaults prioritized.
+
+    Priority order is:
+    1. claude_code
+    2. codex
+    3. gemini
+
+    Any remaining providers keep their original relative order.
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for provider_id in QUICKSTART_PROVIDER_PRIORITY:
+        if provider_id in provider_ids and provider_id not in seen:
+            ordered.append(provider_id)
+            seen.add(provider_id)
+
+    for provider_id in provider_ids:
+        if provider_id not in seen:
+            ordered.append(provider_id)
+            seen.add(provider_id)
+
+    return ordered
 
 
 def normalize_quickstart_config_filename(
@@ -120,14 +151,54 @@ class ConfigBuilder:
         backend_type: str | None,
         model: str | None,
     ) -> dict[str, Any] | None:
-        """Return quickstart reasoning options for GPT-5x models.
+        """Return quickstart reasoning options for supported models.
 
         Returns None when no quickstart reasoning selector should be shown.
         """
         normalized_backend = (backend_type or "").strip().lower()
         normalized_model = (model or "").strip().lower()
 
-        if not normalized_model or "gpt-5" not in normalized_model:
+        def mark_recommended(label: str, effort: str, default_effort: str) -> str:
+            if effort != default_effort:
+                return label
+            if "(" in label and label.endswith(")"):
+                return f"{label[:-1]}, recommended)"
+            return f"{label} (recommended)"
+
+        def with_recommended(
+            base_choices: list[tuple[str, str]],
+            default_effort: str,
+        ) -> list[tuple[str, str]]:
+            return [(mark_recommended(label, effort, default_effort), effort) for label, effort in base_choices]
+
+        if not normalized_model:
+            return None
+
+        # Claude Code supports effort controls for Opus/Sonnet 4.6.
+        # "max" is only supported on Opus 4.6.
+        if normalized_backend == "claude_code":
+            supports_max = normalized_model.startswith("claude-opus-4-6")
+            supports_standard = supports_max or normalized_model.startswith("claude-sonnet-4-6")
+            if not supports_standard:
+                return None
+
+            default_effort = "high" if supports_max else "medium"
+            choices = [
+                ("Low (faster)", "low"),
+                ("Medium", "medium"),
+                ("High (deeper reasoning)", "high"),
+            ]
+            if supports_max:
+                choices.append(("Max (deepest reasoning)", "max"))
+            choices = with_recommended(choices, default_effort)
+
+            return {
+                "choices": choices,
+                "default_effort": default_effort,
+                "description": "This Claude Code model supports configurable reasoning effort.",
+            }
+
+        if "gpt-5" not in normalized_model:
             return None
 
         supports_xhigh = normalized_backend == "codex" or "codex" in normalized_model
@@ -136,24 +207,34 @@ class ConfigBuilder:
             return None
 
         default_effort = "low" if "nano" in normalized_model else "medium"
+        if supports_xhigh and "gpt-5.3" in normalized_model:
+            default_effort = "xhigh"
         if supports_xhigh:
-            return {
-                "choices": [
+            choices = with_recommended(
+                [
                     ("Low (faster)", "low"),
-                    ("Medium (recommended)", "medium"),
+                    ("Medium", "medium"),
                     ("High (deeper reasoning)", "high"),
                     ("XHigh (maximum depth)", "xhigh"),
                 ],
+                default_effort,
+            )
+            return {
+                "choices": choices,
                 "default_effort": default_effort,
                 "description": "This GPT-5 Codex model supports extended reasoning.",
             }
 
-        return {
-            "choices": [
+        choices = with_recommended(
+            [
                 ("Low (faster)", "low"),
-                ("Medium (recommended)", "medium"),
+                ("Medium", "medium"),
                 ("High (deeper reasoning)", "high"),
             ],
+            default_effort,
+        )
+        return {
+            "choices": choices,
             "default_effort": default_effort,
             "description": "This GPT-5 model supports extended reasoning.",
         }
@@ -4070,7 +4151,9 @@ class ConfigBuilder:
             # Get available providers (exclude generic backends)
             api_keys = self.detect_api_keys()
             excluded_generic_backends = ["chatcompletion", "inference"]
-            available_providers = [p for p, has_key in api_keys.items() if has_key and p not in excluded_generic_backends]
+            available_providers = sort_quickstart_provider_ids(
+                [p for p, has_key in api_keys.items() if has_key and p not in excluded_generic_backends],
+            )
 
             if not available_providers:
                 console.print("\n[error]❌ No providers with API keys found.[/error]")
@@ -5123,6 +5206,8 @@ class ConfigBuilder:
             orchestrator_config = {
                 "snapshot_storage": "snapshots",
                 "agent_temporary_workspace": "temp_workspaces",
+                "voting_sensitivity": "checklist_gated",
+                "voting_threshold": 3,
                 "max_new_answers_per_agent": 5,
                 # Fairness defaults (enabled across all coordination modes)
                 "fairness_enabled": True,
@@ -5150,6 +5235,8 @@ class ConfigBuilder:
             orchestrator_config = {
                 "snapshot_storage": "snapshots",
                 "agent_temporary_workspace": "temp_workspaces",
+                "voting_sensitivity": "checklist_gated",
+                "voting_threshold": 3,
                 "max_new_answers_per_agent": 5,
                 # Fairness defaults (enabled across all coordination modes)
                 "fairness_enabled": True,
@@ -5204,6 +5291,8 @@ class ConfigBuilder:
 
         if coordination_settings.get("voting_sensitivity"):
             orchestrator_config["voting_sensitivity"] = coordination_settings["voting_sensitivity"]
+        if coordination_settings.get("voting_threshold") is not None:
+            orchestrator_config["voting_threshold"] = coordination_settings["voting_threshold"]
         if coordination_settings.get("answer_novelty_requirement"):
             orchestrator_config["answer_novelty_requirement"] = coordination_settings["answer_novelty_requirement"]
         if coordination_settings.get("max_new_answers_per_agent"):

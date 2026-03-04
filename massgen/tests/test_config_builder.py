@@ -16,6 +16,7 @@ from massgen.config_builder import (
     ConfigBuilder,
     build_quickstart_config_path,
     normalize_quickstart_config_filename,
+    sort_quickstart_provider_ids,
 )
 
 
@@ -451,6 +452,8 @@ class TestQuickstartDecompositionSettings:
         orch = config["orchestrator"]
         assert orch["coordination_mode"] == "decomposition"
         assert orch["presenter_agent"] == "agent_c"
+        assert orch["voting_sensitivity"] == "checklist_gated"
+        assert orch["voting_threshold"] == 3
         assert orch["max_new_answers_per_agent"] == 2
         assert orch["max_new_answers_global"] == 9
         assert orch["answer_novelty_requirement"] == "balanced"
@@ -466,6 +469,8 @@ class TestQuickstartDecompositionSettings:
             coordination_settings={
                 "coordination_mode": "decomposition",
                 "presenter_agent": "agent_a",
+                "voting_sensitivity": "lenient",
+                "voting_threshold": 5,
                 "max_new_answers_per_agent": 3,
                 "max_new_answers_global": 12,
                 "answer_novelty_requirement": "strict",
@@ -475,6 +480,8 @@ class TestQuickstartDecompositionSettings:
         orch = config["orchestrator"]
         assert orch["coordination_mode"] == "decomposition"
         assert orch["presenter_agent"] == "agent_a"
+        assert orch["voting_sensitivity"] == "lenient"
+        assert orch["voting_threshold"] == 5
         assert orch["max_new_answers_per_agent"] == 3
         assert orch["max_new_answers_global"] == 12
         assert orch["answer_novelty_requirement"] == "strict"
@@ -487,6 +494,8 @@ class TestQuickstartDecompositionSettings:
         )
 
         orch = config["orchestrator"]
+        assert orch["voting_sensitivity"] == "checklist_gated"
+        assert orch["voting_threshold"] == 3
         assert orch["max_new_answers_per_agent"] == 5
         assert orch["fairness_enabled"] is True
         assert orch["fairness_lead_cap_answers"] == 2
@@ -535,6 +544,37 @@ class TestQuickstartReasoningSettings:
         assert profile is not None
         efforts = [value for _, value in profile["choices"]]
         assert efforts == ["low", "medium", "high", "xhigh"]
+        labels = {value: label for label, value in profile["choices"]}
+        assert "recommended" in labels["xhigh"].lower()
+        assert "recommended" not in labels["medium"].lower()
+
+    def test_reasoning_profile_for_codex53_defaults_xhigh(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.3-codex")
+        assert profile is not None
+        assert profile["default_effort"] == "xhigh"
+
+    def test_reasoning_profile_for_claude_code_includes_max(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("claude_code", "claude-opus-4-6")
+        assert profile is not None
+        assert profile["default_effort"] == "high"
+        efforts = [value for _, value in profile["choices"]]
+        assert efforts == ["low", "medium", "high", "max"]
+        labels = {value: label for label, value in profile["choices"]}
+        assert "recommended" in labels["high"].lower()
+        assert "recommended" not in labels["medium"].lower()
+
+    def test_reasoning_profile_for_claude_code_sonnet46_defaults_medium(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("claude_code", "claude-sonnet-4-6")
+        assert profile is not None
+        assert profile["default_effort"] == "medium"
+        efforts = [value for _, value in profile["choices"]]
+        assert efforts == ["low", "medium", "high"]
+        labels = {value: label for label, value in profile["choices"]}
+        assert "recommended" in labels["medium"].lower()
+
+    def test_reasoning_profile_for_claude_code_non_46_has_no_profile(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("claude_code", "claude-opus-4-5")
+        assert profile is None
 
     def test_reasoning_profile_ignored_for_non_gpt5_models(self):
         profile = ConfigBuilder.get_quickstart_reasoning_profile("openai", "gpt-4o")
@@ -555,6 +595,12 @@ class TestQuickstartReasoningSettings:
                     "model": "gpt-5.3-codex",
                     "reasoning_effort": "xhigh",
                 },
+                {
+                    "id": "agent_c",
+                    "type": "claude_code",
+                    "model": "claude-opus-4-6",
+                    "reasoning_effort": "max",
+                },
             ],
             use_docker=False,
         )
@@ -567,6 +613,35 @@ class TestQuickstartReasoningSettings:
             "effort": "xhigh",
             "summary": "auto",
         }
+        assert config["agents"][2]["backend"]["reasoning"] == {
+            "effort": "max",
+            "summary": "auto",
+        }
+
+
+class TestQuickstartProviderOrdering:
+    """Test provider ordering for quickstart defaults."""
+
+    def test_quickstart_provider_priority_order(self):
+        providers = [
+            "openai",
+            "gemini",
+            "anthropic",
+            "codex",
+            "claude_code",
+            "grok",
+        ]
+
+        ordered = sort_quickstart_provider_ids(providers)
+
+        assert ordered == [
+            "claude_code",
+            "codex",
+            "gemini",
+            "openai",
+            "anthropic",
+            "grok",
+        ]
 
 
 class TestQuickstartConfigPathHelpers:

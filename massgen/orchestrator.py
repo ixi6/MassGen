@@ -880,6 +880,8 @@ class Orchestrator(ChatAgent):
         }
         self._push_cached_criteria_to_display(force=True)
 
+        tracker = getattr(self, "coordination_tracker", None)
+
         for agent_id, agent in self.agents.items():
             backend = agent.backend
 
@@ -940,7 +942,7 @@ class Orchestrator(ChatAgent):
                 "subagents_enabled": bool(
                     hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents") and self.config.coordination_config.enable_subagents,
                 ),
-                "agent_answer_count": len(self.coordination_tracker.answers_by_agent.get(agent_id, [])),
+                "agent_answer_count": (len(tracker.answers_by_agent.get(agent_id, [])) if tracker is not None and hasattr(tracker, "answers_by_agent") else 0),
                 "enable_quality_rethink_on_iteration": bool(
                     getattr(
                         getattr(self.config, "coordination_config", None),

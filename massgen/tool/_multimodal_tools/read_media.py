@@ -25,6 +25,34 @@ from massgen.tool._result import ExecutionResult, TextContent
 MEDIA_ANALYSIS_TIMEOUT = 600  # 10 minutes
 
 
+def _normalize_stringified_inputs(
+    inputs: list[dict[str, Any]] | str | None,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Normalize `inputs` when models pass JSON as a string.
+
+    Returns:
+        Tuple of (normalized_inputs, error_message). When normalization fails,
+        error_message contains a user-facing explanation and normalized_inputs
+        is None.
+    """
+    if not isinstance(inputs, str):
+        return inputs, None
+
+    raw = inputs.strip()
+    if not raw:
+        return None, "inputs string is empty; expected a JSON array"
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, f"inputs must be a valid JSON array string: {exc.msg}"
+
+    if not isinstance(parsed, list):
+        return None, "inputs JSON string must decode to an array"
+
+    return parsed, None
+
+
 def _normalize_inputs_aliases(inputs: list[dict]) -> list[dict]:
     """Normalize common aliases in each input dict before validation.
 
@@ -288,6 +316,11 @@ async def read_media(
                    prompt="Does gameplay look correct? Are controls responsive? Be critical.")
         → Returns critique-focused analysis
     """
+    # Normalize stringified JSON inputs before validation.
+    inputs, inputs_error = _normalize_stringified_inputs(inputs)
+    if inputs_error:
+        return _error_result(inputs_error)
+
     # Validate file_path / inputs / continue_from
     if file_path and inputs:
         return _error_result("Provide either 'file_path' or 'inputs', not both")

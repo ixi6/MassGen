@@ -1269,12 +1269,15 @@ def _json_schema_to_python_type(prop_schema: dict[str, Any]) -> Any:
         "integer": int,
         "number": float,
         "boolean": bool,
-        "array": list,
         "object": dict,
     }
+    _ARRAY_COMPAT_TYPE = list | str
 
     # Direct type
     direct = prop_schema.get("type")
+    if direct == "array":
+        # Allow stringified JSON lists through FastMCP's runtime validation.
+        return _ARRAY_COMPAT_TYPE
     if direct in _JSON_TYPE_MAP:
         return _JSON_TYPE_MAP[direct]
 
@@ -1284,7 +1287,8 @@ def _json_schema_to_python_type(prop_schema: dict[str, Any]) -> Any:
         non_null = [v for v in any_of if isinstance(v, dict) and v.get("type") != "null"]
         has_null = any(isinstance(v, dict) and v.get("type") == "null" for v in any_of)
         if non_null:
-            base = _JSON_TYPE_MAP.get(non_null[0].get("type", ""), _Any)
+            base_type = non_null[0].get("type", "")
+            base = _ARRAY_COMPAT_TYPE if base_type == "array" else _JSON_TYPE_MAP.get(base_type, _Any)
             return Optional[base] if has_null else base
 
     return _Any

@@ -1013,6 +1013,7 @@ def create_app(
         import os
 
         from massgen.backend.capabilities import BACKEND_CAPABILITIES
+        from massgen.config_builder import sort_quickstart_provider_ids
 
         providers = []
         for backend_type, caps in BACKEND_CAPABILITIES.items():
@@ -1065,8 +1066,16 @@ def create_app(
                 },
             )
 
-        # Sort by has_api_key (available first), then by name
-        providers.sort(key=lambda p: (not p["has_api_key"], p["name"]))
+        # Sort by has_api_key (available first), then quickstart priority.
+        # Priority order defaults to: claude_code, codex, gemini.
+        ordered_ids = sort_quickstart_provider_ids([provider["id"] for provider in providers])
+        provider_rank = {provider_id: index for index, provider_id in enumerate(ordered_ids)}
+        providers.sort(
+            key=lambda provider: (
+                not provider["has_api_key"],
+                provider_rank.get(provider["id"], len(provider_rank)),
+            ),
+        )
 
         return {"providers": providers}
 

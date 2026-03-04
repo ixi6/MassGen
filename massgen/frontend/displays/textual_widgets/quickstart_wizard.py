@@ -32,6 +32,7 @@ from massgen.config_builder import (
     DEFAULT_QUICKSTART_CONFIG_FILENAME,
     build_quickstart_config_path,
     normalize_quickstart_config_filename,
+    sort_quickstart_provider_ids,
 )
 
 from .setup_wizard import DockerSetupStep
@@ -230,8 +231,10 @@ class ProviderModelStep(StepComponent):
 
             builder = ConfigBuilder()
             api_keys = builder.detect_api_keys()
+            ordered_provider_ids = sort_quickstart_provider_ids(list(builder.PROVIDERS.keys()))
 
-            for provider_id, provider_info in builder.PROVIDERS.items():
+            for provider_id in ordered_provider_ids:
+                provider_info = builder.PROVIDERS.get(provider_id, {})
                 name = provider_info.get("name", provider_id)
                 models = provider_info.get("models", [])
                 has_key = api_keys.get(provider_id, False)
@@ -309,8 +312,7 @@ class ProviderModelStep(StepComponent):
 
         choices = profile.get("choices", [])
         default_effort = profile.get("default_effort", "medium")
-        valid_efforts = {value for _, value in choices}
-        selected_effort = self._current_reasoning_effort if self._current_reasoning_effort in valid_efforts else default_effort
+        selected_effort = default_effort
 
         self._current_reasoning_effort = selected_effort
         if not self.is_mounted:
@@ -393,8 +395,8 @@ class ProviderModelStep(StepComponent):
         yield self._reasoning_label
 
         self._reasoning_select = Select(
-            [("Medium (recommended)", "medium")],
-            value="medium",
+            [("Select reasoning effort", "__placeholder__")],
+            value="__placeholder__",
             id="reasoning_select",
         )
         self._reasoning_select.display = False
@@ -431,6 +433,8 @@ class ProviderModelStep(StepComponent):
             self._current_model = str(event.value)
             self._update_reasoning_input()
         elif event.select.id == "reasoning_select" and event.value != Select.BLANK:
+            if str(event.value) == "__placeholder__":
+                return
             self._current_reasoning_effort = str(event.value)
 
     def get_value(self) -> dict[str, str]:
@@ -444,15 +448,20 @@ class ProviderModelStep(StepComponent):
 
     def set_value(self, value: Any) -> None:
         if isinstance(value, dict):
+            saved_reasoning_effort = value.get("reasoning_effort")
             if "provider" in value and self._provider_select:
                 self._current_provider = value["provider"]
                 self._provider_select.value = value["provider"]
             if "model" in value and self._model_select:
                 self._current_model = value["model"]
                 self._model_select.value = value["model"]
-            if "reasoning_effort" in value:
-                self._current_reasoning_effort = value["reasoning_effort"]
             self._update_reasoning_input()
+            if saved_reasoning_effort and self._reasoning_select:
+                try:
+                    self._reasoning_select.value = saved_reasoning_effort
+                    self._current_reasoning_effort = saved_reasoning_effort
+                except Exception:
+                    pass
 
     def validate(self) -> str | None:
         if not self._current_provider:
@@ -507,8 +516,10 @@ class TabbedProviderModelStep(StepComponent):
 
             builder = ConfigBuilder()
             api_keys = builder.detect_api_keys()
+            ordered_provider_ids = sort_quickstart_provider_ids(list(builder.PROVIDERS.keys()))
 
-            for provider_id, provider_info in builder.PROVIDERS.items():
+            for provider_id in ordered_provider_ids:
+                provider_info = builder.PROVIDERS.get(provider_id, {})
                 name = provider_info.get("name", provider_id)
                 models = provider_info.get("models", [])
                 has_key = api_keys.get(provider_id, False)
@@ -581,10 +592,7 @@ class TabbedProviderModelStep(StepComponent):
 
         choices = profile.get("choices", [])
         default_effort = profile.get("default_effort", "medium")
-        valid_efforts = {value for _, value in choices}
-        selected_effort = self._tab_selections.get(agent_key, {}).get("reasoning_effort")
-        if selected_effort not in valid_efforts:
-            selected_effort = default_effort
+        selected_effort = default_effort
 
         self._tab_selections.setdefault(agent_key, {})["reasoning_effort"] = selected_effort
         if not self.is_mounted:
@@ -671,8 +679,8 @@ class TabbedProviderModelStep(StepComponent):
                         yield reasoning_label
 
                         reasoning_select = Select(
-                            [("Medium (recommended)", "medium")],
-                            value="medium",
+                            [("Select reasoning effort", "__placeholder__")],
+                            value="__placeholder__",
                             id=f"reasoning_{letter}",
                         )
                         reasoning_select.display = False
@@ -719,6 +727,8 @@ class TabbedProviderModelStep(StepComponent):
                 self._tab_selections[agent_key].get("model"),
             )
         elif kind == "reasoning":
+            if str(event.value) == "__placeholder__":
+                return
             self._tab_selections[agent_key]["reasoning_effort"] = str(event.value)
 
     def get_value(self) -> dict[str, Any]:
@@ -756,6 +766,7 @@ class TabbedProviderModelStep(StepComponent):
                 if reasoning_select and reasoning_effort:
                     try:
                         reasoning_select.value = reasoning_effort
+                        self._tab_selections[agent_key]["reasoning_effort"] = reasoning_effort
                     except Exception:
                         pass
 
@@ -1600,7 +1611,7 @@ class ConfigPreviewStep(StepComponent):
             # Build agents config
             agents_config = []
 
-            if setup_mode == "same":
+            if setup_mode == "same" or agent_count == 1:
                 # Same provider/model for all agents
                 provider_model = self.wizard_state.get("provider_model", {})
                 provider = provider_model.get("provider", "openai")
@@ -1801,7 +1812,7 @@ class QuickstartWizard(WizardModal):
                 title="Provider & Model",
                 description="Choose your AI provider and model",
                 component_class=ProviderModelStep,
-                skip_condition=lambda state: state.get("setup_mode") == "different",
+                skip_condition=lambda state: state.get("agent_count", 3) > 1 and state.get("setup_mode") == "different",
             ),
             # Dynamic per-agent steps are inserted here when setup_mode == "different"
             WizardStep(

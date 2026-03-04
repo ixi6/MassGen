@@ -274,6 +274,29 @@ class TestProviderFormats:
         # Cached should be cheaper (800 tokens at discount)
         assert cost_with_cache < cost_no_cache
 
+    def test_openai_top_level_cached_input_tokens_format(self):
+        """Test Codex/OpenAI usage format with top-level cached_input_tokens."""
+        calc = TokenCostCalculator()
+
+        usage_with_cache = {
+            "prompt_tokens": 1000,  # Includes 800 cached
+            "completion_tokens": 200,
+            "cached_input_tokens": 800,
+        }
+
+        breakdown = calc.extract_token_breakdown(usage_with_cache)
+        assert breakdown["cached_input_tokens"] == 800
+
+        cost_with_cache = calc.calculate_cost_with_usage_object("gpt-4o", usage_with_cache, "openai")
+
+        usage_no_cache = {
+            "prompt_tokens": 1000,
+            "completion_tokens": 200,
+        }
+        cost_no_cache = calc.calculate_cost_with_usage_object("gpt-4o", usage_no_cache, "openai")
+
+        assert cost_with_cache < cost_no_cache
+
     def test_groq_usage_format(self):
         """Test Groq-specific usage format."""
         calc = TokenCostCalculator()

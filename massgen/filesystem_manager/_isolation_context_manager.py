@@ -619,19 +619,18 @@ class IsolationContextManager:
         return scratch_path
 
     def move_scratch_to_workspace(self, context_path: str, archive_label: str | None = None) -> str | None:
-        """Move .massgen_scratch/ to {workspace}/.scratch_archive/{label}/.
+        """Move .massgen_scratch/ from the worktree into the workspace as .massgen_scratch/.
 
-        This preserves scratch files after worktree teardown. The archive
-        lives in the workspace (sibling of .worktree/), so it gets included
-        in workspace snapshots shared with other agents.
+        This preserves scratch files after worktree teardown. The result lives
+        in the workspace as `.massgen_scratch/`, so it gets included in workspace
+        snapshots shared with other agents under the same consistent path.
 
         Args:
             context_path: Original context path
-            archive_label: Human-readable label for the archive dir (e.g. "agent1").
-                When set, used instead of extracting suffix from branch name.
+            archive_label: Unused; kept for backwards-compatibility.
 
         Returns:
-            Path to the archive directory, or None if no scratch to move
+            Path to the .massgen_scratch/ directory in the workspace, or None if no scratch
         """
         context_path = os.path.abspath(context_path)
         if context_path not in self._contexts:
@@ -647,29 +646,27 @@ class IsolationContextManager:
             log.debug(f"Scratch directory empty, skipping archive: {scratch_path}")
             return None
 
-        # Use archive_label for directory name if provided, otherwise
-        # extract the suffix from the branch name
-        if archive_label:
-            archive_name = archive_label
-        else:
-            branch_name = ctx.get("branch_name", "")
-            archive_name = branch_name.rsplit("/", 1)[-1] if "/" in branch_name else secrets.token_hex(4)
-
-        # Determine archive location
+        # Determine archive location — always .massgen_scratch/ in the workspace
         workspace = self.workspace_path
         if not workspace:
             log.warning("No workspace_path set, cannot archive scratch")
             return None
 
-        archive_dir = os.path.join(workspace, ".scratch_archive", archive_name)
+        archive_dir = os.path.join(workspace, SCRATCH_DIR_NAME)
+
+        # If scratch is already at the destination (workspace mode), nothing to do
+        if os.path.abspath(scratch_path) == os.path.abspath(archive_dir):
+            log.debug(f"Scratch already at workspace destination: {archive_dir}")
+            return archive_dir
+
         os.makedirs(os.path.dirname(archive_dir), exist_ok=True)
 
         try:
             shutil.move(scratch_path, archive_dir)
-            log.info(f"Moved scratch to archive: {scratch_path} -> {archive_dir}")
+            log.info(f"Moved scratch to workspace: {scratch_path} -> {archive_dir}")
             return archive_dir
         except Exception as e:
-            log.warning(f"Failed to move scratch to archive: {e}")
+            log.warning(f"Failed to move scratch to workspace: {e}")
             return None
 
     def _auto_commit_worktree(self, isolated_path: str, message: str = "[ROUND] Auto-commit") -> bool:

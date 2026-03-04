@@ -1166,6 +1166,7 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
         if event_type == "turn.completed":
             self._active_background_wait_calls.clear()
             usage = event.get("usage", {})
+            cached_input_tokens = usage.get("cached_input_tokens", 0)
             return [
                 StreamChunk(
                     type="done",
@@ -1173,6 +1174,7 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
                         "prompt_tokens": usage.get("input_tokens", 0),
                         "completion_tokens": usage.get("output_tokens", 0),
                         "total_tokens": usage.get("total_tokens", 0),
+                        "cached_input_tokens": cached_input_tokens,
                     },
                 ),
             ]

@@ -1140,16 +1140,26 @@ After all tasks complete:
    output with fewer features is always better than a broken output with more.
 2. Confirm you implemented the full scope of identified improvements, not just some.
    Each round is expensive — deliver everything you identified, not just the easiest item.
-3. Write/update `memory/short_term/verification_latest.md` with a **verification replay**
+3. For each verification command you run, save its output to `.massgen_scratch/verification/`
+   as a plain text file named `output_<name>.txt` (e.g. `output_pytest.txt`). Use this format:
+
+   Command: uv run pytest massgen/tests/ -q
+   Exit code: 0
+   Output:
+   15 passed in 2.3s
+
+4. Write/update `memory/short_term/verification_latest.md` with a **verification replay**
    summary for this answer. This memo must be replayable — a future agent should be able to
    re-run verification from it without guessing. Required fields:
    - **Environment**: workspace path, artifact under test, tools used (e.g. Playwright Python)
    - **Pipeline**: exact commands or script paths used (e.g. `python .massgen_scratch/verification/check.py`
      or `npx -y playwright@1.52.0 screenshot ...`). Scripts must live under `.massgen_scratch/verification/`.
+   - **Outputs**: for each script — its output file path and a one-line result summary
+     (e.g. `verification/output_pytest.txt — 15 passed, 0 failed`)
    - **Artifacts**: list every file produced (screenshots, logs, scripts) with paths relative to workspace
    - **Freshness**: state whether artifacts were generated this run or reused from a prior run
    Absolute paths are allowed; they are normalized when replay memories are auto-injected in later rounds.
-4. Call `{iterate_action}` to submit your improved answer and end this round.
+5. Call `{iterate_action}` to submit your improved answer and end this round.
 
 Your answer MUST be **obviously and substantially better** than the prior round —
 not just marginally different. A user should immediately notice the improvement.
@@ -2844,14 +2854,15 @@ class FilesystemBestPracticesSection(SystemPromptSection):
             "causes errors. Instead, include proper dependency files (`package.json`, "
             "`requirements.txt`) and let users reinstall.\n"
             "- **Cleanup**: Move temporary files, intermediate artifacts, test scripts, or "
-            "unused files to scratch space (`.massgen_scratch/` or `scratch/`) before submitting "
+            "unused files to scratch space (`.massgen_scratch/`) before submitting "
             "`new_answer`. Your workspace should contain only the files that are part of your "
             "final deliverable. For example, move `test_output.txt` or `old_version.py` to scratch. "
             "**Never delete system-managed directories**: `.worktree/`, `.git/`, symlinks to shared "
             "tools, or any directory you did not create.\n"
             "- **Verification Artifacts**: Save test results, screenshots, videos, and other "
             "verification evidence to `.massgen_scratch/verification/`. These are preserved "
-            "in scratch archives for reference in subsequent rounds.\n"
+            "in `.massgen_scratch/` which is included in workspace snapshots for reference "
+            "in subsequent rounds.\n"
             "- **Organization**: Keep files logically organized. If you're combining work from "
             "multiple agents, structure the result clearly.\n"
             "- **Internal Documents**: Never write internal documents (decision journals, evolving "
@@ -2881,12 +2892,15 @@ class FilesystemBestPracticesSection(SystemPromptSection):
             "their workspaces (via Shared Reference)\n"
             "- **For functionality**: Evaluate outcomes by running tests, checking visualizations, "
             "validating outputs, or testing the deliverables\n"
-            "- **Run your own verification**: Do not rely solely on agents' self-reported results. "
-            "Run tests, take screenshots, and validate deliverables yourself. Save your "
-            "verification evidence to `.massgen_scratch/verification/{agentN}/` (create subdirs "
-            "as needed per agent you're evaluating). Agents' own verification may be available "
-            "in their Shared Reference under `.scratch_archive/{agentN}/verification/` as "
-            "optional context, but it may be incomplete or stale — always verify independently.\n"
+            "- **Run your own verification**: Each agent's prior verification outputs are "
+            "available in their Shared Reference under `.massgen_scratch/verification/`. "
+            "Read those files directly — output logs, screenshots, test results — and use them "
+            "as evidence or as a base for your own evaluation. Focus on what's new, unverified, "
+            "or failing rather than repeating checks that already passed. Run additional commands "
+            "where needed (new comparisons, checks the agent missed, edge cases) and save those "
+            "outputs alongside the existing ones. "
+            "Save your own verification evidence to `.massgen_scratch/verification/{agentN}/` "
+            "(create subdirs as needed per agent you're evaluating).\n"
             "- **Focus verification**: Prioritize critical functionality and substantial differences "
             "rather than exhaustively reviewing every file\n"
             "- **Don't rely solely on answer text**: Ensure the actual work matches their claims\n"

@@ -224,7 +224,7 @@ class TestMoveScatchToWorkspace:
     """Tests for scratch archive functionality."""
 
     def test_move_scratch_to_workspace(self, tmp_path):
-        """Verify scratch is moved to .scratch_archive/ in workspace."""
+        """Verify scratch is moved to .massgen_scratch/ in workspace (not .scratch_archive/)."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         init_test_repo(repo_path)
@@ -247,7 +247,8 @@ class TestMoveScatchToWorkspace:
         archive_dir = icm.move_scratch_to_workspace(str(repo_path))
 
         assert archive_dir is not None
-        assert ".scratch_archive" in archive_dir
+        assert ".scratch_archive" not in archive_dir
+        assert archive_dir == str(workspace / ".massgen_scratch")
         assert os.path.isdir(archive_dir)
         assert os.path.exists(os.path.join(archive_dir, "notes.md"))
         # Original scratch should no longer exist
@@ -259,7 +260,7 @@ class TestScratchArchiveLabel:
     """Tests for archive_label in move_scratch_to_workspace."""
 
     def test_scratch_archive_uses_label(self, tmp_path):
-        """Verify archive dir uses archive_label when provided."""
+        """Verify archive always goes to .massgen_scratch/ regardless of archive_label."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         init_test_repo(repo_path)
@@ -282,13 +283,13 @@ class TestScratchArchiveLabel:
         archive_dir = icm.move_scratch_to_workspace(str(repo_path), archive_label="agent1")
 
         assert archive_dir is not None
-        assert archive_dir.endswith("agent1"), f"Expected archive dir ending with 'agent1', got {archive_dir}"
+        assert archive_dir == str(workspace / ".massgen_scratch")
         assert os.path.isdir(archive_dir)
         assert os.path.exists(os.path.join(archive_dir, "notes.md"))
         icm.cleanup_all()
 
-    def test_scratch_archive_falls_back_to_branch_suffix(self, tmp_path):
-        """Verify archive dir uses branch suffix when no archive_label."""
+    def test_scratch_archive_falls_back_without_label(self, tmp_path):
+        """Verify archive goes to .massgen_scratch/ even when no archive_label given."""
         repo_path = tmp_path / "repo"
         repo_path.mkdir()
         init_test_repo(repo_path)
@@ -307,14 +308,11 @@ class TestScratchArchiveLabel:
         with open(scratch_file, "w") as f:
             f.write("notes")
 
-        # No archive_label — should fall back to branch suffix
         archive_dir = icm.move_scratch_to_workspace(str(repo_path))
 
         assert archive_dir is not None
-        assert ".scratch_archive" in archive_dir
-        # The archive dir name should be the hex suffix from branch name
-        archive_name = os.path.basename(archive_dir)
-        assert len(archive_name) == 8, f"Expected 8-char hex suffix, got '{archive_name}'"
+        assert archive_dir == str(workspace / ".massgen_scratch")
+        assert ".scratch_archive" not in archive_dir
         icm.cleanup_all()
 
 
@@ -726,7 +724,7 @@ class TestWorkspaceScratchNoContextPaths:
         icm2.cleanup_session()
 
     def test_workspace_move_scratch_to_archive(self, tmp_path):
-        """Verify scratch archive works in workspace mode."""
+        """Verify move_scratch_to_workspace is a no-op in workspace mode (scratch already at right place)."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
 
@@ -744,11 +742,12 @@ class TestWorkspaceScratchNoContextPaths:
 
         archive_dir = icm.move_scratch_to_workspace(str(workspace))
 
+        # In workspace mode scratch is already at {workspace}/.massgen_scratch/ — no move needed
         assert archive_dir is not None
-        assert ".scratch_archive" in archive_dir
+        assert ".scratch_archive" not in archive_dir
+        assert archive_dir == str(workspace / ".massgen_scratch")
+        # File still accessible at same path
         assert os.path.exists(os.path.join(archive_dir, "notes.md"))
-        # Original scratch should no longer exist
-        assert not os.path.exists(os.path.join(str(workspace), SCRATCH_DIR_NAME))
         icm.cleanup_session()
 
     def test_workspace_inside_parent_repo_gets_own_git(self, tmp_path):
@@ -1610,6 +1609,7 @@ class TestVerificationDirectory:
             archive_label="agent1",
         )
         assert archive_dir is not None
+        assert archive_dir == str(workspace / ".massgen_scratch")
         archived_verification = os.path.join(
             archive_dir,
             VERIFICATION_DIR_NAME,

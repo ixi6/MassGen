@@ -203,3 +203,45 @@ def test_memory_section_renders_dedicated_verification_replay_block():
     assert "Verification Replay Memories (Auto-Injected)" in content
     assert "verification_latest.md" in content
     assert "uv run pytest" in content
+
+
+def test_checklist_gated_decision_requires_saving_script_outputs():
+    """Phase 5 guidance should instruct agents to save verification script outputs."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+    )
+    # Must tell agents to save stdout/stderr output files under verification dir
+    assert ".massgen_scratch/verification/" in content
+    assert "exit code" in content.lower() or "stdout" in content.lower()
+    # Must index output files in the memo
+    assert "output" in content.lower()
+
+
+def test_checklist_gated_decision_output_file_format():
+    """Phase 5 guidance should give a concrete format example for output files."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+    )
+    lower = content.lower()
+    # Must show the concrete key-value format (Command:, Exit code:, Output:)
+    assert "command:" in lower
+    assert "exit code:" in lower
+    assert "output:" in lower
+    # Must specify the output_<name>.txt naming convention
+    assert "output_" in content
+
+
+def test_filesystem_best_practices_evaluator_uses_prior_outputs_as_starting_point():
+    """Evaluator guidance should direct agents to use prior verification outputs, not repeat blindly."""
+    section = FilesystemBestPracticesSection()
+    content = section.build_content()
+    lower = content.lower()
+    # Must reference where prior outputs are available (under .massgen_scratch, not .scratch_archive)
+    assert "scratch_archive" not in content
+    assert ".massgen_scratch/verification/" in content
+    # Must tell evaluators they can read artifact files directly and add their own
+    assert "read" in lower
+    # Must direct focus toward new/unverified/failing rather than blind re-running
+    assert "new" in lower or "unverified" in lower or "failing" in lower
+    # Must not say "always verify independently" (that discourages reuse)
+    assert "always verify independently" not in content

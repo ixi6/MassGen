@@ -670,7 +670,6 @@ def run_self_analysis(
         turn_dir = turn_dirs[-1]
 
     report_path = turn_dir / "ANALYSIS_REPORT.md"
-
     # Handle existing report
     if report_path.exists():
         if force:

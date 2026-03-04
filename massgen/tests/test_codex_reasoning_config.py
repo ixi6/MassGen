@@ -208,6 +208,53 @@ def test_codex_writes_execution_trace_markdown(tmp_path: Path):
     assert "### Tool Result: massgen_custom_tools/custom_tool__read_media" in trace_text
 
 
+def test_codex_turn_completed_usage_preserves_cached_input_tokens(tmp_path: Path):
+    backend = CodexBackend(cwd=str(tmp_path))
+
+    chunks = backend._parse_codex_event(
+        {
+            "type": "turn.completed",
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "total_tokens": 1200,
+                "cached_input_tokens": 800,
+            },
+        },
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0].type == "done"
+    assert chunks[0].usage == {
+        "prompt_tokens": 1000,
+        "completion_tokens": 200,
+        "total_tokens": 1200,
+        "cached_input_tokens": 800,
+    }
+
+
+def test_codex_usage_chain_tracks_cached_input_tokens(tmp_path: Path):
+    backend = CodexBackend(cwd=str(tmp_path))
+
+    chunks = backend._parse_codex_event(
+        {
+            "type": "turn.completed",
+            "usage": {
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "total_tokens": 1200,
+                "cached_input_tokens": 800,
+            },
+        },
+    )
+    done_chunk = chunks[0]
+    backend._update_token_usage_from_api_response(done_chunk.usage, backend.model)
+
+    assert backend.token_usage.input_tokens == 1000
+    assert backend.token_usage.output_tokens == 200
+    assert backend.token_usage.cached_input_tokens == 800
+
+
 @pytest.mark.asyncio
 async def test_codex_execution_trace_saved_via_orchestrator_snapshot(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(logger_config, "_LOG_BASE_SESSION_DIR", None)

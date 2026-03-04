@@ -84,13 +84,12 @@ class CoordinationConfig:
                                        memories auto-inject into all agents' system prompts. Long-term
                                        memories are read on-demand. Inspired by Letta's context hierarchy.
         learning_capture_mode: Controls when evolving-skill + memory capture is produced.
-            - "round": full round-time capture (evolving skills + memory reminders/tasks)
-            - "verification_and_final_only": round-time verification replay memo only;
-              full consolidation remains presenter/final-time
-            - "final_only": defer all learning capture to presenter/final-time
-                              - "round": Existing behavior. Capture can be produced in coordination rounds.
-                              - "final_only" (default): Keep changedoc behavior, but defer evolving-skill + memory production
-                                to the final presenter stage. Coordination rounds remain read-focused.
+            - "round": Existing behavior. Capture can be produced in coordination rounds.
+            - "final_only": Keep changedoc behavior, but defer evolving-skill + memory
+                            production to the final presenter stage. Coordination rounds
+                            remain read-focused.
+            - "verification_and_final_only" (default): Round-time verification replay memo
+                            only; full consolidation remains presenter/final-time.
         disable_final_only_round_capture_fallback: If True, final_only mode remains read-focused
                                                   even when skip_final_presentation is enabled.
                                                   This disables the default fallback that re-enables

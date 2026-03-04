@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.58
+**Current Version:** v0.1.59
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** March 2, 2026
+**Last Updated:** March 4, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,15 +42,28 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.59** | 03/04/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
-| **v0.1.60** | 03/06/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
-| **v0.1.61** | 03/09/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
+| **v0.1.60** | 03/06/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
+| **v0.1.61** | 03/09/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
+| **v0.1.62** | 03/11/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.59 - Skill Use & Exploration
+## ✅ v0.1.59 - Quality Round Improvements (Completed)
+
+**Released:** March 4, 2026 | PR: [#969](https://github.com/massgen/MassGen/pull/969)
+
+### Features
+- **Planning Improvements**: Auto-add improvements to task plan, plan review enhancements
+- **Checklist & Evaluation Enhancements**: Better eval gen config, checklist fixes, Gemini tool name normalization for MCP
+- **Subagent Improvements**: Adjusted subagent behavior, subagent manager enhancements, Docker skill write access fixes
+- **Media Generation Fixes**: Video gen skill adjustments (no fallback to animated on errors), video understanding criticality, impact metric restoration
+- **Bug Fixes**: Answer anonymization fix, quickstart and test updates, plan/Docker small fixes
+
+---
+
+## 📋 v0.1.60 - Skill Use & Exploration
 
 ### Features
 
@@ -69,7 +82,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.60 - Image/Video Edit Capabilities
+## 📋 v0.1.61 - Image/Video Edit Capabilities
 
 ### Features
 
@@ -85,7 +98,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.61 - OpenAI Audio API
+## 📋 v0.1.62 - OpenAI Audio API
 
 ### Features
 
@@ -892,5 +905,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** March 2, 2026
+**Last Updated:** March 4, 2026
 **Maintained By:** MassGen Team

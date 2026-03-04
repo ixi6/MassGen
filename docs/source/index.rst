@@ -190,6 +190,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.59 (March 4, 2026)** - Quality Round Improvements
+
+Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and Docker skill write access fixes. Media generation fixes for video gen skills and impact metric restoration.
+
 **v0.1.58 (March 2, 2026)** - Multimodal Revamp, Nvidia NIM Backend & Quality Rethinking
 
 Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image generation, and Grok multimedia. Nvidia NIM backend for NVIDIA Inference Microservices. Quality rethinking subagent for per-element craft improvements. Smarter checklists with improve/preserve listings and evaluation criteria defaults.
@@ -197,10 +201,6 @@ Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image gen
 **v0.1.57 (February 27, 2026)** - Delegated Subagent Protocol & Builder Subagent
 
 File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Smarter convergence with substantiveness tracking and diagnostic report gating. Claude Code reasoning parameters for updated SDK.
-
-**v0.1.56 (February 25, 2026)** - Spec Plan Mode & Targeted Messaging
-
-Spec plan mode for formal requirements specification before execution with TUI spec mode support. Targeted agent-to-agent messaging via ``target_agents`` parameter. Critic subagent for quality assessment. Media conversation continuity. Codex OAuth login fix.
 
 :doc:`Full changelog → <changelog>`
 

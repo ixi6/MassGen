@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.58 Features](#-latest-features-v0158)
+- [v0.1.59 Features](#-latest-features-v0159)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.58)](#recent-achievements-v0158)
-- [Previous Achievements (v0.0.3 - v0.1.57)](#previous-achievements-v003---v0157)
+- [Recent Achievements (v0.1.59)](#recent-achievements-v0159)
+- [Previous Achievements (v0.0.3 - v0.1.58)](#previous-achievements-v003---v0158)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.59 Roadmap](#v0159-roadmap)
+- [v0.1.60 Roadmap](#v0160-roadmap)
 </details>
 
 <details open>
@@ -155,22 +155,22 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.58)
+## 🆕 Latest Features (v0.1.59)
 
-**🎉 Released: March 2, 2026**
+**🎉 Released: March 4, 2026**
 
-**What's New in v0.1.58:**
-- **🎨 Comprehensive Multimodal Revamp** - ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, media generation skills, and multi-turn image editing with continuation IDs.
-- **🟢 Nvidia NIM Backend** - First-class provider integration for NVIDIA Inference Microservices, enabling access to NVIDIA-hosted models.
-- **🔍 Quality Rethinking Subagent** - New `quality_rethinking` subagent type for targeted per-element craft improvements with explicit improve/preserve listings.
-- **✅ Smarter Checklists** - Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults, and hardened subagent parsing.
+**What's New in v0.1.59:**
+- **📋 Planning Improvements** - Auto-add improvements to task plan and plan review enhancements for smarter quality rounds.
+- **✅ Checklist & Evaluation Enhancements** - Better eval gen config, checklist fixes, and Gemini tool name normalization for MCP compatibility.
+- **🤖 Subagent Improvements** - Adjusted subagent behavior, subagent manager enhancements, and Docker skill write access fixes.
+- **🎬 Media Generation Fixes** - Video gen skill adjustments (no fallback to animated on errors), video understanding criticality, and impact metric restoration.
 
-**Try v0.1.58 Features:**
+**Try v0.1.59 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Try checklist-driven refinement with quality rethinking
+# Try checklist-driven refinement with quality rounds
 uv run massgen --config @examples/features/subagent_checklist.yaml \
   "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
 ```
@@ -1234,37 +1234,36 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.58)
+### Recent Achievements (v0.1.59)
 
-**🎉 Released: March 2, 2026**
+**🎉 Released: March 4, 2026**
 
-#### Comprehensive Multimodal Revamp
-- **ElevenLabs TTS & STT** ([#942](https://github.com/massgen/MassGen/issues/942)): High-quality voice synthesis and transcription via ElevenLabs API integrated with `generate_media` and `read_media` tools
-- **Nano Banana 2 Image Generation** ([#951](https://github.com/massgen/MassGen/issues/951)): New default image generation model with higher quality output
-- **Grok Image/Video Generation**: Grok multimedia generation support via xAI API
-- **Media Generation Skills**: New reusable skills for image, video, and audio generation workflows
-- **Multi-Turn Image Editing**: Continuation IDs for iterative image editing sessions
+#### Planning Improvements
+- **Auto-Add Improvements to Task Plan** ([#969](https://github.com/massgen/MassGen/pull/969)): Improvements are now automatically incorporated into the task plan for better iteration tracking
+- **Plan Review Enhancements**: More thorough quality evaluation during plan review phases
 
-#### Nvidia NIM Backend
-- **NVIDIA Inference Microservices** ([#962](https://github.com/massgen/MassGen/pull/962)): First-class provider integration for NVIDIA-hosted models via NIM API
+#### Checklist & Evaluation Enhancements
+- **Better Eval Gen Config** ([#969](https://github.com/massgen/MassGen/pull/969)): More accurate quality assessments with improved evaluation generation configuration
+- **Checklist Fixes**: Consistent checklist behavior across rounds
+- **Gemini Tool Name Normalization**: MCP tool name normalization for Gemini backend compatibility
 
-#### Quality & Checklist Improvements
-- **Quality Rethinking Subagent** ([#964](https://github.com/massgen/MassGen/pull/964)): New `quality_rethinking` subagent type for targeted per-element craft improvements
-- **Explicit Improve/Preserve Listings**: Checklists now specify what to improve and what to preserve separately
-- **Better Label Refresh Ordering**: Improved ordering of checklist label refreshes
-- **Evaluation Criteria Defaults**: Sensible defaults for evaluation criteria
+#### Subagent Improvements
+- **Adjusted Subagent Behavior** ([#969](https://github.com/massgen/MassGen/pull/969)): Subagent manager enhancements for better coordination
+- **Docker Skill Write Access**: Fixed write access for skills running in Docker containers
 
-#### Logging & CLI
-- **Logging Architecture Refactor**: Fixed concurrent logging for parallel multi-agent execution with `LoggingSession` isolation
-- **CLI Mode Flags**: `--quick`, `--single-agent`, `--coordination-mode`, `--personas` flags mirroring TUI toggles
-- **Plan Mode CLI**: Plan mode accessible from command line
+#### Media Generation Fixes
+- **Video Gen Skill Adjustments**: No fallback to animated on errors — fail cleanly instead
+- **Video Understanding Criticality**: Improved video understanding importance in evaluations
+- **Impact Metric Restoration**: Restored impact metrics for quality assessment
 
 #### Bug Fixes
-- Hardened subagent '@' parsing and error handling for multiple `submit_checklist` calls
-- Clearer subagent context and improved error messages
-- Fixed pre-collaboration checklist and evaluation criteria defaults
+- Fixed answer anonymization during evaluation
+- Updated quickstart flow and test suite
+- Small fixes for plan mode and Docker execution
 
-### Previous Achievements (v0.0.3 - v0.1.57)
+### Previous Achievements (v0.0.3 - v0.1.58)
+
+✅ **Comprehensive Multimodal Revamp (v0.1.58)**: ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok multimedia generation, media generation skills, and multi-turn image editing. Nvidia NIM backend. Quality rethinking subagent. Smarter checklists with improve/preserve listings. CLI mode flags and logging architecture refactor.
 
 ✅ **Delegated Subagent Protocol & Builder Subagent (v0.1.57)**: File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Substantiveness tracking for smarter convergence. Claude Code reasoning parameters for updated SDK.
 
@@ -1525,9 +1524,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.59 Roadmap
+### v0.1.60 Roadmap
 
-Version 0.1.59 focuses on improving skill use and exploration:
+Version 0.1.60 focuses on improving skill use and exploration:
 
 #### Planned Features
 - **Improve Skill Use and Exploration** ([#873](https://github.com/massgen/MassGen/issues/873)): Local skill execution, skill registry with hierarchical organization, and skill consolidation workflow

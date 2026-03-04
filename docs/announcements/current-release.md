@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Better planning with auto-added improvements and plan review enhancements. Checklist and evaluation improvements including better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and Docker skill write access fixes. Media generation fixes for video gen skills and impact metric restoration.
+We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Smarter planning with auto-added improvements and plan review. Agents now save replayable verification steps to `verification_latest.md`, auto-injected into future rounds so the next agent can replay the exact verification pipeline. Plus: checklist evaluation fixes, subagent enhancements, and media generation improvements.
 
 ## Install
 
@@ -29,13 +29,14 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Better planning with auto-added improvements and plan review enhancements. Checklist and evaluation improvements including better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and Docker skill write access fixes. Media generation fixes for video gen skills and impact metric restoration.
+We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Smarter planning with auto-added improvements and plan review. Agents now save replayable verification steps to `verification_latest.md`, auto-injected into future rounds so the next agent can replay the exact verification pipeline. Plus: checklist evaluation fixes, subagent enhancements, and media generation improvements.
 
 **Key Improvements:**
 
 **Planning Improvements** - Smarter quality rounds:
 - Auto-add improvements to task plan for better iteration tracking
 - Plan review enhancements for more thorough quality evaluation
+- Verification replay memories — agents save replayable verification steps (commands, scripts, artifacts) to `memory/short_term/verification_latest.md`, auto-injected into future rounds so the next agent can replay the exact verification pipeline
 
 **Checklist & Evaluation Enhancements** - More reliable evaluations:
 - Better eval gen config for more accurate quality assessments

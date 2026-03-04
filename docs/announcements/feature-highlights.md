@@ -13,7 +13,7 @@ Update this when major new features ship.
 
 🧠Supports diverse backends — Access open-source and proprietary models (local, Gemini 3.1 Pro, GPT-5.3-Codex, Claude 4.6 Opus/Sonnet, GLM-5, Grok 4.1) and agents (Claude Code, Codex, GitHub Copilot). 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/backends.html
 
-🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Spawn subagents for focused background work, including specialized roles. Personas, refinement, and dynamic evaluation criteria. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
+🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Checklist-gated quality rounds with dynamic evaluation criteria drive iterative refinement. Spawn subagents for focused background work, including specialized roles. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/concepts.html#multi-agent-coordination
 
 📋Task planning & execution — Structured plans with chunked execution, progress checkpoints, iterative review, and verification. Spec mode for formal requirements before execution. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/task_planning.html
 
@@ -35,7 +35,7 @@ Update this when major new features ship.
 
 🧠Supports diverse backends — Access open-source and proprietary models (local, Gemini 3.1 Pro, GPT-5.3-Codex, Claude 4.6 Opus/Sonnet, GLM-5, Grok 4.1) and agents (Claude Code, Codex, GitHub Copilot). 👉 More Info: https://lnkd.in/gdXw-ZiN
 
-🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Spawn subagents for focused background work, including specialized roles. Personas, refinement, and dynamic evaluation criteria. 👉 More Info: https://lnkd.in/gTH5prec
+🤖Build collaborative multi-agent teams — Run agents in parallel with shared workspaces, voting, and consensus — or decompose tasks into owned subtasks. Checklist-gated quality rounds with dynamic evaluation criteria drive iterative refinement. Spawn subagents for focused background work, including specialized roles. 👉 More Info: https://lnkd.in/gTH5prec
 
 📋Task planning & execution — Structured plans with chunked execution, progress checkpoints, iterative review, and verification. Spec mode for formal requirements before execution. 👉 More Info: https://lnkd.in/gy5qtbau
 

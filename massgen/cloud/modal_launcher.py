@@ -22,6 +22,8 @@ class ModalCloudJobLauncher(CloudJobLauncher):
 
     def launch(self, request: CloudJobRequest) -> CloudJobResult:
         """Run cloud job through `modal run` and return extracted artifacts."""
+        print("Launching cloud job...")
+
         payload = {
             "prompt": request.prompt,
             "config_yaml": request.config_yaml,

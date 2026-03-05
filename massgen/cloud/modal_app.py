@@ -3,20 +3,37 @@
 """Modal app entrypoint for MassGen cloud jobs."""
 
 import base64
+import io
 import json
 import os
+import re
 import shutil
 import subprocess
+import tarfile
+import threading
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 import modal
 
-from .cloud_job import CloudJobLauncher
-from .utils import make_tar_gz_b64, parse_automation_value
-
 APP_NAME = "massgen-cloud-job"
-RESULT_MARKER = CloudJobLauncher.RESULT_MARKER
+RESULT_MARKER = "__MASSGEN_CLOUD_JOB_RESULT__"
+
+
+def parse_automation_value(label: str, text: str) -> str | None:
+    pattern = re.compile(rf"^{re.escape(label)}:\s*(.+)$", re.MULTILINE)
+    match = pattern.search(text)
+    return match.group(1).strip() if match else None
+
+
+def make_tar_gz_b64(source_dir: Path) -> str:
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for path in source_dir.rglob("*"):
+            if path.is_file():
+                tar.add(path, arcname=str(path.relative_to(source_dir)))
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
 
 app = modal.App(APP_NAME)
 image = (
@@ -44,7 +61,7 @@ def run_massgen_job(payload_b64: str) -> dict:
 
     prompt = str(payload["prompt"])
     config_yaml = str(payload["config_yaml"])
-    timeout_seconds = int(payload.get("timeout_seconds", 1800))
+    int(payload.get("timeout_seconds", 1800))
     output_filename = str(payload.get("output_filename", "final_answer.txt"))
     forwarded_env = payload.get("env", {}) or {}
 
@@ -63,6 +80,7 @@ def run_massgen_job(payload_b64: str) -> dict:
     config_path.write_text(config_yaml, encoding="utf-8")
 
     output_file = workspace / output_filename
+    print(f"Running massgen with config: {config_path}")
     cmd = [
         "massgen",
         "--automation",
@@ -74,34 +92,47 @@ def run_massgen_job(payload_b64: str) -> dict:
         prompt,
     ]
 
-    try:
-        proc = subprocess.run(
-            cmd,
-            cwd=str(workspace),
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as exc:
-        result = {
-            "status": "error",
-            "timed_out": True,
-            "error": f"massgen timed out after {timeout_seconds}s",
-            "stdout": exc.stdout or "",
-            "stderr": exc.stderr or "",
-        }
-        print(f"{RESULT_MARKER}{json.dumps(result)}")
-        return result
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(workspace),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        bufsize=1,
+    )
+
+    # Stream stdout line-by-line so `modal run` can forward it in real time.
+    stdout_lines: List[str] = []
+    stderr_lines: List[str] = []
+
+    def _drain_stderr():
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            stderr_lines.append(line)
+
+    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    stderr_thread.start()
+
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        stdout_lines.append(line)
+        print(line, end="", flush=True)
+
+    proc.wait()
+    stderr_thread.join(timeout=5)
+
+    stdout_text = "".join(stdout_lines)
+    stderr_text = "".join(stderr_lines)
+    returncode = proc.returncode
 
     artifact_root = workspace / "artifacts"
     artifact_root.mkdir(parents=True, exist_ok=True)
 
-    (artifact_root / "stdout.log").write_text(proc.stdout, encoding="utf-8")
-    (artifact_root / "stderr.log").write_text(proc.stderr, encoding="utf-8")
-    (artifact_root / "events.jsonl").write_text(proc.stdout, encoding="utf-8")
+    (artifact_root / "stdout.log").write_text(stdout_text, encoding="utf-8")
+    (artifact_root / "stderr.log").write_text(stderr_text, encoding="utf-8")
+    (artifact_root / "events.jsonl").write_text(stdout_text, encoding="utf-8")
 
-    log_dir = parse_automation_value("LOG_DIR", proc.stderr)
+    log_dir = parse_automation_value("LOG_DIR", stderr_text)
     if log_dir:
         src_log_dir = Path(log_dir)
         if src_log_dir.exists():
@@ -112,9 +143,9 @@ def run_massgen_job(payload_b64: str) -> dict:
         (artifact_root / "final_answer.txt").write_text(final_answer, encoding="utf-8")
 
     result = {
-        "status": "ok" if proc.returncode == 0 else "error",
+        "status": "ok" if returncode == 0 else "error",
         "timed_out": False,
-        "error": None if proc.returncode == 0 else f"massgen exited with code {proc.returncode}",
+        "error": None if returncode == 0 else f"massgen exited with code {returncode}",
         "final_answer": final_answer,
         "remote_log_dir": log_dir,
         "artifacts_tar_gz_b64": make_tar_gz_b64(artifact_root),

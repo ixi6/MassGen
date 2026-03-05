@@ -32,8 +32,6 @@ class CloudJobResult:
     local_log_dir: Optional[Path]
     local_events_path: Optional[Path]
     remote_log_dir: Optional[str]
-    raw_stdout: str
-    raw_stderr: str
 
 
 class CloudJobLauncher:

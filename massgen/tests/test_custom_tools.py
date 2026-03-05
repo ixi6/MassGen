@@ -393,6 +393,7 @@ class TestResponseBackendCustomTools:
         assert result["ready"] is True
         assert result["status"] == "completed"
         assert "Weather in Tokyo" in result["result"]
+        assert result["tool_success"] is True
 
         pending = backend.get_pending_background_tool_results()
         assert any(job["job_id"] == job_id for job in pending)
@@ -651,6 +652,7 @@ class TestResponseBackendCustomTools:
         assert waited["job_id"] == start["job_id"]
         assert waited["status"] == "completed"
         assert "Weather in Tokyo" in waited["result"]
+        assert waited["tool_success"] is True
 
     @pytest.mark.asyncio
     async def test_wait_for_background_tool_consumes_shared_completion_queue(self):
@@ -794,6 +796,7 @@ class TestResponseBackendCustomTools:
         assert result["ready"] is True
         assert result["status"] == "completed"
         assert "Executed: echo hi" in result["result"]
+        assert "tool_success" not in result
 
     @pytest.mark.asyncio
     async def test_execute_mcp_function_with_retry_accepts_double_encoded_arguments(self):

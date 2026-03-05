@@ -1608,6 +1608,62 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         return None
 
     @staticmethod
+    def _looks_like_json_payload(raw_text: str) -> bool:
+        stripped = str(raw_text or "").lstrip()
+        return stripped.startswith("{") or stripped.startswith("[")
+
+    @classmethod
+    def _annotate_custom_tool_outcome_from_payload(
+        cls,
+        payload: dict[str, Any],
+        *,
+        ready: bool,
+    ) -> None:
+        """Attach tool-level outcome fields for terminal custom-tool jobs."""
+        if not ready or payload.get("tool_type") != "custom":
+            return
+
+        status = str(payload.get("status") or "")
+        if status in {"error", "cancelled"}:
+            payload["tool_success"] = False
+            payload["tool_error"] = str(payload.get("error") or "Custom tool execution failed")
+            return
+
+        if status != "completed":
+            payload["tool_success"] = None
+            return
+
+        raw_result = str(payload.get("result") or "").strip()
+        if not raw_result:
+            payload["tool_success"] = False
+            payload["tool_error"] = "No final result payload captured from custom tool execution"
+            return
+
+        parsed = cls._parse_json_or_python_dict(raw_result)
+        if parsed is not None:
+            parsed_success = parsed.get("success")
+            if isinstance(parsed_success, bool):
+                payload["tool_success"] = parsed_success
+                if not parsed_success:
+                    parsed_error = parsed.get("error")
+                    payload["tool_error"] = str(parsed_error) if parsed_error is not None else "Custom tool reported success=false"
+            else:
+                payload["tool_success"] = True
+            return
+
+        if raw_result.startswith("Error:"):
+            payload["tool_success"] = False
+            payload["tool_error"] = raw_result
+            return
+
+        if cls._looks_like_json_payload(raw_result):
+            payload["tool_success"] = None
+            payload["result_parse_error"] = "Could not parse custom tool JSON result payload"
+            return
+
+        payload["tool_success"] = True
+
+    @staticmethod
     def _format_unix_timestamp(timestamp: float | None) -> str | None:
         """Convert unix timestamp to ISO-8601 string."""
         if timestamp is None:
@@ -1817,7 +1873,10 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
                 force_foreground=True,
             )
             result_text = self._extract_text_from_mcp_response(response)
-            return (result_text, result_text.startswith("Error:"))
+            normalized_result = str(result_text or "").strip()
+            if not normalized_result or normalized_result == "Tool executed successfully":
+                return ("No final result payload captured from custom tool execution", True)
+            return (normalized_result, normalized_result.startswith("Error:"))
 
         if tool_type == "mcp":
             mcp_client = await self._get_background_mcp_client()
@@ -2101,6 +2160,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             ready = job.status in BACKGROUND_TOOL_TERMINAL_STATUSES
             payload = self._serialize_background_job(job, include_result=True)
             payload.update({"success": True, "ready": ready})
+            self._annotate_custom_tool_outcome_from_payload(payload, ready=ready)
             if not ready:
                 payload["message"] = "Background tool still running"
             return payload
@@ -2165,6 +2225,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
                         "waited_seconds": round(time.time() - wait_started_at, 3),
                     },
                 )
+                self._annotate_custom_tool_outcome_from_payload(payload, ready=True)
                 return payload
 
             interrupt_payload = await self._get_background_wait_interrupt_payload()

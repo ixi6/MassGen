@@ -346,7 +346,7 @@ class BackgroundToolManager:
         blocks = content if isinstance(content, list) else [content]
         return cls._extract_text_from_output_blocks(blocks)
 
-    async def _run_custom_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
+    async def _run_custom_tool(self, tool_name: str, arguments: dict[str, Any]) -> tuple[str, bool]:
         tool_request = {"name": tool_name, "input": arguments}
         final_result = None
         async for result in self._tool_manager.execute_tool(
@@ -356,29 +356,38 @@ class BackgroundToolManager:
             final_result = result
 
         if final_result is None:
-            return "Tool executed successfully"
+            return ("No final result payload captured from custom tool execution", True)
 
         output_blocks = getattr(final_result, "output_blocks", None)
         if isinstance(output_blocks, list):
             text = self._extract_text_from_output_blocks(output_blocks)
             if text:
-                return text
+                return (text, False)
 
         if hasattr(final_result, "model_dump"):
             dumped = final_result.model_dump()
             text = self._extract_text_from_output_blocks(dumped.get("output_blocks", []))
             if text:
-                return text
-            return json.dumps(dumped, default=str)
+                return (text, False)
+            dumped_text = json.dumps(dumped, default=str)
+            if dumped_text:
+                return (dumped_text, False)
+            return ("No final result payload captured from custom tool execution", True)
 
         if hasattr(final_result, "__dict__"):
             dumped = final_result.__dict__
             text = self._extract_text_from_output_blocks(dumped.get("output_blocks", []))
             if text:
-                return text
-            return json.dumps(dumped, default=str)
+                return (text, False)
+            dumped_text = json.dumps(dumped, default=str)
+            if dumped_text:
+                return (dumped_text, False)
+            return ("No final result payload captured from custom tool execution", True)
 
-        return str(final_result)
+        result_text = str(final_result).strip()
+        if result_text:
+            return (result_text, False)
+        return ("No final result payload captured from custom tool execution", True)
 
     async def _get_mcp_client(self):
         if self._mcp_client is not None:
@@ -424,6 +433,65 @@ class BackgroundToolManager:
         if isinstance(parsed, dict):
             return parsed
         return None
+
+    @staticmethod
+    def _looks_like_json_payload(raw_text: str) -> bool:
+        stripped = str(raw_text or "").lstrip()
+        return stripped.startswith("{") or stripped.startswith("[")
+
+    @classmethod
+    def _annotate_custom_tool_outcome(
+        cls,
+        payload: dict[str, Any],
+        job: BackgroundToolJob,
+        *,
+        ready: bool,
+    ) -> None:
+        """Attach tool-level outcome fields for terminal custom-tool jobs."""
+        if not ready or job.tool_type != "custom":
+            return
+
+        if job.status in {"error", "cancelled"}:
+            payload["tool_success"] = False
+            payload["tool_error"] = str(job.error or "Custom tool execution failed")
+            return
+
+        if job.status != "completed":
+            payload["tool_success"] = None
+            return
+
+        raw_result = str(job.result or "").strip()
+        if not raw_result:
+            payload["tool_success"] = False
+            payload["tool_error"] = "No final result payload captured from custom tool execution"
+            return
+
+        parsed = cls._parse_json_payload(raw_result)
+        if parsed is not None:
+            parsed_success = parsed.get("success")
+            if isinstance(parsed_success, bool):
+                payload["tool_success"] = parsed_success
+                if not parsed_success:
+                    parsed_error = parsed.get("error")
+                    if parsed_error is not None:
+                        payload["tool_error"] = str(parsed_error)
+                    else:
+                        payload["tool_error"] = "Custom tool reported success=false"
+            else:
+                payload["tool_success"] = True
+            return
+
+        if raw_result.startswith("Error:"):
+            payload["tool_success"] = False
+            payload["tool_error"] = raw_result
+            return
+
+        if cls._looks_like_json_payload(raw_result):
+            payload["tool_success"] = None
+            payload["result_parse_error"] = "Could not parse custom tool JSON result payload"
+            return
+
+        payload["tool_success"] = True
 
     async def _resolve_subagent_mcp_tool_name(self, tool_name: str) -> str | None:
         """Resolve list_subagents/cancel_subagent style names to concrete MCP names."""
@@ -531,9 +599,13 @@ class BackgroundToolManager:
         job.started_at = time.time()
         try:
             if job.tool_type == "custom":
-                result = await self._run_custom_tool(job.tool_name, job.arguments)
-                job.status = "completed"
-                job.result = result
+                result, is_error = await self._run_custom_tool(job.tool_name, job.arguments)
+                if is_error:
+                    job.status = "error"
+                    job.error = result
+                else:
+                    job.status = "completed"
+                    job.result = result
             elif job.tool_type == "mcp":
                 result, is_error = await self._run_mcp_tool(job.tool_name, job.arguments)
                 if is_error:
@@ -714,6 +786,7 @@ class BackgroundToolManager:
             ready = job.status in BACKGROUND_TOOL_TERMINAL_STATUSES
             payload = self._serialize_job(job, include_result=True)
             payload.update({"success": True, "ready": ready})
+            self._annotate_custom_tool_outcome(payload, job, ready=ready)
             if not ready:
                 payload["message"] = "Background tool still running"
             return payload
@@ -924,6 +997,7 @@ class BackgroundToolManager:
                         "waited_seconds": round(time.time() - started_at, 3),
                     },
                 )
+                self._annotate_custom_tool_outcome(payload, ready_job, ready=True)
                 return payload
 
             delegate_ready_job = await self._next_waitable_delegate_job()

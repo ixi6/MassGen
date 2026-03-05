@@ -433,8 +433,7 @@ class TestConfigPassthrough:
             from massgen.tool._multimodal_tools.read_media import read_media
 
             await read_media(
-                file_path=str(video_file),
-                prompt="describe",
+                inputs=[{"files": {"video_0": str(video_file)}, "prompt": "describe"}],
                 backend_type="openai",
                 model="gpt-5.2",
                 multimodal_config={"video": video_config},

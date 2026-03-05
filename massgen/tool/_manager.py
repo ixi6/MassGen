@@ -296,6 +296,63 @@ class ToolManager:
         else:
             raise ValueError(f"Tool '{tool_name}' not found.")
 
+    @staticmethod
+    def _read_media_inputs_example_from_path(file_path: Any) -> str:
+        """Return inputs-only shape hint inferred from a legacy file_path value."""
+        media_key = "image_0"
+        media_path = "image.png"
+        if isinstance(file_path, str):
+            suffix = Path(file_path).suffix.lower()
+            if suffix in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}:
+                media_key = "video_0"
+                media_path = "clip.mp4"
+            elif suffix in {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"}:
+                media_key = "audio_0"
+                media_path = "voice.mp3"
+            elif suffix:
+                media_path = f"image{suffix}"
+        return f'inputs=[{{"files":{{"{media_key}":"{media_path}"}}}}]'
+
+    @staticmethod
+    def _is_read_media_tool_name(tool_name: Any) -> bool:
+        normalized = str(tool_name or "").strip().lower()
+        return normalized in {"read_media", "custom_tool__read_media"}
+
+    @classmethod
+    def _normalize_legacy_read_media_input(
+        cls,
+        tool_name: Any,
+        tool_input: Any,
+    ) -> tuple[Any, ExecutionResult | None]:
+        """Normalize or reject deprecated read_media legacy input keys.
+
+        Enforces inputs-first semantics:
+        - If `file_path` is present with non-empty `inputs`, drop `file_path`.
+        - If only `file_path` is present, return a migration error result.
+        """
+        if not cls._is_read_media_tool_name(tool_name):
+            return tool_input, None
+        if not isinstance(tool_input, dict):
+            return tool_input, None
+        if "file_path" not in tool_input:
+            return tool_input, None
+
+        normalized_input = dict(tool_input)
+        legacy_file_path = normalized_input.pop("file_path", None)
+        if normalized_input.get("inputs"):
+            logger.info("[ToolManager] Ignoring deprecated read_media `file_path` because canonical `inputs` is present")
+            return normalized_input, None
+
+        hint = cls._read_media_inputs_example_from_path(legacy_file_path)
+        error_payload = {
+            "success": False,
+            "operation": "read_media",
+            "error": f"`file_path` is no longer supported for read_media. Use {hint}",
+        }
+        return normalized_input, ExecutionResult(
+            output_blocks=[TextContent(data=json.dumps(error_payload, indent=2))],
+        )
+
     async def execute_tool(
         self,
         tool_request: dict,
@@ -324,6 +381,16 @@ class ToolManager:
                 ],
             )
             return
+
+        normalized_input, migration_error = self._normalize_legacy_read_media_input(
+            tool_name,
+            tool_request.get("input", {}) or {},
+        )
+        if migration_error is not None:
+            yield migration_error
+            return
+        if normalized_input != (tool_request.get("input", {}) or {}):
+            tool_request = {**tool_request, "input": normalized_input}
 
         tool_entry = self.registered_tools[tool_name]
 

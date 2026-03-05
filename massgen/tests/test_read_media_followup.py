@@ -504,8 +504,7 @@ class TestReadMediaContinueFrom:
         mock_ui = AsyncMock(return_value=mock_result)
         with patch("massgen.tool._multimodal_tools.understand_image.understand_image", mock_ui):
             result = await read_media(
-                file_path=str(img),
-                prompt="What's wrong?",
+                inputs=[{"files": {"image_0": str(img)}, "prompt": "What's wrong?"}],
                 agent_cwd=str(tmp_path),
                 backend_type="openai",
                 model="gpt-5.2",

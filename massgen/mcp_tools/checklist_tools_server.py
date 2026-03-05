@@ -431,7 +431,9 @@ def evaluate_proposed_improvements(
         task_plan.append(
             {
                 "type": "verify_preserve",
-                "description": "Before submitting: verify these strengths haven't regressed",
+                "description": (
+                    "Before submitting: verify these strengths haven't regressed — " "confirm each preserved item is present in the actual output, " "and that passing criteria scores haven't dropped."
+                ),
                 "items": preserve_items,
                 "priority": "high",
             },
@@ -1058,8 +1060,14 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
             bullet_list = "; ".join(f"[{p['criterion_id']}] {p['what']} ({p['source']})" for p in item["items"])
             tasks.append(
                 {
-                    "description": f"Before submitting: verify preserved strengths haven't regressed — {bullet_list}",
-                    "verification": "All preserved elements still present and intact in your output",
+                    "description": (
+                        f"Before submitting: verify preserved strengths haven't regressed — {bullet_list}. "
+                        "Confirm each preserved item is present in the actual output (run/render/screenshot, "
+                        "not just checking the code), and that passing criteria scores haven't dropped."
+                    ),
+                    "verification": (
+                        "All preserved elements verified in actual output (run/render/screenshot as appropriate), " "not just present in source files; passing criteria scores confirmed not dropped"
+                    ),
                     "priority": "high",
                     "metadata": {
                         "type": "verify_preserve",
@@ -1182,8 +1190,8 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
         "Score each agent's answer separately per criterion, then submit all "
         "agent scores in 'scores' as a nested object: "
         '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2.1": {...}}. '
-        "Use the exact agent labels from the 'Available answers' section of your context "
-        "(e.g. agent1.1, agent2.1). "
+        "Use the exact agent labels from the <CURRENT ANSWERS> headers in your context "
+        "(labels follow the format agentX.Y — use the full label including the .Y suffix). "
         "The verdict is determined by the strongest agent's scores — the agent "
         "with the highest aggregate across all criteria. Include all agents so "
         "the evaluation is transparent and auditable. "

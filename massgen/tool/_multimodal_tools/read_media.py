@@ -40,15 +40,24 @@ def _normalize_stringified_inputs(
 
     raw = inputs.strip()
     if not raw:
-        return None, "inputs string is empty; expected a JSON array"
+        return (
+            None,
+            "inputs string is empty; expected a JSON array, " 'e.g. inputs=\'[{"files":{"image_0":"image.png"}}]\'',
+        )
 
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        return None, f"inputs must be a valid JSON array string: {exc.msg}"
+        return (
+            None,
+            f"inputs must be a valid JSON array string: {exc.msg}. " 'Example: inputs=\'[{"files":{"image_0":"image.png"}}]\'',
+        )
 
     if not isinstance(parsed, list):
-        return None, "inputs JSON string must decode to an array"
+        return (
+            None,
+            "inputs JSON string must decode to an array, " 'e.g. inputs=\'[{"files":{"image_0":"image.png"}}]\'',
+        )
 
     return parsed, None
 
@@ -83,6 +92,54 @@ def _normalize_inputs_aliases(inputs: list[dict]) -> list[dict]:
         normalized["files"] = {f"image_{i}": p for i, p in enumerate(file_paths)}
         result.append(normalized)
     return result
+
+
+def _inputs_only_example(media_type: str | None) -> str:
+    """Return a concise inputs-only call shape example for a modality."""
+    if media_type == "video":
+        return 'inputs=[{"files":{"video_0":"clip.mp4"},"prompt":"Analyze this video"}]'
+    if media_type == "audio":
+        return 'inputs=[{"files":{"audio_0":"voice.mp3"},"prompt":"Analyze this audio"}]'
+    return 'inputs=[{"files":{"image_0":"image.png"},"prompt":"Analyze this image"}]'
+
+
+def _infer_media_type_from_input_item(inp: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Best-effort infer modality + suspicious key from malformed batch item."""
+    alias_map = {
+        "screenshot_path": "image",
+        "image_path": "image",
+        "video_path": "video",
+        "audio_path": "audio",
+        "sound_path": "audio",
+        "file_path": None,
+    }
+
+    for key, media_type in alias_map.items():
+        if key not in inp:
+            continue
+        value = inp.get(key)
+        if media_type is not None:
+            return media_type, key
+        if isinstance(value, str):
+            return _detect_media_type(value), key
+        return None, key
+
+    for key, value in inp.items():
+        if isinstance(value, str):
+            media_type = _detect_media_type(value)
+            if media_type:
+                return media_type, key
+
+    return None, None
+
+
+def _build_missing_files_error(index: int, inp: dict[str, Any]) -> str:
+    """Build actionable missing-files validation error with modality hints."""
+    media_type, detected_key = _infer_media_type_from_input_item(inp)
+    hint = _inputs_only_example(media_type)
+    if detected_key:
+        return f"inputs[{index}] missing required 'files' key. " f"Detected '{detected_key}'. " f"Use {hint}"
+    return f"inputs[{index}] missing required 'files' key. Use {hint}"
 
 
 def _error_result(error: str) -> ExecutionResult:
@@ -225,7 +282,6 @@ def _validate_path_access(path: Path, allowed_paths: list[Path] | None = None) -
     "task_context",
 )
 async def read_media(
-    file_path: str | None = None,
     prompt: str | None = None,
     inputs: list[dict[str, Any]] | None = None,
     max_concurrent: int = 4,
@@ -271,8 +327,6 @@ async def read_media(
                 system_prompt_enabled: false
 
     Args:
-        file_path: Path to a single media file (relative or absolute).
-                   Use for simple single-file analysis.
         prompt: Optional prompt/question about the media content.
                 For evaluation: include critical/skeptical framing in your prompt.
         inputs: List of input specs for batch/multi-image analysis.
@@ -292,15 +346,6 @@ async def read_media(
         For batch mode, returns results array with per-input status.
 
     Examples:
-        # Analyze a screenshot
-        read_media(file_path="screenshot.png", prompt="What layout issues do you see?")
-        → Returns critique of static layout
-
-        # Analyze a video recording of an interaction or animation
-        read_media(file_path="interaction_recording.mp4",
-                   prompt="Does the animation play smoothly? Are there visual glitches?")
-        → Returns analysis of the recorded behavior
-
         # Batch with multi-image comparison (parallel processing)
         read_media(
             inputs=[
@@ -311,8 +356,8 @@ async def read_media(
         )
         → Returns batch results with each input processed in parallel
 
-        # Critical evaluation of any media type
-        read_media(file_path="game_recording.mp4",
+        # Critical evaluation of video
+        read_media(inputs=[{"files": {"video_0": "game_recording.mp4"}}],
                    prompt="Does gameplay look correct? Are controls responsive? Be critical.")
         → Returns critique-focused analysis
     """
@@ -321,11 +366,9 @@ async def read_media(
     if inputs_error:
         return _error_result(inputs_error)
 
-    # Validate file_path / inputs / continue_from
-    if file_path and inputs:
-        return _error_result("Provide either 'file_path' or 'inputs', not both")
-    if not file_path and not inputs and not continue_from:
-        return _error_result("Must provide either 'file_path', 'inputs', or 'continue_from'")
+    # Inputs-only contract (continue_from remains available for follow-up calls).
+    if not inputs and not continue_from:
+        return _error_result("Must provide either 'inputs' or 'continue_from'")
 
     # Validate continue_from early
     if continue_from:
@@ -345,9 +388,14 @@ async def read_media(
             if not isinstance(inp, dict):
                 return _error_result(f"inputs[{i}] must be a dict, got {type(inp).__name__}")
             if "files" not in inp:
-                return _error_result(f"inputs[{i}] missing required 'files' key")
+                return _error_result(_build_missing_files_error(i, inp))
             if not isinstance(inp["files"], dict) or not inp["files"]:
                 return _error_result(f"inputs[{i}]['files'] must be a non-empty dict mapping names to paths")
+
+    if max_concurrent is None:
+        max_concurrent = 4
+    elif not isinstance(max_concurrent, int) or max_concurrent <= 0:
+        return _error_result("max_concurrent must be a positive integer")
 
     try:
         # Load task_context dynamically from CONTEXT.md (it may be created during execution)
@@ -405,26 +453,37 @@ async def read_media(
             if not model:
                 model = conv_state.get("model")
 
+        # Inputs-only contract still supports single-file behavior by using
+        # a single-item inputs payload with a one-file files dict.
+        single_input_file_path: str | None = None
+        single_input_prompt: str | None = prompt
+        if inputs and len(inputs) == 1 and isinstance(inputs[0], dict):
+            files_dict = inputs[0].get("files")
+            if isinstance(files_dict, dict) and len(files_dict) == 1:
+                candidate_path = next(iter(files_dict.values()))
+                if isinstance(candidate_path, str):
+                    single_input_file_path = candidate_path
+                    single_input_prompt = inputs[0].get("prompt") or prompt
+
         # ------------------------------------------------------------------
-        # SINGLE FILE MODE (backwards compatible) + follow-up mode
+        # FOLLOW-UP MODE (continue_from without new inputs)
         # ------------------------------------------------------------------
-        if file_path or (continue_from and not inputs):
-            # For follow-ups without file_path, we still route to image
-            if file_path:
-                if Path(file_path).is_absolute():
-                    media_path = Path(file_path).resolve()
+        if single_input_file_path or (continue_from and not inputs):
+            if single_input_file_path:
+                if Path(single_input_file_path).is_absolute():
+                    media_path = Path(single_input_file_path).resolve()
                 else:
-                    media_path = (base_dir / file_path).resolve()
+                    media_path = (base_dir / single_input_file_path).resolve()
 
                 _validate_path_access(media_path, allowed_paths_list)
 
                 if not media_path.exists():
                     return _error_result(f"File does not exist: {media_path}")
 
-                media_type = _detect_media_type(file_path)
+                media_type = _detect_media_type(single_input_file_path)
                 if not media_type:
                     return _error_result(
-                        f"Unsupported file type: {media_path.suffix}. " "Supported: images (png, jpg, webp), audio (mp3, wav, m4a, ogg), video (mp4, mov, avi, mkv, webm, gif)",
+                        f"Unsupported file type: {media_path.suffix}. " "Supported: images (png, jpg, webp), audio (mp3, wav, m4a, ogg), " "video (mp4, mov, avi, mkv, webm, gif)",
                     )
             else:
                 # Follow-up without new file — use stored conversation's media type
@@ -433,7 +492,8 @@ async def read_media(
 
             logger.info(f"Using understand_{media_type} for {media_type} analysis")
 
-            default_prompt = prompt or DEFAULT_MEDIA_PROMPT_TEMPLATE.format(
+            selected_prompt = single_input_prompt if single_input_file_path else prompt
+            default_prompt = selected_prompt or DEFAULT_MEDIA_PROMPT_TEMPLATE.format(
                 media_type=media_type,
             )
 
@@ -568,7 +628,7 @@ async def read_media(
             async with semaphore:
                 try:
                     files_dict: dict[str, str] = inp["files"]
-                    input_prompt = inp.get("prompt") or prompt or "Please analyze and describe what you see."
+                    input_prompt = inp.get("prompt") or prompt
 
                     # Determine media type from first file
                     first_path = next(iter(files_dict.values()))
@@ -581,6 +641,10 @@ async def read_media(
                             "error": f"Unsupported file type for '{first_path}'",
                         }
 
+                    default_prompt = input_prompt or DEFAULT_MEDIA_PROMPT_TEMPLATE.format(
+                        media_type=media_type,
+                    )
+
                     # For now, only images support multi-file in single call
                     # Audio/video process first file only
                     if media_type == "image":
@@ -590,7 +654,7 @@ async def read_media(
 
                         image_kwargs: dict[str, Any] = {
                             "images": files_dict,
-                            "prompt": input_prompt,
+                            "prompt": default_prompt,
                             "agent_cwd": agent_cwd,
                             "allowed_paths": allowed_paths,
                             "task_context": task_context,
@@ -624,7 +688,7 @@ async def read_media(
                         result = await asyncio.wait_for(
                             understand_audio(
                                 audio_paths=audio_paths,
-                                prompt=input_prompt,
+                                prompt=default_prompt,
                                 backend_type=audio_config.get("backend") or backend_type,
                                 model=audio_config.get("model"),
                                 agent_cwd=agent_cwd,
@@ -654,7 +718,7 @@ async def read_media(
                         result = await asyncio.wait_for(
                             understand_video(
                                 video_path=first_path,
-                                prompt=input_prompt,
+                                prompt=default_prompt,
                                 backend_type=video_config.get("backend") or backend_type,
                                 model=video_config.get("model"),
                                 agent_cwd=agent_cwd,

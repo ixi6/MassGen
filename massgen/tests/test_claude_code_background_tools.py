@@ -72,6 +72,7 @@ async def test_claude_code_background_lifecycle_for_custom_tool(tmp_path):
     assert final["ready"] is True
     assert final["status"] == "completed"
     assert "weather::paris" in final["result"]
+    assert final["tool_success"] is True
 
     pending = backend.get_pending_background_tool_results()
     assert pending
@@ -126,6 +127,7 @@ async def test_claude_code_background_lifecycle_for_mcp_tool(tmp_path, monkeypat
     assert final["status"] == "completed"
     assert final["tool_type"] == "mcp"
     assert "hello" in final["result"]
+    assert "tool_success" not in final
 
 
 @pytest.mark.asyncio
@@ -317,6 +319,7 @@ async def test_claude_code_wait_for_next_background_tool(tmp_path):
     assert waited["job_id"] == started["job_id"]
     assert waited["status"] == "completed"
     assert "echo::berlin" in waited["result"]
+    assert waited["tool_success"] is True
 
 
 @pytest.mark.asyncio

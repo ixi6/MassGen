@@ -985,10 +985,10 @@ reference specific evidence from your analysis.
   # When multiple agents exist, use per-agent format (REQUIRED):
   submit_checklist(
     scores={{
-      "<agent_label>": {{
+      "agentX.Y": {{
         {score_lines}
       }},
-      "<other_agent_label>": {{
+      "agentA.B": {{
         {score_lines}
       }}
     }},
@@ -1138,17 +1138,24 @@ approaches you wouldn't have tried.
 After all tasks complete:
 1. Verify no regressions — confirm features from prior rounds still work. A working
    output with fewer features is always better than a broken output with more.
-2. Confirm you implemented the full scope of identified improvements, not just some.
+2. Compare your new answer against the existing answers for every criterion that was
+   marked failing or plateaued. For each one:
+   - Confirm the improvement is present and unambiguously better (not just different)
+   - Confirm no other dimension regressed in the process
+   Do this by running or viewing the actual output — not just reviewing the code.
+   If any criterion is not clearly improved, or anything regressed, fix it before submitting.
+   A new answer that passes the checklist but is worse overall is a failed round.
+3. Confirm you implemented the full scope of identified improvements, not just some.
    Each round is expensive — deliver everything you identified, not just the easiest item.
-3. For each verification command you run, save its output to `.massgen_scratch/verification/`
+4. For each verification command you run, save its output to `.massgen_scratch/verification/`
    as a plain text file named `output_<name>.txt` (e.g. `output_pytest.txt`). Use this format:
 
-   Command: uv run pytest massgen/tests/ -q
+   Command: uv run pytest ...
    Exit code: 0
    Output:
    15 passed in 2.3s
 
-4. Write/update `memory/short_term/verification_latest.md` with a **verification replay**
+5. Write/update `memory/short_term/verification_latest.md` with a **verification replay**
    summary for this answer. This memo must be replayable — a future agent should be able to
    re-run verification from it without guessing. Required fields:
    - **Environment**: workspace path, artifact under test, tools used (e.g. Playwright Python)
@@ -1157,9 +1164,10 @@ After all tasks complete:
    - **Outputs**: for each script — its output file path and a one-line result summary
      (e.g. `verification/output_pytest.txt — 15 passed, 0 failed`)
    - **Artifacts**: list every file produced (screenshots, logs, scripts) with paths relative to workspace
-   - **Freshness**: state whether artifacts were generated this run or reused from a prior run
+   - **Coverage**: note any known gaps or checks skipped and why
    Absolute paths are allowed; they are normalized when replay memories are auto-injected in later rounds.
-5. Call `{iterate_action}` to submit your improved answer and end this round.
+   Write this memo after your final answer is complete — it must reflect the submitted state, not an intermediate one.
+6. Call `{iterate_action}` to submit your improved answer and end this round.
 
 Your answer MUST be **obviously and substantially better** than the prior round —
 not just marginally different. A user should immediately notice the improvement.
@@ -2068,7 +2076,9 @@ class MemorySection(SystemPromptSection):
         if verification_replay_entries:
             content_parts.append("\n### Verification Replay Memories (Auto-Injected)\n")
             content_parts.append(
-                "These memories capture how prior answers were verified. Reuse the pipeline directly when still valid, " "or rerun and refresh if artifacts are stale.\n",
+                "These memories capture how the prior answer was verified — they reflect the state at submission. "
+                "Use them as your baseline and generally trust their results. Only run additional verification "
+                "if you spot an error or omission in the prior check, or need evidence for a new comparison.\n",
             )
             for entry in verification_replay_entries:
                 source = entry.get("source", "unknown")
@@ -2132,7 +2142,8 @@ class MemorySection(SystemPromptSection):
             "- **Verification replay** → `memory/short_term/verification_latest.md` "
             "(required before checklist-gated `new_answer` submissions; must include: environment context "
             "(workspace path, artifact under test, tools used), exact commands/script paths under "
-            "`.massgen_scratch/verification/`, artifact paths, and freshness status)\n\n"
+            "`.massgen_scratch/verification/`, artifact paths, and any known coverage gaps; "
+            "write after your final answer is complete so it reflects submitted state)\n\n"
             "**File Format (REQUIRED YAML Frontmatter):**\n"
             "```markdown\n"
             "---\n"
@@ -5154,7 +5165,8 @@ Before considering any interactive artifact complete, ask:
 
 ### Apply at every stage:
 1. **During development** - short loops: interact, improve, re-interact
-2. **Before answering** - full interaction test on the actual output
+2. **Before answering** - full interaction test on new or changed work; if prior-round verification
+   already covered unchanged parts through this loop, that evidence stands
 3. **During evaluation** - judge by interaction results, improve if gaps found
 
 ### Iteration examples:
@@ -5227,8 +5239,8 @@ Use follow-ups for:
 - Drilling into specifics: "Focus on just the navigation bar"
 - Verifying fixes: "Does this version address the issues you found?"
 
-You can include a new `file_path` with a follow-up, or just send a new prompt
-to ask about the same image(s).
+You can include new media in `inputs=[{"files": {...}}]` with a follow-up, or
+just send a new prompt to ask about the same image(s).
 
 A broad first analysis often flags issues in passing without going deep. Use
 follow-ups to drill into specific quality dimensions that matter for your task —

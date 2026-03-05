@@ -52,6 +52,7 @@ async def test_background_tool_manager_custom_tool_lifecycle():
     assert final["ready"] is True
     assert final["status"] == "completed"
     assert "weather::paris" in final["result"]
+    assert final["tool_success"] is True
 
 
 @pytest.mark.asyncio
@@ -141,6 +142,7 @@ async def test_background_tool_manager_mcp_tool_lifecycle(monkeypatch):
     assert final["status"] == "completed"
     assert final["tool_type"] == "mcp"
     assert "hello" in final["result"]
+    assert "tool_success" not in final
 
 
 @pytest.mark.asyncio
@@ -364,6 +366,7 @@ async def test_background_tool_manager_waits_for_next_completion():
     assert waited["job_id"] == started["job_id"]
     assert waited["status"] == "completed"
     assert "echo::oslo" in waited["result"]
+    assert waited["tool_success"] is True
 
     timed_out = await manager.wait_for_next_completion(timeout_seconds=0.02)
     assert timed_out["success"] is True
@@ -656,3 +659,90 @@ async def test_background_tool_manager_media_start_requires_context_file(tmp_pat
     assert started["success"] is False
     assert "CONTEXT.md" in started["error"]
     assert (await manager.list_jobs(include_all=True))["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_background_tool_manager_custom_result_surfaces_inner_failure_payload():
+    """Terminal custom payload should expose inner tool-level failure explicitly."""
+    tool_manager = ToolManager()
+
+    async def custom_tool__returns_failure() -> ExecutionResult:
+        return ExecutionResult(
+            output_blocks=[
+                TextContent(
+                    data=json.dumps(
+                        {
+                            "success": False,
+                            "operation": "read_media",
+                            "error": "inputs[0] missing required 'files' key",
+                        },
+                    ),
+                ),
+            ],
+        )
+
+    tool_manager.add_tool_function(func=custom_tool__returns_failure)
+    manager = BackgroundToolManager(
+        tool_manager=tool_manager,
+        execution_context={"agent_id": "agent_x"},
+    )
+
+    started = await manager.start(
+        tool_name="custom_tool__returns_failure",
+        arguments={},
+    )
+    assert started["success"] is True
+    job_id = started["job_id"]
+
+    final = None
+    for _ in range(40):
+        final = await manager.get_result(job_id)
+        if final["ready"]:
+            break
+        await asyncio.sleep(0.01)
+
+    assert final is not None
+    assert final["success"] is True
+    assert final["ready"] is True
+    assert final["status"] == "completed"
+    assert final["tool_success"] is False
+    assert "missing required 'files' key" in final["tool_error"]
+
+
+@pytest.mark.asyncio
+async def test_background_tool_manager_custom_tool_without_output_is_error():
+    """A custom tool that yields no final output should fail explicitly."""
+    tool_manager = ToolManager()
+
+    async def custom_tool__silent():
+        if False:
+            yield ExecutionResult(
+                output_blocks=[TextContent(data="never")],
+            )
+
+    tool_manager.add_tool_function(func=custom_tool__silent)
+    manager = BackgroundToolManager(
+        tool_manager=tool_manager,
+        execution_context={"agent_id": "agent_x"},
+    )
+
+    started = await manager.start(
+        tool_name="custom_tool__silent",
+        arguments={},
+    )
+    assert started["success"] is True
+    job_id = started["job_id"]
+
+    final = None
+    for _ in range(40):
+        final = await manager.get_result(job_id)
+        if final["ready"]:
+            break
+        await asyncio.sleep(0.01)
+
+    assert final is not None
+    assert final["success"] is True
+    assert final["ready"] is True
+    assert final["status"] == "error"
+    assert "no final result" in final["error"].lower()
+    assert final["tool_success"] is False

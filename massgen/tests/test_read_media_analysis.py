@@ -369,7 +369,7 @@ class TestVideoSystemPromptParity:
         ):
             asyncio.run(
                 read_media(
-                    file_path="test.mp4",
+                    inputs=[{"files": {"video_0": "test.mp4"}}],
                     agent_cwd=str(tmp_path),
                     task_context="Test context for video analysis",
                 ),
@@ -416,7 +416,7 @@ class TestVideoSystemPromptParity:
         ):
             asyncio.run(
                 read_media(
-                    file_path="test.mp4",
+                    inputs=[{"files": {"video_0": "test.mp4"}}],
                     agent_cwd=str(tmp_path),
                     task_context="Test context for video analysis",
                 ),
@@ -426,6 +426,158 @@ class TestVideoSystemPromptParity:
         call_kwargs = mock_uv.call_args
         expected_prompt = DEFAULT_MEDIA_PROMPT_TEMPLATE.format(media_type="video")
         assert call_kwargs.kwargs.get("prompt") == expected_prompt
+
+
+class TestReadMediaInputsOnlyContract:
+    """read_media should require inputs[] and provide actionable modality hints."""
+
+    def test_read_media_signature_is_inputs_only(self):
+        import inspect
+
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        sig = inspect.signature(read_media)
+        assert "inputs" in sig.parameters
+        assert "file_path" not in sig.parameters
+
+    def test_read_media_tool_schema_excludes_file_path(self):
+        from massgen.tool._manager import ToolManager
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        tool_manager = ToolManager()
+        tool_manager.add_tool_function(func=read_media)
+        schemas = tool_manager.fetch_tool_schemas()
+        schema = next(s for s in schemas if s["function"]["name"] == "custom_tool__read_media")
+        properties = schema["function"]["parameters"]["properties"]
+
+        assert "inputs" in properties
+        assert "file_path" not in properties
+
+    def test_legacy_file_path_is_rejected_with_inputs_only_migration_hint(self):
+        import asyncio
+        import json
+
+        from massgen.tool._manager import ToolManager
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        async def _run() -> str:
+            tool_manager = ToolManager()
+            tool_manager.add_tool_function(func=read_media)
+            tool_request = {
+                "name": "custom_tool__read_media",
+                "input": {"file_path": "legacy.png"},
+            }
+            chunks = []
+            async for result in tool_manager.execute_tool(tool_request):
+                chunks.append(result)
+            return chunks[0].output_blocks[0].data
+
+        output = json.loads(asyncio.run(_run()))
+
+        assert output["success"] is False
+        assert "file_path" in output["error"]
+        assert "inputs" in output["error"]
+        assert "image_0" in output["error"]
+
+    def test_file_path_is_ignored_when_canonical_inputs_present(self, tmp_path):
+        import asyncio
+        import json
+        from unittest.mock import AsyncMock, patch
+
+        from massgen.tool._manager import ToolManager
+        from massgen.tool._multimodal_tools.read_media import read_media
+        from massgen.tool._result import ExecutionResult, TextContent
+
+        img = tmp_path / "test.png"
+        img.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        (tmp_path / "CONTEXT.md").write_text("test context", encoding="utf-8")
+
+        mock_result = ExecutionResult(
+            output_blocks=[
+                TextContent(
+                    data=json.dumps(
+                        {
+                            "success": True,
+                            "operation": "understand_image",
+                            "response": "ok",
+                            "response_id": "resp_123",
+                        },
+                    ),
+                ),
+            ],
+        )
+
+        async def _run() -> str:
+            tool_manager = ToolManager()
+            tool_manager.add_tool_function(func=read_media)
+
+            tool_request = {
+                "name": "custom_tool__read_media",
+                "input": {
+                    "file_path": "legacy.png",
+                    "inputs": [{"files": {"image_0": str(img)}}],
+                    "prompt": "Analyze",
+                },
+            }
+            execution_context = {
+                "agent_cwd": str(tmp_path),
+                "backend_type": "openai",
+                "model": "gpt-5.2",
+            }
+            chunks = []
+            async for result in tool_manager.execute_tool(tool_request, execution_context):
+                chunks.append(result)
+            return chunks[0].output_blocks[0].data
+
+        with patch("massgen.tool._multimodal_tools.understand_image.understand_image", AsyncMock(return_value=mock_result)):
+            output = json.loads(asyncio.run(_run()))
+
+        assert output["success"] is True
+
+    def test_missing_files_error_has_image_specific_hint(self):
+        import asyncio
+        import json
+
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        result = asyncio.run(read_media(inputs=[{"screenshot_path": "hero.png"}]))
+        output = json.loads(result.output_blocks[0].data)
+
+        assert output["success"] is False
+        assert "missing required 'files' key" in output["error"]
+        assert "screenshot_path" in output["error"]
+        assert "image_0" in output["error"]
+        assert "inputs" in output["error"]
+
+    def test_missing_files_error_has_video_specific_hint(self):
+        import asyncio
+        import json
+
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        result = asyncio.run(read_media(inputs=[{"video_path": "demo.mp4"}]))
+        output = json.loads(result.output_blocks[0].data)
+
+        assert output["success"] is False
+        assert "missing required 'files' key" in output["error"]
+        assert "video_path" in output["error"]
+        assert "video_0" in output["error"]
+        assert "inputs" in output["error"]
+
+    def test_missing_files_error_has_audio_specific_hint(self):
+        import asyncio
+        import json
+
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        result = asyncio.run(read_media(inputs=[{"audio_path": "voice.mp3"}]))
+        output = json.loads(result.output_blocks[0].data)
+
+        assert output["success"] is False
+        assert "missing required 'files' key" in output["error"]
+        assert "audio_path" in output["error"]
+        assert "audio_0" in output["error"]
+        assert "inputs" in output["error"]
 
     def test_video_backend_functions_accept_system_prompt(self):
         """All _process_with_* video backend functions accept system_prompt."""

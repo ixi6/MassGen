@@ -65,6 +65,7 @@ from .mcp_tools.hooks import (
     HighPriorityTaskReminderHook,
     HookType,
     HumanInputHook,
+    MediaCallLedgerHook,
     MidStreamInjectionHook,
     RoundTimeoutPostHook,
     RoundTimeoutPreHook,
@@ -7095,6 +7096,9 @@ Your answer:"""
             reminder_hook = HighPriorityTaskReminderHook()
             manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
+        # Register media call ledger hook (read_media/generate_media provenance capture)
+        manager.register_global_hook(HookType.POST_TOOL_USE, MediaCallLedgerHook())
+
         # Register human input hook (shared across all agents)
         manager.register_global_hook(HookType.POST_TOOL_USE, self._human_input_hook)
 
@@ -8729,6 +8733,9 @@ Your answer:"""
             reminder_hook = HighPriorityTaskReminderHook()
             manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
+        # Register media call ledger hook (read_media/generate_media provenance capture)
+        manager.register_global_hook(HookType.POST_TOOL_USE, MediaCallLedgerHook())
+
         # Register human input hook (shared across all agents)
         self._ensure_runtime_human_input_hook_initialized()
         manager.register_global_hook(HookType.POST_TOOL_USE, self._human_input_hook)
@@ -8787,10 +8794,18 @@ Your answer:"""
 
         # Create context factory for hooks
         def context_factory() -> dict[str, Any]:
+            workspace_path = None
+            filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+            if filesystem_manager and hasattr(filesystem_manager, "get_current_workspace"):
+                try:
+                    workspace_path = str(filesystem_manager.get_current_workspace())
+                except Exception:
+                    workspace_path = None
             return {
                 "session_id": getattr(self, "session_id", ""),
                 "orchestrator_id": getattr(self, "orchestrator_id", ""),
                 "agent_id": agent_id,
+                "workspace_path": workspace_path,
             }
 
         # Convert to native format using adapter

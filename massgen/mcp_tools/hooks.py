@@ -20,6 +20,7 @@ Built-in Hooks:
 
 import asyncio
 import fnmatch
+import hashlib
 import importlib
 import json
 import threading
@@ -1104,6 +1105,361 @@ class HighPriorityTaskReminderHook(PatternHook):
         return HookResult.allow()
 
 
+class MediaCallLedgerHook(PatternHook):
+    """PostToolUse hook that records read/generate media provenance to scratch.
+
+    The hook is fail-open by design: ledger write errors are tracked in HookResult
+    but never block tool execution flow.
+    """
+
+    _LEDGER_LOCK = threading.Lock()
+
+    def __init__(self, name: str = "media_call_ledger"):
+        # Match both plain and prefixed custom tool names.
+        super().__init__(name, matcher="*read_media|*generate_media", timeout=5)
+
+    @staticmethod
+    def _normalize_tool_name(function_name: str) -> str | None:
+        normalized = str(function_name or "").strip().lower()
+        if normalized.endswith("read_media"):
+            return "read_media"
+        if normalized.endswith("generate_media"):
+            return "generate_media"
+        return None
+
+    @staticmethod
+    def _parse_input(arguments: str) -> dict[str, Any]:
+        if not arguments:
+            return {}
+        try:
+            parsed = json.loads(arguments)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @staticmethod
+    def _parse_output(tool_output: Any) -> dict[str, Any]:
+        if isinstance(tool_output, dict):
+            return tool_output
+        if not isinstance(tool_output, str):
+            return {}
+        raw = tool_output.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @staticmethod
+    def _decode_json_like(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+
+        raw = value.strip()
+        if not raw or raw[0] not in ("{", "["):
+            return value
+
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return value
+
+    @classmethod
+    def _has_nested_json_strings(cls, value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(cls._has_nested_json_strings(v) for v in value.values())
+        if isinstance(value, list):
+            return any(cls._has_nested_json_strings(v) for v in value)
+        if not isinstance(value, str):
+            return False
+        decoded = cls._decode_json_like(value)
+        return decoded is not value
+
+    @classmethod
+    def _should_store_arguments_raw(cls, arguments_raw: str, tool_input: dict[str, Any]) -> bool:
+        raw = str(arguments_raw or "").strip()
+        if not raw:
+            return False
+
+        if cls._has_nested_json_strings(tool_input):
+            return True
+
+        if tool_input != {}:
+            return False
+
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return True
+
+        return parsed != {}
+
+    @staticmethod
+    def _resolve_workspace_path(context: dict[str, Any], tool_input: dict[str, Any]) -> Path | None:
+        candidates = [
+            context.get("workspace_path"),
+            context.get("agent_cwd"),
+            tool_input.get("agent_cwd"),
+        ]
+        for candidate in candidates:
+            if not isinstance(candidate, str) or not candidate.strip():
+                continue
+            try:
+                return Path(candidate).resolve()
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    @staticmethod
+    def _resolve_path(raw_path: Any, workspace_root: Path) -> str:
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return str(raw_path)
+        path = Path(raw_path)
+        if path.is_absolute():
+            return str(path)
+        return str((workspace_root / raw_path).resolve())
+
+    @staticmethod
+    def _extract_prompt(tool_input: dict[str, Any]) -> str | list[str] | None:
+        prompt = tool_input.get("prompt")
+        if isinstance(prompt, str):
+            return prompt
+        prompts = tool_input.get("prompts")
+        if isinstance(prompts, list):
+            valid = [p for p in prompts if isinstance(p, str)]
+            if valid:
+                return valid
+        return None
+
+    @staticmethod
+    def _default_ledger_payload() -> dict[str, Any]:
+        return {
+            "version": 1,
+            "updated_at": None,
+            "entries": [],
+        }
+
+    def _load_ledger_payload(self, ledger_path: Path) -> dict[str, Any]:
+        if not ledger_path.exists():
+            return self._default_ledger_payload()
+
+        raw = ledger_path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return self._default_ledger_payload()
+
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("media ledger payload must be a JSON object")
+        entries = payload.get("entries")
+        if entries is None:
+            payload["entries"] = []
+        elif not isinstance(entries, list):
+            raise ValueError("media ledger entries must be a JSON array")
+        return payload
+
+    def _capture_context_snapshot(
+        self,
+        workspace_root: Path,
+        *,
+        require_snapshot: bool,
+    ) -> tuple[bool, str | None]:
+        snapshots_dir = workspace_root / ".massgen_scratch" / "verification" / "context_snapshots"
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        context_file = workspace_root / "CONTEXT.md"
+
+        if context_file.exists():
+            try:
+                context_content = context_file.read_text(encoding="utf-8")
+            except Exception:
+                context_content = ""
+            digest = hashlib.sha256(context_content.encode("utf-8")).hexdigest()[:12]
+            snapshot_path = snapshots_dir / f"context_{digest}.md"
+            if not snapshot_path.exists():
+                snapshot_path.write_text(context_content, encoding="utf-8")
+            rel_path = snapshot_path.relative_to(workspace_root).as_posix()
+            return (True, rel_path)
+
+        if not require_snapshot:
+            return (False, None)
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        snapshot_path = snapshots_dir / f"context_missing_{timestamp}.md"
+        if not snapshot_path.exists():
+            snapshot_path.write_text("CONTEXT.md missing at media call time.\n", encoding="utf-8")
+        rel_path = snapshot_path.relative_to(workspace_root).as_posix()
+        return (False, rel_path)
+
+    def _extract_file_mappings(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_output: dict[str, Any],
+        workspace_root: Path,
+    ) -> list[str]:
+        mappings: list[str] = []
+
+        if tool_name == "read_media":
+            inputs = self._decode_json_like(tool_input.get("inputs"))
+            if isinstance(inputs, dict):
+                inputs = [inputs]
+            if isinstance(inputs, list):
+                for idx, input_item in enumerate(inputs):
+                    if not isinstance(input_item, dict):
+                        continue
+                    files = self._decode_json_like(input_item.get("files"))
+                    if not isinstance(files, dict):
+                        continue
+                    for label, raw_path in files.items():
+                        resolved = self._resolve_path(raw_path, workspace_root)
+                        mappings.append(f"input[{idx}].{label} -> {resolved}")
+
+            continue_from = tool_input.get("continue_from")
+            if isinstance(continue_from, str) and continue_from.strip():
+                mappings.append(f"continue_from -> {continue_from.strip()}")
+            return mappings
+
+        input_images = self._decode_json_like(tool_input.get("input_images"))
+        if isinstance(input_images, str):
+            input_images = [input_images]
+        if isinstance(input_images, list):
+            for idx, raw_path in enumerate(input_images):
+                resolved = self._resolve_path(raw_path, workspace_root)
+                mappings.append(f"input_image[{idx}] -> {resolved}")
+
+        input_audio = self._decode_json_like(tool_input.get("input_audio"))
+        if input_audio:
+            mappings.append(f"input_audio -> {self._resolve_path(input_audio, workspace_root)}")
+
+        continue_from = tool_input.get("continue_from")
+        if isinstance(continue_from, str) and continue_from.strip():
+            mappings.append(f"continue_from -> {continue_from.strip()}")
+
+        if tool_output.get("batch") and isinstance(tool_output.get("results"), list):
+            for idx, result in enumerate(tool_output["results"]):
+                if not isinstance(result, dict):
+                    continue
+                output_path = result.get("file_path")
+                if isinstance(output_path, str) and output_path.strip():
+                    mappings.append(f"output[{idx}] -> {output_path}")
+        else:
+            output_path = tool_output.get("file_path")
+            if isinstance(output_path, str) and output_path.strip():
+                mappings.append(f"output -> {output_path}")
+
+        return mappings
+
+    def _append_entry(
+        self,
+        *,
+        function_name: str,
+        canonical_tool: str,
+        arguments_raw: str,
+        tool_input: dict[str, Any],
+        tool_output: dict[str, Any],
+        context: dict[str, Any],
+    ) -> None:
+        workspace_root = self._resolve_workspace_path(context, tool_input)
+        if workspace_root is None:
+            raise ValueError("workspace path unavailable for media ledger capture")
+
+        verification_dir = workspace_root / ".massgen_scratch" / "verification"
+        verification_dir.mkdir(parents=True, exist_ok=True)
+        ledger_path = verification_dir / "media_call_ledger.json"
+
+        if canonical_tool == "generate_media":
+            context_requested = bool(tool_input.get("use_context", False))
+        else:
+            context_requested = True
+
+        context_used, snapshot_rel_path = self._capture_context_snapshot(
+            workspace_root,
+            require_snapshot=context_requested or canonical_tool == "read_media",
+        )
+        mappings = self._extract_file_mappings(
+            canonical_tool,
+            tool_input,
+            tool_output,
+            workspace_root,
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        agent_id = str(context.get("agent_id") or "unknown")
+        backend = tool_output.get("backend") or tool_input.get("backend_type")
+        model = tool_output.get("model") or tool_input.get("model")
+        success_value = tool_output.get("success")
+        success = success_value if isinstance(success_value, bool) else None
+        error_value = tool_output.get("error")
+        output_error = str(error_value).strip() if error_value is not None else None
+
+        entry = {
+            "timestamp": now,
+            "tool": canonical_tool,
+            "success": success,
+            "agent_id": agent_id,
+            "tool_name": function_name,
+            "tool_arguments": tool_input,
+            "backend": backend,
+            "model": model,
+            "context_used": context_used,
+            "context_snapshot_path": snapshot_rel_path,
+            "output_error": output_error,
+            "file_mappings": mappings,
+        }
+        if self._should_store_arguments_raw(arguments_raw, tool_input):
+            entry["tool_arguments_raw"] = arguments_raw
+
+        with self._LEDGER_LOCK:
+            ledger_payload = self._load_ledger_payload(ledger_path)
+            entries = ledger_payload.get("entries")
+            if not isinstance(entries, list):
+                raise ValueError("media ledger entries must be a JSON array")
+            entries.append(entry)
+            ledger_payload["updated_at"] = now
+            if "version" not in ledger_payload:
+                ledger_payload["version"] = 1
+            ledger_path.write_text(
+                json.dumps(ledger_payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+    async def execute(
+        self,
+        function_name: str,
+        arguments: str,
+        context: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> HookResult:
+        if not self.matches(function_name):
+            return HookResult.allow()
+
+        canonical_tool = self._normalize_tool_name(function_name)
+        if canonical_tool is None:
+            return HookResult.allow()
+
+        tool_input = self._parse_input(arguments)
+        hook_context = context or {}
+        tool_output = self._parse_output(hook_context.get("tool_output"))
+
+        try:
+            self._append_entry(
+                function_name=function_name,
+                canonical_tool=canonical_tool,
+                arguments_raw=arguments,
+                tool_input=tool_input,
+                tool_output=tool_output,
+                context=hook_context,
+            )
+            return HookResult.allow()
+        except Exception as e:
+            error_msg = f"Media call ledger capture failed: {e}"
+            logger.error(f"[MediaCallLedgerHook] {error_msg}", exc_info=True)
+            result = HookResult.allow()
+            result.add_error(f"Media call ledger: {e}")
+            return result
+
+
 class RoundTimeoutState:
     """Shared state between soft and hard timeout hooks.
 
@@ -2011,6 +2367,7 @@ __all__ = [
     "BackgroundToolCompleteHook",
     "SubagentCompleteHook",
     "HighPriorityTaskReminderHook",
+    "MediaCallLedgerHook",
     "HumanInputHook",
     "RuntimeInboxPoller",
     # Per-round timeout hooks

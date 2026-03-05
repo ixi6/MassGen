@@ -1,5 +1,6 @@
 """Tests for two-tier workspace (scratch/deliverable) functionality."""
 
+import json
 import subprocess
 
 import pytest
@@ -335,6 +336,88 @@ class TestTempWorkspaceSharing:
         temp_workspace_b = temp_workspaces / "agent_b"
         assert (temp_workspace_b / "agent1" / "scratch" / "notes.txt").exists(), "Should see agent1's scratch/"
         assert (temp_workspace_b / "agent1" / "deliverable" / "answer.txt").exists(), "Should see agent1's deliverable/"
+
+    @pytest.mark.asyncio
+    async def test_temp_workspace_rewrites_media_ledger_paths(self, tmp_path):
+        """Copied media ledger paths should be normalized to temp workspace references."""
+        workspace_b = tmp_path / "workspace_b"
+        workspace_b.mkdir()
+        temp_workspaces = tmp_path / "temp_workspaces"
+        temp_workspaces.mkdir()
+        snapshot_storage = tmp_path / "snapshots"
+        snapshot_storage.mkdir()
+
+        source_snapshot = snapshot_storage / "agent_a"
+        verification_dir = source_snapshot / ".massgen_scratch" / "verification"
+        verification_dir.mkdir(parents=True)
+
+        (verification_dir / "site_initial.png").write_text("x", encoding="utf-8")
+        (verification_dir / "site_interacted.png").write_text("y", encoding="utf-8")
+
+        original_workspace = tmp_path / "workspace_source"
+        original_initial = (original_workspace / ".massgen_scratch" / "verification" / "site_initial.png").resolve()
+        original_interacted = (original_workspace / ".massgen_scratch" / "verification" / "site_interacted.png").resolve()
+
+        ledger_payload = {
+            "version": 1,
+            "updated_at": "2026-03-05T00:00:00+00:00",
+            "entries": [
+                {
+                    "timestamp": "2026-03-05T00:00:00+00:00",
+                    "tool": "read_media",
+                    "tool_arguments": {
+                        "prompt": "Evaluate images",
+                        "inputs": json.dumps(
+                            [
+                                {
+                                    "files": {
+                                        "initial": str(original_initial),
+                                        "interacted": str(original_interacted),
+                                    },
+                                },
+                            ],
+                        ),
+                    },
+                    "file_mappings": [
+                        f"input[0].initial -> {original_initial}",
+                        f"input[0].interacted -> {original_interacted}",
+                    ],
+                },
+            ],
+        }
+        (verification_dir / "media_call_ledger.json").write_text(
+            json.dumps(ledger_payload, indent=2),
+            encoding="utf-8",
+        )
+
+        manager_b = FilesystemManager(
+            cwd=str(workspace_b),
+            agent_temporary_workspace_parent=str(temp_workspaces),
+            use_two_tier_workspace=True,
+        )
+        manager_b.setup_orchestration_paths(
+            agent_id="agent_b",
+            snapshot_storage=str(snapshot_storage),
+            agent_temporary_workspace=str(temp_workspaces),
+        )
+
+        all_snapshots = {"agent_a": source_snapshot}
+        agent_mapping = {"agent_a": "agent1"}
+        await manager_b.copy_snapshots_to_temp_workspace(all_snapshots, agent_mapping)
+
+        copied_ledger_path = temp_workspaces / "agent_b" / "agent1" / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        copied_payload = json.loads(copied_ledger_path.read_text(encoding="utf-8"))
+        copied_entry = copied_payload["entries"][0]
+
+        expected_initial = (temp_workspaces / "agent_b" / "agent1" / ".massgen_scratch" / "verification" / "site_initial.png").resolve()
+        expected_interacted = (temp_workspaces / "agent_b" / "agent1" / ".massgen_scratch" / "verification" / "site_interacted.png").resolve()
+
+        rewritten_inputs = json.loads(copied_entry["tool_arguments"]["inputs"])
+        files = rewritten_inputs[0]["files"]
+        assert files["initial"] == str(expected_initial)
+        assert files["interacted"] == str(expected_interacted)
+        assert copied_entry["file_mappings"][0] == f"input[0].initial -> {expected_initial}"
+        assert copied_entry["file_mappings"][1] == f"input[0].interacted -> {expected_interacted}"
 
 
 class TestGitIsolation:

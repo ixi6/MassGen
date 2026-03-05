@@ -1164,9 +1164,18 @@ After all tasks complete:
    - **Outputs**: for each script — its output file path and a one-line result summary
      (e.g. `verification/output_pytest.txt — 15 passed, 0 failed`)
    - **Artifacts**: list every file produced (screenshots, logs, scripts) with paths relative to workspace
+   - **Freshness**: whether each key verification artifact is still current for the submitted answer
+     (fresh, stale, or unknown) and what triggered any staleness
+   - **Current Media Map**: reconciled mapping of the media call ledger to current files after any
+     moved or renamed artifacts; explicitly mark superseded entries
    - **Coverage**: note any known gaps or checks skipped and why
    Absolute paths are allowed; they are normalized when replay memories are auto-injected in later rounds.
    Write this memo after your final answer is complete — it must reflect the submitted state, not an intermediate one.
+   Before making new media calls, read `.massgen_scratch/verification/media_call_ledger.json` first.
+   Specifically, check it before making new `read_media` or `generate_media` calls.
+   This is advisory/informational provenance, not a hard block: you may still run fresh calls when
+   needed for better side-by-side comparisons. The ledger also tracks `CONTEXT.md` provenance snapshots
+   under `.massgen_scratch/verification/context_snapshots/` so you can see what context was active.
 6. Call `{iterate_action}` to submit your improved answer and end this round.
 
 Your answer MUST be **obviously and substantially better** than the prior round —
@@ -2143,6 +2152,7 @@ class MemorySection(SystemPromptSection):
             "(required before checklist-gated `new_answer` submissions; must include: environment context "
             "(workspace path, artifact under test, tools used), exact commands/script paths under "
             "`.massgen_scratch/verification/`, artifact paths, and any known coverage gaps; "
+            "freshness status for key artifacts and media mappings; "
             "write after your final answer is complete so it reflects submitted state)\n\n"
             "**File Format (REQUIRED YAML Frontmatter):**\n"
             "```markdown\n"
@@ -5133,6 +5143,7 @@ Render to images using available tools, then read_media each one. |
 
 Before concluding an answer is broken, first confirm your evidence capture is complete:
 - **Capture the full artifact** — all pages, sections, states, and outputs (not just one viewport/hero/frame slice)
+- Scroll through long pages and multi-state flows to ensure capture includes hidden or off-screen regions
 - Check for **capture artifacts**: blank/empty regions from timing/iframe/canvas/export/cropping/etc issues, clipped sections, or cut-off content
 - If the code suggests there is more to the output and it conflicts with captured evidence, treat it as a **verification issue first** and fix capture before judging the answer \
 or determining the code is the problem

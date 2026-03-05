@@ -662,6 +662,75 @@ async def test_background_tool_manager_media_start_requires_context_file(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_background_tool_manager_media_background_run_writes_ledger(tmp_path):
+    """Codex custom-tools server path should append read_media calls to media ledger."""
+    tool_manager = ToolManager()
+
+    async def custom_tool__read_media(prompt: str = "", inputs: list[dict[str, Any]] | None = None) -> ExecutionResult:
+        _ = prompt, inputs
+        return ExecutionResult(
+            output_blocks=[
+                TextContent(
+                    data=json.dumps(
+                        {
+                            "success": True,
+                            "operation": "read_media",
+                            "response": "Looks solid.",
+                        },
+                    ),
+                ),
+            ],
+        )
+
+    tool_manager.add_tool_function(func=custom_tool__read_media)
+    (tmp_path / "CONTEXT.md").write_text("# Task\nCompare screenshots", encoding="utf-8")
+
+    manager = BackgroundToolManager(
+        tool_manager=tool_manager,
+        execution_context={
+            "agent_id": "agent_x",
+            "agent_cwd": str(tmp_path),
+            "allowed_paths": [str(tmp_path)],
+        },
+    )
+
+    started = await manager.start(
+        tool_name="custom_tool__read_media",
+        arguments={
+            "prompt": "Compare the layout hierarchy",
+            "inputs": [{"files": {"hero": ".massgen_scratch/verification/hero.png"}}],
+        },
+    )
+    assert started["success"] is True
+    job_id = started["job_id"]
+
+    final = None
+    for _ in range(40):
+        final = await manager.get_result(job_id)
+        if final["ready"]:
+            break
+        await asyncio.sleep(0.01)
+
+    assert final is not None
+    assert final["success"] is True
+    assert final["status"] == "completed"
+
+    ledger_path = tmp_path / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+    assert ledger_path.exists()
+    ledger_payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+    last_entry = ledger_payload["entries"][-1]
+    assert last_entry["tool"] == "read_media"
+    assert last_entry["tool_arguments"]["inputs"][0]["files"]["hero"] == ".massgen_scratch/verification/hero.png"
+    assert "tool_arguments_raw" not in last_entry
+    assert any("input[0].hero ->" in mapping for mapping in last_entry["file_mappings"])
+    assert ".massgen_scratch/verification/context_snapshots/" in str(
+        last_entry["context_snapshot_path"],
+    )
+
+    await manager.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_background_tool_manager_custom_result_surfaces_inner_failure_payload():
     """Terminal custom payload should expose inner tool-level failure explicitly."""
     tool_manager = ToolManager()

@@ -232,6 +232,49 @@ def test_checklist_gated_decision_output_file_format():
     assert "output_" in content
 
 
+def test_checklist_gated_decision_includes_media_call_ledger_read_first_guidance():
+    """Checklist guidance should direct agents to consult the media ledger before new media calls."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+    )
+    lower = content.lower()
+    assert ".massgen_scratch/verification/media_call_ledger.json" in content
+    assert "read_media" in content
+    assert "generate_media" in content
+    assert "before making new media calls" in lower or "before issuing new" in lower
+
+
+def test_checklist_gated_decision_media_ledger_non_blocking_side_by_side():
+    """Ledger instructions should remain advisory and allow fresh side-by-side comparisons."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+    )
+    lower = content.lower()
+    assert "advisory" in lower or "informational" in lower
+    assert "side-by-side" in content or "side by side" in lower
+    assert "may still run fresh calls" in lower or "still run fresh" in lower
+
+
+def test_checklist_gated_decision_requires_media_map_finalization_reconciliation():
+    """Phase 5 should require reconciling moved artifacts and finalizing Current Media Map."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+    )
+    lower = content.lower()
+    assert "current media map" in lower
+    assert "moved or renamed" in lower or "moved/renamed" in lower
+    assert "superseded" in lower
+
+
+def test_checklist_gated_decision_mentions_context_snapshot_provenance():
+    """Ledger guidance should reference CONTEXT.md snapshot tracking for media calls."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+    )
+    assert "CONTEXT.md" in content
+    assert "context_snapshots" in content
+
+
 def test_output_first_verification_requires_capture_coverage_before_diagnosis():
     """Output-first guidance should require checking capture completeness before
     concluding an answer is broken."""

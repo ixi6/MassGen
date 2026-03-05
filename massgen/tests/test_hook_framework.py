@@ -23,6 +23,7 @@ from massgen.mcp_tools.hooks import (
     HookType,
     HumanInputHook,
     InjectionDeliveryStatus,
+    MediaCallLedgerHook,
     MidStreamInjectionHook,
     PatternHook,
     PythonCallableHook,
@@ -851,6 +852,200 @@ class TestHighPriorityTaskReminderHook:
         assert "=" * 60 in result.inject["content"]  # Border separator
         assert "memory/long_term" in result.inject["content"]  # Memory paths
         assert result.inject["strategy"] == "user_message"
+
+
+class TestMediaCallLedgerHook:
+    """Tests for PostToolUse media call ledger capture."""
+
+    @pytest.mark.asyncio
+    async def test_read_media_call_writes_ledger_and_context_snapshot(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "CONTEXT.md").write_text("# Task\nEvaluate hero screenshot", encoding="utf-8")
+        long_prompt = ("Compare visual hierarchy and spacing in detail. " * 20).strip()
+
+        hook = MediaCallLedgerHook()
+        arguments_raw = json.dumps(
+            {
+                "prompt": long_prompt,
+                "inputs": [{"files": {"hero": "artifacts/hero.png"}}],
+            },
+        )
+
+        result = await hook.execute(
+            "custom_tool__read_media",
+            arguments_raw,
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps(
+                    {
+                        "success": True,
+                        "operation": "read_media",
+                        "response": "looks good",
+                    },
+                ),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        assert ledger_path.exists()
+
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        assert isinstance(payload, dict)
+        entries = payload.get("entries")
+        assert isinstance(entries, list)
+        assert entries
+        last_entry = entries[-1]
+        assert last_entry["tool"] == "read_media"
+        assert "tool_arguments_raw" not in last_entry
+        assert last_entry["tool_arguments"]["prompt"] == long_prompt
+        assert last_entry["tool_arguments"]["inputs"][0]["files"]["hero"] == "artifacts/hero.png"
+        assert "prompt" not in last_entry
+        assert "mode" not in last_entry
+        assert "continue_from" not in last_entry
+        assert any("hero ->" in mapping for mapping in last_entry["file_mappings"])
+        assert ".massgen_scratch/verification/context_snapshots/" in str(last_entry["context_snapshot_path"])
+
+        snapshot_dir = workspace / ".massgen_scratch" / "verification" / "context_snapshots"
+        snapshots = sorted(snapshot_dir.glob("context_*.md"))
+        assert snapshots
+        assert "Evaluate hero screenshot" in snapshots[0].read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_read_media_stringified_inputs_are_preserved_and_mapped(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "CONTEXT.md").write_text("# Task\nEvaluate screenshot", encoding="utf-8")
+
+        hook = MediaCallLedgerHook()
+        stringified_inputs = '[{"files":{"home":"artifacts/home.png"}}]'
+        arguments_raw = json.dumps(
+            {
+                "prompt": "Analyze home screenshot",
+                "inputs": stringified_inputs,
+            },
+        )
+
+        result = await hook.execute(
+            "custom_tool__read_media",
+            arguments_raw,
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps({"success": True, "operation": "read_media"}),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        last_entry = payload["entries"][-1]
+        assert last_entry["tool_arguments_raw"] == arguments_raw
+        assert last_entry["tool_arguments"]["inputs"] == stringified_inputs
+        assert any("input[0].home ->" in mapping and "artifacts/home.png" in mapping for mapping in last_entry["file_mappings"])
+
+    @pytest.mark.asyncio
+    async def test_generate_media_logs_context_used_false_when_disabled(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+
+        hook = MediaCallLedgerHook()
+
+        result = await hook.execute(
+            "custom_tool__generate_media",
+            json.dumps(
+                {
+                    "prompt": "Cinematic skyline",
+                    "mode": "image",
+                    "use_context": False,
+                    "input_images": ["assets/ref.png"],
+                    "continue_from": "img_prev_123",
+                },
+            ),
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps(
+                    {
+                        "success": True,
+                        "operation": "generate_media",
+                        "file_path": str(workspace / "out.png"),
+                        "backend": "openai",
+                        "model": "gpt-image-1",
+                        "metadata": {"continuation_id": "cont_456"},
+                    },
+                ),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        last_entry = payload["entries"][-1]
+        assert last_entry["tool"] == "generate_media"
+        assert last_entry["context_used"] is False
+        assert any("out.png" in mapping for mapping in last_entry["file_mappings"])
+
+    @pytest.mark.asyncio
+    async def test_generate_media_with_context_enabled_records_snapshot(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "CONTEXT.md").write_text("# Task\nRender launch poster", encoding="utf-8")
+
+        hook = MediaCallLedgerHook()
+
+        result = await hook.execute(
+            "custom_tool__generate_media",
+            json.dumps(
+                {
+                    "prompt": "Launch poster",
+                    "mode": "image",
+                    "use_context": True,
+                },
+            ),
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps(
+                    {
+                        "success": True,
+                        "operation": "generate_media",
+                        "file_path": str(workspace / "poster.png"),
+                    },
+                ),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        last_entry = payload["entries"][-1]
+        assert last_entry["context_used"] is True
+        assert isinstance(last_entry["context_snapshot_path"], str)
+
+    @pytest.mark.asyncio
+    async def test_media_call_ledger_hook_fails_open_on_write_error(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+
+        hook = MediaCallLedgerHook()
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(hook, "_append_entry", _raise)
+
+        result = await hook.execute(
+            "custom_tool__read_media",
+            json.dumps({"prompt": "Analyze", "inputs": [{"files": {"img": "a.png"}}]}),
+            context={"workspace_path": str(workspace), "tool_output": '{"success": true}'},
+        )
+
+        assert result.allowed is True
+        assert result.has_errors()
+        assert any("Media call ledger" in err for err in result.hook_errors)
 
 
 # =============================================================================

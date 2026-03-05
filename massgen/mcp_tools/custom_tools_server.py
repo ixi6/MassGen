@@ -59,6 +59,32 @@ def _resolve_hook_middleware() -> Any:
     return MassGenHookMiddleware
 
 
+def _resolve_media_call_ledger_hook() -> Any:
+    """Return MediaCallLedgerHook in package and standalone launch modes."""
+    try:
+        from massgen.mcp_tools.hooks import MediaCallLedgerHook
+
+        return MediaCallLedgerHook
+    except ImportError:
+        pass
+
+    try:
+        from .hooks import MediaCallLedgerHook
+
+        return MediaCallLedgerHook
+    except ImportError:
+        pass
+
+    # fastmcp file-path launches can drop package context; add repo root explicitly.
+    project_root = str(Path(__file__).resolve().parents[2])
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    from massgen.mcp_tools.hooks import MediaCallLedgerHook
+
+    return MediaCallLedgerHook
+
+
 BACKGROUND_TOOL_START_NAME = "custom_tool__start_background_tool"
 BACKGROUND_TOOL_STATUS_NAME = "custom_tool__get_background_tool_status"
 BACKGROUND_TOOL_RESULT_NAME = "custom_tool__get_background_tool_result"
@@ -194,6 +220,12 @@ class BackgroundToolManager:
         self._subagent_delegate_initialized = False
         self._subagent_tool_name_cache: dict[str, str] = {}
         self._wait_interrupt_file: Path | None = Path(wait_interrupt_file) if wait_interrupt_file else None
+        self._media_call_ledger_hook = None
+        try:
+            MediaCallLedgerHook = _resolve_media_call_ledger_hook()
+            self._media_call_ledger_hook = MediaCallLedgerHook()
+        except Exception:
+            logger.debug("Media call ledger hook unavailable in custom tools server", exc_info=True)
 
     @staticmethod
     def _filter_background_mcp_servers(servers: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -356,38 +388,52 @@ class BackgroundToolManager:
             final_result = result
 
         if final_result is None:
-            return ("No final result payload captured from custom tool execution", True)
+            missing_result_error = "No final result payload captured from custom tool execution"
+            await self._record_media_call_ledger(tool_name, arguments, missing_result_error)
+            return (missing_result_error, True)
 
         output_blocks = getattr(final_result, "output_blocks", None)
         if isinstance(output_blocks, list):
             text = self._extract_text_from_output_blocks(output_blocks)
             if text:
+                await self._record_media_call_ledger(tool_name, arguments, text)
                 return (text, False)
 
         if hasattr(final_result, "model_dump"):
             dumped = final_result.model_dump()
             text = self._extract_text_from_output_blocks(dumped.get("output_blocks", []))
             if text:
+                await self._record_media_call_ledger(tool_name, arguments, text)
                 return (text, False)
             dumped_text = json.dumps(dumped, default=str)
             if dumped_text:
+                await self._record_media_call_ledger(tool_name, arguments, dumped_text)
                 return (dumped_text, False)
-            return ("No final result payload captured from custom tool execution", True)
+            missing_result_error = "No final result payload captured from custom tool execution"
+            await self._record_media_call_ledger(tool_name, arguments, missing_result_error)
+            return (missing_result_error, True)
 
         if hasattr(final_result, "__dict__"):
             dumped = final_result.__dict__
             text = self._extract_text_from_output_blocks(dumped.get("output_blocks", []))
             if text:
+                await self._record_media_call_ledger(tool_name, arguments, text)
                 return (text, False)
             dumped_text = json.dumps(dumped, default=str)
             if dumped_text:
+                await self._record_media_call_ledger(tool_name, arguments, dumped_text)
                 return (dumped_text, False)
-            return ("No final result payload captured from custom tool execution", True)
+            missing_result_error = "No final result payload captured from custom tool execution"
+            await self._record_media_call_ledger(tool_name, arguments, missing_result_error)
+            return (missing_result_error, True)
 
         result_text = str(final_result).strip()
         if result_text:
+            await self._record_media_call_ledger(tool_name, arguments, result_text)
             return (result_text, False)
-        return ("No final result payload captured from custom tool execution", True)
+        missing_result_error = "No final result payload captured from custom tool execution"
+        await self._record_media_call_ledger(tool_name, arguments, missing_result_error)
+        return (missing_result_error, True)
 
     async def _get_mcp_client(self):
         if self._mcp_client is not None:
@@ -492,6 +538,45 @@ class BackgroundToolManager:
             return
 
         payload["tool_success"] = True
+
+    async def _record_media_call_ledger(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        result_text: str,
+    ) -> None:
+        """Run media call ledger capture as a non-blocking side effect."""
+        hook = self._media_call_ledger_hook
+        if hook is None:
+            return
+
+        try:
+            arguments_str = json.dumps(arguments)
+        except (TypeError, ValueError):
+            arguments_str = "{}"
+
+        workspace_path = self._execution_context.get("agent_cwd")
+        context = {
+            "agent_id": self._execution_context.get("agent_id"),
+            "workspace_path": workspace_path,
+            "agent_cwd": workspace_path,
+            "tool_output": result_text,
+        }
+
+        try:
+            hook_result = await hook.execute(
+                tool_name,
+                arguments_str,
+                context=context,
+            )
+            if hook_result.has_errors():
+                logger.debug(
+                    "Media call ledger hook reported non-blocking errors for %s: %s",
+                    tool_name,
+                    "; ".join(hook_result.hook_errors),
+                )
+        except Exception:
+            logger.debug("Media call ledger capture failed for %s", tool_name, exc_info=True)
 
     async def _resolve_subagent_mcp_tool_name(self, tool_name: str) -> str | None:
         """Resolve list_subagents/cancel_subagent style names to concrete MCP names."""

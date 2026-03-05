@@ -2538,11 +2538,15 @@ class CustomToolAndMCPBackend(LLMBackend):
         try:
             # Execute PreToolUse hooks if hook manager is available
             if self._general_hook_manager:
+                workspace_path = None
+                if self.filesystem_manager and getattr(self.filesystem_manager, "cwd", None):
+                    workspace_path = str(self.filesystem_manager.cwd)
                 hook_context = {
                     "hook_type": "PreToolUse",
                     "session_id": getattr(self, "session_id", ""),
                     "orchestrator_id": getattr(self, "orchestrator_id", ""),
                     "agent_id": self.agent_id,
+                    "workspace_path": workspace_path,
                 }
                 pre_result = await self._general_hook_manager.execute_hooks(
                     HookType.PRE_TOOL_USE,
@@ -2913,11 +2917,15 @@ class CustomToolAndMCPBackend(LLMBackend):
             post_hook_injection = None
             post_hook_reminder = None
             if self._general_hook_manager:
+                workspace_path = None
+                if self.filesystem_manager and getattr(self.filesystem_manager, "cwd", None):
+                    workspace_path = str(self.filesystem_manager.cwd)
                 hook_context = {
                     "hook_type": "PostToolUse",
                     "session_id": getattr(self, "session_id", ""),
                     "orchestrator_id": getattr(self, "orchestrator_id", ""),
                     "agent_id": self.agent_id,
+                    "workspace_path": workspace_path,
                 }
                 post_result = await self._general_hook_manager.execute_hooks(
                     HookType.POST_TOOL_USE,

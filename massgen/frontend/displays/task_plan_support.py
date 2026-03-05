@@ -21,6 +21,7 @@ _PLANNING_TOOL_OPERATIONS = {
     "add_task": "add",
     "edit_task": "edit",
     "get_task_plan": "get",
+    "clear_task_plan": "clear",
 }
 
 # Planning tool names used for tool filtering (skip normal tool cards)
@@ -30,6 +31,7 @@ _PLANNING_TOOL_NAMES = {
     "add_task",
     "edit_task",
     "get_task_plan",
+    "clear_task_plan",
     "delete_task",
     "get_ready_tasks",
     "get_blocked_tasks",
@@ -124,6 +126,23 @@ def update_task_plan_from_tool(
 
     if not operation:
         return False
+
+    if operation == "clear":
+        if hasattr(host, "clear"):
+            host.clear()  # type: ignore[attr-defined]
+        _log("_task_plan: cleared")
+        return True
+
+    should_accept = getattr(host, "should_accept_task_plan", None)
+    if callable(should_accept):
+        try:
+            if not bool(should_accept()):
+                if hasattr(host, "clear"):
+                    host.clear()  # type: ignore[attr-defined]
+                _log("_task_plan: suppressed (no persisted plan artifact)")
+                return True
+        except Exception:
+            pass
 
     result = tool_data.result_full
     _log(f"_task_plan: tool_name={tool_name}")

@@ -7,6 +7,7 @@ the main TUI and subagent TUI share identical behavior and layout.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from textual.containers import Container
@@ -22,12 +23,14 @@ class TaskPlanHost(Container):
         *,
         agent_id: str,
         ribbon: Any | None = None,
+        has_persisted_plan: Callable[[], bool] | None = None,
         id: str | None = None,
         classes: str | None = None,
     ) -> None:
         super().__init__(id=id, classes=classes)
         self._agent_id = agent_id
         self._ribbon = ribbon
+        self._has_persisted_plan = has_persisted_plan
         self._active_task_plan_id: str | None = None
         self._active_task_plan_tasks: list[dict[str, Any]] | None = None
         self._task_plan_visible: bool = False
@@ -44,8 +47,23 @@ class TaskPlanHost(Container):
         """Return current plan id, if any."""
         return self._active_task_plan_id
 
+    def should_accept_task_plan(self) -> bool:
+        """Return whether task plan UI should be visible for this host."""
+        if self._has_persisted_plan is None:
+            return True
+        try:
+            return bool(self._has_persisted_plan())
+        except Exception:
+            # If host-level persistence check is unavailable, prefer showing
+            # task updates rather than suppressing all task UI.
+            return True
+
     def update_task_plan(self, tasks: list[dict[str, Any]], plan_id: str | None = None, operation: str = "create") -> None:
         """Update cached task plan state and ribbon counts."""
+        if not self.should_accept_task_plan():
+            self.clear()
+            return
+
         self._active_task_plan_id = plan_id
         self._active_task_plan_tasks = [t.copy() for t in tasks] if tasks else None
 
@@ -61,6 +79,10 @@ class TaskPlanHost(Container):
         show_notification: bool = True,
     ) -> None:
         """Update or create the pinned TaskPlanCard."""
+        if not self.should_accept_task_plan():
+            self.clear()
+            return
+
         existing_card = None
         try:
             existing_card = self.query_one(TaskPlanCard)

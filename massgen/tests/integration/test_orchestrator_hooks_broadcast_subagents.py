@@ -25,6 +25,21 @@ def _capture_general_hook_manager(agent):
     return captured
 
 
+def test_setup_hook_manager_registers_media_call_ledger_hook(mock_orchestrator):
+    """Standard hook-manager path should include the media call ledger post hook."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    agent = orchestrator.agents[agent_id]
+
+    captured = _capture_general_hook_manager(agent)
+    orchestrator._setup_hook_manager_for_agent(agent_id, agent, {})
+    manager = captured["manager"]
+
+    post_hooks = manager.get_hooks_for_agent(agent_id, HookType.POST_TOOL_USE)
+    hook_names = {hook.name for hook in post_hooks}
+    assert "media_call_ledger" in hook_names
+
+
 @pytest.mark.asyncio
 async def test_mid_stream_hook_clears_stale_restart_when_no_new_answers(mock_orchestrator):
     orchestrator = mock_orchestrator(num_agents=2)

@@ -14,6 +14,7 @@ The manager is backend-agnostic and works with any backend that has filesystem
 MCP tools configured.
 """
 
+import json
 import os
 import shutil
 import stat
@@ -2134,6 +2135,180 @@ class FilesystemManager:
             except Exception:
                 pass
 
+    @staticmethod
+    def _rewrite_temp_workspace_path(raw_value: str, source_snapshot_root: Path, temp_snapshot_root: Path) -> str:
+        """Rewrite an absolute workspace path to the copied temp workspace path."""
+        if not isinstance(raw_value, str):
+            return raw_value
+
+        candidate = raw_value.strip()
+        if not candidate:
+            return raw_value
+
+        source_root = str(source_snapshot_root.resolve())
+        temp_root = str(temp_snapshot_root.resolve())
+
+        if candidate.startswith(source_root):
+            suffix = candidate[len(source_root) :]
+            return f"{temp_root}{suffix}"
+
+        try:
+            source_path = Path(candidate).resolve(strict=False)
+        except Exception:
+            return raw_value
+
+        markers = (
+            "/.massgen_scratch/",
+            "/scratch/",
+            "/deliverable/",
+            "/memory/",
+        )
+        normalized = str(source_path).replace("\\", "/")
+        for marker in markers:
+            marker_index = normalized.find(marker)
+            if marker_index < 0:
+                continue
+            rel_suffix = normalized[marker_index + 1 :]  # drop leading slash
+            source_candidate = source_snapshot_root / rel_suffix
+            if source_candidate.exists():
+                return str((temp_snapshot_root / rel_suffix).resolve())
+
+        try:
+            rel = source_path.relative_to(source_snapshot_root.resolve())
+            return str((temp_snapshot_root / rel).resolve())
+        except Exception:
+            return raw_value
+
+    @classmethod
+    def _rewrite_media_ledger_value(cls, value: Any, source_snapshot_root: Path, temp_snapshot_root: Path) -> Any:
+        """Recursively rewrite absolute paths in media ledger values."""
+        if isinstance(value, dict):
+            return {
+                key: cls._rewrite_media_ledger_value(
+                    nested,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                for key, nested in value.items()
+            }
+
+        if isinstance(value, list):
+            return [
+                cls._rewrite_media_ledger_value(
+                    nested,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                for nested in value
+            ]
+
+        if not isinstance(value, str):
+            return value
+
+        raw = value.strip()
+        if raw and raw[0] in ("{", "["):
+            try:
+                parsed = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if parsed is not None:
+                rewritten = cls._rewrite_media_ledger_value(
+                    parsed,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                return json.dumps(rewritten, ensure_ascii=False, separators=(",", ":"))
+
+        return cls._rewrite_temp_workspace_path(
+            value,
+            source_snapshot_root,
+            temp_snapshot_root,
+        )
+
+    def _normalize_media_call_ledger_paths(
+        self,
+        source_snapshot_root: Path,
+        temp_snapshot_root: Path,
+    ) -> None:
+        """Rewrite copied media ledger paths so they are valid in temp workspace."""
+        ledger_path = temp_snapshot_root / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        if not ledger_path.exists():
+            return
+
+        try:
+            payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.debug(f"[FilesystemManager] Failed to parse media ledger for rewrite: {ledger_path} ({e})")
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        entries = payload.get("entries")
+        if not isinstance(entries, list):
+            return
+
+        changed = False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+
+            tool_arguments = entry.get("tool_arguments")
+            if tool_arguments is not None:
+                rewritten_args = self._rewrite_media_ledger_value(
+                    tool_arguments,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                if rewritten_args != tool_arguments:
+                    entry["tool_arguments"] = rewritten_args
+                    changed = True
+
+            mappings = entry.get("file_mappings")
+            if not isinstance(mappings, list):
+                continue
+
+            rewritten_mappings: list[Any] = []
+            mapping_changed = False
+            for item in mappings:
+                if not isinstance(item, str):
+                    rewritten_mappings.append(item)
+                    continue
+
+                if "->" in item:
+                    left, _, right = item.partition("->")
+                    rewritten_right = self._rewrite_temp_workspace_path(
+                        right.strip(),
+                        source_snapshot_root,
+                        temp_snapshot_root,
+                    )
+                    rewritten_item = f"{left.strip()} -> {rewritten_right}"
+                else:
+                    rewritten_item = self._rewrite_temp_workspace_path(
+                        item,
+                        source_snapshot_root,
+                        temp_snapshot_root,
+                    )
+
+                rewritten_mappings.append(rewritten_item)
+                if rewritten_item != item:
+                    mapping_changed = True
+
+            if mapping_changed:
+                entry["file_mappings"] = rewritten_mappings
+                changed = True
+
+        if not changed:
+            return
+
+        try:
+            ledger_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.debug(f"[FilesystemManager] Failed to persist normalized media ledger: {ledger_path} ({e})")
+
     async def copy_snapshots_to_temp_workspace(self, all_snapshots: dict[str, Path], agent_mapping: dict[str, str]) -> Path | None:
         """
         Copy snapshots from multiple agents to temporary workspace for context sharing.
@@ -2175,6 +2350,10 @@ class FilesystemManager:
                         dirs_exist_ok=True,
                         symlinks=True,
                         ignore_dangling_symlinks=True,
+                    )
+                    self._normalize_media_call_ledger_paths(
+                        source_snapshot_root=snapshot_path,
+                        temp_snapshot_root=dest_dir,
                     )
 
         return self.agent_temporary_workspace

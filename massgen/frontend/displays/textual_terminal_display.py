@@ -12206,6 +12206,7 @@ Type your question and press Enter to ask the agents.
             self._task_plan_host = TaskPlanHost(
                 agent_id=self.agent_id,
                 ribbon=None,
+                has_persisted_plan=self._has_persisted_task_plan,
                 id=f"task_plan_host_{self._dom_safe_id}",
                 classes="pinned-task-plan hidden",
             )
@@ -12229,6 +12230,38 @@ Type your question and press Enter to ask the agents.
             # Final presentation tracking
             # When True, content flows through the normal pipeline but is tagged as final presentation
             self._is_final_presentation_round: bool = False
+
+        def _has_persisted_task_plan(self) -> bool:
+            """Return whether this agent's current workspace has a persisted plan/spec artifact."""
+            try:
+                orchestrator = getattr(self.coordination_display, "orchestrator", None)
+                agents = getattr(orchestrator, "agents", None)
+                if not isinstance(agents, dict):
+                    return True
+
+                agent = agents.get(self.agent_id)
+                if agent is None:
+                    return True
+
+                filesystem_manager = getattr(agent, "filesystem_manager", None)
+                get_workspace = getattr(filesystem_manager, "get_current_workspace", None)
+                if not callable(get_workspace):
+                    return True
+
+                workspace = get_workspace()
+                if not workspace:
+                    return True
+
+                workspace_path = Path(str(workspace))
+                candidates = (
+                    workspace_path / "tasks" / "plan.json",
+                    workspace_path / "tasks" / "spec.json",
+                    workspace_path / "plan.json",
+                    workspace_path / "spec.json",
+                )
+                return any(path.exists() for path in candidates)
+            except Exception:
+                return True
 
         def reset_round_state(self) -> None:
             """Reset round tracking state for a new turn."""

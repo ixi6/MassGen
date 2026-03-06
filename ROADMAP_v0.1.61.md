@@ -1,10 +1,10 @@
-# MassGen v0.1.60 Roadmap
+# MassGen v0.1.61 Roadmap
 
-**Target Release:** March 6, 2026
+**Target Release:** March 9, 2026
 
 ## Overview
 
-Version 0.1.60 focuses on improving skill use and exploration — local execution, hierarchical registry, and consolidation workflows.
+Version 0.1.61 focuses on improving skill use and exploration — local execution, hierarchical registry, and consolidation workflows. This was originally planned for v0.1.60 but rolled forward as v0.1.60 delivered verification & decomposition improvements instead.
 
 ---
 
@@ -31,6 +31,6 @@ Version 0.1.60 focuses on improving skill use and exploration — local executio
 
 ## Related Tracks
 
-- **v0.1.59**: Quality Round Improvements — planning improvements, checklist/eval enhancements, subagent improvements, media fixes ([#969](https://github.com/massgen/MassGen/pull/969))
-- **v0.1.61**: Image/Video Edit Capabilities ([#959](https://github.com/massgen/MassGen/issues/959))
-- **v0.1.62**: OpenAI Audio API ([#960](https://github.com/massgen/MassGen/issues/960))
+- **v0.1.60**: Verification & Decomposition Improvements — decomp mode cooperates with checklist, GPT-5.4, read_media rewrite, media call ledger ([#978](https://github.com/massgen/MassGen/pull/978))
+- **v0.1.62**: Image/Video Edit Capabilities ([#959](https://github.com/massgen/MassGen/issues/959))
+- **v0.1.63**: OpenAI Audio API ([#960](https://github.com/massgen/MassGen/issues/960))

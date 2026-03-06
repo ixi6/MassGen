@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.59
+**Current Version:** v0.1.60
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** March 4, 2026
+**Last Updated:** March 7, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,11 +42,24 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.60** | 03/06/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
-| **v0.1.61** | 03/09/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
-| **v0.1.62** | 03/11/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
+| **v0.1.61** | 03/09/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
+| **v0.1.62** | 03/11/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
+| **v0.1.63** | 03/13/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
 
 *All releases ship on MWF @ 9am PT when ready*
+
+---
+
+## ✅ v0.1.60 - Verification & Decomposition Improvements (Completed)
+
+**Released:** March 6, 2026 | PR: [#978](https://github.com/massgen/MassGen/pull/978)
+
+### Features
+- **Decomp Mode Cooperates with Checklist**: Decomposition mode now cooperates with checklist workflow for unified quality-gated subtask iteration
+- **GPT-5.4 Support**: New OpenAI flagship model added to the model registry
+- **Multimodal Tool Improvements**: Rewritten read_media with clearer schema, media call ledger tracking
+- **Checklist & Prompt Fixes**: Proposal injection improvements, system prompt refocused on entire output
+- **Infrastructure**: Codex prompt caching for pricing accuracy, hook framework for tool interception, skill prefix handling fixes
 
 ---
 
@@ -63,7 +76,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.60 - Skill Use & Exploration
+## 📋 v0.1.61 - Skill Use & Exploration
 
 ### Features
 
@@ -82,7 +95,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.61 - Image/Video Edit Capabilities
+## 📋 v0.1.62 - Image/Video Edit Capabilities
 
 ### Features
 
@@ -98,7 +111,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.62 - OpenAI Audio API
+## 📋 v0.1.63 - OpenAI Audio API
 
 ### Features
 
@@ -905,5 +918,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** March 4, 2026
+**Last Updated:** March 7, 2026
 **Maintained By:** MassGen Team

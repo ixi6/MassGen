@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.60 (March 6, 2026)** - Verification & Decomposition Improvements
+Decomp mode cooperates with checklist workflow for unified quality gating. GPT-5.4 support, rewritten read_media with clearer schema, media call ledger tracking. Checklist and prompt injection fixes, Codex prompt caching for pricing accuracy, hook framework for tool interception.
+
 **v0.1.59 (March 4, 2026)** - Quality Round Improvements
 Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and media generation fixes.
 
@@ -19,6 +22,30 @@ Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image gen
 File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Claude Code reasoning parameters for updated SDK. Smarter convergence with substantiveness tracking and diagnostic report gating.
 
 ---
+
+## [0.1.60] - 2026-03-06
+
+### Added
+- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New OpenAI flagship model added to the model registry
+- **Hook Framework** ([#978](https://github.com/massgen/MassGen/pull/978)): Internal hook framework for tool call interception (ledger tracking for media calls)
+- **Media Call Ledger** ([#978](https://github.com/massgen/MassGen/pull/978)): Ledger tracking for read/generate media tool calls
+
+### Changed
+- **Decomp Mode Cooperates with Checklist** ([#978](https://github.com/massgen/MassGen/pull/978)): Decomposition mode now cooperates with the checklist workflow for unified quality-gated subtask iteration
+- **read_media Rewrite** ([#978](https://github.com/massgen/MassGen/pull/978)): Rewritten with clearer schema, better error handling, and improved naming
+- **System Prompt Focus** ([#978](https://github.com/massgen/MassGen/pull/978)): Refocused system prompt on evaluating entire output quality
+- **Verification Prompts** ([#978](https://github.com/massgen/MassGen/pull/978)): Improved verification_latest prompts for faster verification rounds
+
+### Fixed
+- **Checklist & Proposal Injections** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed proposal injection improvements for more reliable checklist behavior
+- **Task Plan Refresh** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed task plan refresh during quality rounds
+- **Codex Prompt Caching** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed prompt caching pricing accuracy for Codex backend
+- **Skill Prefix Handling** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed skill prefix handling edge cases
+
+### Technical Details
+- **Major Focus**: Verification & decomposition improvements — unified quality gating, multimodal tools, model support
+- **PRs Merged**: [#978](https://github.com/massgen/MassGen/pull/978) (improve_verification_time)
+- **Contributors**: @ncrispino (6 commits), @HenryQi (1 commit)
 
 ## [0.1.59] - 2026-03-04
 

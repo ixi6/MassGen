@@ -242,7 +242,8 @@ class TokenCostCalculator:
     # Default pricing data for various providers and models
     PROVIDER_PRICING: dict[str, dict[str, ModelPricing]] = {
         "OpenAI": {
-            # GPT-5 models (400K context window)
+            # GPT-5 models
+            "gpt-5.4": ModelPricing(0.0025, 0.015, 1050000, 128000),
             "gpt-5.2": ModelPricing(0.00175, 0.014, 400000, 128000),
             "gpt-5": ModelPricing(0.00125, 0.01, 400000, 128000),
             "gpt-5-mini": ModelPricing(0.00025, 0.002, 400000, 128000),

@@ -153,12 +153,10 @@ _CHECKLIST_ITEMS_CHANGEDOC = [
     ("The output directly achieves what was asked for — requirements are met," " not just approximated. Missing or partially implemented requirements" " count as failures."),
     ("No broken functionality, errors, or obvious defects. Everything that's" " present works correctly. A working output with fewer features beats a" " broken one with more."),
     (
-        "Changedoc is honest, complete, and traceable. Every significant"
-        " decision is documented with genuine rationale. Implementation"
-        " references point to code that actually exists. No fabricated claims."
-        " Gaps from all sources — this answer's own changedoc, other agents'"
-        " answers, and other agents' changedocs — are addressed or explicitly"
-        " justified. Critical gaps that persist unaddressed are a failure."
+        "The output is complete enough to be genuinely useful — no major"
+        " missing pieces, placeholder-only sections, or obvious"
+        " unaddressed chunks remain. Further polish or expansion alone"
+        " is not a failure."
     ),
     ("The output shows care beyond correctness — thoughtful choices," " consistent style, attention to edge cases, or creative elements that" " distinguish it from adequate work."),
 ]
@@ -167,7 +165,7 @@ _CHECKLIST_ITEMS_CHANGEDOC = [
 _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC = {
     "E1": "must",
     "E2": "must",
-    "E3": "must",
+    "E3": "should",
     "E4": "could",
 }
 
@@ -260,8 +258,8 @@ def _build_changedoc_failure_bullets(
     """Build changedoc-specific failure-pattern bullets.
 
     When custom items are provided, uses dynamic labels. Otherwise uses the
-    default changedoc labels (goal alignment, correctness, changedoc quality,
-    alignment, remaining criteria).
+    default changedoc labels (goal alignment, correctness, output completeness,
+    supporting changedoc audit, remaining criteria).
     """
     if custom_checklist_items:
         return _build_criteria_failure_bullets(custom_checklist_items, item_verify_by)
@@ -271,10 +269,11 @@ def _build_changedoc_failure_bullets(
         "- **E2 (correctness)**: Regression failures — does the deliverable actually work\n"
         "  end-to-end? Are features from earlier rounds still functioning? A working output\n"
         "  with fewer features beats a broken output with more.\n"
-        "- **E3 (changedoc quality)**: Which decisions have thin rationale? Which alternatives\n"
-        "  are strawmen? Which Implementation fields are vague, incorrect, or fabricated?\n"
-        "- **E3 (alignment)**: Where did the code drift from documented decisions? What was\n"
-        "  built but never decided? What was decided but poorly implemented?\n"
+        "- **E3 (output completeness)**: Where is the output still obviously partial,\n"
+        "  placeholder-heavy, or missing important chunks a demanding user would expect?\n"
+        "- **Changedoc / alignment (supporting evidence)**: Which decisions have thin rationale?\n"
+        "  Which Implementation fields are vague, incorrect, or fabricated? Where did the\n"
+        "  code drift from documented decisions, or where were important choices never recorded?\n"
         "- **E4+ (remaining criteria)**: Quality gaps against each remaining criterion?"
     )
 
@@ -771,6 +770,9 @@ def _build_checklist_gated_decision(
     gap_report_mode: str = "changedoc",
     builder_enabled: bool = True,
     improvements_cfg: dict | None = None,
+    score_current_work_only: bool = False,
+    round_evaluator_before_checklist: bool = False,
+    orchestrator_managed_round_evaluator: bool = False,
 ) -> str:
     """Build checklist_gated decision section (tool-gated, hidden threshold).
 
@@ -793,22 +795,45 @@ def _build_checklist_gated_decision(
         _example_entries.append(f'{key}: {{"score": <0-10>, "reasoning": "{hint}"}}')
     score_lines = ",\n      ".join(_example_entries)
     # Diagnostic report is always required as a separate artifact
-    _diagnostic_report_section = (
-        "### Diagnostic Report (REQUIRED)\n\n"
-        "Before submitting scores, write a markdown diagnostic report in your workspace\n"
-        "(e.g., `tasks/diagnostic_report.md`). This is separate from your changedoc.\n\n"
-        "The report MUST cover, anchored to the E-criteria above:\n\n"
-        "1. **Failure Patterns** — map each failure to the E-criterion it violates\n"
-        '   (e.g., "E1: missing mobile nav = requirement unmet")\n'
-        "2. **Root Causes** — underlying issues and which E-criteria they drag down\n"
-        "3. **Goal Alignment** — per-criterion assessment of how far the output is\n"
-        "   from genuinely fulfilling each E-criterion\n\n"
-        "Optional but valuable: Success Patterns, Cross-Answer Synthesis.\n\n"
-        "Start with output quality from the user's perspective — experience the output\n"
-        "the way a user would before evaluating it.\n\n"
-        "Pass the file path via `report_path` when calling `submit_checklist`.\n"
-        "Submission will be rejected if no diagnostic report is provided.\n"
-    )
+    if round_evaluator_before_checklist:
+        _diagnostic_report_section = (
+            "### Diagnostic Report (REQUIRED)\n\n"
+            "In round-evaluator mode, the delegated round-evaluator report is your\n"
+            "diagnostic basis. Before submitting scores, save or copy that round-evaluator report "
+            "into your workspace (e.g., `tasks/diagnostic_report.md`). This is\n"
+            "still separate from your changedoc.\n\n"
+            "Do not run a separate self-evaluation pass or author a second diagnostic\n"
+            "report from scratch. If needed, lightly normalize the delegated report so it\n"
+            "is a clean markdown artifact for `report_path`, but preserve its findings.\n\n"
+            "The saved report MUST stay anchored to the E-criteria above:\n\n"
+            "1. **Failure Patterns** — map each failure to the E-criterion it violates\n"
+            '   (e.g., "E1: missing mobile nav = requirement unmet")\n'
+            "2. **Root Causes** — underlying issues and which E-criteria they drag down\n"
+            "3. **Goal Alignment** — per-criterion assessment of how far the output is\n"
+            "   from genuinely fulfilling each E-criterion\n\n"
+            "Optional but valuable: Success Patterns, Cross-Answer Synthesis.\n\n"
+            "Only gather additional evidence when the packet's `evidence_gaps` identify a\n"
+            "specific missing fact required for grounded checklist submission.\n\n"
+            "Pass the saved report path via `report_path` when calling `submit_checklist`.\n"
+            "Submission will be rejected if no diagnostic report is provided.\n"
+        )
+    else:
+        _diagnostic_report_section = (
+            "### Diagnostic Report (REQUIRED)\n\n"
+            "Before submitting scores, write a markdown diagnostic report in your workspace\n"
+            "(e.g., `tasks/diagnostic_report.md`). This is separate from your changedoc.\n\n"
+            "The report MUST cover, anchored to the E-criteria above:\n\n"
+            "1. **Failure Patterns** — map each failure to the E-criterion it violates\n"
+            '   (e.g., "E1: missing mobile nav = requirement unmet")\n'
+            "2. **Root Causes** — underlying issues and which E-criteria they drag down\n"
+            "3. **Goal Alignment** — per-criterion assessment of how far the output is\n"
+            "   from genuinely fulfilling each E-criterion\n\n"
+            "Optional but valuable: Success Patterns, Cross-Answer Synthesis.\n\n"
+            "Start with output quality from the user's perspective — experience the output\n"
+            "the way a user would before evaluating it.\n\n"
+            "Pass the file path via `report_path` when calling `submit_checklist`.\n"
+            "Submission will be rejected if no diagnostic report is provided.\n"
+        )
     if gap_report_mode == "changedoc":
         report_requirement = _diagnostic_report_section
     elif gap_report_mode == "separate":
@@ -839,12 +864,11 @@ def _build_checklist_gated_decision(
             "\n"
             "Look at your task plan. Identify all `[builder]` tasks with no "
             "dependencies on\n"
-            "each other. Spawn them all in a **single** `spawn_subagents` call "
-            "— they run\n"
+            "each other. Launch them all in a **single parallel batch** — they run\n"
             "simultaneously:\n"
             "\n"
             "- `tasks`: one entry per deliverable (not one entry for all of them)\n"
-            "- `background=True, refine=False`\n"
+            "- run them in background, single-pass mode\n"
             "- Parent workspace is auto-mounted read-only. The shared peer snapshot "
             "directory\n"
             "  (temp_workspaces) is also auto-mounted read-only so subagents can "
@@ -911,77 +935,56 @@ def _build_checklist_gated_decision(
             "before starting the next."
         )
 
-    return f"""---
+    if score_current_work_only:
+        _decision_intro = (
+            f"- `{iterate_action}`: improve your current work against the criteria. "
+            "Use useful ideas from other agents for adjacent integration, but score "
+            "your own current work rather than ranking peers.\n"
+            f"- `{terminate_action}`: stop only when your current work already clears "
+            "the checklist bar and no further iteration is worthwhile. Do not rank "
+            "peers as alternative final answers."
+        )
+        _submit_scores_intro = "Call `submit_checklist` with per-item reasoning and a report path."
+        _submit_scores_example = f"""
+  submit_checklist(
+    scores={{
+      {score_lines}
+    }},
+    report_path="<path to your markdown gap report>",
+  )"""
+        _phase2_scoring = "Score your current work against the criteria using the evidence from Phase 1. " "Submit flat per-criterion scores format."
+        _phase1_scope = """Inspect your current deliverable as a user would before scoring.
 
-## Decision
+- Review peer outputs only where they affect your owned subtask: interfaces,
+  contracts, shared assets, visual consistency, or integration boundaries.
+- Gather concrete evidence first (screenshots, renders, tests, manual checks)
+  for your current work and any peer dependency that affects it.
+- Use evaluators when helpful, but keep the evaluation centered on your current
+  work and how well it fits with the latest peer context.
+- Do NOT treat peers as competing final answers to rank.
 
-Now decide: call `{iterate_action}` or `{terminate_action}`.
+If no specialized subagents are available: do all evidence gathering and
+qualitative analysis inline.
 
-- `{iterate_action}`: build a new answer, drawing the strongest elements from
-  each existing answer. Identify what each answer does well before you start —
-  do not anchor to any single answer as your base.
-- `{terminate_action}`: select the answer with the strongest overall scores and stop.
-
-### Substantiveness Test
-
-Classify each planned change as:
-- **TRANSFORMATIVE**: Fundamentally different approach, architecture, or creative direction.
-  Examples: switching from client-side to server-side rendering, replacing a REST API with
-  GraphQL, rewriting a synchronous pipeline as event-driven, choosing a completely different
-  data model or storage engine.
-- **STRUCTURAL**: Meaningful redesign of a component, new capability, or significant quality
-  lift. The bar is outcome-based, not degree of change — a rewrite that achieves significantly
-  better quality (stronger prose, more compelling argument, clearer explanation, more immersive
-  experience) counts as structural even when keeping the same theme, approach, or structure.
-  *Quick test: would a demanding user say "much better"? → structural. "Nice touch, barely
-  noticed"? → incremental.*
-  Examples: adding real-time collaboration to a single-user editor, introducing a caching
-  layer that changes perceived performance, redesigning navigation to support a new workflow,
-  adding offline support, building a new visualization that reveals patterns previously hidden,
-  a rewrite that is dramatically more vivid, persuasive, or correct than the prior version.
-- **INCREMENTAL**: Minor polish, formatting, or small additions that do not change the user's
-  experience in a meaningful way.
-  Examples: CSS tweaks and animation refinements, adding aria labels or alt text to existing
-  elements, reformatting code or reordering sections, adding source notes or attribution,
-  adding individual keyboard shortcuts, reduced-motion support, async decoding, adding test
-  tooling or developer-facing infrastructure, adding/strengthening/reorganizing changedoc
-  decisions without corresponding changes to the actual deliverable.
-
-If no planned changes are TRANSFORMATIVE or STRUCTURAL, seriously consider whether
-further iteration will produce meaningful improvement — or just accumulate incremental
-changes. Voting may be the better choice.
-
-### Confidence Assessment
-
-Your goal is **excellence**, not minimum viability. The question is not "does this
-satisfy the bare requirements?" but "is this the best version we can produce?"
-Depth, features, polish, and richness all count — they are never "beyond scope" or
-"unnecessary." If the answer can be meaningfully better, it should be.
-
-Rate your confidence (0-10) in each of the following statements.
-0 = completely disagree, 10 = fully agree, no reservations.
-Calibrate your scores against these anchors:
-- **9-10**: A professional would publish this as-is. No meaningful improvement possible.
-- **7-8**: Good with real gaps. You can name specific things a demanding user would improve.
-- **5-6**: Adequate but uninspired. Does what was asked but not well. Most first drafts belong here.
-- **3-4**: Significant problems. Approach may be sound but execution has clear failures.
-- **1-2**: Fundamentally wrong direction or non-functional.
-
-Calibration rule: your score for each criterion MUST be consistent with the
-weaknesses in your diagnostic analysis. If your analysis identified significant
-gaps but your scores are 8+, your scores are inflated — lower them to match.
-
-{numbered}
-
-{report_requirement}
-
-### Submit Your Scores
-
-Call `submit_checklist` with per-item reasoning and a report path.
-
-Each score entry MUST include `"reasoning"` explaining why you gave that score —
-reference specific evidence from your analysis.
-
+**CHECKPOINT**: Before moving to Phase 2, confirm your evaluator has returned
+results. Use `list_subagents()` to check — it shows `elapsed_seconds` and
+`seconds_remaining` for each running subagent. Evaluator evidence (screenshots,
+test results, accessibility findings) directly affects your scores. Do NOT
+score without this evidence."""
+        _proposal_review = f"""When verdict is `{iterate_action}`, review your current work plus the
+relevant strengths in peer outputs before proposing:
+- What should your next revision preserve?
+- Which peer elements improve your owned subtask or unblock integration?
+Use this to fill in the `sources` and `preserve` fields accurately."""
+    else:
+        _decision_intro = (
+            f"- `{iterate_action}`: build a new answer, drawing the strongest elements from\n"
+            "  each existing answer. Identify what each answer does well before you start —\n"
+            "  do not anchor to any single answer as your base.\n"
+            f"- `{terminate_action}`: select the answer with the strongest overall scores and stop."
+        )
+        _submit_scores_intro = "Call `submit_checklist` with per-item reasoning and a report path."
+        _submit_scores_example = f"""
   # When multiple agents exist, use per-agent format (REQUIRED):
   submit_checklist(
     scores={{
@@ -993,16 +996,9 @@ reference specific evidence from your analysis.
       }}
     }},
     report_path="<path to your markdown gap report>",
-  )
-
-The tool will evaluate your scores and return a verdict telling you whether
-to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
-
-**Round lifecycle — full sequence:**
-
-**Phase 1 — Gather evidence. Do this BEFORE calling `submit_checklist`.**
-
-Spawn **one evaluator** that sees **all candidate answers together**.
+  )"""
+        _phase2_scoring = "Score EACH agent per dimension using the evidence from Phase 1. Submit with\n" "per-agent scores format."
+        _phase1_scope = """Spawn **one evaluator** that sees **all candidate answers together**.
 Run it in blocking mode (`background=False, refine=False`) because its evidence
 is required before scoring:
 
@@ -1045,12 +1041,171 @@ qualitative analysis inline.
 results. Use `list_subagents()` to check — it shows `elapsed_seconds` and
 `seconds_remaining` for each running subagent. Evaluator evidence (screenshots,
 test results, accessibility findings) directly affects your scores. Do NOT
-score without this evidence.
+score without this evidence."""
+        _proposal_review = f"""When verdict is `{iterate_action}`, review each existing answer before proposing:
+- What does each existing answer do well for each criterion?
+- Which answer has the strongest element for each failing criterion?
+Use this to fill in the `sources` and `preserve` fields accurately."""
+
+        if round_evaluator_before_checklist and orchestrator_managed_round_evaluator:
+            _phase1_scope = """Before round 2 and later checklist-gated rounds, the **orchestrator**
+runs one blocking `round_evaluator` for you. Do not spawn another round_evaluator yourself.
+
+That orchestrator-managed evaluator sees all candidate answers together, the
+evaluation criteria verbatim, relevant evidence/artifact paths, and the
+available peer/temp-workspace paths so it can inspect snapshots directly.
+
+The round evaluator is a **very critical** critic/spec writer. Its packet will
+include:
+- `criteria_interpretation` — what each criterion really demands at a high bar
+- `criterion_findings` — evidence-backed weaknesses and hidden risks per criterion
+- `cross_answer_synthesis` — what to combine across answers and what no answer solves yet
+- `preserve` — the exact strengths that must survive into the next revision
+- `improvement_spec` — a detailed builder-style execution brief
+- `verification_plan` — concrete post-implementation checks
+- `evidence_gaps` — what uncertainty still remains
+
+Use that critique packet as evidence when you assign scores and call
+`submit_checklist`. Save or copy that round-evaluator report into your workspace
+and use it as the diagnostic report you pass via `report_path`.
+Do not run a separate self-evaluation pass, fresh interactive verification
+sweep, or second report-writing cycle unless the packet's `evidence_gaps`
+identify a concrete missing fact that blocks grounded checklist submission.
+The round evaluator is not a workflow proxy and does not decide your parent
+workflow for you.
+
+If iteration is required, translate the critique into your own
+`propose_improvements` call and use `improvement_spec` as the richer build brief
+while implementing.
+
+If no specialized subagents are available: do all evidence gathering and
+qualitative analysis inline, but keep the same parent-owned checklist flow.
+
+**CHECKPOINT**: Before moving to Phase 2, confirm the orchestrator-provided
+round evaluator packet is present and use it in your reasoning. Round-evaluator
+evidence and packet fields directly affect your scores. Do NOT score without
+this evidence."""
+        elif round_evaluator_before_checklist:
+            _phase1_scope = """Before round 2 and later checklist-gated rounds, run one
+blocking `round_evaluator` subagent yourself and wait for its packet before
+scoring or calling `submit_checklist`.
+
+Give that `round_evaluator` the full evaluation criteria verbatim, all current
+candidate answers together, and the available peer/temp-workspace paths so it
+can inspect snapshots directly.
+
+The round evaluator is a **very critical** critic/spec writer. Its packet will
+include:
+- `criteria_interpretation` — what each criterion really demands at a high bar
+- `criterion_findings` — evidence-backed weaknesses and hidden risks per criterion
+- `cross_answer_synthesis` — what to combine across answers and what no answer solves yet
+- `preserve` — the exact strengths that must survive into the next revision
+- `improvement_spec` — a detailed builder-style execution brief
+- `verification_plan` — concrete post-implementation checks
+- `evidence_gaps` — what uncertainty still remains
+
+Use that critique packet as evidence when you assign scores and call
+`submit_checklist`. Save or copy that round-evaluator report into your workspace
+and use it as the diagnostic report you pass via `report_path`.
+Do not run a separate self-evaluation pass, fresh interactive verification
+sweep, or second report-writing cycle unless the packet's `evidence_gaps`
+identify a concrete missing fact that blocks grounded checklist submission.
+The round evaluator is not a workflow proxy and does not decide your parent
+workflow for you.
+
+If iteration is required, translate the critique into your own
+`propose_improvements` call and use `improvement_spec` as the richer build brief
+while implementing.
+
+If no specialized subagents are available: do all evidence gathering and
+qualitative analysis inline, but keep the same parent-owned checklist flow.
+
+**CHECKPOINT**: Before moving to Phase 2, confirm the round-evaluator packet is
+present and use it in your reasoning. Round-evaluator evidence and packet
+fields directly affect your scores. Do NOT score without this evidence."""
+
+    return f"""---
+
+## Decision
+
+Now decide: call `{iterate_action}` or `{terminate_action}`.
+
+{_decision_intro}
+
+### Substantiveness Test
+
+Classify each planned change as:
+- **TRANSFORMATIVE**: Fundamentally different approach, architecture, or creative direction.
+  Examples: switching from client-side to server-side rendering, replacing a REST API with
+  GraphQL, rewriting a synchronous pipeline as event-driven, choosing a completely different
+  data model or storage engine.
+- **STRUCTURAL**: Meaningful redesign of a component, new capability, or significant quality
+  lift. The bar is outcome-based, not degree of change — a rewrite that achieves significantly
+  better quality (stronger prose, more compelling argument, clearer explanation, more immersive
+  experience) counts as structural even when keeping the same theme, approach, or structure.
+  *Quick test: would a demanding user say "much better"? → structural. "Nice touch, barely
+  noticed"? → incremental.*
+  Examples: adding real-time collaboration to a single-user editor, introducing a caching
+  layer that changes perceived performance, redesigning navigation to support a new workflow,
+  adding offline support, building a new visualization that reveals patterns previously hidden,
+  a rewrite that is dramatically more vivid, persuasive, or correct than the prior version.
+- **INCREMENTAL**: Minor polish, formatting, or small additions that do not change the user's
+  experience in a meaningful way.
+  Examples: CSS tweaks and animation refinements, adding aria labels or alt text to existing
+  elements, reformatting code or reordering sections, adding source notes or attribution,
+  adding individual keyboard shortcuts, reduced-motion support, async decoding, adding test
+  tooling or developer-facing infrastructure, adding/strengthening/reorganizing changedoc
+  decisions without corresponding changes to the actual deliverable.
+
+If no planned changes are TRANSFORMATIVE or STRUCTURAL, seriously consider whether
+further iteration will produce meaningful improvement — or just accumulate incremental
+changes. {"Stopping may be the better choice." if score_current_work_only else "Voting may be the better choice."}
+
+### Confidence Assessment
+
+Your goal is **excellence**, not minimum viability. The question is not "does this
+satisfy the bare requirements?" but "is this the best version we can produce?"
+Depth, features, polish, and richness all count — they are never "beyond scope" or
+"unnecessary." If the answer can be meaningfully better, it should be.
+
+Rate your confidence (0-10) in each of the following statements.
+0 = completely disagree, 10 = fully agree, no reservations.
+Calibrate your scores against these anchors:
+- **9-10**: A professional would publish this as-is. No meaningful improvement possible.
+- **7-8**: Good with real gaps. You can name specific things a demanding user would improve.
+- **5-6**: Adequate but uninspired. Does what was asked but not well. Most first drafts belong here.
+- **3-4**: Significant problems. Approach may be sound but execution has clear failures.
+- **1-2**: Fundamentally wrong direction or non-functional.
+
+Calibration rule: your score for each criterion MUST be consistent with the
+weaknesses in your diagnostic analysis. If your analysis identified significant
+gaps but your scores are 8+, your scores are inflated — lower them to match.
+
+{numbered}
+
+{report_requirement}
+
+### Submit Your Scores
+
+{_submit_scores_intro}
+
+Each score entry MUST include `"reasoning"` explaining why you gave that score —
+reference specific evidence from your analysis.
+
+{_submit_scores_example}
+
+The tool will evaluate your scores and return a verdict telling you whether
+to call `{terminate_action}` or `{iterate_action}`. Follow the verdict.
+
+**Round lifecycle — full sequence:**
+
+**Phase 1 — Gather evidence. Do this BEFORE calling `submit_checklist`.**
+
+{_phase1_scope}
 
 **Phase 2 — Score and submit `submit_checklist`.**
 
-Score EACH agent per dimension using the evidence from Phase 1. Submit with
-per-agent scores format.
+{_phase2_scoring}
 
 `submit_checklist` returns a verdict:
 - **`{iterate_action}`** — improvements needed; call `propose_improvements` next
@@ -1058,10 +1213,7 @@ per-agent scores format.
 
 Follow the verdict. Do not call `submit_checklist` again after receiving it.
 
-When verdict is `{iterate_action}`, review each existing answer before proposing:
-- What does each existing answer do well for each criterion?
-- Which answer has the strongest element for each failing criterion?
-Use this to fill in the `sources` and `preserve` fields accurately.
+{_proposal_review}
 
 Output quality takes precedence over documentation quality:
 - Do NOT treat missing/weak changedoc alone as proof an answer is worse.
@@ -3241,6 +3393,8 @@ class EvaluationSection(SystemPromptSection):
         has_existing_answers: bool = True,
         builder_enabled: bool = True,
         improvements_cfg: dict | None = None,
+        round_evaluator_before_checklist: bool = False,
+        orchestrator_managed_round_evaluator: bool = False,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -3263,6 +3417,8 @@ class EvaluationSection(SystemPromptSection):
         self.has_existing_answers = has_existing_answers
         self.builder_enabled = builder_enabled
         self.improvements_cfg = improvements_cfg
+        self.round_evaluator_before_checklist = round_evaluator_before_checklist
+        self.orchestrator_managed_round_evaluator = orchestrator_managed_round_evaluator
 
     def build_content(self) -> str:
         # Vote-only mode: agent has exhausted their answer limit
@@ -3414,6 +3570,8 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                     gap_report_mode=self.gap_report_mode,
                     builder_enabled=self.builder_enabled,
                     improvements_cfg=self.improvements_cfg,
+                    round_evaluator_before_checklist=self.round_evaluator_before_checklist,
+                    orchestrator_managed_round_evaluator=self.orchestrator_managed_round_evaluator,
                 )
                 evaluation_section = f"""{analysis}
 
@@ -3649,6 +3807,7 @@ Both are terminal actions that end your round.
                     gap_report_mode=self.gap_report_mode,
                     builder_enabled=getattr(self, "builder_enabled", True),
                     improvements_cfg=self.improvements_cfg,
+                    score_current_work_only=True,
                 )
                 return f"""**CHOOSING THE RIGHT TOOL — `new_answer` vs `stop`:**
 Both are terminal actions that end your round.
@@ -4278,6 +4437,8 @@ class SubagentSection(SystemPromptSection):
         max_concurrent: int = 3,
         specialized_subagents=None,
         default_timeout: int = 300,
+        round_evaluator_before_checklist: bool = False,
+        orchestrator_managed_round_evaluator: bool = False,
     ):
         super().__init__(
             title="Subagent Delegation",
@@ -4288,6 +4449,8 @@ class SubagentSection(SystemPromptSection):
         self.max_concurrent = max_concurrent
         self.specialized_subagents = specialized_subagents or []
         self.default_timeout = default_timeout
+        self.round_evaluator_before_checklist = round_evaluator_before_checklist
+        self.orchestrator_managed_round_evaluator = orchestrator_managed_round_evaluator
 
     def _build_attached_subagents_section(self) -> str:
         """Build the ATTACHED SUBAGENTS section listing discovered types."""
@@ -4297,7 +4460,7 @@ class SubagentSection(SystemPromptSection):
         # Most types run background=True (fire-and-forget while main agent keeps working).
         # evaluator is blocking (background=False) so the main agent waits for evidence
         # before scoring — scores without evidence are meaningless.
-        background_by_type: dict[str, bool] = {"evaluator": False}
+        background_by_type: dict[str, bool] = {"evaluator": False, "round_evaluator": False}
 
         lines = [
             "",
@@ -4311,9 +4474,14 @@ class SubagentSection(SystemPromptSection):
             background_default = background_by_type.get(t.name.lower(), True)
             background_str = "True" if background_default else "False"
             lines.append(f"**{t.name}** — {t.description}")
-            lines.append(
-                f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}"}}], background={background_str}, refine=False)`',
-            )
+            if t.name.lower() == "round_evaluator" and self.round_evaluator_before_checklist and self.orchestrator_managed_round_evaluator:
+                lines.append(
+                    "Reserved for orchestrator-managed launches before round 2+ " "checklist decisions. Use the returned critique packet; do not " "spawn this type manually in that mode.",
+                )
+            else:
+                lines.append(
+                    f'`spawn_subagents(tasks=[{{"task": "...", "subagent_type": "{t.name}"}}], background={background_str}, refine=False)`',
+                )
             if getattr(t, "expected_input", None):
                 lines.append("Expected input for this type:")
                 for item in t.expected_input:
@@ -4325,6 +4493,30 @@ class SubagentSection(SystemPromptSection):
                     "Your workspace is mounted read-only by default. Use `include_parent_workspace: false` "
                     "only for tasks with no workspace file dependencies.",
                 )
+            if t.name.lower() == "round_evaluator":
+                if self.round_evaluator_before_checklist and self.orchestrator_managed_round_evaluator:
+                    lines.append(
+                        "In this run, the orchestrator launches `round_evaluator` "
+                        "automatically before round 2+ checklist reasoning. You "
+                        "still read and use its packet, but you do not launch it "
+                        "yourself.",
+                    )
+                elif self.round_evaluator_before_checklist:
+                    lines.append(
+                        "In this run, use `round_evaluator` manually before round 2+ "
+                        "checklist reasoning. Launch it in blocking mode, wait for "
+                        "its critique packet, then use that report as the "
+                        "diagnostic basis for your parent-owned checklist "
+                        "submission.",
+                    )
+                else:
+                    lines.append(
+                        "Use this for round-2+ critique passes where you need one very critical "
+                        "cross-answer packet back before submitting your own checklist decision. Give it "
+                        "the criteria verbatim plus all available peer/temp-workspace paths. It "
+                        "returns a detailed improvement spec; the parent still owns all workflow "
+                        "tools and terminal decisions.",
+                    )
             if t.name.lower() == "builder":
                 lines.append(
                     "**FOR `BUILDER` TASKS — one task per deliverable, run independent ones in parallel:**\n\n"
@@ -4368,6 +4560,7 @@ class SubagentSection(SystemPromptSection):
         specialized_guidance = ""
         if specialized_names:
             evaluator_guidance = ""
+            round_evaluator_guidance = ""
             novelty_quality_guidance = ""
             if "evaluator" in specialized_names:
                 evaluator_guidance = """
@@ -4381,6 +4574,17 @@ no other way to know what each criterion means. Without this, it guesses.
 - What evidence to capture per criterion (screenshots, logs, timings, artifact paths)
 - Output format: detailed observations keyed to each criterion ID — NOT pass/fail verdicts \
 or scores (those are the main agent's job)
+"""
+            if "round_evaluator" in specialized_names:
+                round_evaluator_guidance = """
+**FOR `ROUND_EVALUATOR` TASKS, EXPLICITLY INCLUDE:**
+- **Evaluation criteria verbatim** — paste the full E1..EN criterion text (and `verify_by` \
+guidance when present) into the task.
+- **All candidate answers together** — name every answer or answer label the critique must compare.
+- **All available peer/temp-workspace paths** — include the shared temp-workspace root and any \
+artifact paths the evaluator should inspect directly.
+- **Constraint**: ask for critique + `improvement_spec` only. Do NOT ask for checklist payloads, \
+numeric scores, or terminal recommendations.
 """
             if "novelty" in specialized_names or "quality_rethinking" in specialized_names:
                 novelty_quality_guidance = """
@@ -4406,6 +4610,7 @@ Read the "Expected input for this type" bullets in ATTACHED SUBAGENTS and adapt 
 If that checklist is present, treat it as required inputs for your task brief.
 
 {evaluator_guidance}
+{round_evaluator_guidance}
 {novelty_quality_guidance}
 """
         return f"""{attached}

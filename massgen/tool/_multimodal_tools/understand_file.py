@@ -1,5 +1,5 @@
 """
-Understand and analyze file contents using OpenAI's gpt-5.2 API.
+Understand and analyze file contents using OpenAI's gpt-5.4 API.
 Supports text files, PDF, DOCX, XLSX, and more.
 """
 
@@ -194,24 +194,24 @@ def _extract_text_from_pptx(file_path: Path) -> tuple[str, str]:
 async def understand_file(
     file_path: str,
     prompt: str = "Please analyze this file and provide a comprehensive understanding of its content, purpose, and structure.",
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     max_chars: int = 50000,
     allowed_paths: list[str] | None = None,
     agent_cwd: str | None = None,
     task_context: str | None = None,
 ) -> ExecutionResult:
     """
-    Understand and analyze file contents using OpenAI's gpt-5.2 API.
+    Understand and analyze file contents using OpenAI's gpt-5.4 API.
 
     This tool reads a file (text or document format) and processes its content through
-    OpenAI's gpt-5.2 API to provide insights, summaries, explanations, or answer questions.
+    OpenAI's gpt-5.4 API to provide insights, summaries, explanations, or answer questions.
 
     Args:
         file_path: Path to the file to analyze
                   - Relative path: Resolved relative to workspace
                   - Absolute path: Must be within allowed directories
         prompt: Question or instruction about the file (default: asks for comprehensive analysis)
-        model: Model to use (default: "gpt-5.2")
+        model: Model to use (default: "gpt-5.4")
         max_chars: Maximum number of characters to read/extract (default: 50000)
                   - Prevents processing extremely large files
                   - Applies to both text files and extracted content from documents

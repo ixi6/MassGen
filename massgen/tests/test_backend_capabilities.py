@@ -36,6 +36,18 @@ class TestBackendCapabilitiesRegistry:
         for backend_type, caps in BACKEND_CAPABILITIES.items():
             assert caps.default_model in caps.models, f"{backend_type}: default_model '{caps.default_model}' not in models list"
 
+    def test_openai_default_model_is_gpt54(self):
+        """OpenAI should advertise GPT-5.4 as the default model."""
+        caps = BACKEND_CAPABILITIES["openai"]
+        assert caps.default_model == "gpt-5.4"
+        assert caps.models[0] == "gpt-5.4"
+
+    def test_codex_default_model_is_gpt54(self):
+        """Codex should advertise GPT-5.4 as the default model."""
+        caps = BACKEND_CAPABILITIES["codex"]
+        assert caps.default_model == "gpt-5.4"
+        assert caps.models[0] == "gpt-5.4"
+
     def test_filesystem_support_values(self):
         """Ensure filesystem_support has valid values."""
         valid_values = {"none", "native", "mcp"}
@@ -103,6 +115,40 @@ class TestCapabilityQueries:
     def test_has_capability_nonexistent_backend(self):
         """Test checking capability on non-existent backend."""
         assert has_capability("nonexistent", "web_search") is False
+
+    @pytest.mark.parametrize(
+        ("backend_type", "expected_backend_type"),
+        [
+            ("OpenAI", "openai"),
+            ("Claude", "claude"),
+            ("Grok", "grok"),
+            ("Azure OpenAI", "azure_openai"),
+            ("ChatCompletion", "chatcompletion"),
+            ("Together AI", "together"),
+            ("Fireworks AI", "fireworks"),
+            ("OpenRouter", "openrouter"),
+            ("Kimi", "moonshot"),
+            ("Nvidia NIM", "nvidia_nim"),
+        ],
+    )
+    def test_get_capabilities_normalizes_known_display_names(self, backend_type, expected_backend_type):
+        """Display-name provider labels should resolve to canonical backend ids."""
+        caps = get_capabilities(backend_type)
+        assert caps is not None
+        assert caps.backend_type == expected_backend_type
+
+    @pytest.mark.parametrize(
+        ("backend_type", "capability"),
+        [
+            ("OpenAI", "image_understanding"),
+            ("Claude", "image_understanding"),
+            ("Grok", "image_understanding"),
+            ("Azure OpenAI", "image_understanding"),
+        ],
+    )
+    def test_has_capability_accepts_display_names(self, backend_type, capability):
+        """Display-name provider labels should work in capability checks."""
+        assert has_capability(backend_type, capability) is True
 
     def test_get_all_backend_types(self):
         """Test getting all backend types."""

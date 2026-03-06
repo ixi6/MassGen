@@ -112,6 +112,7 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         builtin_tools=["web_search", "code_interpreter"],
         filesystem_support="mcp",
         models=[
+            "gpt-5.4",
             "gpt-5.2",
             "gpt-5.1-codex-max",
             "gpt-5.1-codex",
@@ -128,14 +129,15 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
             "gpt-4o-mini",
             "o4-mini",
         ],
-        default_model="gpt-5.2",
+        default_model="gpt-5.4",
         env_var="OPENAI_API_KEY",
         notes=(
-            "GPT-5.2 is the recommended default. Codex models (gpt-5.1-codex, gpt-5-codex) are optimized "
+            "GPT-5.4 is the recommended default. Codex models (gpt-5.1-codex, gpt-5-codex) are optimized "
             "for shorter system messages and may not work well with MassGen's coordination prompts. "
             "Reasoning support in GPT-5 and o-series models. Audio/video generation (v0.0.30+)."
         ),
         model_release_dates={
+            "gpt-5.4": "2026-03",
             "gpt-5.2": "2025-12",
             "gpt-5.1-codex-max": "2025-12",
             "gpt-5.1-codex": "2025-12",
@@ -274,13 +276,14 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         ],
         filesystem_support="native",
         models=[
+            "gpt-5.4",
             "gpt-5.3-codex",
             "gpt-5.2-codex",
             "gpt-5.1-codex",
             "gpt-5-codex",
             "gpt-4.1",
         ],
-        default_model="gpt-5.3-codex",
+        default_model="gpt-5.4",
         env_var="OPENAI_API_KEY",
         notes=(
             "OpenAI Codex CLI with OAuth support. Run `codex login` and complete the browser "
@@ -291,6 +294,7 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
             "NOT reads. For security-sensitive workloads, prefer Docker mode for full isolation."
         ),
         model_release_dates={
+            "gpt-5.4": "2026-03",
             "gpt-5.3-codex": "2026-02",
             "gpt-5.2-codex": "2025-12",
             "gpt-5.1-codex": "2025-12",
@@ -665,7 +669,57 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
 }
 
 
-def get_capabilities(backend_type: str) -> BackendCapabilities | None:
+_DISPLAY_NAME_TO_BACKEND_TYPE: dict[str, str] = {
+    "openai": "openai",
+    "azure openai": "azure_openai",
+    "claude": "claude",
+    "claude code": "claude_code",
+    "claude_code": "claude_code",
+    "gemini": "gemini",
+    "grok": "grok",
+    "chatcompletion": "chatcompletion",
+    "chat completion": "chatcompletion",
+    "openrouter": "openrouter",
+    "cerebras ai": "cerebras",
+    "together ai": "together",
+    "fireworks ai": "fireworks",
+    "groq": "groq",
+    "zai": "zai",
+    "nebius ai studio": "nebius",
+    "kimi": "moonshot",
+    "nvidia nim": "nvidia_nim",
+    "poe": "poe",
+    "qwen": "qwen",
+    "vllm": "vllm",
+    "sglang": "sglang",
+    "copilot": "copilot",
+}
+
+
+def normalize_backend_type(backend_type: str | None) -> str | None:
+    """Normalize backend identifiers for capability lookup."""
+    if backend_type is None:
+        return None
+
+    normalized = str(backend_type).strip()
+    if not normalized:
+        return None
+
+    normalized_lower = normalized.lower()
+    if normalized_lower in BACKEND_CAPABILITIES:
+        return normalized_lower
+
+    if normalized_lower in _DISPLAY_NAME_TO_BACKEND_TYPE:
+        return _DISPLAY_NAME_TO_BACKEND_TYPE[normalized_lower]
+
+    underscored = normalized_lower.replace(" ", "_").replace("-", "_")
+    if underscored in BACKEND_CAPABILITIES:
+        return underscored
+
+    return normalized_lower
+
+
+def get_capabilities(backend_type: str | None) -> BackendCapabilities | None:
     """Get capabilities for a backend type.
 
     Args:
@@ -674,10 +728,11 @@ def get_capabilities(backend_type: str) -> BackendCapabilities | None:
     Returns:
         BackendCapabilities object if found, None otherwise
     """
-    return BACKEND_CAPABILITIES.get(backend_type)
+    normalized_backend_type = normalize_backend_type(backend_type)
+    return BACKEND_CAPABILITIES.get(normalized_backend_type) if normalized_backend_type else None
 
 
-def has_capability(backend_type: str, capability: str) -> bool:
+def has_capability(backend_type: str | None, capability: str) -> bool:
     """Check if backend supports a capability.
 
     Args:

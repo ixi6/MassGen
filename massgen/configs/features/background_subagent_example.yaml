@@ -11,7 +11,7 @@ agents:
     # model: gemini-3-flash-preview
     # type: codex
     # # model: gpt-5.3-codex-spark
-    # model: gpt-5.3-codex
+    # model: gpt-5.4
     # reasoning:
     #   effort: xhigh
     #   # effort: medium
@@ -67,7 +67,7 @@ orchestrator:
       - backend:
           # type: codex
           # # model: gpt-5.3-codex-spark
-          # model: gpt-5.3-codex
+          # model: gpt-5.4
           # reasoning:
           #   effort: medium
           # type: grok

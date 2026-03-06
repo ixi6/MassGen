@@ -175,7 +175,7 @@ This is the recommended tool for all media generation. It automatically selects 
 **Supported Backends:**
 | Mode | Backends | Default Models |
 |------|----------|----------------|
-| image | google, openai, grok, openrouter | Nano Banana 2 (`gemini-3.1-flash-image-preview`), GPT-5.2, `grok-imagine-image`, Nano Banana 2 (via OR) |
+| image | google, openai, grok, openrouter | Nano Banana 2 (`gemini-3.1-flash-image-preview`), GPT-5.4, `grok-imagine-image`, Nano Banana 2 (via OR) |
 | video | grok, google, openai | `grok-imagine-video`, Veo 3.1, Sora-2 |
 | audio (speech) | elevenlabs, openai | eleven_multilingual_v2, gpt-4o-mini-tts |
 | audio (music) | elevenlabs | elevenlabs-music |
@@ -437,7 +437,7 @@ agents:
 **Available Backends:**
 | Mode  | Backends                              | Default Models |
 |-------|--------------------------------------|----------------|
-| image | google, openai, grok, openrouter     | gemini-3.1-flash-image-preview (Nano Banana 2), gpt-5.2, grok-imagine-image, google/gemini-3.1-flash-image-preview |
+| image | google, openai, grok, openrouter     | gemini-3.1-flash-image-preview (Nano Banana 2), gpt-5.4, grok-imagine-image, google/gemini-3.1-flash-image-preview |
 | video | grok, google, openai                 | grok-imagine-video, veo-3.1-generate-preview, sora-2 |
 | audio (speech) | elevenlabs, openai             | eleven_multilingual_v2, gpt-4o-mini-tts |
 | audio (music) | elevenlabs                      | elevenlabs-music |

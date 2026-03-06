@@ -98,6 +98,120 @@ def test_codex_custom_tools_mcp_env_sets_claude_config_dir_for_docker_mount(tmp_
     assert env["CLAUDE_CONFIG_DIR"] == "/home/massgen/.claude"
 
 
+class TestCodexMcpEnvFileMultiLocation:
+    """Env file resolution should search multiple locations like DockerManager."""
+
+    @pytest.fixture()
+    def _fake_home(self, tmp_path, monkeypatch):
+        """Set up a fake home with ~/.massgen/.env containing a home key."""
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        massgen_dir = fake_home / ".massgen"
+        massgen_dir.mkdir()
+        (massgen_dir / ".env").write_text("OPENAI_API_KEY=sk-from-home\n")
+        monkeypatch.setattr(
+            "massgen.backend.codex.Path.home",
+            staticmethod(lambda: fake_home),
+        )
+        return fake_home
+
+    def test_finds_home_env_when_local_missing(self, tmp_path, monkeypatch, _fake_home):
+        """When CWD has no .env, fall back to ~/.massgen/.env."""
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+
+        backend = CodexBackend(
+            cwd=str(workspace),
+            command_line_docker_credentials={
+                "env_file": ".env",
+                "env_vars_from_file": ["OPENAI_API_KEY"],
+            },
+        )
+
+        env = backend._build_custom_tools_mcp_env()
+        assert env.get("OPENAI_API_KEY") == "sk-from-home"
+
+    def test_provided_path_overrides_home(self, tmp_path, monkeypatch, _fake_home):
+        """An absolute env_file path should take priority over ~/.massgen/.env."""
+        project_root = tmp_path / "project"
+        project_root.mkdir()
+        (project_root / ".env").write_text("OPENAI_API_KEY=sk-from-project\n")
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+
+        backend = CodexBackend(
+            cwd=str(workspace),
+            command_line_docker_credentials={
+                "env_file": str(project_root / ".env"),
+                "env_vars_from_file": ["OPENAI_API_KEY"],
+            },
+        )
+
+        env = backend._build_custom_tools_mcp_env()
+        assert env.get("OPENAI_API_KEY") == "sk-from-project"
+
+    def test_no_env_file_anywhere_logs_warning(self, tmp_path, monkeypatch, caplog):
+        """Should warn when no .env found in any candidate location."""
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        (fake_home / ".massgen").mkdir()
+        # No .env anywhere under fake_home
+        monkeypatch.setattr(
+            "massgen.backend.codex.Path.home",
+            staticmethod(lambda: fake_home),
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+
+        backend = CodexBackend(
+            cwd=str(workspace),
+            command_line_docker_credentials={
+                "env_file": ".env",
+                "env_vars_from_file": ["OPENAI_API_KEY"],
+            },
+        )
+
+        env = backend._build_custom_tools_mcp_env()
+
+        assert "OPENAI_API_KEY" not in env
+
+    def test_strips_surrounding_quotes_from_env_values(self, tmp_path, monkeypatch):
+        """Quoted values in .env should have quotes stripped (like DockerManager)."""
+        fake_home = tmp_path / "fake_home"
+        fake_home.mkdir()
+        massgen_dir = fake_home / ".massgen"
+        massgen_dir.mkdir()
+        (massgen_dir / ".env").write_text(
+            'OPENAI_API_KEY="sk-proj-quoted"\n' "GEMINI_API_KEY='AIza-single-quoted'\n" "XAI_API_KEY=no-quotes\n",
+        )
+        monkeypatch.setattr(
+            "massgen.backend.codex.Path.home",
+            staticmethod(lambda: fake_home),
+        )
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.chdir(workspace)
+
+        backend = CodexBackend(
+            cwd=str(workspace),
+            command_line_docker_credentials={
+                "env_file": ".env",
+                "env_vars_from_file": ["OPENAI_API_KEY", "GEMINI_API_KEY", "XAI_API_KEY"],
+            },
+        )
+
+        env = backend._build_custom_tools_mcp_env()
+        assert env["OPENAI_API_KEY"] == "sk-proj-quoted"
+        assert env["GEMINI_API_KEY"] == "AIza-single-quoted"
+        assert env["XAI_API_KEY"] == "no-quotes"
+
+
 class TestCodexParseItemMcpNoStreamChunkDuplication:
     """Verify _parse_item emits events but NOT mcp_status StreamChunks for MCP tool calls.
 

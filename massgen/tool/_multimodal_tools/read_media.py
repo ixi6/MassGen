@@ -508,7 +508,7 @@ async def read_media(
                     "allowed_paths": allowed_paths,
                     "task_context": task_context,
                     "backend_type": backend_type,
-                    "model": image_config.get("model") or model or "gpt-5.2",
+                    "model": image_config.get("model") or model or "gpt-5.4",
                     "system_prompt": vision_system_prompt,
                     "previous_response_id": prev_response_id,
                     "conversation_messages": conv_messages,
@@ -659,7 +659,7 @@ async def read_media(
                             "allowed_paths": allowed_paths,
                             "task_context": task_context,
                             "backend_type": backend_type,
-                            "model": image_config.get("model") or model or "gpt-5.2",
+                            "model": image_config.get("model") or model or "gpt-5.4",
                             "system_prompt": vision_system_prompt,
                         }
 

@@ -121,6 +121,23 @@ class SubagentManager:
         self._subagent_orchestrator_config = subagent_orchestrator_config
         self._parent_context_paths = self._normalize_parent_context_paths(parent_context_paths)
         self._parent_coordination_config = parent_coordination_config or {}
+        if self._subagent_orchestrator_config is None:
+            # Fallback path: preserve inherit mode even if runtime startup loses
+            # inline orchestrator JSON args by recovering from coordination payload.
+            fallback_subagent_orchestrator = self._parent_coordination_config.get("subagent_orchestrator")
+            if isinstance(fallback_subagent_orchestrator, dict):
+                try:
+                    self._subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(
+                        fallback_subagent_orchestrator,
+                    )
+                    logger.info(
+                        "[SubagentManager] Loaded subagent_orchestrator fallback from parent_coordination_config",
+                    )
+                except (TypeError, ValueError) as e:
+                    logger.warning(
+                        "[SubagentManager] Ignoring invalid parent subagent_orchestrator fallback: %s",
+                        e,
+                    )
         self._agent_temporary_workspace = Path(agent_temporary_workspace) if agent_temporary_workspace else None
         self._subagent_runtime_mode = subagent_runtime_mode or "isolated"
         self._subagent_runtime_fallback_mode = subagent_runtime_fallback_mode
@@ -1688,20 +1705,45 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         """
         orch_config = self._subagent_orchestrator_config
         refine = config.metadata.get("refine", True)
+        inherit_spawning_agent_backend = bool(
+            orch_config and getattr(orch_config, "inherit_spawning_agent_backend", False),
+        )
+        matched_parent = next(
+            (a for a in self.parent_agent_configs if str(a.get("id", "")).strip() == self.parent_agent_id),
+            None,
+        )
 
-        # Determine agent configs to use:
-        # 1. If subagent_orchestrator.agents is specified, use those
-        # 2. Otherwise, inherit from parent agent configs
-        if orch_config and orch_config.agents:
-            # Use explicitly configured agents
-            source_agents = orch_config.agents
+        common_agents = list(orch_config.agents) if orch_config and orch_config.agents else []
+        local_agents: list[dict[str, Any]] = []
+        synthetic_local = False
+
+        if matched_parent is not None:
+            local_agents = list(matched_parent.get("subagent_agents") or [])
+
+        if not local_agents and inherit_spawning_agent_backend:
+            if matched_parent is None:
+                raise ValueError(
+                    "Unable to inherit backend for spawning parent agent " f"'{self.parent_agent_id}': parent agent config not found",
+                )
+            local_agents = [
+                {
+                    "id": matched_parent.get("id", self.parent_agent_id),
+                    "backend": dict(matched_parent.get("backend", {})),
+                },
+            ]
+            synthetic_local = True
+
+        source_agents_with_origin: list[tuple[dict[str, Any], str]]
+        if common_agents or local_agents:
+            local_origin = "synthetic" if synthetic_local else "local"
+            source_agents_with_origin = [(agent_cfg, "common") for agent_cfg in common_agents]
+            source_agents_with_origin.extend((agent_cfg, local_origin) for agent_cfg in local_agents)
         else:
-            # Inherit parent agent configs (default behavior)
-            source_agents = self.parent_agent_configs
+            source_agents_with_origin = [(agent_cfg, "legacy") for agent_cfg in self.parent_agent_configs]
 
         # Build agent configs - each agent needs a unique workspace directory
         agents = []
-        num_agents = len(source_agents) if source_agents else 1
+        num_agents = len(source_agents_with_origin) if source_agents_with_origin else 1
 
         for i in range(num_agents):
             # Create unique workspace for each agent
@@ -1709,10 +1751,11 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             agent_workspace.mkdir(parents=True, exist_ok=True)
 
             # Get source config for this agent
-            if source_agents and i < len(source_agents):
-                source_config = source_agents[i]
+            if source_agents_with_origin and i < len(source_agents_with_origin):
+                source_config, source_origin = source_agents_with_origin[i]
             else:
                 source_config = {}
+                source_origin = "legacy"
 
             # Build agent ID - use source id or auto-generate
             agent_id = source_config.get("id", f"{config.id}_agent_{i+1}")
@@ -1720,8 +1763,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             # Get backend config from source or use defaults
             source_backend = source_config.get("backend", {})
 
-            # Get first parent backend as fallback for missing values
-            fallback_backend = self.parent_agent_configs[0].get("backend", {}) if self.parent_agent_configs else {}
+            # Shared/common entries fall back to the first parent backend.
+            # Parent-local and synthesized entries fall back to the spawning parent's backend.
+            if source_origin in {"local", "synthetic"} and matched_parent is not None:
+                fallback_backend = matched_parent.get("backend", {})
+            else:
+                fallback_backend = self.parent_agent_configs[0].get("backend", {}) if self.parent_agent_configs else {}
             enable_mcp_command_line = source_backend.get("enable_mcp_command_line")
             if enable_mcp_command_line is None:
                 enable_mcp_command_line = fallback_backend.get("enable_mcp_command_line", False)
@@ -1798,6 +1845,21 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             elif "reasoning" in fallback_backend and "type" not in source_backend:
                 backend_config["reasoning"] = fallback_backend["reasoning"]
 
+            # Preserve additional backend options from explicit common/local entries
+            # and synthesized parent-local inheritance unless explicitly overridden above.
+            if source_origin != "legacy":
+                passthrough_exclusions = {
+                    "cwd",
+                    "type",
+                    "model",
+                    "enable_mcp_command_line",
+                    "command_line_execution_mode",
+                }
+                for setting, value in source_backend.items():
+                    if setting in passthrough_exclusions:
+                        continue
+                    backend_config.setdefault(setting, value)
+
             agent_config = {
                 "id": agent_id,
                 "backend": backend_config,
@@ -1808,6 +1870,19 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # Build coordination config - disable subagents to prevent nesting
         coord_settings = orch_config.coordination.copy() if orch_config and orch_config.coordination else {}
         explicit_coord_settings = set(coord_settings.keys())
+        subagent_type = str((config.metadata or {}).get("subagent_type") or "").strip().lower()
+        is_round_evaluator = subagent_type == "round_evaluator"
+        if is_round_evaluator:
+            # round_evaluator should critique only; do not expose checklist-gated
+            # child orchestration or checklist MCP tools inside the subagent run.
+            for setting in (
+                "voting_sensitivity",
+                "voting_threshold",
+                "checklist_require_gap_report",
+                "gap_report_mode",
+            ):
+                coord_settings.pop(setting, None)
+                explicit_coord_settings.discard(setting)
         coord_settings["enable_subagents"] = False  # CRITICAL: prevent nesting
         # Subagents should not broadcast to humans (e.g., ask_others with broadcast=human)
         if coord_settings.get("broadcast") == "human":
@@ -1860,16 +1935,24 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # This must be at the top level of orchestrator config (not inside coordination)
         if orch_config and orch_config.max_new_answers:
             orchestrator_config["max_new_answers_per_agent"] = orch_config.max_new_answers
+        if orch_config and orch_config.final_answer_strategy is not None:
+            orchestrator_config["final_answer_strategy"] = orch_config.final_answer_strategy
 
         # Apply refinement overrides for quick mode (matches TUI behavior)
         if not refine:
             orchestrator_config["max_new_answers_per_agent"] = 1
-            orchestrator_config["skip_final_presentation"] = True
             if num_agents == 1:
+                orchestrator_config["skip_final_presentation"] = True
                 orchestrator_config["skip_voting"] = True
             else:
                 orchestrator_config["disable_injection"] = True
                 orchestrator_config["defer_voting_until_all_answered"] = True
+                if "final_answer_strategy" not in orchestrator_config:
+                    orchestrator_config["final_answer_strategy"] = "synthesize"
+                effective_final_answer_strategy = orchestrator_config.get("final_answer_strategy")
+                # round_evaluator packets are expected to come from an explicit
+                # presenter-stage merge when child synthesis/presentation is enabled.
+                orchestrator_config["skip_final_presentation"] = not (is_round_evaluator and effective_final_answer_strategy in {"winner_present", "synthesize"})
 
         # Merge context paths: parent context paths + task-specific context paths
         # Parent context paths are always read-only (subagents can read the codebase)
@@ -1903,6 +1986,13 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             for ctx_path in context_paths:
                 if ctx_path.get("path") not in existing_paths:
                     merged_context_paths.append(ctx_path)
+                    existing_paths.add(ctx_path.get("path"))
+
+        if is_round_evaluator and self._agent_temporary_workspace:
+            temp_root = str(self._agent_temporary_workspace.resolve())
+            existing_paths = {p.get("path") for p in merged_context_paths}
+            if temp_root not in existing_paths:
+                merged_context_paths.append({"path": temp_root, "permission": "read"})
 
         if merged_context_paths:
             orchestrator_config["context_paths"] = merged_context_paths
@@ -2110,6 +2200,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         system_prompt: str | None = None,
         refine: bool = True,
         skills: list[str] | None = None,
+        subagent_type: str | None = None,
     ) -> SubagentResult:
         """
         Spawn a single subagent to work on a task.
@@ -2137,6 +2228,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         metadata = {"refine": refine}
         if skills:
             metadata["skills"] = skills
+        if subagent_type:
+            metadata["subagent_type"] = subagent_type
         config = SubagentConfig.create(
             task=task,
             parent_agent_id=self.parent_agent_id,
@@ -2305,6 +2398,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 system_prompt=task_config.get("system_prompt"),
                 refine=refine,
                 skills=task_config.get("skills"),
+                subagent_type=task_config.get("subagent_type"),
             )
             coroutines.append(coro)
 
@@ -2367,6 +2461,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         metadata = {"refine": refine}
         if skills:
             metadata["skills"] = skills
+        if subagent_type:
+            metadata["subagent_type"] = subagent_type
         config = SubagentConfig.create(
             task=task,
             parent_agent_id=self.parent_agent_id,

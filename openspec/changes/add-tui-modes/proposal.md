@@ -24,7 +24,8 @@ The Textual TUI currently lacks native mode toggles for common multi-agent workf
 - Add toggle in Mode Bar to enable/disable refinement
 - Default: On (normal vote/new_answer patterns)
 - Off + Single agent: skip coordination rounds entirely, direct answer
-- Off + Multi-agent: set max_new_answers_per_agent=1, forcing vote-only after first answer
+- Off + Multi-agent: set max_new_answers_per_agent=1 so each agent produces one independent answer
+- Off + Multi-agent: default final answer behavior to synthesis, combining the strongest parts of completed answers instead of reusing the voted winner verbatim
 
 ### Human Override (Ctrl+O)
 - Add keyboard binding (Ctrl+O) to trigger override modal
@@ -42,13 +43,16 @@ The Textual TUI currently lacks native mode toggles for common multi-agent workf
 
 ### Orchestrator Changes
 - Add `skip_voting` config flag to bypass vote tool injection (used when refinement OFF + single agent)
+- Add `final_answer_strategy` config flag with `winner_reuse`, `winner_present`, and `synthesize`
 - Support runtime config overrides from TUI mode state
 - Note: Single agent + refinement ON keeps voting (vote = "I'm done refining")
+- In multi-agent + refinement OFF quick mode, keep deferred voting to select the synthesis presenter but default `final_answer_strategy` to `synthesize`
 
 ### Context Path Write Access (Refinement OFF)
 - Single agent + refinement OFF: Enable write access for context paths even without final presentation LLM call
-- Multi-agent + refinement OFF: Require final presentation only if write context paths exist
-- Multi-agent + refinement OFF + no write context paths: Skip final presentation entirely
+- Multi-agent + refinement OFF + `winner_reuse`: Skip final presentation when no write context paths exist
+- Multi-agent + refinement OFF + `winner_present`: Run the selected winner's normal final presentation
+- Multi-agent + refinement OFF + `synthesize`: Always run a synthesis presentation, even when no write context paths exist
 
 ### Context Path Write Tracking
 - Track files written to context paths during final presentation
@@ -63,7 +67,13 @@ The Textual TUI currently lacks native mode toggles for common multi-agent workf
   - `massgen/frontend/displays/textual_terminal_display.py` (mode integration, write tracking display)
   - `massgen/frontend/displays/textual_widgets/tab_bar.py` (single-agent mode)
   - `massgen/frontend/interactive_controller.py` (mode state propagation)
-  - `massgen/orchestrator.py` (skip_voting flag, write context path helpers, write tracking exposure)
+  - `massgen/orchestrator.py` (skip_voting flag, final answer strategy handling, write context path helpers, write tracking exposure)
+  - `massgen/agent_config.py` (new final-answer strategy config)
   - `massgen/filesystem_manager/_path_permission_manager.py` (write tracking)
   - New files: `tui_modes.py`, `mode_bar.py`
   - Theme files for new widget styling
+
+## What's Next
+- Implement `final_answer_strategy` in orchestrator and config plumbing
+- Update quick-mode TUI overrides so multi-agent refinement OFF defaults to `synthesize`
+- Add integration coverage for `winner_reuse`, `winner_present`, and `synthesize`

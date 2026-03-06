@@ -181,7 +181,7 @@ and ``metadata`` fields.
      - Default Models
    * - image
      - google, openai, grok, openrouter
-     - Nano Banana 2 (``gemini-3.1-flash-image-preview``), ``gpt-5.2``, ``grok-imagine-image``, Nano Banana 2 (via OR)
+     - Nano Banana 2 (``gemini-3.1-flash-image-preview``), ``gpt-5.4``, ``grok-imagine-image``, Nano Banana 2 (via OR)
    * - video
      - grok, google, openai
      - ``grok-imagine-video``, Veo 3.1 (``veo-3.1-generate-preview``), ``sora-2``
@@ -223,7 +223,7 @@ Specify backends and models per media type:
    backend:
      enable_multimodal_tools: true
      image_generation_backend: openai
-     image_generation_model: gpt-5
+     image_generation_model: gpt-5.4
      video_generation_backend: google
      video_generation_model: veo-3.1-generate-preview
      audio_generation_backend: openai
@@ -237,7 +237,7 @@ Image and video understanding now route to the **agent's own backend** when it s
 
 **Supported image backends**: OpenAI, Claude, Gemini, Grok, Claude Code (SDK), Codex (CLI).
 
-If the agent's backend doesn't support image understanding, it falls back to OpenAI ``gpt-5.2``.
+If the agent's backend doesn't support image understanding, it falls back to OpenAI ``gpt-5.4``.
 
 .. code-block:: yaml
 
@@ -357,7 +357,7 @@ Complete Multimodal Workflow
          multimodal_config:
            image:
              backend: openai
-             model: gpt-5.2
+             model: gpt-5.4
            video:
              backend: google
              model: veo-3.1-generate-preview
@@ -400,7 +400,7 @@ Multi-Agent with Specialized Backends
          multimodal_config:
            image:
              backend: openai
-             model: gpt-5.2  # Best for images
+             model: gpt-5.4  # Best for images
 
      - id: video_specialist
        backend:

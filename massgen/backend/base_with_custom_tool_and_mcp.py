@@ -73,6 +73,7 @@ from ..utils import CoordinationStage
 from ..utils.tool_argument_normalization import normalize_json_object_argument
 from ._constants import configure_openrouter_extra_body
 from .base import LLMBackend, StreamChunk, get_multimodal_tool_definitions
+from .capabilities import normalize_backend_type
 
 
 @dataclass
@@ -4433,7 +4434,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             agent_system_message=kwargs.get("system_message", None),
             agent_id=agent_id or self.agent_id,  # Use kwargs agent_id, fallback to instance attribute
             backend_name=self.backend_name,
-            backend_type=self.get_provider_name(),  # For multimodal capability lookup
+            backend_type=normalize_backend_type(self.get_provider_name()),  # For multimodal capability lookup
             model=kwargs.get(
                 "model",
                 "",

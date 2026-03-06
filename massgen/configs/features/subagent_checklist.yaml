@@ -4,7 +4,7 @@ agents:
 - id: agent_a
   backend:
     type: codex
-    model: gpt-5.3-codex
+    model: gpt-5.4
     reasoning:
       effort: xhigh
     cwd: workspace
@@ -105,7 +105,7 @@ orchestrator:
             # type: openrouter
             # model:  z-ai/glm-5
             # type: codex
-            # model: gpt-5.3-codex
+            # model: gpt-5.4
             # reasoning:
             #   effort: medium
             #   summary: auto

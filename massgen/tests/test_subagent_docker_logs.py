@@ -407,6 +407,30 @@ class TestSubagentMcpConfigEnv:
         assert payload[0]["backend"]["command_line_docker_credentials"]["mount"] == ["codex_config"]
         assert payload[0]["backend"]["enable_code_based_tools"] is True
 
+    def test_subagent_mcp_agent_config_includes_parent_local_subagent_agents(self, tmp_path):
+        """Parent-local subagent_agents must survive orchestrator handoff into the agent config payload."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.agents["test_agent"].backend.config = {
+            "type": "codex",
+            "model": "gpt-5.3-codex",
+        }
+        orch.agents["test_agent"].config = MagicMock(spec=[])
+        orch.agents["test_agent"].config.subagent_agents = [
+            {
+                "id": "local_eval",
+                "backend": {"type": "openai", "model": "gpt-5-mini"},
+            },
+        ]
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+        agent_configs_file = Path(self._get_arg(args, "--agent-configs-file"))
+        payload = json.loads(agent_configs_file.read_text())
+
+        assert payload[0]["id"] == "test_agent"
+        assert payload[0]["subagent_agents"][0]["id"] == "local_eval"
+        assert payload[0]["subagent_agents"][0]["backend"]["model"] == "gpt-5-mini"
+
     def test_subagent_mcp_coordination_config_includes_skill_inheritance_fields(self, tmp_path):
         """Parent skills settings should be serialized for subagent coordination inheritance."""
         orch, agent = self._make_orchestrator_and_agent(tmp_path)
@@ -438,6 +462,44 @@ class TestSubagentMcpConfigEnv:
 
         assert payload["learning_capture_mode"] == "final_only"
         assert payload["disable_final_only_round_capture_fallback"] is True
+
+    def test_subagent_mcp_coordination_config_includes_subagent_orchestrator_fallback_payload(self, tmp_path):
+        """Coordination config should carry subagent_orchestrator payload for runtime fallback parsing."""
+        from massgen.subagent.models import SubagentOrchestratorConfig
+
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.config.coordination_config.subagent_orchestrator = SubagentOrchestratorConfig(
+            enabled=True,
+            inherit_spawning_agent_backend=True,
+        )
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+        coord_file = Path(self._get_arg(args, "--coordination-config-file"))
+        payload = json.loads(coord_file.read_text())
+
+        assert "subagent_orchestrator" in payload
+        assert payload["subagent_orchestrator"]["enabled"] is True
+        assert payload["subagent_orchestrator"]["inherit_spawning_agent_backend"] is True
+
+    def test_subagent_mcp_orchestrator_config_file_includes_inherit_backend(self, tmp_path):
+        """Subagent orchestrator settings should be written to a workspace file for robust arg passing."""
+        from massgen.subagent.models import SubagentOrchestratorConfig
+
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.config.coordination_config.subagent_orchestrator = SubagentOrchestratorConfig(
+            enabled=True,
+            inherit_spawning_agent_backend=True,
+        )
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+        orchestrator_cfg_file = Path(self._get_arg(args, "--orchestrator-config-file"))
+        payload = json.loads(orchestrator_cfg_file.read_text())
+
+        assert orchestrator_cfg_file.exists()
+        assert payload["enabled"] is True
+        assert payload["inherit_spawning_agent_backend"] is True
 
 
 class TestPlanningMcpConfigHooks:

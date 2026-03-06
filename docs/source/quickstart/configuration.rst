@@ -546,7 +546,7 @@ Example:
      - id: "agent_a"
        backend:
          type: "codex"
-         model: "gpt-5.3-codex"
+         model: "gpt-5.4"
          reasoning:
            effort: "xhigh"
            summary: "auto"

@@ -31,7 +31,7 @@ class TestDefaultCriteriaEPrefix:
         criteria = get_default_criteria(has_changedoc=True)
         for c in criteria:
             assert c.id.startswith("E")
-        assert criteria[-1].id == "E6"
+        assert criteria[-1].id == "E5"
 
 
 class TestItemCategoriesInState:
@@ -67,13 +67,15 @@ class TestItemCategoriesInState:
             assert _CHECKLIST_ITEM_CATEGORIES[c.id] == c.category
 
     def test_changedoc_categories_have_4_items(self):
-        """Changedoc categories must have 4 items (3 must + 1 could)."""
+        """Changedoc categories must have 4 items (2 must + 1 should + 1 could)."""
         from massgen.system_prompt_sections import _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC
 
         assert len(_CHECKLIST_ITEM_CATEGORIES_CHANGEDOC) == 4
         must_count = sum(1 for v in _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC.values() if v == "must")
+        should_count = sum(1 for v in _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC.values() if v == "should")
         could_count = sum(1 for v in _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC.values() if v == "could")
-        assert must_count == 3
+        assert must_count == 2
+        assert should_count == 1
         assert could_count == 1
 
 
@@ -273,7 +275,7 @@ class TestAnalysisDynamicCriteriaLabels:
 
         analysis = _build_changedoc_checklist_analysis()
         assert "goal alignment" in analysis
-        assert "changedoc quality" in analysis
+        assert "changedoc quality" not in analysis
 
     def test_evaluation_section_threads_custom_items_to_analysis(self):
         """EvaluationSection should pass custom items to analysis builder."""

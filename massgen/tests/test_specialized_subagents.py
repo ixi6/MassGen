@@ -79,6 +79,19 @@ def test_scanner_finds_builtin_types():
     assert "researcher" in names
 
 
+def test_scanner_finds_round_evaluator_when_allowed():
+    """Scanner discovers round_evaluator when explicitly allowed."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    assert [t.name for t in types] == ["round_evaluator"]
+
+
 def test_scanner_parses_frontmatter():
     """Name, description, skills, expected_input extracted from SUBAGENT.md frontmatter."""
     from massgen.subagent.type_scanner import scan_subagent_types
@@ -97,7 +110,7 @@ def test_builtin_descriptions_include_when_to_use():
 
     builtin_dir = Path(__file__).parent.parent / "subagent_types"
     types = scan_subagent_types(builtin_dir=builtin_dir, project_dir=Path("/nonexistent"))
-    for name in ("evaluator", "explorer", "researcher"):
+    for name in ("evaluator", "explorer", "researcher", "round_evaluator"):
         config = next(t for t in types if t.name == name)
         assert "when to use" in config.description.lower()
 
@@ -108,7 +121,7 @@ def test_builtin_profiles_define_expected_input():
 
     builtin_dir = Path(__file__).parent.parent / "subagent_types"
     types = scan_subagent_types(builtin_dir=builtin_dir, project_dir=Path("/nonexistent"))
-    for name in ("evaluator", "explorer", "researcher"):
+    for name in ("evaluator", "explorer", "researcher", "round_evaluator"):
         config = next(t for t in types if t.name == name)
         assert len(config.expected_input) >= 3
         assert all(isinstance(item, str) and item.strip() for item in config.expected_input)
@@ -193,13 +206,59 @@ def test_builtin_prompts_include_actionable_sections():
     builtin_dir = Path(__file__).parent.parent / "subagent_types"
     types = scan_subagent_types(builtin_dir=builtin_dir, project_dir=Path("/nonexistent"))
 
-    for name in ("evaluator", "explorer", "researcher"):
+    for name in ("evaluator", "explorer", "researcher", "round_evaluator"):
         config = next(t for t in types if t.name == name)
         prompt = config.system_prompt.lower()
         assert len(prompt) > 400
         assert "when to use" in prompt
         assert "deliverable" in prompt or "output format" in prompt
         assert "do not" in prompt
+
+
+def test_round_evaluator_prompt_returns_critique_and_spec_only():
+    """round_evaluator should return critique/spec guidance without checklist or terminal workflow language."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "criteria_interpretation" in config.system_prompt
+    assert "criterion_findings" in config.system_prompt
+    assert "improvement_spec" in config.system_prompt
+    assert "verification_plan" in config.system_prompt
+    assert "spec writer" in lower
+    assert "very critical" in lower
+    assert "submit_checklist_args" not in config.system_prompt
+    assert "propose_improvements_args" not in config.system_prompt
+    assert "expected_verdict" not in config.system_prompt
+    assert "draft checklist tool arguments" in lower
+    assert "predict terminal outcomes" in lower
+
+
+def test_round_evaluator_prompt_keeps_parent_workflow_out_of_returned_packet():
+    """round_evaluator may use inner workflow machinery, but should not direct the parent's workflow."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "parent-owned workflow steps" in lower
+    assert "do not tell the parent" in lower
+    assert "internal massgen workflow machinery" in lower
+    assert "submit_checklist" in config.system_prompt
+    assert "new_answer" in config.system_prompt
 
 
 def test_scanner_project_overrides_builtin(tmp_path):
@@ -458,6 +517,49 @@ def test_subagent_section_includes_evaluator_task_brief_details():
     assert "what evidence to capture" in content
     # observations per criterion, not pass/fail verdicts
     assert "observations" in content or "per criterion" in content
+
+
+def test_subagent_section_reserves_round_evaluator_for_orchestrator_when_gate_enabled():
+    """When the round-evaluator gate is orchestrator-managed, the subagent section should not tell the parent to spawn it manually."""
+    from massgen.subagent.models import SpecializedSubagentConfig
+    from massgen.system_prompt_sections import SubagentSection
+
+    types = [
+        SpecializedSubagentConfig(name="round_evaluator", description="Cross-answer critic"),
+    ]
+    section = SubagentSection(
+        "/workspace",
+        max_concurrent=3,
+        specialized_subagents=types,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+    )
+    content = section.build_content().lower()
+
+    assert "round_evaluator" in content
+    assert "reserved for orchestrator-managed launches" in content
+    assert '"subagent_type": "round_evaluator"' not in content
+
+
+def test_subagent_section_round_evaluator_defaults_to_manual_spawn_guidance():
+    """Prompt-guidance mode should still teach the parent how to launch round_evaluator manually."""
+    from massgen.subagent.models import SpecializedSubagentConfig
+    from massgen.system_prompt_sections import SubagentSection
+
+    types = [
+        SpecializedSubagentConfig(name="round_evaluator", description="Cross-answer critic"),
+    ]
+    section = SubagentSection(
+        "/workspace",
+        max_concurrent=3,
+        specialized_subagents=types,
+        round_evaluator_before_checklist=True,
+    )
+    content = section.build_content().lower()
+
+    assert "round_evaluator" in content
+    assert '"subagent_type": "round_evaluator"' in content
+    assert "reserved for orchestrator-managed launches" not in content
 
 
 def test_subagent_section_evaluator_uses_blocking_mode():

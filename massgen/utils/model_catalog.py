@@ -363,7 +363,7 @@ async def get_models_for_provider(provider: str, use_cache: bool = True) -> list
             "https://api.openai.com/v1",
             os.getenv("OPENAI_API_KEY"),
             sort_by_created=True,
-            default_model="gpt-5.2",
+            default_model="gpt-5.4",
             filter_chat_models=True,
             provider="openai",
         )

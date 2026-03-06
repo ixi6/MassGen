@@ -333,7 +333,58 @@ def criteria_from_inline(inline_list: list[dict[str, str]]) -> list[GeneratedCri
     Returns:
         List of GeneratedCriterion with E1..EN IDs.
     """
-    return [GeneratedCriterion(id=f"E{i + 1}", text=item["text"], category=item["category"]) for i, item in enumerate(inline_list)]
+    criteria: list[GeneratedCriterion] = []
+    for i, item in enumerate(inline_list):
+        category = str(item.get("category") or "should").strip().lower()
+        if category == "core":
+            category = "must"
+        elif category == "stretch":
+            category = "could"
+        if category not in {"must", "should", "could"}:
+            category = "should"
+        verify_by = str(item.get("verify_by") or "").strip() or None
+        criteria.append(
+            GeneratedCriterion(
+                id=f"E{i + 1}",
+                text=item["text"],
+                category=category,
+                verify_by=verify_by,
+            ),
+        )
+    return criteria
+
+
+def build_decomposition_execution_criteria(subtask: str) -> list[GeneratedCriterion]:
+    """Build parameterized checklist criteria for executing one decomposition subtask."""
+    scope = " ".join((subtask or "").split())
+    if len(scope) > 140:
+        scope = scope[:137].rstrip() + "..."
+    if not scope:
+        scope = "your assigned subtask"
+
+    criteria = [
+        (
+            f"The current work substantially completes and improves the owned scope for this subtask: {scope}",
+            "must",
+        ),
+        (
+            "Relevant peer work that touches this subtask is incorporated cleanly where needed " "(interfaces, contracts, shared assets, or adjacent integration boundaries).",
+            "must",
+        ),
+        (
+            "Changes stay within the owned scope except for necessary adjacent integration. " "The agent does not take over unrelated work owned by other subtasks.",
+            "must",
+        ),
+        (
+            "The current work does not introduce regressions in the owned area or shared " "contracts it depends on. Validation evidence is strong enough to support that claim.",
+            "must",
+        ),
+        (
+            "This revision is a meaningful improvement to the owned subtask, not just churn, " "reformatting, or superficial edits.",
+            "should",
+        ),
+    ]
+    return [GeneratedCriterion(id=f"E{i + 1}", text=text, category=category) for i, (text, category) in enumerate(criteria)]
 
 
 def get_criteria_for_preset(preset: str) -> list[GeneratedCriterion]:
@@ -369,13 +420,6 @@ _QUALITY_CRAFT_TEXT = (
     " cohesive and considered, not assembled from adequate parts."
 )
 
-# Changedoc traceability criterion — appended when changedoc is enabled
-_CHANGEDOC_TRACEABILITY_TEXT = (
-    "Changedoc is honest, complete, and traceable. Every significant"
-    " decision is documented with genuine rationale. Implementation"
-    " references point to code that actually exists. No fabricated claims."
-)
-
 
 def get_default_criteria(has_changedoc: bool = False) -> list[GeneratedCriterion]:
     """Return static default evaluation criteria.
@@ -383,11 +427,12 @@ def get_default_criteria(has_changedoc: bool = False) -> list[GeneratedCriterion
     These are used when generation is disabled or fails. They are concrete,
     GEPA-inspired defaults that work for any task type.
 
-    Always appends a quality/craft criterion.  Optionally appends changedoc
-    traceability when changedoc mode is active.
+    Always appends a quality/craft criterion. The ``has_changedoc`` flag is
+    retained for call-site compatibility but does not alter the fallback
+    defaults.
 
     Args:
-        has_changedoc: If True, append changedoc traceability criterion.
+        has_changedoc: Retained for compatibility with existing call sites.
 
     Returns:
         List of GeneratedCriterion with E-prefix IDs.
@@ -411,15 +456,6 @@ def get_default_criteria(has_changedoc: bool = False) -> list[GeneratedCriterion
             category="should",
         ),
     )
-
-    if has_changedoc:
-        criteria.append(
-            GeneratedCriterion(
-                id=f"E{len(criteria) + 1}",
-                text=_CHANGEDOC_TRACEABILITY_TEXT,
-                category="must",
-            ),
-        )
 
     return criteria
 

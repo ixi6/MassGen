@@ -297,7 +297,7 @@ uv run pytest massgen/tests/test_native_multimodal_routing.py -m "not live_api a
 
 Test categories:
 - **Capability registry**: Verify `image_understanding` is declared for claude, openai, gemini, grok, claude_code, codex; absent for lmstudio.
-- **Routing dispatch**: `understand_image(backend_type="claude")` calls `call_claude`, etc. Backends without the capability fall back to OpenAI gpt-5.2.
+- **Routing dispatch**: `understand_image(backend_type="claude")` calls `call_claude`, etc. Backends without the capability fall back to OpenAI gpt-5.4.
 - **Wiring**: `read_media` passes `backend_type` and `model` through to `understand_image` in both single-file and batch modes. Config model overrides agent model.
 - **Video routing**: `understand_video` skips `backend_selector` when the agent's backend has `video_understanding`.
 - **Backend payload construction**: Each `call_*` function builds the correct wire format (mocked API clients).

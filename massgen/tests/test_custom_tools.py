@@ -1100,6 +1100,97 @@ def test_custom_tools_build_server_config_includes_wait_interrupt_file(tmp_path:
     assert args[index + 1] == str(wait_interrupt_file)
 
 
+@pytest.mark.asyncio
+async def test_custom_tools_create_server_injects_backend_context(monkeypatch, tmp_path: Path) -> None:
+    """custom_tools_server should propagate backend identity into tool context params."""
+    tool_path = tmp_path / "context_tool.py"
+    tool_path.write_text(
+        """
+import json
+
+from massgen.tool import ExecutionResult
+from massgen.tool._decorators import context_params
+from massgen.tool._result import TextContent
+
+
+@context_params("backend_type", "model", "agent_cwd", "task_context")
+async def capture_context(
+    backend_type=None,
+    model=None,
+    agent_cwd=None,
+    task_context=None,
+):
+    return ExecutionResult(
+        output_blocks=[
+            TextContent(
+                data=json.dumps(
+                    {
+                        "backend_type": backend_type,
+                        "model": model,
+                        "agent_cwd": agent_cwd,
+                        "task_context": task_context,
+                    }
+                )
+            )
+        ]
+    )
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "CONTEXT.md").write_text("Inspect the rendered output carefully.", encoding="utf-8")
+
+    specs_path = tmp_path / "custom_tool_specs.json"
+    specs_path.write_text(
+        json.dumps(
+            {
+                "custom_tools": [
+                    {
+                        "path": str(tool_path),
+                        "function": "capture_context",
+                    },
+                ],
+                "background_mcp_servers": [],
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "custom_tools_server.py",
+            "--tool-specs",
+            str(specs_path),
+            "--agent-id",
+            "agent_test",
+            "--allowed-paths",
+            str(tmp_path),
+            "--backend-type",
+            "codex",
+            "--model",
+            "gpt-5.4",
+        ],
+    )
+
+    server = await create_server()
+
+    handler = None
+    for tool in server._tool_manager._tools.values():
+        if tool.name == "custom_tool__capture_context":
+            handler = tool.fn
+            break
+    assert handler is not None
+
+    response = json.loads(await handler())
+    block = response["output_blocks"][0]
+    block_text = block["data"] if isinstance(block, dict) else str(block)
+    assert '"backend_type": "codex"' in block_text
+    assert '"model": "gpt-5.4"' in block_text
+    assert str(tmp_path) in block_text
+    assert "Inspect the rendered output carefully." in block_text
+
+
 def test_custom_tools_server_standalone_import_no_relative_imports():
     """custom_tools_server.py must be loadable as a standalone module (no relative imports).
 

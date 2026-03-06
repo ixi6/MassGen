@@ -227,6 +227,79 @@ class TestBuildCoordinationMessage:
         # vote_only should influence the evaluation section
         assert "vote" in msg.lower()
 
+    def test_answers_used_drives_round_two_round_evaluator_context_guidance_without_peer_answers(self):
+        """A single-parent run with prior submissions should default to manual round-evaluator guidance."""
+        builder = _make_builder()
+        builder.config.coordination_config.round_evaluator_before_checklist = True
+        agent = _make_agent()
+
+        msg = builder.build_coordination_message(
+            agent=agent,
+            agent_id="agent_a",
+            answers={},
+            planning_mode_enabled=False,
+            use_skills=False,
+            enable_memory=False,
+            enable_task_planning=False,
+            previous_turns=[],
+            voting_sensitivity_override="checklist_gated",
+            answers_used=1,
+        )
+
+        lower = msg.lower()
+        assert "round_evaluator" in msg
+        assert "improvement_spec" in msg
+        assert "very critical" in lower
+        assert "submit_checklist" in lower
+        assert "before round 2" in lower
+        assert "blocking `round_evaluator` subagent yourself" in lower
+        assert "wait for its packet before" in lower
+        assert "do not run a separate self-evaluation pass" in lower
+        assert "save or copy that round-evaluator report into your workspace" in lower
+        assert "submit_checklist_args" not in msg
+        assert "expected_verdict" not in msg
+
+    def test_orchestrator_managed_round_evaluator_suppresses_manual_spawn_example(self):
+        """When the orchestrator owns round_evaluator launches, the subagent section should mark that type as reserved instead of teaching a manual spawn call."""
+        from massgen.subagent.models import SpecializedSubagentConfig
+
+        builder = _make_builder()
+        builder.config.coordination_config.enable_subagents = True
+        builder.config.coordination_config.round_evaluator_before_checklist = True
+        builder.config.coordination_config.orchestrator_managed_round_evaluator = True
+        builder.config.coordination_config.subagent_types = ["round_evaluator"]
+        agent = _make_agent(has_filesystem=True)
+
+        with patch.object(
+            builder,
+            "_discover_specialized_subagents",
+            return_value=[
+                SpecializedSubagentConfig(
+                    name="round_evaluator",
+                    description="Cross-answer critic",
+                ),
+            ],
+        ):
+            msg = builder.build_coordination_message(
+                agent=agent,
+                agent_id="agent_a",
+                answers={},
+                planning_mode_enabled=False,
+                use_skills=False,
+                enable_memory=False,
+                enable_task_planning=False,
+                previous_turns=[],
+                voting_sensitivity_override="checklist_gated",
+                answers_used=1,
+            )
+
+        lower = msg.lower()
+        assert "round_evaluator" in lower
+        assert "reserved for orchestrator-managed launches" in lower
+        assert "save or copy that round-evaluator report into your workspace" in lower
+        assert "do not run a separate self-evaluation pass" in lower
+        assert '"subagent_type": "round_evaluator"' not in msg
+
     def test_final_only_suppresses_round_evolving_skills_and_memory_writes(self):
         """final_only keeps memory readable but disables round-time production prompts."""
         builder = _make_builder(
@@ -312,6 +385,35 @@ class TestBuildCoordinationMessage:
         assert "Saving Memories" in msg
         assert "Use `tasks/changedoc.md` as the canonical decision log for your evolving skill" in msg
         assert "Before writing memory files, review `tasks/changedoc.md`" in msg
+
+    def test_final_only_with_synthesize_strategy_keeps_final_only_capture(self):
+        """Synthesizing quick mode still has a presenter stage, so round fallback should stay off."""
+        builder = _make_builder(
+            enable_memory=True,
+            learning_capture_mode="final_only",
+        )
+        builder.config.skip_final_presentation = True
+        builder.config.final_answer_strategy = "synthesize"
+        agent = _make_agent(auto_discover_custom_tools=True)
+
+        with (
+            patch.object(builder, "_get_all_memories", return_value=([], ["Long-term pattern A"])),
+            patch.object(builder, "_load_temp_workspace_memories", return_value=[]),
+            patch.object(builder, "_load_archived_memories", return_value={"short_term": {}, "long_term": {}}),
+        ):
+            msg = builder.build_coordination_message(
+                agent=agent,
+                agent_id="agent_a",
+                answers=None,
+                planning_mode_enabled=False,
+                use_skills=False,
+                enable_memory=True,
+                enable_task_planning=True,
+                previous_turns=[],
+            )
+
+        assert "## Evolving Skills" not in msg
+        assert "Saving Memories" not in msg
 
     def test_final_only_with_skip_final_presentation_respects_fallback_opt_out(self):
         """Subagent opt-out should keep final_only read-focused even when final presentation is skipped."""

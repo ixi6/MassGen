@@ -54,3 +54,32 @@ class TestTuiModeStateSpecMode:
         state = TuiModeState()
         assert hasattr(state, "spec_config")
         assert isinstance(state.spec_config, SpecConfig)
+
+
+class TestTuiModeStateQuickMode:
+    """Test quick-mode orchestrator overrides."""
+
+    def test_multi_agent_refinement_off_defaults_to_synthesize(self):
+        state = TuiModeState(
+            agent_mode="multi",
+            refinement_enabled=False,
+        )
+
+        overrides = state.get_orchestrator_overrides()
+
+        assert overrides["max_new_answers_per_agent"] == 1
+        assert overrides["skip_final_presentation"] is True
+        assert overrides["disable_injection"] is True
+        assert overrides["defer_voting_until_all_answered"] is True
+        assert overrides["final_answer_strategy"] == "synthesize"
+
+    def test_single_agent_refinement_off_keeps_direct_answer_flow(self):
+        state = TuiModeState(
+            agent_mode="single",
+            refinement_enabled=False,
+        )
+
+        overrides = state.get_orchestrator_overrides()
+
+        assert overrides["skip_voting"] is True
+        assert "final_answer_strategy" not in overrides

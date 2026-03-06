@@ -296,3 +296,63 @@ async def test_stream_agent_execution_truncates_injected_buffer_on_retry(mock_or
     assert "END_SENTINEL" not in enforcement_content
     assert "truncated" in enforcement_content.lower()
     assert "showing first" in enforcement_content.lower()
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_execution_restarts_when_peer_updates_are_deferred(mock_orchestrator, monkeypatch):
+    orchestrator = mock_orchestrator(num_agents=2)
+    orchestrator.current_task = "Handle deferred peer updates."
+    orchestrator.config.disable_injection = False
+    orchestrator.config.defer_peer_updates_until_restart = True
+    orchestrator.config.allow_midstream_peer_updates_before_checklist_submit = False
+
+    agent_id = "agent_a"
+    orchestrator.agent_states[agent_id].answer = "existing answer"
+    orchestrator.agent_states[agent_id].restart_pending = True
+
+    # Force hook-delivery branch and unseen-update detection.
+    monkeypatch.setattr(orchestrator, "_backend_supports_midstream_hook_injection", lambda _agent: True)
+    monkeypatch.setattr(orchestrator, "_has_unseen_answer_updates", lambda _aid: _aid == agent_id)
+
+    _configure_agent_script(
+        orchestrator.agents[agent_id],
+        scripted_tool_calls=[
+            [{"name": "new_answer", "arguments": {"content": "should not run"}}],
+        ],
+    )
+
+    emitted = await _collect_stream(
+        orchestrator._stream_agent_execution(agent_id, orchestrator.current_task, {}),
+    )
+
+    assert emitted == [("done", None)]
+
+
+@pytest.mark.asyncio
+async def test_stream_agent_execution_clears_stale_restart_pending_when_no_unseen_updates(mock_orchestrator, monkeypatch):
+    orchestrator = mock_orchestrator(num_agents=2)
+    orchestrator.current_task = "Continue when restart flag is stale."
+    orchestrator.config.disable_injection = False
+    orchestrator.config.defer_peer_updates_until_restart = True
+    orchestrator.config.allow_midstream_peer_updates_before_checklist_submit = False
+
+    agent_id = "agent_a"
+    orchestrator.agent_states[agent_id].answer = "existing answer"
+    orchestrator.agent_states[agent_id].restart_pending = True
+
+    monkeypatch.setattr(orchestrator, "_backend_supports_midstream_hook_injection", lambda _agent: True)
+    monkeypatch.setattr(orchestrator, "_has_unseen_answer_updates", lambda _aid: False)
+
+    _configure_agent_script(
+        orchestrator.agents[agent_id],
+        scripted_tool_calls=[
+            [{"name": "new_answer", "arguments": {"content": "fresh answer"}}],
+        ],
+    )
+
+    emitted = await _collect_stream(
+        orchestrator._stream_agent_execution(agent_id, orchestrator.current_task, {}),
+    )
+
+    assert ("result", ("answer", "fresh answer")) in emitted
+    assert orchestrator.agent_states[agent_id].restart_pending is False

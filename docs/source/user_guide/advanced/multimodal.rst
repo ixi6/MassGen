@@ -19,7 +19,7 @@ MassGen supports comprehensive multimodal AI workflows, enabling agents to both 
 
    * Image and video understanding now route API calls to the **agent's own backend** when it supports the capability
    * Supported image backends: **OpenAI**, **Claude**, **Gemini**, **Grok**, **Claude Code** (SDK), **Codex** (CLI)
-   * If the agent's backend does not support image understanding, falls back to OpenAI ``gpt-5.2``
+   * If the agent's backend does not support image understanding, falls back to OpenAI ``gpt-5.4``
    * This preserves model diversity and per-agent consistency — a Claude agent analyzes images via Claude, not GPT
 
    **Backend Requirements:**
@@ -76,7 +76,7 @@ Image Understanding
 Image understanding enables agents to analyze visual content, extract information, and answer questions about images using the ``understand_image`` custom tool.
 
 .. note::
-   **Native backend routing (v0.1.55+):** The ``understand_image`` tool now routes to the agent's own backend when it supports ``image_understanding``. For example, a Claude agent will use Claude's vision API, a Gemini agent will use Gemini's multimodal API, etc. If the agent's backend doesn't support image understanding, it falls back to OpenAI ``gpt-5.2``.
+   **Native backend routing (v0.1.55+):** The ``understand_image`` tool now routes to the agent's own backend when it supports ``image_understanding``. For example, a Claude agent will use Claude's vision API, a Gemini agent will use Gemini's multimodal API, etc. If the agent's backend doesn't support image understanding, it falls back to OpenAI ``gpt-5.4``.
 
    Supported backends: OpenAI, Claude, Gemini, Grok, Claude Code (SDK), Codex (CLI).
 
@@ -499,7 +499,7 @@ Video Understanding
 Analyze and extract information from video files using the ``understand_video`` custom tool.
 
 .. note::
-   The ``understand_video`` tool now routes to the agent's native backend when it supports ``video_understanding``. If the agent's backend doesn't support video understanding, it falls back to OpenAI ``gpt-5.2``. The OpenAI fallback requires an ``OPENAI_API_KEY``.
+   The ``understand_video`` tool now routes to the agent's native backend when it supports ``video_understanding``. If the agent's backend doesn't support video understanding, it falls back to OpenAI ``gpt-5.4``. The OpenAI fallback requires an ``OPENAI_API_KEY``.
 
 .. code-block:: yaml
 
@@ -547,7 +547,7 @@ By default, video understanding uses scene-based frame extraction (PySceneDetect
      - id: "video_analyzer"
        backend:
          type: "openai"
-         model: "gpt-5.2"
+         model: "gpt-5.4"
          enable_multimodal_tools: true
          multimodal_config:
            video:

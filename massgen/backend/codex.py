@@ -121,7 +121,7 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
             api_key: OpenAI API key (falls back to OPENAI_API_KEY env var).
                     If None, will attempt OAuth authentication.
             **kwargs: Additional configuration options including:
-                - model: Model name (default: gpt-5.3-codex)
+                - model: Model name (default: gpt-5.4)
                 - model_reasoning_effort: Reasoning effort level (low, medium, high, xhigh)
                 - cwd: Current working directory for Codex
                 - system_prompt: System prompt to prepend
@@ -140,7 +140,7 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
         self._session_file: Path | None = None
 
         # Configuration
-        self.model = kwargs.get("model", "gpt-5.3-codex")
+        self.model = kwargs.get("model", "gpt-5.4")
         # Prefer native Codex setting, but accept OpenAI-style nesting for compatibility:
         # backend.reasoning.effort -> model_reasoning_effort
         self.model_reasoning_effort = kwargs.get("model_reasoning_effort")  # low, medium, high, xhigh
@@ -150,6 +150,10 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
                 effort = reasoning_cfg.get("effort")
                 if isinstance(effort, str) and effort.strip():
                     self.model_reasoning_effort = effort.strip()
+        if self.model_reasoning_effort is None and str(self.model).strip().lower() == "gpt-5.4":
+            # GPT-5.4 supports xhigh reasoning, and Codex should default to
+            # the deepest effort tier unless the caller explicitly overrides it.
+            self.model_reasoning_effort = "xhigh"
         self._config_cwd = kwargs.get("cwd")  # May be relative; resolved at execution time
         self.system_prompt = kwargs.get("system_prompt", "")
         self.approval_mode = kwargs.get("approval_mode", "full-auto")
@@ -499,6 +503,11 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
                         key, value = line.split("=", 1)
                         key = key.strip()
                         value = value.strip()
+                        # Strip surrounding quotes (same as DockerManager)
+                        if value.startswith('"') and value.endswith('"'):
+                            value = value[1:-1]
+                        elif value.startswith("'") and value.endswith("'"):
+                            value = value[1:-1]
                         if key:
                             loaded[key] = value
                         else:
@@ -511,20 +520,39 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
         if creds.get("pass_all_env"):
             env_vars.update(os.environ)
 
-        # Load from env_file (filtered if env_vars_from_file is set)
+        # Load from env_file (filtered if env_vars_from_file is set).
+        # Search multiple locations (same as DockerManager) so subagent
+        # workspaces that lack a local .env still pick up global keys.
         env_file = creds.get("env_file")
         if env_file:
-            env_path = Path(env_file).expanduser().resolve()
-            if env_path.exists():
-                file_env = _load_env_file(env_path)
+            home_env = Path.home() / ".massgen" / ".env"
+            provided_path = Path(env_file).expanduser().resolve()
+            local_env = Path(".env").resolve()
+
+            seen: set[Path] = set()
+            candidates: list[Path] = []
+            for p in [home_env, provided_path, local_env]:
+                resolved = p.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(resolved)
+
+            file_env: dict[str, str] = {}
+            for env_path in candidates:
+                if env_path.exists():
+                    file_env.update(_load_env_file(env_path))
+
+            if file_env:
                 filter_list = creds.get("env_vars_from_file")
                 if filter_list:
                     filtered_env = {k: v for k, v in file_env.items() if k in filter_list}
                     env_vars.update(filtered_env)
                 else:
                     env_vars.update(file_env)
-            else:
-                logger.warning(f"⚠️ [Codex] Env file not found: {env_path}")
+            elif not any(c.exists() for c in candidates):
+                logger.warning(
+                    f"⚠️ [Codex] Env file not found in any location: " f"{[str(c) for c in candidates]}",
+                )
 
         # Pass specific env vars from host
         for var_name in creds.get("env_vars", []) or []:
@@ -621,6 +649,8 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
             tool_specs_path=specs_path,
             allowed_paths=[self.cwd],
             agent_id="codex",
+            backend_type="codex",
+            model=self.model,
             env=self._build_custom_tools_mcp_env(),
             wait_interrupt_file=self._resolve_background_wait_interrupt_file(),
             hook_dir=self.get_hook_dir(),
@@ -676,6 +706,8 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
                             tool_specs_path=specs_path,
                             allowed_paths=[self.cwd],
                             agent_id="codex",
+                            backend_type="codex",
+                            model=self.model,
                             env=self._build_custom_tools_mcp_env(),
                             wait_interrupt_file=self._resolve_background_wait_interrupt_file(),
                             hook_dir=self.get_hook_dir(),

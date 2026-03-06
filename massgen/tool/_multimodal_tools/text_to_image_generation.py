@@ -1,5 +1,5 @@
 """
-Generate image using OpenAI's response with gpt-5.2 WITHOUT ANY INPUT IMAGES and store it in the workspace.
+Generate image using OpenAI's response with gpt-5.4 WITHOUT ANY INPUT IMAGES and store it in the workspace.
 
 This module is an alias for the unified generate_media tool.
 For new code, prefer using generate_media(prompt, mode="image") directly.
@@ -12,21 +12,21 @@ from .generation import generate_media
 
 async def text_to_image_generation(
     prompt: str,
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     storage_path: str | None = None,
     allowed_paths: list[str] | None = None,
     agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """
-    Generate image using OpenAI's response with gpt-5.2 **WITHOUT ANY INPUT IMAGES** and store it in the workspace.
+    Generate image using OpenAI's response with gpt-5.4 **WITHOUT ANY INPUT IMAGES** and store it in the workspace.
 
     This is an alias for generate_media(mode="image", backend="openai").
     For new code, prefer using generate_media directly.
 
     Args:
         prompt: Text description of the image to generate
-        model: Model to use for generation (default: "gpt-5.2")
-               Options: "gpt-5.2"
+        model: Model to use for generation (default: "gpt-5.4")
+               Options: "gpt-5.4"
         storage_path: Directory path where to save the image (optional)
                      - **IMPORTANT**: Must be a DIRECTORY path only, NOT a file path (e.g., "images/generated" NOT "images/cat.png")
                      - The filename is automatically generated from the prompt

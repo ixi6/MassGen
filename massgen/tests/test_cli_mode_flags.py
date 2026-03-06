@@ -238,9 +238,10 @@ class TestModeConfigOverrides:
         assert config["orchestrator"]["skip_voting"] is True
         # Should NOT have multi-agent-specific overrides
         assert config["orchestrator"].get("disable_injection") is None
+        assert config["orchestrator"].get("final_answer_strategy") is None
 
     def test_quick_multi_agent_disables_injection(self):
-        """--quick (multi-agent) sets disable_injection=True, defer_voting_until_all_answered=True."""
+        """--quick (multi-agent) defaults to independent work plus synthesized final answer."""
         from massgen.cli import apply_mode_flags_to_config
 
         config = {"orchestrator": {}}
@@ -253,6 +254,7 @@ class TestModeConfigOverrides:
         apply_mode_flags_to_config(config, args)
         assert config["orchestrator"]["disable_injection"] is True
         assert config["orchestrator"]["defer_voting_until_all_answered"] is True
+        assert config["orchestrator"]["final_answer_strategy"] == "synthesize"
         # Should NOT have single-agent-specific overrides
         assert config["orchestrator"].get("skip_voting") is None
 

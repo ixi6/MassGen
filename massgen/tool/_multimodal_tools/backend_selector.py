@@ -76,13 +76,13 @@ OPENAI_AUDIO = BackendConfig(
 
 OPENAI_VIDEO = BackendConfig(
     name="openai",
-    model="gpt-5.2",
+    model="gpt-5.4",
     api_key_env_vars=["OPENAI_API_KEY"],
 )
 
 OPENAI_IMAGE = BackendConfig(
     name="openai",
-    model="gpt-5.2",
+    model="gpt-5.4",
     api_key_env_vars=["OPENAI_API_KEY"],
 )
 

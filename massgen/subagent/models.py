@@ -210,10 +210,13 @@ class SubagentOrchestratorConfig:
 
     Attributes:
         enabled: Whether orchestrator mode is enabled (default False = single agent)
-        agents: List of agent configurations for the subagent orchestrator.
+        agents: Shared common agent configurations for the subagent orchestrator.
                 Each agent config can have: id (optional, auto-generated if missing),
                 backend (with type, model, base_url, etc.)
-                If empty/None, inherits from parent config.
+                If empty/None, no shared common agents are added.
+        inherit_spawning_agent_backend: If True, synthesize a parent-local subagent
+                agent from the spawning parent's backend when that parent has no
+                explicit `subagent_agents` configured.
         coordination: Optional coordination config subset (broadcast, planning, etc.)
         max_new_answers: Maximum new answers per agent before forcing consensus.
                         Default 3 for subagents to prevent runaway iterations.
@@ -227,14 +230,18 @@ class SubagentOrchestratorConfig:
             subagents are provided explicitly via the spawn API's context_paths
             parameter. Set True only if subagent tasks intentionally use @path
             syntax.
+        final_answer_strategy: Optional child orchestrator final-answer policy.
+            Mirrors the top-level orchestrator setting for multi-agent subagent runs.
     """
 
     enabled: bool = False
     agents: list[dict[str, Any]] = field(default_factory=list)
+    inherit_spawning_agent_backend: bool = False
     coordination: dict[str, Any] = field(default_factory=dict)
     max_new_answers: int = 3  # Conservative default for subagents
     enable_web_search: bool | None = None  # None = inherit from parent
     parse_at_references: bool = False
+    final_answer_strategy: Literal["winner_reuse", "winner_present", "synthesize"] | None = None
 
     @property
     def num_agents(self) -> int:
@@ -272,10 +279,12 @@ class SubagentOrchestratorConfig:
         return cls(
             enabled=data.get("enabled", False),
             agents=data.get("agents", []),
+            inherit_spawning_agent_backend=data.get("inherit_spawning_agent_backend", False),
             coordination=data.get("coordination", {}),
             max_new_answers=data.get("max_new_answers", 3),
             enable_web_search=data.get("enable_web_search"),
             parse_at_references=data.get("parse_at_references", False),
+            final_answer_strategy=data.get("final_answer_strategy"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -283,12 +292,15 @@ class SubagentOrchestratorConfig:
         result = {
             "enabled": self.enabled,
             "agents": [a.copy() for a in self.agents] if self.agents else [],
+            "inherit_spawning_agent_backend": self.inherit_spawning_agent_backend,
             "coordination": self.coordination.copy() if self.coordination else {},
             "max_new_answers": self.max_new_answers,
             "parse_at_references": self.parse_at_references,
         }
         if self.enable_web_search is not None:
             result["enable_web_search"] = self.enable_web_search
+        if self.final_answer_strategy is not None:
+            result["final_answer_strategy"] = self.final_answer_strategy
         return result
 
 

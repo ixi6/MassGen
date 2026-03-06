@@ -751,7 +751,7 @@ async def _inpaint_image_openai(config: GenerationConfig) -> GenerationResult:
 
     try:
         client = AsyncOpenAI(api_key=api_key)
-        model = config.model or "gpt-5.2"
+        model = config.model or "gpt-5.4"
 
         # Build edit kwargs
         edit_kwargs: dict[str, Any] = {

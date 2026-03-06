@@ -18,7 +18,7 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -931,6 +931,271 @@ class TestSubagentContextPaths:
 
 
 class TestSubagentConfigInheritance:
+    def test_inherit_spawning_parent_backend_uses_single_matching_parent(self, tmp_path):
+        """inherit_spawning_agent_backend should select only the spawning parent's backend."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_agent_configs = [
+            {
+                "id": "agent_a",
+                "backend": {
+                    "type": "gemini",
+                    "model": "gemini-3-flash-preview",
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                    "reasoning": {"effort": "low"},
+                },
+            },
+            {
+                "id": "agent_b",
+                "backend": {
+                    "type": "openai",
+                    "model": "gpt-5-mini",
+                    "reasoning": {"effort": "high"},
+                },
+            },
+        ]
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=parent_agent_configs,
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                inherit_spawning_agent_backend=True,
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="inherit-spawner-backend",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert len(yaml_config["agents"]) == 1
+        only_agent = yaml_config["agents"][0]
+        assert only_agent["id"] == "agent_a"
+        assert only_agent["backend"]["type"] == "gemini"
+        assert only_agent["backend"]["model"] == "gemini-3-flash-preview"
+        assert only_agent["backend"]["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
+        assert only_agent["backend"]["reasoning"] == {"effort": "low"}
+
+    def test_inherit_spawning_parent_backend_raises_when_parent_not_found(self, tmp_path):
+        """If the spawning parent ID is missing, inherit mode should fail fast."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_missing",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_a", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                inherit_spawning_agent_backend=True,
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate app behavior",
+            parent_agent_id="agent_missing",
+            subagent_id="missing-parent-backend",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        with pytest.raises(ValueError, match="Unable to inherit backend for spawning parent agent"):
+            manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+    def test_inherit_spawning_parent_backend_falls_back_from_parent_coordination_config(self, tmp_path):
+        """Manager should recover inherit mode from parent_coordination_config when direct config is missing."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_agent_configs = [
+            {
+                "id": "agent_a",
+                "backend": {
+                    "type": "gemini",
+                    "model": "gemini-3-flash-preview",
+                },
+            },
+            {
+                "id": "agent_b",
+                "backend": {
+                    "type": "openrouter",
+                    "model": "minimax/minimax-m2.5",
+                },
+            },
+        ]
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=parent_agent_configs,
+            subagent_orchestrator_config=None,
+            parent_coordination_config={
+                "subagent_orchestrator": {
+                    "enabled": True,
+                    "inherit_spawning_agent_backend": True,
+                },
+            },
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate candidate output",
+            parent_agent_id="agent_a",
+            subagent_id="inherit-from-parent-coordination",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert len(yaml_config["agents"]) == 1
+        assert yaml_config["agents"][0]["id"] == "agent_a"
+        assert yaml_config["agents"][0]["backend"]["type"] == "gemini"
+        assert yaml_config["agents"][0]["backend"]["model"] == "gemini-3-flash-preview"
+
+    def test_shared_common_agents_are_used_when_parent_has_no_local_subagent_agents(self, tmp_path):
+        """Shared common subagent_orchestrator agents should be used alone when local config is absent."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_a", "backend": {"type": "gemini", "model": "gemini-3-flash-preview"}},
+                {"id": "agent_b", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "shared_eval", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="shared-only",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert [agent["id"] for agent in yaml_config["agents"]] == ["shared_eval"]
+        assert yaml_config["agents"][0]["backend"]["model"] == "gpt-5-mini"
+
+    def test_shared_common_agents_and_parent_local_subagent_agents_are_combined(self, tmp_path):
+        """Effective child team should combine shared common agents with the spawning parent's local list."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_agent_configs = [
+            {
+                "id": "agent_a",
+                "backend": {"type": "gemini", "model": "gemini-3-flash-preview"},
+                "subagent_agents": [
+                    {"id": "a_local", "backend": {"type": "openrouter", "model": "minimax/minimax-m2.5"}},
+                ],
+            },
+            {
+                "id": "agent_b",
+                "backend": {"type": "openai", "model": "gpt-5-mini"},
+                "subagent_agents": [
+                    {"id": "b_local", "backend": {"type": "claude", "model": "claude-sonnet-4-20250514"}},
+                ],
+            },
+        ]
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=parent_agent_configs,
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "shared_eval", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="common-plus-local",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert [agent["id"] for agent in yaml_config["agents"]] == ["shared_eval", "a_local"]
+        assert yaml_config["agents"][1]["backend"]["type"] == "openrouter"
+        assert yaml_config["agents"][1]["backend"]["model"] == "minimax/minimax-m2.5"
+
+    def test_inherit_synthesizes_parent_local_subagent_agent_after_shared_common_agents(self, tmp_path):
+        """inherit mode should synthesize only the missing local portion, not replace shared common agents."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {
+                    "id": "agent_a",
+                    "backend": {
+                        "type": "gemini",
+                        "model": "gemini-3-flash-preview",
+                        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                    },
+                },
+                {
+                    "id": "agent_b",
+                    "backend": {"type": "openai", "model": "gpt-5-mini"},
+                },
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                inherit_spawning_agent_backend=True,
+                agents=[
+                    {"id": "shared_eval", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="inherit-plus-common",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert [agent["id"] for agent in yaml_config["agents"]] == ["shared_eval", "agent_a"]
+        assert yaml_config["agents"][1]["backend"]["type"] == "gemini"
+        assert yaml_config["agents"][1]["backend"]["model"] == "gemini-3-flash-preview"
+        assert yaml_config["agents"][1]["backend"]["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
     def test_inherits_parent_skill_settings_into_coordination(self, tmp_path):
         """Subagent YAML should inherit parent skills settings when unset locally."""
         from massgen.subagent.manager import SubagentManager
@@ -1045,6 +1310,49 @@ class TestSubagentConfigInheritance:
         assert backend["audio_generation_backend"] == "openai"
         assert backend["audio_generation_model"] == "gpt-4o-mini-tts"
 
+    def test_common_child_agents_fall_back_to_parent_multimodal_tool_settings(self, tmp_path):
+        """Shared subagent orchestrator agents should still inherit parent multimodal settings."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_backend = {
+            "type": "codex",
+            "model": "gpt-5.4",
+            "enable_multimodal_tools": True,
+            "image_generation_backend": "openai",
+            "video_generation_backend": "openai",
+        }
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "parent-agent", "backend": parent_backend},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "eval_codex", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Inspect screenshots and media artifacts",
+            parent_agent_id="parent-agent",
+            subagent_id="common-agent-inherit-multimodal",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        backend = yaml_config["agents"][0]["backend"]
+
+        assert backend["enable_multimodal_tools"] is True
+        assert backend["image_generation_backend"] == "openai"
+        assert backend["video_generation_backend"] == "openai"
+
     def test_omits_command_line_execution_mode_when_command_line_mcp_disabled(self, tmp_path):
         """Subagent backend should omit execution mode when command-line MCP is disabled."""
         from massgen.subagent.manager import SubagentManager
@@ -1129,6 +1437,175 @@ class TestSubagentConfigInheritance:
         assert "voting_threshold" not in coord_cfg
         assert "checklist_require_gap_report" not in coord_cfg
         assert "gap_report_mode" not in coord_cfg
+
+    def test_multi_agent_quick_subagents_default_child_final_answer_strategy_to_synthesize(self, tmp_path):
+        """refine=False multi-agent subagents should synthesize child output by default."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate prior answers",
+            parent_agent_id="parent-agent",
+            subagent_id="quick-eval-default",
+            metadata={"refine": False},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert yaml_config["orchestrator"]["skip_final_presentation"] is True
+        assert yaml_config["orchestrator"]["final_answer_strategy"] == "synthesize"
+
+    def test_multi_agent_quick_subagents_keep_explicit_child_final_answer_strategy(self, tmp_path):
+        """Explicit child final_answer_strategy should override quick-mode synthesize default."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                final_answer_strategy="winner_reuse",
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate prior answers",
+            parent_agent_id="parent-agent",
+            subagent_id="quick-eval-explicit",
+            metadata={"refine": False},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert yaml_config["orchestrator"]["final_answer_strategy"] == "winner_reuse"
+
+    @pytest.mark.asyncio
+    async def test_spawn_parallel_passes_subagent_type_to_spawn_subagent(self, tmp_path):
+        """Blocking parallel spawns should preserve subagent_type through the manager layer."""
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentResult
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+        )
+
+        with patch.object(
+            manager,
+            "spawn_subagent",
+            new=AsyncMock(
+                return_value=SubagentResult.create_success(
+                    subagent_id="round_eval",
+                    answer="ok",
+                    workspace_path=str(parent_workspace),
+                    execution_time_seconds=0.1,
+                ),
+            ),
+        ) as mock_spawn:
+            await manager.spawn_parallel(
+                tasks=[
+                    {
+                        "task": "Critique all current answers and write a detailed improvement spec",
+                        "subagent_id": "round_eval",
+                        "subagent_type": "round_evaluator",
+                    },
+                ],
+                refine=False,
+            )
+
+        assert mock_spawn.await_args.kwargs["subagent_type"] == "round_evaluator"
+
+    def test_round_evaluator_child_yaml_omits_checklist_settings_and_mounts_temp_root(self, tmp_path):
+        """round_evaluator child YAML should keep presenter-stage synthesis, omit checklist settings, and mount temp roots."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "run_001"
+        temp_root.mkdir(parents=True)
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                coordination={
+                    "voting_sensitivity": "checklist_gated",
+                    "voting_threshold": 9,
+                    "checklist_require_gap_report": True,
+                    "gap_report_mode": "separate",
+                },
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}},
+                ],
+            ),
+            agent_temporary_workspace=str(temp_root),
+        )
+
+        config = SubagentConfig.create(
+            task="Critique all candidate answers and produce a detailed improvement spec.",
+            parent_agent_id="parent-agent",
+            subagent_id="round-eval",
+            metadata={"refine": False, "subagent_type": "round_evaluator"},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        context_paths = orchestrator_cfg.get("context_paths", [])
+        path_set = {entry["path"] for entry in context_paths}
+
+        assert "voting_sensitivity" not in orchestrator_cfg
+        assert "voting_threshold" not in orchestrator_cfg
+        assert "checklist_require_gap_report" not in orchestrator_cfg
+        assert "gap_report_mode" not in orchestrator_cfg
+        assert orchestrator_cfg["final_answer_strategy"] == "synthesize"
+        assert orchestrator_cfg["skip_final_presentation"] is False
+        assert str(temp_root.resolve()) in path_set
 
     def test_parent_voting_settings_not_promoted_without_subagent_orchestrator(self, tmp_path):
         """General subagents should not inherit voting/checklist settings from parent coordination."""

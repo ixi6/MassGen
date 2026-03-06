@@ -428,7 +428,7 @@ async def generate_media(
         )
 
     Supported Backends:
-        Image: google (Nano Banana 2 / Gemini + Imagen), openai (GPT-5.2), grok (Grok Imagine), openrouter
+        Image: google (Nano Banana 2 / Gemini + Imagen), openai (GPT-5.4), grok (Grok Imagine), openrouter
         Video: grok (Grok Imagine Video), google (Veo), openai (Sora-2)
         Audio (speech): elevenlabs (eleven_multilingual_v2), openai (gpt-4o-mini-tts)
         Audio (music): elevenlabs only

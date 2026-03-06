@@ -349,6 +349,8 @@ async def call_codex(
             "-c",
             "web_search=disabled",
         ]
+        if model:
+            cmd.extend(["--model", model])
         for img_path in image_paths:
             cmd.extend(["--image", img_path])
 

@@ -50,6 +50,9 @@ orchestrator:
     subagent_orchestrator:
       enabled: true
       # enable_web_search: true
+      # agents here are the shared common subagent agents for every parent agent.
+      # Parent agents can add top-level subagent_agents, and inherit_spawning_agent_backend
+      # can synthesize one from the spawning parent's backend when local config is absent.
       agents:
       - backend:
           type: openrouter

@@ -338,6 +338,8 @@ class LLMBackend(ABC):
             "write_mode",  # Isolated write context mode (auto/worktree/isolated/legacy)
             "drift_conflict_policy",  # Isolated apply drift resolution policy
             "subagent_types",  # Which subagent types to expose (handled by orchestrator)
+            "round_evaluator_before_checklist",  # Coordination-only evaluator-first loop control
+            "orchestrator_managed_round_evaluator",  # Gate for orchestrator-owned round_evaluator launch
             "enable_quality_rethink_on_iteration",  # Coordination-only quality task injection toggle
             "enable_novelty_on_iteration",  # Coordination-only novelty task injection toggle
             "novelty_injection",  # Novelty pressure level (none/gentle/moderate/aggressive)
@@ -366,11 +368,14 @@ class LLMBackend(ABC):
             # Decomposition mode parameters (handled by orchestrator, not passed to API)
             "coordination_mode",
             "presenter_agent",
+            "final_answer_strategy",
             "subtask",
             # Fairness controls (handled by orchestrator, not passed to API)
             "fairness_enabled",
             "fairness_lead_cap_answers",
             "max_midstream_injections_per_round",
+            "defer_peer_updates_until_restart",
+            "allow_midstream_peer_updates_before_checklist_submit",
             "max_checklist_calls_per_round",
             "checklist_first_answer",
         }

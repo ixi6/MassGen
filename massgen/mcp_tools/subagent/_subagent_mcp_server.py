@@ -96,6 +96,32 @@ def _load_json_with_temp_workspace_fallback(path_str: str) -> tuple[Any, Path]:
             return json.load(f), fallback
 
 
+def _parse_orchestrator_config_arg(raw_value: str) -> dict[str, Any] | None:
+    """Parse --orchestrator-config robustly across runtimes with escape quirks."""
+    raw = str(raw_value or "").strip()
+    if not raw:
+        return None
+
+    candidates = [raw]
+    if (raw.startswith('"') and raw.endswith('"')) or (raw.startswith("'") and raw.endswith("'")):
+        candidates.append(raw[1:-1])
+
+    if '\\"' in raw:
+        candidates.append(raw.replace('\\"', '"'))
+    if "\\'" in raw:
+        candidates.append(raw.replace("\\'", "'"))
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+
+    return None
+
+
 def _ensure_specialized_types_loaded() -> None:
     """Lazily scan workspace for SUBAGENT.md dirs on first call to spawn_subagents.
 
@@ -291,6 +317,13 @@ async def create_server() -> fastmcp.FastMCP:
         help="JSON-encoded subagent orchestrator configuration",
     )
     parser.add_argument(
+        "--orchestrator-config-file",
+        type=str,
+        required=False,
+        default="",
+        help="Path to JSON file containing subagent orchestrator configuration",
+    )
+    parser.add_argument(
         "--log-directory",
         type=str,
         required=False,
@@ -376,13 +409,39 @@ async def create_server() -> fastmcp.FastMCP:
             logger.warning(f"Failed to load agent configs from {args.agent_configs_file}: {e}")
             _parent_agent_configs = []
 
-    # Parse subagent orchestrator config
-    try:
-        orch_cfg_data = json.loads(args.orchestrator_config)
-        if orch_cfg_data:
+    # Parse subagent orchestrator config (prefer file payload over inline JSON).
+    _subagent_orchestrator_config = None
+    orch_cfg_data: dict[str, Any] | None = None
+    if args.orchestrator_config_file:
+        try:
+            loaded_orch_cfg, _orch_cfg_loaded_path = _load_json_with_temp_workspace_fallback(
+                args.orchestrator_config_file,
+            )
+            if isinstance(loaded_orch_cfg, dict):
+                orch_cfg_data = loaded_orch_cfg
+            else:
+                logger.warning(
+                    "[SubagentMCP] Ignoring non-dict orchestrator config from %s",
+                    args.orchestrator_config_file,
+                )
+        except (json.JSONDecodeError, FileNotFoundError, OSError) as e:
+            logger.warning(
+                "[SubagentMCP] Failed to load orchestrator config from %s: %s",
+                args.orchestrator_config_file,
+                e,
+            )
+
+    if orch_cfg_data is None and args.orchestrator_config:
+        parsed_inline = _parse_orchestrator_config_arg(args.orchestrator_config)
+        if parsed_inline is None and args.orchestrator_config.strip() not in ("", "{}"):
+            logger.warning("[SubagentMCP] Failed to parse --orchestrator-config payload; using defaults")
+        orch_cfg_data = parsed_inline
+
+    if isinstance(orch_cfg_data, dict) and orch_cfg_data:
+        try:
             _subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(orch_cfg_data)
-    except json.JSONDecodeError:
-        pass  # Keep default None
+        except (TypeError, ValueError) as e:
+            logger.warning(f"[SubagentMCP] Invalid orchestrator config payload: {e}")
 
     # Set log directory
     _log_directory = args.log_directory if args.log_directory else None
@@ -714,6 +773,26 @@ async def create_server() -> fastmcp.FastMCP:
                                 "operation": "spawn_subagents",
                                 "error": (f"Task at index {i} has a non-existent context_path: '{path_str}'. " f"Your workspace is at: {_workspace_path}. " "Check the path exists first."),
                             }
+
+            inherit_spawning_agent_backend = bool(
+                _subagent_orchestrator_config and getattr(_subagent_orchestrator_config, "inherit_spawning_agent_backend", False),
+            )
+            if inherit_spawning_agent_backend:
+                model_override_indices = []
+                for i, task_config in enumerate(tasks):
+                    model_override = task_config.get("model")
+                    if model_override is not None and str(model_override).strip():
+                        model_override_indices.append(i)
+
+                if model_override_indices:
+                    task_indexes = ", ".join(str(idx) for idx in model_override_indices)
+                    return {
+                        "success": False,
+                        "operation": "spawn_subagents",
+                        "error": (
+                            "Task-level model override is not allowed when " "subagent_orchestrator.inherit_spawning_agent_backend=true. " f"Remove 'model' from task(s) at index: {task_indexes}."
+                        ),
+                    }
 
             # Normalize task IDs using a global counter so IDs are unique
             # across multiple spawn_subagents calls (not just within one call).

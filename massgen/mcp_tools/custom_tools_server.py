@@ -7,6 +7,8 @@ via stdio MCP transport.
 Usage (launched by backend):
     fastmcp run massgen/mcp_tools/custom_tools_server.py:create_server -- \
         --tool-specs /path/to/tool_specs.json \
+        --backend-type codex \
+        --model gpt-5.4 \
         --allowed-paths /workspace
 
 The tool_specs.json file is written by the backend before launch and contains
@@ -1183,6 +1185,18 @@ async def create_server() -> fastmcp.FastMCP:
         help="Agent ID for execution context",
     )
     parser.add_argument(
+        "--backend-type",
+        type=str,
+        default=None,
+        help="Canonical backend id for tool context injection",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Model name for tool context injection",
+    )
+    parser.add_argument(
         "--wait-interrupt-file",
         type=str,
         default=None,
@@ -1296,8 +1310,21 @@ async def create_server() -> fastmcp.FastMCP:
         "agent_id": args.agent_id,
         "allowed_paths": [str(Path(p).resolve()) for p in args.allowed_paths],
     }
+    if args.backend_type:
+        execution_context["backend_type"] = args.backend_type
+        execution_context["backend_name"] = args.backend_type
+    if args.model:
+        execution_context["model"] = args.model
     if args.allowed_paths:
         execution_context["agent_cwd"] = args.allowed_paths[0]
+        try:
+            from massgen.context.task_context import load_task_context
+
+            task_context = load_task_context(args.allowed_paths[0], required=False)
+            if task_context is not None:
+                execution_context["task_context"] = task_context
+        except Exception:  # noqa: BLE001
+            pass
 
     background_manager = BackgroundToolManager(
         tool_manager=tool_manager,
@@ -1625,6 +1652,8 @@ def build_server_config(
     tool_specs_path: Path,
     allowed_paths: list[str] | None = None,
     agent_id: str = "unknown",
+    backend_type: str | None = None,
+    model: str | None = None,
     env: dict[str, str] | None = None,
     tool_timeout_sec: int = 300,
     wait_interrupt_file: Path | None = None,
@@ -1636,6 +1665,8 @@ def build_server_config(
         tool_specs_path: Path to the tool specs JSON file.
         allowed_paths: List of allowed filesystem paths.
         agent_id: Agent identifier.
+        backend_type: Canonical backend id for tool context injection.
+        model: Model name for tool context injection.
         tool_timeout_sec: Timeout in seconds for tool execution (default 300 for media generation).
 
     Returns:
@@ -1653,6 +1684,10 @@ def build_server_config(
         "--agent-id",
         agent_id,
     ]
+    if backend_type:
+        cmd_args.extend(["--backend-type", backend_type])
+    if model:
+        cmd_args.extend(["--model", model])
     if allowed_paths:
         cmd_args.extend(["--allowed-paths"] + allowed_paths)
     if wait_interrupt_file is not None:

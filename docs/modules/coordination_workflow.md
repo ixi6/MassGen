@@ -51,7 +51,15 @@ Use this as a mental model for how one real turn flows:
 6. Optional checklist-gated mode:
    - agent runs `submit_checklist`
    - if gaps exist, it may call `propose_improvements` and then `new_answer`
-   - if quality gates pass, it can move to `vote`
+   - in voting mode, accepted terminal verdicts move to `vote`
+   - in decomposition mode, accepted terminal verdicts move to `stop`, and the checklist scores the agent's current subtask work rather than ranking all peers as competing final answers
+   - when decomposition provides per-agent execution criteria, those criteria are routed to that agent's prompt and checklist tool state; otherwise runtime decomposition defaults are synthesized from the owned subtask
+   - when `coordination.round_evaluator_before_checklist: true`, the parent is
+     guided to run one blocking `round_evaluator` subagent before round 2+ and
+     then use that packet as the diagnostic basis for `submit_checklist` /
+     `propose_improvements`
+   - when `coordination.orchestrator_managed_round_evaluator: true` is also
+     enabled, the orchestrator owns that launch instead
 7. Restart and/or mid-stream injection delivers fresh peer updates.
 8. Agents keep iterating until all active agents are terminal (`has_voted=True` or stop path).
 9. Finalization selects the winner, runs presenter synthesis, and writes final artifacts/snapshots.
@@ -337,6 +345,8 @@ When new peer work exists, delivery path is selected by backend capability:
 - `vote-only` mode forces restart instead of mid-stream injection so vote options/tool schema refresh correctly.
 - If near soft timeout (`_should_skip_injection_due_to_timeout`), injection is skipped and restart is deferred.
 - `max_midstream_injections_per_round` caps unseen-update fanout per round.
+- `defer_peer_updates_until_restart: true` queues peer answer updates for the next restart instead of delivering them mid-stream.
+- In checklist mode, `allow_midstream_peer_updates_before_checklist_submit: true` keeps mid-stream peer updates enabled until the first accepted `submit_checklist` for the current answer.
 - `disable_injection: true` bypasses peer-answer propagation (independent refinement mode).
 
 Non-peer runtime payloads can also inject:
@@ -428,17 +438,29 @@ Checklist mode is policy, not the core coordination primitive:
 
 - enabled with `voting_sensitivity: checklist_gated`
 - default behavior blocks checklist before first answer unless `checklist_first_answer: true`
+- when `defer_peer_updates_until_restart: true`, peer updates wait for restart unless `allow_midstream_peer_updates_before_checklist_submit` keeps the pre-submit window open
 - common flow:
   1. implement + verify
-  2. call `submit_checklist`
-  3. if checklist returns `status=validation_error`, fix payload/report and call `submit_checklist` again
-  4. if accepted iterate verdict, call `propose_improvements`
-  5. implement plan
-  6. write/update `memory/short_term/verification_latest.md` with replayable verification steps/artifacts
-  7. submit via `new_answer` (or terminal action)
+  2. if `round_evaluator_before_checklist: true` and this is round 2+, launch one blocking `round_evaluator` before checklist submission
+  3. parent uses the returned critique/spec packet as the diagnostic basis for checklist submission
+  4. parent saves or copies that packet into its workspace as the diagnostic report and calls `submit_checklist`
+  5. if checklist returns `status=validation_error`, fix payload/report and call `submit_checklist` again
+  6. if accepted iterate verdict, call `propose_improvements`
+  7. implement plan (use `improvement_spec` from the evaluator packet as richer guidance when present)
+  8. write/update `memory/short_term/verification_latest.md` with replayable verification steps/artifacts
+  9. submit via `new_answer` (or terminal action)
+- round evaluator contract notes:
+  - returns a packet with `criteria_interpretation`, `criterion_findings`, `cross_answer_synthesis`, `preserve`, `improvement_spec`, `verification_plan`, and `evidence_gaps`
+  - the packet is critique/spec guidance only, not a checklist payload or terminal recommendation
+  - the round evaluator never calls `submit_checklist`, `propose_improvements`, or `vote` itself
+  - the parent should not run a second full self-evaluation pass after delegation; only close explicit `evidence_gaps` if grounded checklist submission still needs more facts
+  - generated child YAML for `round_evaluator` omits checklist-gated child settings and always mounts the shared temp-workspace root read-only
 - checklist result contract:
   - accepted path: `status=accepted` + `verdict`
   - invalid path: `status=validation_error`, `requires_resubmission=true`, no `verdict`
+- scoring scope:
+  - voting mode: when multiple answers are in context, `submit_checklist` expects per-agent scores across the candidate answers
+  - decomposition mode: `submit_checklist` evaluates the agent's current owned work against the latest peer context, using flat criterion scores for that current work
 - `propose_improvements` is only valid after the latest accepted iterate checklist result
 - after injection updates arrive post-checklist, one bounded recheck is allowed:
   - preferred: score only newly injected labels (delta recheck)
@@ -525,6 +547,8 @@ orchestrator:
   fairness_enabled: true
   fairness_lead_cap_answers: 2
   max_midstream_injections_per_round: 2
+  defer_peer_updates_until_restart: false
+  allow_midstream_peer_updates_before_checklist_submit: null
   max_new_answers_per_agent: 2              # null = unlimited
   max_new_answers_global: 8                 # null = unlimited
   defer_voting_until_all_answered: false

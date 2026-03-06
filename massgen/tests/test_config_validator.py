@@ -999,6 +999,102 @@ class TestCommonBadConfigs:
         assert not result.is_valid()
         assert any("subagent_host_launch_prefix" in error.location for error in result.errors)
 
+    def test_subagent_orchestrator_allows_inherit_mode_with_shared_common_agents(self):
+        """inherit mode may coexist with shared common subagent_orchestrator agents."""
+        config = {
+            "agents": [
+                {"id": "agent_a", "backend": {"type": "gemini", "model": "gemini-3-flash-preview"}},
+                {"id": "agent_b", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "enable_subagents": True,
+                    "subagent_orchestrator": {
+                        "enabled": True,
+                        "inherit_spawning_agent_backend": True,
+                        "agents": [
+                            {"backend": {"type": "openai", "model": "gpt-5-mini"}},
+                        ],
+                    },
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid(), [error.message for error in result.errors]
+
+    def test_subagent_orchestrator_inherit_mode_must_be_boolean(self):
+        """inherit_spawning_agent_backend must be a boolean when provided."""
+        config = {
+            "agents": [
+                {"id": "agent_a", "backend": {"type": "gemini", "model": "gemini-3-flash-preview"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "enable_subagents": True,
+                    "subagent_orchestrator": {
+                        "enabled": True,
+                        "inherit_spawning_agent_backend": "yes",
+                    },
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("inherit_spawning_agent_backend" in error.location for error in result.errors)
+
+    def test_agent_subagent_agents_must_be_a_list(self):
+        """Top-level per-agent subagent_agents should reject non-list values."""
+        config = {
+            "agents": [
+                {
+                    "id": "agent_a",
+                    "backend": {"type": "gemini", "model": "gemini-3-flash-preview"},
+                    "subagent_agents": {"backend": {"type": "openai", "model": "gpt-5-mini"}},
+                },
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "enable_subagents": True,
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("subagent_agents" in error.location for error in result.errors)
+
+    def test_agent_subagent_agents_accepts_agent_like_entries(self):
+        """Top-level per-agent subagent_agents should accept the same agent-entry shape."""
+        config = {
+            "agents": [
+                {
+                    "id": "agent_a",
+                    "backend": {"type": "gemini", "model": "gemini-3-flash-preview"},
+                    "subagent_agents": [
+                        {"id": "local_eval", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+                    ],
+                },
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "enable_subagents": True,
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid(), [error.message for error in result.errors]
+
     def test_agent_without_id(self):
         """Test agent missing id field (common mistake)."""
         config = {
@@ -1188,6 +1284,59 @@ class TestCommonBadConfigs:
 
         assert not result.is_valid()
         assert any("max_midstream_injections_per_round" in error.location for error in result.errors)
+
+    def test_valid_defer_peer_updates_until_restart_flag(self):
+        """defer_peer_updates_until_restart accepts booleans."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"defer_peer_updates_until_restart": True},
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid()
+        assert not result.has_errors()
+
+    def test_invalid_defer_peer_updates_until_restart_type(self):
+        """defer_peer_updates_until_restart must be a boolean."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"defer_peer_updates_until_restart": "yes"},
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("defer_peer_updates_until_restart" in error.location for error in result.errors)
+
+    @pytest.mark.parametrize("value", [True, False, None])
+    def test_valid_allow_midstream_peer_updates_before_checklist_submit(self, value):
+        """allow_midstream_peer_updates_before_checklist_submit accepts bool/null."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"allow_midstream_peer_updates_before_checklist_submit": value},
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid()
+        assert not result.has_errors()
+
+    def test_invalid_allow_midstream_peer_updates_before_checklist_submit_type(self):
+        """allow_midstream_peer_updates_before_checklist_submit must be bool/null."""
+        config = {
+            "agents": [{"id": "test", "backend": {"type": "openai", "model": "gpt-4o"}}],
+            "orchestrator": {"allow_midstream_peer_updates_before_checklist_submit": "nope"},
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("allow_midstream_peer_updates_before_checklist_submit" in error.location for error in result.errors)
 
     @pytest.mark.parametrize(
         "mode",

@@ -27,7 +27,7 @@ generate_media(prompts=["sunset over ocean", "mountain landscape", "city at nigh
 | Backend | Default Model | Strengths | API Key |
 |---------|--------------|-----------|---------|
 | **Google** (priority 1) | `gemini-3.1-flash-image-preview` (Nano Banana 2) | Fast, flexible sizes, image editing, multi-turn | `GOOGLE_API_KEY` or `GEMINI_API_KEY` |
-| **OpenAI** (priority 2) | `gpt-5.2` | High quality, transparent backgrounds, continuation via response ID | `OPENAI_API_KEY` |
+| **OpenAI** (priority 2) | `gpt-5.4` | High quality, transparent backgrounds, continuation via response ID | `OPENAI_API_KEY` |
 | **Grok** (priority 3) | `grok-imagine-image` | 1k resolution, continuation via stored data URI | `XAI_API_KEY` |
 | **OpenRouter** (priority 4) | `google/gemini-3.1-flash-image-preview` | Access to multiple models via single API | `OPENROUTER_API_KEY` |
 

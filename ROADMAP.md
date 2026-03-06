@@ -50,16 +50,16 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## ✅ v0.1.60 - Verification & Decomposition Improvements (Completed)
+## ✅ v0.1.60 - Multimodal Tools, Subagent Enhancements & GPT-5.4 (Completed)
 
 **Released:** March 6, 2026 | PR: [#978](https://github.com/massgen/MassGen/pull/978)
 
 ### Features
-- **Decomp Mode Cooperates with Checklist**: Decomposition mode now cooperates with checklist workflow for unified quality-gated subtask iteration
-- **GPT-5.4 Support**: New OpenAI flagship model added to the model registry
-- **Multimodal Tool Improvements**: Rewritten read_media with clearer schema, media call ledger tracking
-- **Checklist & Prompt Fixes**: Proposal injection improvements, system prompt refocused on entire output
-- **Infrastructure**: Codex prompt caching for pricing accuracy, hook framework for tool interception, skill prefix handling fixes
+- **Multimodal Tool Improvements**: Rewritten `read_media` with clearer schema, new `MediaCallLedgerHook` for media call tracking
+- **Subagent Enhancements**: `inherit_spawning_agent_backend`, `final_answer_strategy`, per-agent `subagent_agents` override
+- **GPT-5.4 Support**: New default OpenAI flagship model added to the model registry
+- **Decomp Mode Cooperates with Checklist**: Decomposition mode now cooperates with checklist workflow for quality-gated subtask iteration
+- **Fixes**: Checklist/proposal injection improvements, Codex prompt caching calculation fix, task plan refresh, skill prefix handling
 
 ---
 

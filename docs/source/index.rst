@@ -190,9 +190,9 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.60 (March 6, 2026)** - Verification & Decomposition Improvements
+**v0.1.60 (March 6, 2026)** - Multimodal Tools, Subagent Enhancements & GPT-5.4
 
-Decomp mode now cooperates with the checklist workflow for quality-gated subtask iteration with improved verification round time. GPT-5.4 support. Rewritten read_media tool with clearer schema and media call ledger tracking. Checklist and prompt injection fixes. Codex prompt caching for pricing accuracy.
+Rewritten read_media tool with clearer schema and new MediaCallLedgerHook for media call tracking. Subagent enhancements with inherit_spawning_agent_backend and final_answer_strategy options. GPT-5.4 as default OpenAI flagship. Decomp mode cooperates with checklist workflow. Codex prompt caching calculation fix for pricing accuracy.
 
 **v0.1.59 (March 4, 2026)** - Quality Round Improvements
 

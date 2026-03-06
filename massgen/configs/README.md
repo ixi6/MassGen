@@ -228,23 +228,23 @@ Most configurations use environment variables for API keys:so
 ## Release History & Examples
 
 ### v0.1.60 - Latest
-**New Features:** Verification & Decomposition Improvements — Decomp + Checklist Cooperation, GPT-5.4, read_media Rewrite
+**New Features:** Multimodal Tools, Subagent Enhancements & GPT-5.4
 
 **Key Features:**
-- **Decomp + Checklist Cooperation**: Decomposition mode now works with checklist workflow for quality-gated subtask iteration
-- **GPT-5.4 Support**: New OpenAI flagship model added to the model registry
-- **Multimodal Tool Improvements**: Rewritten `read_media` with clearer schema; media call ledger tracking
-- **Checklist & Prompt Fixes**: Improved proposal injections, system prompt refocused on entire output quality
-- **Infrastructure**: Codex prompt caching for pricing accuracy, hook framework for tool interception
+- **Multimodal Tool Improvements**: Rewritten `read_media` with clearer schema; new `MediaCallLedgerHook` for media call tracking
+- **Subagent Enhancements**: `inherit_spawning_agent_backend` for automatic backend inheritance, `final_answer_strategy` for child orchestrator policy, per-agent `subagent_agents` override
+- **GPT-5.4 Support**: New default OpenAI flagship model
+- **Decomp + Checklist Cooperation**: Decomposition mode works with checklist workflow for quality-gated subtask iteration
+- **Fixes**: Codex prompt caching calculation fix, checklist/proposal injection improvements, task plan refresh
 
 **Try It:**
 ```bash
 # Install or upgrade to v0.1.60
 pip install --upgrade massgen
 
-# Decomp mode with checklist-gated quality rounds
-uv run massgen --coordination-mode decomposition \
-  "Build a full-stack todo app with React frontend and Python API backend"
+# Subagents inherit the spawning agent's backend automatically
+uv run massgen --config @examples/features/subagent_checklist.yaml \
+  "Create a website for an AI company selling a creative sci-fi style product"
 ```
 
 ### v0.1.59

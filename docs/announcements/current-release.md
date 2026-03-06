@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.60 — Verification & Decomposition Improvements! 🚀 Decomp mode now cooperates with the checklist workflow, enabling quality-gated subtask iteration with improved verification round time. Plus: GPT-5.4 support, rewritten read_media tool with clearer schema, media call ledger tracking, checklist and prompt injection fixes, and Codex prompt caching for pricing accuracy.
+We're excited to release MassGen v0.1.60 — Multimodal Tools, Subagent Enhancements & GPT-5.4! 🚀 Rewritten `read_media` tool with clearer schema and new `MediaCallLedgerHook` for tracking media calls. Subagents gain `inherit_spawning_agent_backend` and `final_answer_strategy` options. GPT-5.4 added as the default OpenAI flagship. Plus: decomp mode cooperates with checklist workflow, Codex prompt caching calculation fix for pricing accuracy, and checklist/prompt injection fixes.
 
 ## Install
 
@@ -29,29 +29,31 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.60 — Verification & Decomposition Improvements! 🚀 Decomp mode now cooperates with the checklist workflow, enabling quality-gated subtask iteration with improved verification round time. Plus: GPT-5.4 support, rewritten read_media tool with clearer schema, media call ledger tracking, checklist and prompt injection fixes, and Codex prompt caching for pricing accuracy.
+We're excited to release MassGen v0.1.60 — Multimodal Tools, Subagent Enhancements & GPT-5.4! 🚀 Rewritten `read_media` tool with clearer schema and new `MediaCallLedgerHook` for tracking media calls. Subagents gain `inherit_spawning_agent_backend` and `final_answer_strategy` options. GPT-5.4 added as the default OpenAI flagship. Plus: decomp mode cooperates with checklist workflow, Codex prompt caching calculation fix for pricing accuracy, and checklist/prompt injection fixes.
 
 **Key Improvements:**
 
-🔄 **Verification & Decomposition** - Unified quality workflow:
-- Decomp mode now cooperates with the checklist workflow, enabling quality-gated subtask iteration
+🛠️ **Multimodal Tool Improvements** - Clearer, more reliable media tools:
+- Rewritten `read_media` tool with clearer schema and better error handling
+- New `MediaCallLedgerHook` for tracking read/generate media calls via the hook framework
+
+🤖 **Subagent Enhancements** - More flexible subagent configuration:
+- `inherit_spawning_agent_backend` — subagents automatically inherit the spawning agent's backend
+- `final_answer_strategy` — configurable child orchestrator final-answer policy (winner_reuse, winner_present, synthesize)
+- Per-agent `subagent_agents` override and robust orchestrator config file support
+
+🧠 **GPT-5.4 Support** - New default OpenAI flagship model:
+- GPT-5.4 added to the model registry for immediate use across all coordination modes
+
+🔄 **Decomposition + Checklist Cooperation** - Unified quality workflow:
+- Decomp mode now cooperates with the checklist workflow for quality-gated subtask iteration
 - Improved verification round time with better verification_latest prompts
 
-🧠 **GPT-5.4 Support** - New OpenAI flagship model:
-- Added GPT-5.4 to the model registry for immediate use across all coordination modes
-
-🛠️ **Multimodal Tool Improvements** - Clearer, more reliable media tools:
-- Rewritten read_media tool with clearer schema and better error handling
-- Media call ledger tracking for read/generate media calls
-
-✅ **Checklist & Prompt Fixes** - More accurate quality gating:
-- Proposal injection improvements for more reliable checklist behavior
+✅ **Fixes** - Quality and accuracy improvements:
+- Checklist & proposal injection improvements for more reliable behavior
 - System prompt refocused on evaluating entire output quality
-
-🔧 **Infrastructure** - Under-the-hood improvements:
-- Codex prompt caching for accurate pricing tracking
-- Hook framework for tool call interception (internal)
-- Skill prefix handling fixes
+- Codex prompt caching calculation fix for pricing accuracy
+- Task plan refresh fix and skill prefix handling fixes
 
 **Getting Started:**
 

@@ -159,19 +159,19 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: March 6, 2026**
 
 **What's New in v0.1.60:**
-- **🔄 Decomposition + Checklist Cooperation** - Decomp mode now works with the checklist workflow, enabling quality-gated subtask iteration with improved verification round time.
-- **🧠 GPT-5.4 Support** - New OpenAI flagship model ready to use across all coordination modes.
-- **🛠️ Multimodal Tool Improvements** - Rewritten `read_media` with clearer schema and better error handling; new media call ledger for tracking read/generate calls.
-- **✅ Checklist & Prompt Fixes** - More reliable proposal injections and system prompt refocused on evaluating entire output quality.
+- **🛠️ Multimodal Tool Improvements** - Rewritten `read_media` with clearer schema and `MediaCallLedgerHook` for tracking media calls.
+- **🤖 Subagent Enhancements** - `inherit_spawning_agent_backend` for automatic backend inheritance, `final_answer_strategy` for child orchestrator policy, per-agent `subagent_agents` override.
+- **🧠 GPT-5.4** - New default OpenAI flagship model across all coordination modes.
+- **🔄 Decomp + Checklist Cooperation** - Decomp mode works with checklist workflow for quality-gated subtask iteration.
 
 **Try v0.1.60 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Decomp mode with checklist-gated quality rounds (activates automatically)
-uv run massgen --coordination-mode decomposition \
-  "Build a full-stack todo app with React frontend and Python API backend"
+# Subagents inherit the spawning agent's backend automatically
+uv run massgen --config @examples/features/subagent_checklist.yaml \
+  "Create a website for an AI company selling a creative sci-fi style product"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1237,20 +1237,24 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 **🎉 Released: March 6, 2026**
 
-#### Verification & Decomposition
-- **Decomp Mode Cooperates with Checklist** ([#978](https://github.com/massgen/MassGen/pull/978)): Decomposition mode now works with the checklist workflow for unified quality-gated subtask iteration
-- **Improved Verification Round Time**: Better `verification_latest` prompts for faster verification rounds
+#### Multimodal Tools
+- **Rewritten `read_media` Tool** ([#978](https://github.com/massgen/MassGen/pull/978)): Clearer schema, better error handling, and improved naming
+- **`MediaCallLedgerHook`**: New hook for tracking `read_media` and `generate_media` tool calls
 
-#### Model & Multimodal
-- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New OpenAI flagship model added to the model registry
-- **Rewritten `read_media` Tool**: Clearer schema, better error handling, and improved naming
-- **Media Call Ledger**: Tracking for `read_media` and `generate_media` tool calls via hook framework
+#### Subagent Enhancements
+- **`inherit_spawning_agent_backend`** ([#978](https://github.com/massgen/MassGen/pull/978)): Subagents automatically inherit the spawning agent's backend configuration
+- **`final_answer_strategy`**: Configurable child orchestrator final-answer policy (winner_reuse, winner_present, synthesize)
+- **Per-Agent `subagent_agents`**: Per-agent override for subagent agent configs; orchestrator config file support with robust JSON parsing
+
+#### Model & Coordination
+- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New default OpenAI flagship model added to the model registry
+- **Decomp + Checklist Cooperation**: Decomposition mode works with the checklist workflow for quality-gated subtask iteration
+- **Improved Verification Round Time**: Better `verification_latest` prompts for faster verification rounds
 
 #### Fixes
 - **Checklist & Proposal Injections**: More reliable checklist behavior with improved proposal injection
-- **System Prompt Focus**: Refocused on evaluating entire output quality
+- **Codex Prompt Caching**: Fixed prompt caching calculation for pricing accuracy
 - **Task Plan Refresh**: Fixed task plan refresh during quality rounds
-- **Codex Prompt Caching**: Accurate pricing tracking for Codex backend
 - **Skill Prefix Handling**: Fixed edge cases in skill prefix resolution
 
 ### Previous Achievements (v0.0.3 - v0.1.59)

@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
-**v0.1.60 (March 6, 2026)** - Verification & Decomposition Improvements
-Decomp mode cooperates with checklist workflow for unified quality gating. GPT-5.4 support, rewritten read_media with clearer schema, media call ledger tracking. Checklist and prompt injection fixes, Codex prompt caching for pricing accuracy, hook framework for tool interception.
+**v0.1.60 (March 6, 2026)** - Multimodal Tools, Subagent Enhancements & GPT-5.4
+Rewritten read_media with clearer schema and MediaCallLedgerHook for media call tracking. Subagent enhancements: inherit_spawning_agent_backend, final_answer_strategy, per-agent subagent_agents. GPT-5.4 as default OpenAI flagship. Decomp mode cooperates with checklist workflow. Codex prompt caching calculation fix for pricing accuracy.
 
 **v0.1.59 (March 4, 2026)** - Quality Round Improvements
 Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and media generation fixes.
@@ -26,24 +26,26 @@ File-based delegation protocol for container-to-host subagent spawning. New buil
 ## [0.1.60] - 2026-03-06
 
 ### Added
-- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New OpenAI flagship model added to the model registry
-- **Hook Framework** ([#978](https://github.com/massgen/MassGen/pull/978)): Internal hook framework for tool call interception (ledger tracking for media calls)
-- **Media Call Ledger** ([#978](https://github.com/massgen/MassGen/pull/978)): Ledger tracking for read/generate media tool calls
+- **read_media Rewrite** ([#978](https://github.com/massgen/MassGen/pull/978)): Rewritten with clearer schema, better error handling, and improved naming
+- **MediaCallLedgerHook** ([#978](https://github.com/massgen/MassGen/pull/978)): New `MediaCallLedgerHook` for tracking read/generate media tool calls via the hook framework
+- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New default OpenAI flagship model added to the model registry
+- **Subagent Backend Inheritance** ([#978](https://github.com/massgen/MassGen/pull/978)): New `inherit_spawning_agent_backend` option — subagents automatically inherit the spawning agent's backend
+- **Subagent Final Answer Strategy** ([#978](https://github.com/massgen/MassGen/pull/978)): New `final_answer_strategy` option for child orchestrator final-answer policy (winner_reuse, winner_present, synthesize)
+- **Per-Agent Subagent Agents** ([#978](https://github.com/massgen/MassGen/pull/978)): Per-agent `subagent_agents` override and orchestrator config file support with robust JSON parsing
 
 ### Changed
 - **Decomp Mode Cooperates with Checklist** ([#978](https://github.com/massgen/MassGen/pull/978)): Decomposition mode now cooperates with the checklist workflow for unified quality-gated subtask iteration
-- **read_media Rewrite** ([#978](https://github.com/massgen/MassGen/pull/978)): Rewritten with clearer schema, better error handling, and improved naming
 - **System Prompt Focus** ([#978](https://github.com/massgen/MassGen/pull/978)): Refocused system prompt on evaluating entire output quality
 - **Verification Prompts** ([#978](https://github.com/massgen/MassGen/pull/978)): Improved verification_latest prompts for faster verification rounds
 
 ### Fixed
 - **Checklist & Proposal Injections** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed proposal injection improvements for more reliable checklist behavior
 - **Task Plan Refresh** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed task plan refresh during quality rounds
-- **Codex Prompt Caching** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed prompt caching pricing accuracy for Codex backend
+- **Codex Prompt Caching** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed prompt caching calculation for pricing accuracy
 - **Skill Prefix Handling** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed skill prefix handling edge cases
 
 ### Technical Details
-- **Major Focus**: Verification & decomposition improvements — unified quality gating, multimodal tools, model support
+- **Major Focus**: Multimodal tools, subagent enhancements, GPT-5.4, decomp+checklist cooperation
 - **PRs Merged**: [#978](https://github.com/massgen/MassGen/pull/978) (improve_verification_time)
 - **Contributors**: @ncrispino (6 commits), @HenryQi (1 commit)
 

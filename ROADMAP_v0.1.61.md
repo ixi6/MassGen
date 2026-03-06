@@ -31,6 +31,6 @@ Version 0.1.61 focuses on improving skill use and exploration — local executio
 
 ## Related Tracks
 
-- **v0.1.60**: Verification & Decomposition Improvements — decomp mode cooperates with checklist, GPT-5.4, read_media rewrite, media call ledger ([#978](https://github.com/massgen/MassGen/pull/978))
+- **v0.1.60**: Multimodal Tools, Subagent Enhancements & GPT-5.4 — read_media rewrite, MediaCallLedgerHook, subagent backend inheritance, GPT-5.4, decomp+checklist cooperation ([#978](https://github.com/massgen/MassGen/pull/978))
 - **v0.1.62**: Image/Video Edit Capabilities ([#959](https://github.com/massgen/MassGen/issues/959))
 - **v0.1.63**: OpenAI Audio API ([#960](https://github.com/massgen/MassGen/issues/960))

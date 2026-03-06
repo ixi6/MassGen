@@ -59,7 +59,8 @@ We're excited to release MassGen v0.1.60 — Multimodal Tools, Subagent Enhancem
 
 ```bash
 pip install massgen==0.1.60
-massgen --automation --config massgen/configs/basic/basic.yaml "Your task here"
+# Choose backend 'openai' with model 'gpt-5.4' in the setup wizard to start using GPT-5.4
+uv run massgen --quickstart
 ```
 
 Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.60

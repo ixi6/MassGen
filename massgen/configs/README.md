@@ -242,9 +242,8 @@ Most configurations use environment variables for API keys:so
 # Install or upgrade to v0.1.60
 pip install --upgrade massgen
 
-# Subagents inherit the spawning agent's backend automatically
-uv run massgen --config @examples/features/subagent_checklist.yaml \
-  "Create a website for an AI company selling a creative sci-fi style product"
+# Choose backend 'openai' with model 'gpt-5.4' in the setup wizard to start using GPT-5.4
+uv run massgen --quickstart
 ```
 
 ### v0.1.59

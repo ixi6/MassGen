@@ -52,7 +52,7 @@ def test_image_auto_selection_openai_only(monkeypatch: pytest.MonkeyPatch):
     )
 
     assert backend == "openai"
-    assert model == "gpt-5.2"
+    assert model == "gpt-5.4"
 
 
 def test_image_auto_selection_openrouter_only(monkeypatch: pytest.MonkeyPatch):
@@ -108,9 +108,9 @@ def test_openrouter_default_model_is_nano_banana_2():
     assert get_default_model("openrouter", MediaType.IMAGE) == "google/gemini-3.1-flash-image-preview"
 
 
-def test_openai_default_model_is_gpt_5_2():
-    """OpenAI default image model should be GPT-5.2."""
-    assert get_default_model("openai", MediaType.IMAGE) == "gpt-5.2"
+def test_openai_default_model_is_gpt_5_4():
+    """OpenAI default image model should be GPT-5.4."""
+    assert get_default_model("openai", MediaType.IMAGE) == "gpt-5.4"
 
 
 def test_image_backend_priority_google_first():

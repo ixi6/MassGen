@@ -291,6 +291,35 @@ class TestSubmitChecklistVerdict:
         )
         assert result["verdict"] == "stop"
 
+    @pytest.mark.asyncio
+    async def test_decomposition_mode_accepts_flat_scores_with_multiple_agents(self, tmp_path):
+        """Decomposition mode should score the current subtask output, not require per-agent ranking."""
+        items = ["Check 1", "Check 2"]
+        state = {
+            "terminate_action": "stop",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_gap_report": False,
+            "decomposition_mode": True,
+            "current_answer_label": "agent1.2",
+            "available_agent_labels": ["agent1.2", "agent2.1"],
+        }
+        handler = _build_handler(_make_specs_file(tmp_path, items, state))
+
+        result = json.loads(
+            await handler(
+                scores={
+                    "E1": {"score": 8, "reasoning": "subtask work is solid"},
+                    "E2": {"score": 8, "reasoning": "integration points are covered"},
+                },
+            ),
+        )
+
+        assert result["status"] == "accepted"
+        assert result["verdict"] == "stop"
+
 
 # ---------------------------------------------------------------------------
 # Incomplete score rejection
@@ -1062,6 +1091,23 @@ class TestProposeImprovements:
         assert len(verify_indices) == 1, "Exactly one verify_preserve row expected"
         assert len(improve_indices) >= 1
         assert min(improve_indices) < verify_indices[0], "verify_preserve must come after improve rows"
+
+    def test_verify_preserve_suggests_evaluator_when_subagents_enabled(self):
+        """When subagents are enabled, preserve verification should suggest evaluator delegation."""
+        state = {**self._NO_GATE, "subagents_enabled": True}
+        result = evaluate_proposed_improvements(
+            improvements={"E2": [{"plan": "tighten hierarchy", "sources": [], "impact": "structural"}]},
+            failed_criteria=["E2"],
+            items=["Check 1", "Check 2"],
+            all_criteria_ids=["E1", "E2"],
+            preserve={"E1": {"what": "Hero impact and narrative clarity", "source": "agent1.2"}},
+            state=state,
+        )
+        assert result["valid"] is True
+        verify_entry = next(t for t in result["task_plan"] if t["type"] == "verify_preserve")
+        assert verify_entry["subagent_name"] == "evaluator"
+        assert "evaluator or critic subagent" in verify_entry["description"]
+        assert "without revealing which answer is yours" in verify_entry["description"]
 
     def test_task_plan_improve_entries_have_sources(self):
         """Improve entries include plan and sources fields."""
@@ -2395,6 +2441,62 @@ class TestChecklistSdkSubmissionCounting:
         assert allowed_after_recheck["valid"] is True
 
     @pytest.mark.asyncio
+    async def test_stdio_submit_checklist_enforces_first_answer_and_round_quota(self, tmp_path):
+        """Stdio checklist path should honor first-answer blocking and persist per-round quota state."""
+        items = ["Hero clarity"]
+        state = {
+            "terminate_action": "stop",
+            "iterate_action": "new_answer",
+            "has_existing_answers": False,
+            "required": 1,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "checklist_first_answer": False,
+            "agent_answer_count": 0,
+            "max_checklist_calls_per_round": 1,
+            "checklist_calls_this_round": 0,
+            "checklist_history": [],
+            "decomposition_mode": True,
+            "current_answer_label": "agent1.1",
+        }
+        specs_path = _make_specs_file(tmp_path, items, state)
+        handlers = _build_handlers(specs_path)
+        submit_checklist = handlers["submit_checklist"]
+
+        blocked_first_answer = json.loads(
+            await submit_checklist(
+                scores={"E1": {"score": 8, "reasoning": "looks solid"}},
+            ),
+        )
+        assert "error" in blocked_first_answer
+        assert "before your first answer" in blocked_first_answer["error"].lower()
+
+        state["has_existing_answers"] = True
+        state["agent_answer_count"] = 1
+        write_checklist_specs(items, state, specs_path)
+
+        accepted = json.loads(
+            await submit_checklist(
+                scores={"E1": {"score": 8, "reasoning": "subtask is ready"}},
+            ),
+        )
+        assert accepted["status"] == "accepted"
+        assert accepted["verdict"] == "stop"
+
+        persisted_after_accept = _read_specs(specs_path)
+        persisted_state = persisted_after_accept["state"]
+        assert persisted_state["checklist_calls_this_round"] == 1
+        assert len(persisted_state["checklist_history"]) == 1
+
+        blocked_repeat = json.loads(
+            await submit_checklist(
+                scores={"E1": {"score": 8, "reasoning": "still ready"}},
+            ),
+        )
+        assert "error" in blocked_repeat
+        assert "already called 1 time(s)" in blocked_repeat["error"]
+
+    @pytest.mark.asyncio
     async def test_sdk_propose_improvements_includes_evaluation_input_packet(self, monkeypatch, tmp_path):
         """SDK path should thread checklist evaluation packet into novelty/quality spawn metadata."""
         from massgen.orchestrator import AgentState, Orchestrator
@@ -3010,6 +3112,51 @@ class TestConvertTaskPlanToInjectFormat:
         assert task["metadata"]["type"] == "verify_preserve"
         assert len(task["metadata"]["items"]) == 2
         assert task["metadata"]["injected"] is True
+
+    def test_convert_verify_preserve_item_preserves_subagent_hint(self):
+        """verify_preserve conversion should preserve evaluator/critic delegation hint metadata."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        task_plan = [
+            {
+                "type": "verify_preserve",
+                "description": "Before submitting: verify these strengths haven't regressed",
+                "items": [
+                    {"criterion_id": "E1", "what": "Warm conversational tone in intro", "source": "agent2.1"},
+                ],
+                "priority": "high",
+                "subagent_name": "evaluator",
+            },
+        ]
+
+        result = _convert_task_plan_to_inject_format(task_plan)
+        assert len(result) == 1
+        assert result[0]["subagent_name"] == "evaluator"
+        assert result[0]["metadata"]["subagent_name"] == "evaluator"
+
+    def test_convert_verify_preserve_item_includes_blind_comparison_instruction(self):
+        """verify_preserve conversion should include anti-bias blind comparison guidance."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        task_plan = [
+            {
+                "type": "verify_preserve",
+                "description": "Before submitting: verify these strengths haven't regressed",
+                "items": [
+                    {"criterion_id": "E1", "what": "Warm conversational tone in intro", "source": "agent2.1"},
+                ],
+                "priority": "high",
+                "subagent_name": "evaluator",
+            },
+        ]
+
+        result = _convert_task_plan_to_inject_format(task_plan)
+        assert len(result) == 1
+        assert "without revealing which answer is yours" in result[0]["description"]
 
     def test_convert_mixed_items(self):
         """Improve and verify_preserve items in a single task_plan convert correctly."""

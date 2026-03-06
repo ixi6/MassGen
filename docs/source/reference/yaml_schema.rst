@@ -578,6 +578,8 @@ Full multi-agent configuration demonstrating all 6 configuration levels:
      fairness_enabled: true                 # Keep coordination pacing balanced (default: true)
      fairness_lead_cap_answers: 2           # Max lead in answer revisions vs slowest active peer
      max_midstream_injections_per_round: 2  # Cap injected unseen source updates per round
+     defer_peer_updates_until_restart: false  # Queue peer updates for next restart instead of mid-stream injection
+     allow_midstream_peer_updates_before_checklist_submit: null  # Optional checklist-mode override before first accepted submit_checklist
 
      # Advanced settings
      skip_coordination_rounds: false        # Normal coordination
@@ -1094,6 +1096,14 @@ Fairness controls are designed to solve a common multi-agent failure mode: fast 
      - integer
      - No
      - Maximum unseen source-agent updates injected mid-stream into a single agent during one round. Helps prevent fast models from receiving runaway update fanout. **Default:** ``2``.
+   * - ``defer_peer_updates_until_restart``
+     - boolean
+     - No
+     - When ``true``, peer answer updates are queued until the agent reaches a safe restart point instead of being injected mid-stream. Human/runtime/background payload delivery is unchanged. **Default:** ``false``.
+   * - ``allow_midstream_peer_updates_before_checklist_submit``
+     - boolean or null
+     - No
+     - Checklist-gated override for ``defer_peer_updates_until_restart``. When enabled, peer updates may still arrive mid-stream until the agent records its first accepted ``submit_checklist`` for the current answer. ``null`` uses the orchestrator default policy. **Default:** ``null``.
 
 **Example Configurations:**
 
@@ -1109,6 +1119,7 @@ Fast but thorough (recommended for balanced evaluation):
      fairness_enabled: true
      fairness_lead_cap_answers: 2
      max_midstream_injections_per_round: 2
+     defer_peer_updates_until_restart: false
 
 Maximum quality with bounded time:
 

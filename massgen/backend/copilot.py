@@ -312,6 +312,11 @@ class CopilotBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend):
                         key, value = line.split("=", 1)
                         key = key.strip()
                         value = value.strip()
+                        # Strip surrounding quotes (same as DockerManager)
+                        if value.startswith('"') and value.endswith('"'):
+                            value = value[1:-1]
+                        elif value.startswith("'") and value.endswith("'"):
+                            value = value[1:-1]
                         if key:
                             loaded[key] = value
                         else:
@@ -325,19 +330,38 @@ class CopilotBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend):
         if creds.get("pass_all_env"):
             env_vars.update(os.environ)
 
+        # Search multiple .env locations (same as DockerManager) so
+        # subagent workspaces that lack a local .env still pick up keys.
         env_file = creds.get("env_file")
         if env_file:
-            env_path = Path(env_file).expanduser().resolve()
-            if env_path.exists():
-                file_env = _load_env_file(env_path)
+            home_env = Path.home() / ".massgen" / ".env"
+            provided_path = Path(env_file).expanduser().resolve()
+            local_env = Path(".env").resolve()
+
+            seen: set[Path] = set()
+            candidates: list[Path] = []
+            for p in [home_env, provided_path, local_env]:
+                resolved = p.resolve()
+                if resolved not in seen:
+                    seen.add(resolved)
+                    candidates.append(resolved)
+
+            file_env: dict[str, str] = {}
+            for env_path in candidates:
+                if env_path.exists():
+                    file_env.update(_load_env_file(env_path))
+
+            if file_env:
                 filter_list = creds.get("env_vars_from_file")
                 if filter_list:
                     filtered_env = {k: v for k, v in file_env.items() if k in filter_list}
                     env_vars.update(filtered_env)
                 else:
                     env_vars.update(file_env)
-            else:
-                logger.warning(f"⚠️ [Copilot] Env file not found: {env_path}")
+            elif not any(c.exists() for c in candidates):
+                logger.warning(
+                    f"⚠️ [Copilot] Env file not found in any location: " f"{[str(c) for c in candidates]}",
+                )
 
         for var_name in creds.get("env_vars", []) or []:
             if var_name in os.environ:

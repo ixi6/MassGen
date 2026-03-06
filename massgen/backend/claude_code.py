@@ -111,7 +111,9 @@ from .base_with_custom_tool_and_mcp import (
     BACKGROUND_TOOL_WAIT_NAME,
     BACKGROUND_TOOL_WAIT_POLL_INTERVAL_SECONDS,
     BackgroundToolJob,
+    ExecutionContext,
 )
+from .capabilities import normalize_backend_type
 from .native_tool_mixin import NativeToolBackendMixin
 
 
@@ -1370,7 +1372,26 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             try:
                 execution_context = self._execution_context.model_dump()
             except Exception:
-                pass
+                execution_context = {}
+
+        task_context = None
+        if self.filesystem_manager and self.filesystem_manager.cwd:
+            from massgen.context.task_context import load_task_context
+
+            task_context = load_task_context(
+                str(self.filesystem_manager.cwd),
+                required=False,
+            )
+
+        execution_context.setdefault("backend_name", self.get_provider_name())
+        execution_context.setdefault(
+            "backend_type",
+            normalize_backend_type(self.get_provider_name()),
+        )
+        execution_context.setdefault("model", self.config.get("model", ""))
+        execution_context.setdefault("current_stage", self.coordination_stage)
+        if task_context is not None:
+            execution_context["task_context"] = task_context
 
         # Ensure agent_cwd is always available for custom tools
         # Use filesystem_manager's cwd which is set to the agent's workspace
@@ -2802,6 +2823,16 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         # Merge constructor config with stream kwargs (stream kwargs take priority)
         all_params = {**self.config, **kwargs}
 
+        # Load task context from CONTEXT.md if it exists (for multimodal tools and subagents)
+        task_context = None
+        if self.filesystem_manager and self.filesystem_manager.cwd:
+            from massgen.context.task_context import load_task_context
+
+            task_context = load_task_context(
+                str(self.filesystem_manager.cwd),
+                required=False,
+            )
+
         # Extract system message from messages for append mode (always do this)
         # This must be done BEFORE checking if we have a client to ensure workflow_system_prompt is always defined
         system_msg = next((msg for msg in messages if msg.get("role") == "system"), None)
@@ -2809,6 +2840,25 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             system_content = system_msg.get("content", "")  # noqa: E128
         else:
             system_content = ""
+
+        # Build execution context for custom tool injection parity with shared backends.
+        self._execution_context = ExecutionContext(
+            messages=messages,
+            agent_system_message=kwargs.get("system_message", None),
+            agent_id=agent_id or self.agent_id,
+            backend_name=self.get_provider_name(),
+            backend_type=normalize_backend_type(self.get_provider_name()),
+            model=kwargs.get("model", self.config.get("model", "")),
+            current_stage=self.coordination_stage,
+            agent_cwd=str(self.filesystem_manager.cwd) if self.filesystem_manager else None,
+            allowed_paths=(
+                self.filesystem_manager.path_permission_manager.get_mcp_filesystem_paths()
+                if self.filesystem_manager and hasattr(self.filesystem_manager, "path_permission_manager") and self.filesystem_manager.path_permission_manager
+                else None
+            ),
+            multimodal_config=self._multimodal_config if hasattr(self, "_multimodal_config") else None,
+            task_context=task_context,
+        )
 
         # Use text-based workflow tools (JSON parsing) for Claude Code
         # TODO: MCP-based workflow tools not yet working with Claude Code SDK

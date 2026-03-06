@@ -724,6 +724,7 @@ Please address these specific issues in your coordination and final answer.
         all_answers: dict[str, str],
         selected_agent_id: str,
         agent_changedocs: dict[str, str] | None = None,
+        final_answer_strategy: str = "winner_present",
     ) -> str:
         """Build final presentation message for winning agent."""
         # Format all answers with clear marking
@@ -736,6 +737,16 @@ Please address these specific issues in your coordination and final answer.
             else:
                 answers_section += f'\n{agent_id}{marker}: "{answer}"\n'
 
+        if final_answer_strategy == "synthesize":
+            strategy_instruction = (
+                "Synthesize the strongest relevant parts across the completed answers into a single final answer. "
+                "Do not just repeat your own answer if another agent handled part of the task better."
+            )
+        elif final_answer_strategy == "winner_present":
+            strategy_instruction = "Use your answer as the primary basis for the final response. " "You may incorporate useful details from other answers when they improve completeness or accuracy."
+        else:
+            strategy_instruction = "Present the selected answer clearly as the final response."
+
         return f"""{self.format_original_message(original_task)}
 
 VOTING RESULTS:
@@ -743,7 +754,7 @@ VOTING RESULTS:
 
 {answers_section}
 
-Based on the coordination process above, present your final answer:"""
+{strategy_instruction}"""
 
     def add_enforcement_message(
         self,

@@ -14,7 +14,7 @@ import sys
 import pytest
 
 
-async def _build_subagent_server(monkeypatch, tmp_path):
+async def _build_subagent_server(monkeypatch, tmp_path, orchestrator_config=None):
     """Create the subagent MCP server and return (module, mcp)."""
     from massgen.mcp_tools.subagent import _subagent_mcp_server as server
 
@@ -25,27 +25,26 @@ async def _build_subagent_server(monkeypatch, tmp_path):
     server._subagent_types_loaded = False
     server._next_subagent_index = 0
 
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "subagent-server",
-            "--agent-id",
-            "agent_a",
-            "--orchestrator-id",
-            "orch_1",
-            "--workspace-path",
-            str(tmp_path),
-        ],
-    )
+    argv = [
+        "subagent-server",
+        "--agent-id",
+        "agent_a",
+        "--orchestrator-id",
+        "orch_1",
+        "--workspace-path",
+        str(tmp_path),
+    ]
+    if orchestrator_config is not None:
+        argv.extend(["--orchestrator-config", json.dumps(orchestrator_config)])
+    monkeypatch.setattr(sys, "argv", argv)
 
     mcp = await server.create_server()
     return server, mcp
 
 
-async def _build_spawn_subagents_handler(monkeypatch, tmp_path):
+async def _build_spawn_subagents_handler(monkeypatch, tmp_path, orchestrator_config=None):
     """Create the subagent MCP server and return (module, spawn_subagents handler)."""
-    server, mcp = await _build_subagent_server(monkeypatch, tmp_path)
+    server, mcp = await _build_subagent_server(monkeypatch, tmp_path, orchestrator_config=orchestrator_config)
     for tool in mcp._tool_manager._tools.values():
         if tool.name == "spawn_subagents":
             return server, tool.fn
@@ -868,6 +867,56 @@ class TestSpecializedTypesFileNotDeleted:
         assert server._parent_coordination_config["enable_agent_task_planning"] is True
         assert server._parent_coordination_config["task_planning_filesystem_mode"] is True
 
+    @pytest.mark.asyncio
+    async def test_orchestrator_config_file_is_loaded_and_preferred(self, monkeypatch, tmp_path):
+        """Server should load subagent_orchestrator config from file (robust against escaped CLI JSON)."""
+        import json
+
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._manager = None
+        server._workspace_path = None
+        server._subagent_orchestrator_config = None
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+
+        orchestrator_cfg_file = workspace / ".massgen" / "subagent_mcp" / "agent_a_orchestrator_config.json"
+        orchestrator_cfg_file.parent.mkdir(parents=True, exist_ok=True)
+        orchestrator_cfg_file.write_text(
+            json.dumps(
+                {
+                    "enabled": True,
+                    "inherit_spawning_agent_backend": True,
+                },
+            ),
+        )
+
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "subagent-server",
+                "--agent-id",
+                "agent_a",
+                "--orchestrator-id",
+                "orch_1",
+                "--workspace-path",
+                str(workspace),
+                "--orchestrator-config-file",
+                str(orchestrator_cfg_file),
+                # Intentionally escaped payload that would fail direct json.loads
+                "--orchestrator-config",
+                r"{\"enabled\": false, \"inherit_spawning_agent_backend\": false}",
+            ],
+        )
+
+        await server.create_server()
+
+        assert server._subagent_orchestrator_config is not None
+        assert server._subagent_orchestrator_config.enabled is True
+        assert server._subagent_orchestrator_config.inherit_spawning_agent_backend is True
+
 
 class TestLazySubagentTypeLoading:
     """Lazy loading of specialized subagent types from workspace SUBAGENT.md dirs."""
@@ -1219,6 +1268,38 @@ class TestSpawnSubagentsBackgroundParameter:
         assert result["subagents"][0]["subagent_id"] == "w1"
         assert result["subagents"][0]["status"] == "running"
         assert "answer" not in result["subagents"][0]
+
+    @pytest.mark.asyncio
+    async def test_inherit_spawning_backend_rejects_task_model_override(self, monkeypatch, tmp_path):
+        """inherit_spawning_agent_backend mode should reject per-task model overrides."""
+        server, handler = await _build_spawn_subagents_handler(
+            monkeypatch,
+            tmp_path,
+            orchestrator_config={
+                "enabled": True,
+                "inherit_spawning_agent_backend": True,
+            },
+        )
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {
+                    "task": "Evaluate this output",
+                    "subagent_id": "eval_1",
+                    "model": "gpt-5-mini",
+                    "context_paths": [],
+                },
+            ],
+            background=False,
+            refine=False,
+        )
+
+        assert result["success"] is False
+        assert "model override" in str(result.get("error", "")).lower()
+        assert fake_manager.parallel_calls == []
 
 
 # =============================================================================

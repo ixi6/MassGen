@@ -137,7 +137,7 @@ BACKEND_API_KEYS: dict[str, list[str]] = {
 # Default models for each backend and media type
 DEFAULT_MODELS: dict[str, dict[MediaType, str]] = {
     "openai": {
-        MediaType.IMAGE: "gpt-5.2",
+        MediaType.IMAGE: "gpt-5.4",
         MediaType.VIDEO: "sora-2",
         MediaType.AUDIO: "gpt-4o-mini-tts",
     },

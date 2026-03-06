@@ -9,7 +9,11 @@ from massgen.coordination_tracker import CoordinationTracker
 from massgen.orchestrator import Orchestrator
 
 
-def _build_orchestrator(voting_sensitivity: str) -> Orchestrator:
+def _build_orchestrator(
+    voting_sensitivity: str,
+    *,
+    coordination_mode: str = "voting",
+) -> Orchestrator:
     orchestrator = Orchestrator.__new__(Orchestrator)
     tracker = CoordinationTracker()
     tracker.initialize_session(["agent_a", "agent_b"], user_prompt="test")
@@ -19,7 +23,7 @@ def _build_orchestrator(voting_sensitivity: str) -> Orchestrator:
 
     orchestrator.coordination_tracker = tracker
     orchestrator.config = SimpleNamespace(
-        coordination_mode="voting",
+        coordination_mode=coordination_mode,
         voting_sensitivity=voting_sensitivity,
     )
     orchestrator._normalize_workspace_paths_in_answers = lambda answers, viewing_agent_id: answers
@@ -59,6 +63,23 @@ def test_checklist_mode_injection_requires_submit_checklist_flow():
     assert "submit_checklist" in injection
     assert "validation error" in injection.lower()
     assert "propose_improvements" in injection
+
+
+def test_decomposition_checklist_mode_injection_requires_recheck_before_stop():
+    orchestrator = _build_orchestrator(
+        voting_sensitivity="checklist_gated",
+        coordination_mode="decomposition",
+    )
+
+    injection = orchestrator._build_tool_result_injection(
+        "agent_a",
+        {"agent_b": "updated peer answer"},
+        existing_answers={"agent_b": "stale peer answer"},
+    )
+
+    assert "submit_checklist" in injection
+    assert "propose_improvements" in injection
+    assert "Call `stop` only" in injection
 
 
 def test_non_checklist_mode_keeps_vote_or_build_guidance():

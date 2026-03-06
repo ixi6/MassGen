@@ -34,9 +34,11 @@ orchestrator:
     # Subagent orchestrator configuration
     subagent_orchestrator:
       enabled: true
-      # agents: Define subagent agents (if empty, inherits 1 agent from parent config)
+      # agents: Shared common subagent agents applied to every spawning parent agent
+      # inherit_spawning_agent_backend: true  # If a parent agent has no local subagent_agents, synthesize one from that parent's backend
       # Each agent can have: id (optional, auto-generated), backend (type, model, base_url)
-      # Example with 2 different agents:
+      # Parent agents may also define their own top-level subagent_agents list.
+      # Effective child team = shared common agents + spawning parent's local subagent_agents.
       agents:
         # - backend:
         #     type: "openai"

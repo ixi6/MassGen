@@ -223,10 +223,13 @@ class TestUnderstandImageRouting:
                 image_path=str(fake_image),
                 prompt="describe",
                 backend_type="codex",
+                model="gpt-5.4",
                 agent_cwd="/tmp",
             )
 
             mock_codex.assert_called_once()
+            assert mock_codex.call_args.kwargs["model"] == "gpt-5.4"
+            assert mock_codex.call_args.kwargs["agent_cwd"] == "/tmp"
             data = json.loads(result.output_blocks[0].data)
             assert data["success"]
 
@@ -250,10 +253,10 @@ class TestUnderstandImageRouting:
             )
 
             mock_openai.assert_called_once()
-            # Fallback uses gpt-5.2
+            # Fallback uses gpt-5.4
             call_args = mock_openai.call_args
             # Positional args: (loaded_images, prompt, model)
-            assert call_args[0][2] == "gpt-5.2"
+            assert call_args[0][2] == "gpt-5.4"
 
     @pytest.mark.asyncio
     async def test_falls_back_when_backend_type_none(self, fake_image):
@@ -277,7 +280,7 @@ class TestUnderstandImageRouting:
 
     @pytest.mark.asyncio
     async def test_falls_back_to_openai_on_native_error(self, fake_image):
-        """If native backend raises an error, falls back to OpenAI gpt-5.2."""
+        """If native backend raises an error, falls back to OpenAI gpt-5.4."""
         from massgen.tool._multimodal_tools.understand_image import understand_image
 
         with (
@@ -301,7 +304,7 @@ class TestUnderstandImageRouting:
             # Fell back to OpenAI
             mock_openai.assert_called_once()
             call_args = mock_openai.call_args
-            assert call_args[0][2] == "gpt-5.2"
+            assert call_args[0][2] == "gpt-5.4"
             # Result should still be successful
             data = json.loads(result.output_blocks[0].data)
             assert data["success"]
@@ -331,8 +334,7 @@ class TestReadMediaWiring:
             mock_openai.return_value = ("analysis", "resp_an")
 
             result = await read_media(
-                file_path=str(fake_image),
-                prompt="describe",
+                inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
                 backend_type="openai",
                 model="gpt-5.2",
                 agent_cwd=str(fake_image.parent),
@@ -357,8 +359,7 @@ class TestReadMediaWiring:
             mock_claude.return_value = ("claude analysis", None)
 
             result = await read_media(
-                file_path=str(fake_image),
-                prompt="describe",
+                inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
                 backend_type="claude",
                 model="claude-sonnet-4-5",
                 agent_cwd=str(fake_image.parent),
@@ -383,8 +384,7 @@ class TestReadMediaWiring:
             mock_openai.return_value = ("analysis", "resp_an")
 
             await read_media(
-                file_path=str(fake_image),
-                prompt="describe",
+                inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
                 backend_type="openai",
                 model="gpt-5.2",
                 multimodal_config={"image": {"model": "gpt-4.1"}},
@@ -420,6 +420,112 @@ class TestReadMediaWiring:
             data = json.loads(result.output_blocks[0].data)
             assert data["success"]
             mock_claude.assert_called_once()
+
+
+class TestDisplayNameRouting:
+    """Display-name backend values should still route using native capabilities."""
+
+    @pytest.mark.asyncio
+    async def test_claude_display_name_routes_natively(self, fake_image):
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        with (
+            patch("massgen.context.task_context.load_task_context_with_warning") as mock_ctx,
+            patch("massgen.tool._multimodal_tools.understand_image.call_claude", new_callable=AsyncMock) as mock_claude,
+            patch("massgen.tool._multimodal_tools.understand_image.call_openai", new_callable=AsyncMock) as mock_openai,
+            patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
+        ):
+            mock_ctx.return_value = ("some context", None)
+            mock_load.return_value = _make_loaded_image()
+            mock_claude.return_value = ("claude analysis", None)
+
+            result = await read_media(
+                inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
+                backend_type="Claude",
+                model="claude-sonnet-4-5",
+                agent_cwd=str(fake_image.parent),
+            )
+
+            data = json.loads(result.output_blocks[0].data)
+            assert data["success"]
+            mock_claude.assert_called_once()
+            mock_openai.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_grok_display_name_routes_natively(self, fake_image):
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        with (
+            patch("massgen.context.task_context.load_task_context_with_warning") as mock_ctx,
+            patch("massgen.tool._multimodal_tools.understand_image.call_grok", new_callable=AsyncMock) as mock_grok,
+            patch("massgen.tool._multimodal_tools.understand_image.call_openai", new_callable=AsyncMock) as mock_openai,
+            patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
+        ):
+            mock_ctx.return_value = ("some context", None)
+            mock_load.return_value = _make_loaded_image()
+            mock_grok.return_value = ("grok analysis", None)
+
+            result = await read_media(
+                inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
+                backend_type="Grok",
+                model="grok-4",
+                agent_cwd=str(fake_image.parent),
+            )
+
+            data = json.loads(result.output_blocks[0].data)
+            assert data["success"]
+            mock_grok.assert_called_once()
+            mock_openai.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_openai_display_name_preserves_configured_model(self, fake_image):
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        with (
+            patch("massgen.context.task_context.load_task_context_with_warning") as mock_ctx,
+            patch("massgen.tool._multimodal_tools.understand_image.call_openai", new_callable=AsyncMock) as mock_openai,
+            patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
+        ):
+            mock_ctx.return_value = ("some context", None)
+            mock_load.return_value = _make_loaded_image()
+            mock_openai.return_value = ("openai analysis", "resp_openai")
+
+            result = await read_media(
+                inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
+                backend_type="OpenAI",
+                model="gpt-5.2",
+                agent_cwd=str(fake_image.parent),
+            )
+
+            data = json.loads(result.output_blocks[0].data)
+            assert data["success"]
+            call_args = mock_openai.call_args
+            assert call_args[0][2] == "gpt-5.2"
+
+    @pytest.mark.asyncio
+    async def test_azure_openai_display_name_preserves_configured_model(self, fake_image):
+        from massgen.tool._multimodal_tools.read_media import read_media
+
+        with (
+            patch("massgen.context.task_context.load_task_context_with_warning") as mock_ctx,
+            patch("massgen.tool._multimodal_tools.understand_image.call_openai", new_callable=AsyncMock) as mock_openai,
+            patch("massgen.tool._multimodal_tools.understand_image._load_and_process_image") as mock_load,
+        ):
+            mock_ctx.return_value = ("some context", None)
+            mock_load.return_value = _make_loaded_image()
+            mock_openai.return_value = ("azure openai analysis", "resp_azure")
+
+            result = await read_media(
+                inputs=[{"files": {"img": str(fake_image)}, "prompt": "describe"}],
+                backend_type="Azure OpenAI",
+                model="gpt-4.1",
+                agent_cwd=str(fake_image.parent),
+            )
+
+            data = json.loads(result.output_blocks[0].data)
+            assert data["success"]
+            call_args = mock_openai.call_args
+            assert call_args[0][2] == "gpt-4.1"
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +568,36 @@ class TestVideoRouting:
             assert data["success"]
             assert data["backend"] == "claude"
             # backend_selector should NOT have been called
+            mock_selector.assert_not_called()
+            mock_claude.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_display_name_backend_routes_directly(self, tmp_path):
+        """Display-name backend_type should still use native video backend directly."""
+        from massgen.tool._multimodal_tools.understand_video import understand_video
+
+        video_file = tmp_path / "test.mp4"
+        video_file.write_bytes(b"\x00" * 100)
+
+        with (
+            patch("massgen.tool._multimodal_tools.understand_video._process_with_anthropic", new_callable=AsyncMock) as mock_claude,
+            patch("massgen.tool._multimodal_tools.understand_video.get_backend") as mock_selector,
+            patch("massgen.tool._multimodal_tools.understand_video.extract_frames") as mock_extract,
+        ):
+            mock_claude.return_value = "claude video analysis"
+            mock_selector.return_value = None
+            mock_extract.return_value = ["fake_frame_base64"]
+
+            result = await understand_video(
+                video_path=str(video_file),
+                prompt="describe",
+                backend_type="Claude",
+                model="claude-sonnet-4-5",
+            )
+
+            data = json.loads(result.output_blocks[0].data)
+            assert data["success"]
+            assert data["backend"] == "claude"
             mock_selector.assert_not_called()
             mock_claude.assert_called_once()
 
@@ -687,7 +823,7 @@ class TestSandboxSecurity:
         ):
             from massgen.tool._multimodal_tools.image_backends import call_codex
 
-            await call_codex([loaded], "describe", agent_cwd="/home/user/project")
+            await call_codex([loaded], "describe", model="gpt-5.4", agent_cwd="/home/user/project")
 
         cmd = captured["cmd"]
         assert "--skip-git-repo-check" in cmd, "Missing --skip-git-repo-check"
@@ -696,6 +832,9 @@ class TestSandboxSecurity:
         disable_idx = cmd.index("--disable")
         assert cmd[disable_idx + 1] == "shell_tool", f"--disable should disable shell_tool, got: {cmd[disable_idx + 1]}"
         assert "--full-auto" in cmd, "Missing --full-auto"
+        assert "--model" in cmd, "Missing --model flag"
+        model_idx = cmd.index("--model")
+        assert cmd[model_idx + 1] == "gpt-5.4", f"Unexpected Codex model flag value: {cmd[model_idx + 1]}"
         # web_search should be disabled via -c flag
         assert "-c" in cmd, "Missing -c flag for web_search"
         c_idx = cmd.index("-c")
@@ -758,11 +897,109 @@ class TestSandboxSecurity:
         assert captured_cwd["cwd"] is not None
 
 
+class TestExecutionContextNormalization:
+    """Shared backends should store canonical backend ids in execution context."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("backend_module", "class_name", "backend_kwargs", "model", "expected_backend_type", "expected_backend_name"),
+        [
+            ("massgen.backend.response", "ResponseBackend", {"api_key": "test-key"}, "gpt-5.2", "openai", "OpenAI"),
+            ("massgen.backend.claude", "ClaudeBackend", {"api_key": "test-key"}, "claude-sonnet-4-5", "claude", "Claude"),
+            ("massgen.backend.grok", "GrokBackend", {"api_key": "test-key"}, "grok-4", "grok", "Grok"),
+        ],
+    )
+    async def test_shared_backends_build_canonical_backend_type(
+        self,
+        backend_module,
+        class_name,
+        backend_kwargs,
+        model,
+        expected_backend_type,
+        expected_backend_name,
+    ):
+        import importlib
+
+        from massgen.backend.base import StreamChunk
+
+        backend_cls = getattr(importlib.import_module(backend_module), class_name)
+        backend = backend_cls(**backend_kwargs)
+        backend._custom_tool_names = set()
+
+        async def fake_stream_without_custom_and_mcp_tools(*args, **kwargs):
+            yield StreamChunk(type="done", source="test")
+
+        with (
+            patch.object(backend, "_create_client", return_value=object()),
+            patch.object(backend, "_stream_without_custom_and_mcp_tools", fake_stream_without_custom_and_mcp_tools),
+        ):
+            chunks = []
+            async for chunk in backend.stream_with_tools(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[],
+                agent_id="agent_a",
+                model=model,
+            ):
+                chunks.append(chunk)
+
+        assert chunks[-1].type == "done"
+        assert backend._execution_context.backend_name == expected_backend_name
+        assert backend._execution_context.backend_type == expected_backend_type
+
+
 # ---------------------------------------------------------------------------
 # Live API tests (opt-in, expensive)
 # ---------------------------------------------------------------------------
 
 TEST_IMAGE_PATH = Path(__file__).parent.parent / "configs" / "resources" / "v0.0.27-example" / "multimodality.jpg"
+
+
+async def _run_read_media_live(
+    tmp_path: Path,
+    *,
+    backend_type: str,
+    model: str,
+    prompt: str = "Describe this image briefly.",
+) -> dict:
+    """Run the full read_media -> understand_image flow against a live backend."""
+    import shutil
+
+    from massgen.tool._multimodal_tools.read_media import read_media
+
+    workspace = tmp_path / f"{backend_type}_workspace"
+    workspace.mkdir()
+
+    image_path = workspace / TEST_IMAGE_PATH.name
+    shutil.copy2(TEST_IMAGE_PATH, image_path)
+    (workspace / "CONTEXT.md").write_text(
+        "Analyze the provided image carefully and answer the user's question.\n",
+    )
+
+    result = await read_media(
+        inputs=[{"files": {"img": image_path.name}, "prompt": prompt}],
+        backend_type=backend_type,
+        model=model,
+        agent_cwd=str(workspace),
+        allowed_paths=[str(workspace)],
+    )
+
+    data = json.loads(result.output_blocks[0].data)
+
+    print(f"\n{'='*60}")
+    print(f"READ_MEDIA ({backend_type}, {model}) response:")
+    print(f"{'='*60}")
+    print(json.dumps(data, indent=2)[:2000])
+    print(f"{'='*60}\n")
+
+    assert data["success"], data
+    assert data["operation"] == "understand_image"
+    assert data["image_path"].endswith(TEST_IMAGE_PATH.name)
+    assert data["conversation_id"].startswith("conv_")
+    assert isinstance(data["response"], str)
+    assert len(data["response"]) > 10
+    assert "response_id" not in data, f"Expected native {backend_type} routing, but saw OpenAI-style response_id: {data.get('response_id')}"
+
+    return data
 
 
 @pytest.mark.live_api
@@ -840,6 +1077,19 @@ class TestLiveAPICalls:
         assert len(result) > 10
 
     @pytest.mark.asyncio
+    async def test_read_media_gemini_live(self, tmp_path):
+        import os
+
+        if not os.getenv("GOOGLE_API_KEY") and not os.getenv("GEMINI_API_KEY"):
+            pytest.skip("GOOGLE_API_KEY/GEMINI_API_KEY not set")
+
+        await _run_read_media_live(
+            tmp_path,
+            backend_type="gemini",
+            model="gemini-3-flash-preview",
+        )
+
+    @pytest.mark.asyncio
     async def test_call_grok_live(self):
         import os
 
@@ -860,6 +1110,19 @@ class TestLiveAPICalls:
         print(f"{'='*60}\n")
         assert isinstance(result, str)
         assert len(result) > 10
+
+    @pytest.mark.asyncio
+    async def test_read_media_grok_live(self, tmp_path):
+        import os
+
+        if not os.getenv("XAI_API_KEY"):
+            pytest.skip("XAI_API_KEY not set")
+
+        await _run_read_media_live(
+            tmp_path,
+            backend_type="grok",
+            model="grok-4",
+        )
 
     @pytest.mark.asyncio
     async def test_call_claude_code_live(self):
@@ -964,6 +1227,20 @@ class TestLiveAPICalls:
         assert len(response_text) > 10, f"Expected response text > 10 chars, got {len(response_text)}: {response_text!r}"
 
     @pytest.mark.asyncio
+    async def test_read_media_claude_code_live(self, tmp_path):
+        """Live test for read_media routing through Claude Code SDK."""
+        import shutil
+
+        if not shutil.which("claude"):
+            pytest.skip("claude CLI not installed (run: npm install -g @anthropic-ai/claude-code)")
+
+        await _run_read_media_live(
+            tmp_path,
+            backend_type="claude_code",
+            model="claude-sonnet-4-20250514",
+        )
+
+    @pytest.mark.asyncio
     async def test_call_codex_live(self):
         """Live test for Codex CLI image understanding.
 
@@ -1031,3 +1308,17 @@ class TestLiveAPICalls:
         assert proc.returncode == 0, f"Codex CLI failed (exit {proc.returncode}): {proc.stderr}"
         assert isinstance(proc.stdout, str)
         assert len(proc.stdout) > 10
+
+    @pytest.mark.asyncio
+    async def test_read_media_codex_live(self, tmp_path):
+        """Live test for read_media routing through the Codex CLI backend."""
+        import shutil
+
+        if not shutil.which("codex"):
+            pytest.skip("codex CLI not installed (run: npm install -g @openai/codex)")
+
+        await _run_read_media_live(
+            tmp_path,
+            backend_type="codex",
+            model="gpt-5.4",
+        )

@@ -68,6 +68,44 @@ def test_checklist_gated_decision_requires_blocking_evaluator_execution():
     assert "required before scoring" in lower
 
 
+def test_checklist_gated_decision_round_evaluator_mode_requires_packet_before_submit():
+    """Round evaluator mode should require a manual blocking critique packet before checklist submission by default."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+    )
+    lower = content.lower()
+    assert "round_evaluator" in content
+    assert "criteria_interpretation" in content
+    assert "improvement_spec" in content
+    assert "very critical" in lower
+    assert "use that critique packet as evidence" in lower
+    assert "before round 2" in lower
+    assert "blocking `round_evaluator` subagent yourself" in lower
+    assert "wait for its packet before" in lower
+    assert "do not run a separate self-evaluation pass" in lower
+    assert "save or copy that round-evaluator report into your workspace" in lower
+    assert "spawn_subagents" not in content
+    assert "submit_checklist_args" not in content
+    assert "expected_verdict" not in content
+    assert "propose_improvements_args" not in content
+    assert "submit_checklist" in lower
+
+
+def test_checklist_gated_decision_orchestrator_managed_round_evaluator_mode_requires_packet_before_submit():
+    """Managed mode should explicitly say the orchestrator supplies the round-evaluator packet."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+    )
+    lower = content.lower()
+    assert "orchestrator" in lower
+    assert "do not spawn another round_evaluator yourself" in lower
+    assert "do not run a separate self-evaluation pass" in lower
+    assert "save or copy that round-evaluator report into your workspace" in lower
+
+
 def test_checklist_gated_decision_includes_peer_build_copy_guidance():
     """Checklist workflow should explain how to evaluate peer build outputs
     without mutating read-only shared snapshots."""

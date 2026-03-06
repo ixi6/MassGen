@@ -28,7 +28,7 @@ import shutil
 import sys
 import time
 import traceback
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -40,6 +40,7 @@ from .backend.base import StreamChunk
 from .chat_agent import ChatAgent
 from .configs.rate_limits import get_rate_limit_config
 from .coordination_tracker import CoordinationTracker
+from .events import EventType as StructuredEventType
 
 if TYPE_CHECKING:
     from .dspy_paraphraser import QuestionParaphraser
@@ -264,6 +265,7 @@ class Orchestrator(ChatAgent):
         self._system_message_builder: SystemMessageBuilder | None = None  # Lazy initialization
         # Decomposition mode: per-agent subtask assignments
         self._agent_subtasks: dict[str, str | None] = {}
+        self._agent_subtask_criteria: dict[str, list] = {}
 
         # Create workflow tools for agents (vote, new_answer, and optionally broadcast)
         # Will be updated with broadcast tools after coordination config is set
@@ -360,6 +362,11 @@ class Orchestrator(ChatAgent):
         # Stores pending results for each parent agent until they can be injected
         # Format: {parent_agent_id: [(subagent_id, SubagentResult), ...]}
         self._pending_subagent_results: dict[str, list[tuple[str, "SubagentResult"]]] = {}
+        # Latest answer-label tuples already critiqued by the orchestrator-owned
+        # round_evaluator gate. Prevents duplicate launches for unchanged revisions.
+        self._round_evaluator_completed_labels: dict[str, tuple[str, ...]] = {}
+        # Context blocks inserted at the start of the next parent round.
+        self._round_start_context_blocks: dict[str, list[str]] = {}
 
         # Track which subagents have been injected to prevent duplicates
         # Format: {agent_id: set(subagent_id, ...)}
@@ -749,12 +756,32 @@ class Orchestrator(ChatAgent):
                 self._plan_session_id,
             )
 
+    def _get_decomposition_criteria_for_agent(self, agent_id: str | None) -> list | None:
+        """Return decomposition execution criteria for one agent when available."""
+        if not agent_id or not self._is_decomposition_mode():
+            return None
+
+        explicit = self._agent_subtask_criteria.get(agent_id)
+        if explicit:
+            return explicit
+
+        subtask = self._agent_subtasks.get(agent_id)
+        if not subtask:
+            return None
+
+        from massgen.evaluation_criteria_generator import (
+            build_decomposition_execution_criteria,
+        )
+
+        return build_decomposition_execution_criteria(subtask)
+
     def _get_active_criteria(
         self,
+        agent_id: str | None = None,
     ) -> tuple[list[str] | None, dict[str, str] | None, dict[str, str] | None]:
         """Return (items, categories, verify_by) using the criteria priority waterfall.
 
-        Priority: inline > generated > preset > None.
+        Priority: inline > decomposition-agent > generated > preset > None.
         Returns (None, None, None) when no custom criteria source is configured.
         This is used by both _init_checklist_tool and the system prompt builder
         to ensure criteria are consistent across the checklist MCP tool and
@@ -777,6 +804,10 @@ class Orchestrator(ChatAgent):
 
             return _to_tuple(criteria_from_inline(inline))
 
+        decomposition_criteria = self._get_decomposition_criteria_for_agent(agent_id)
+        if decomposition_criteria is not None:
+            return _to_tuple(decomposition_criteria)
+
         if self._generated_evaluation_criteria is not None:
             return _to_tuple(self._generated_evaluation_criteria)
 
@@ -791,6 +822,45 @@ class Orchestrator(ChatAgent):
             return _to_tuple(get_criteria_for_preset(preset))
 
         return None, None, None
+
+    def _resolve_effective_checklist_criteria(
+        self,
+        agent_id: str | None = None,
+    ) -> tuple[list[str], dict[str, str], dict[str, str] | None, str]:
+        """Return checklist criteria with changedoc/generic fallback plus source."""
+        from massgen.system_prompt_sections import (
+            _CHECKLIST_ITEM_CATEGORIES,
+            _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC,
+            _CHECKLIST_ITEMS,
+            _CHECKLIST_ITEMS_CHANGEDOC,
+        )
+
+        custom_items, item_categories, item_verify_by = self._get_active_criteria(agent_id)
+        if custom_items is not None:
+            inline = getattr(
+                getattr(self.config, "coordination_config", None),
+                "checklist_criteria_inline",
+                None,
+            )
+            if inline:
+                source = "inline"
+            elif agent_id and self._get_decomposition_criteria_for_agent(agent_id) is not None:
+                source = "decomposition_subtask"
+            elif self._generated_evaluation_criteria is not None:
+                source = "generated"
+            else:
+                source = "preset"
+            return custom_items, item_categories or {}, item_verify_by, source
+
+        if self._is_changedoc_enabled():
+            return (
+                list(_CHECKLIST_ITEMS_CHANGEDOC),
+                dict(_CHECKLIST_ITEM_CATEGORIES_CHANGEDOC),
+                None,
+                "changedoc",
+            )
+
+        return list(_CHECKLIST_ITEMS), dict(_CHECKLIST_ITEM_CATEGORIES), None, "generic"
 
     def _push_cached_criteria_to_display(self, *, force: bool = False) -> None:
         """Push cached evaluation criteria to the active display when available."""
@@ -822,71 +892,51 @@ class Orchestrator(ChatAgent):
             return
 
         from massgen.system_prompt_sections import (
-            _CHECKLIST_ITEM_CATEGORIES,
-            _CHECKLIST_ITEM_CATEGORIES_CHANGEDOC,
-            _CHECKLIST_ITEMS,
-            _CHECKLIST_ITEMS_CHANGEDOC,
             _checklist_confidence_cutoff,
             _checklist_effective_threshold,
             _checklist_required_true,
         )
 
-        # Priority waterfall: inline > generated > preset > changedoc > generic.
-        # _get_active_criteria handles inline/generated/preset; fall through
-        # to changedoc/generic defaults when it returns None.
-        custom_items, item_categories, _item_verify_by = self._get_active_criteria()
-        if custom_items is not None:
-            items = custom_items
-            # Determine source label for logging
-            inline = getattr(
-                getattr(self.config, "coordination_config", None),
-                "checklist_criteria_inline",
-                None,
-            )
-            if inline:
-                criteria_source = "inline"
-            elif self._generated_evaluation_criteria is not None:
-                criteria_source = "generated"
-            else:
-                criteria_source = "preset"
-        elif self._is_changedoc_enabled():
-            items = list(_CHECKLIST_ITEMS_CHANGEDOC)
-            item_categories = dict(_CHECKLIST_ITEM_CATEGORIES_CHANGEDOC)
-            criteria_source = "changedoc"
-        else:
-            items = list(_CHECKLIST_ITEMS)
-            item_categories = dict(_CHECKLIST_ITEM_CATEGORIES)
-            criteria_source = "generic"
-
-        logger.info(
-            f"[Orchestrator._init_checklist_tool] Criteria source: {criteria_source}, " f"count: {len(items)}",
-        )
-        for i, item_text in enumerate(items):
-            cat = item_categories.get(f"E{i + 1}", "unknown")
-            logger.info(f"[Orchestrator._init_checklist_tool]   E{i + 1} ({cat}): {item_text[:120]}")
-
-        # Push resolved criteria to TUI so users can view them via Ctrl+E.
-        # _item_verify_by is only populated when custom_items came from _get_active_criteria.
-        _display_verify_by = _item_verify_by if custom_items is not None else {}
-        criteria_dicts = [
-            {
-                "id": f"E{i + 1}",
-                "text": text,
-                "category": item_categories.get(f"E{i + 1}", "should"),
-                "verify_by": (_display_verify_by or {}).get(f"E{i + 1}"),
-            }
-            for i, text in enumerate(items)
-        ]
-        self._criteria_display_payload = {
-            "criteria": criteria_dicts,
-            "source": criteria_source,
-        }
-        self._push_cached_criteria_to_display(force=True)
-
         tracker = getattr(self, "coordination_tracker", None)
+        display_payload: dict[str, Any] | None = None
 
         for agent_id, agent in self.agents.items():
             backend = agent.backend
+            criteria_agent_id = agent_id if self._is_decomposition_mode() else None
+            items, item_categories, item_verify_by, criteria_source = self._resolve_effective_checklist_criteria(
+                criteria_agent_id,
+            )
+
+            logger.info(
+                "[Orchestrator._init_checklist_tool] Agent %s criteria source: %s, count: %d",
+                agent_id,
+                criteria_source,
+                len(items),
+            )
+            for i, item_text in enumerate(items):
+                cat = item_categories.get(f"E{i + 1}", "unknown")
+                logger.info(
+                    "[Orchestrator._init_checklist_tool]   %s E%d (%s): %s",
+                    agent_id,
+                    i + 1,
+                    cat,
+                    item_text[:120],
+                )
+
+            if display_payload is None:
+                criteria_dicts = [
+                    {
+                        "id": f"E{i + 1}",
+                        "text": text,
+                        "category": item_categories.get(f"E{i + 1}", "should"),
+                        "verify_by": (item_verify_by or {}).get(f"E{i + 1}"),
+                    }
+                    for i, text in enumerate(items)
+                ]
+                display_payload = {
+                    "criteria": criteria_dicts,
+                    "source": criteria_source,
+                }
 
             # Create mutable state dict — orchestrator updates before each round
             threshold = getattr(self.config, "voting_threshold", 5) or 5
@@ -910,6 +960,7 @@ class Orchestrator(ChatAgent):
                 "total": total,
                 "terminate_action": "stop" if self._is_decomposition_mode() else "vote",
                 "iterate_action": "new_answer",
+                "decomposition_mode": self._is_decomposition_mode(),
                 "has_existing_answers": False,  # True once any answer exists for this agent
                 "require_gap_report": bool(
                     getattr(self.config, "checklist_require_gap_report", True),
@@ -917,6 +968,14 @@ class Orchestrator(ChatAgent):
                 "require_diagnostic_report": bool(
                     getattr(self.config, "checklist_require_gap_report", True),
                 ),
+                "checklist_first_answer": bool(
+                    getattr(self.config, "checklist_first_answer", False),
+                ),
+                "max_checklist_calls_per_round": int(
+                    getattr(self.config, "max_checklist_calls_per_round", 1) or 1,
+                ),
+                "checklist_calls_this_round": 0,
+                "checklist_history": [],
                 # Needed by checklist server to interpret item semantics.
                 "changedoc_mode": self._is_changedoc_enabled(),
                 "workspace_path": getattr(
@@ -933,6 +992,8 @@ class Orchestrator(ChatAgent):
                 "pending_checklist_recheck_labels": [],
                 # Dynamic core/stretch categories for convergence off-ramp
                 "item_categories": item_categories,
+                "item_verify_by": item_verify_by or {},
+                "criteria_source": criteria_source,
                 # Novelty subagent guidance only when novelty type is available
                 "novelty_subagent_enabled": "novelty" in [t.lower() for t in _active_subagent_types],
                 # Critic subagent guidance only when critic type is available
@@ -948,6 +1009,7 @@ class Orchestrator(ChatAgent):
                     hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents") and self.config.coordination_config.enable_subagents,
                 ),
                 "agent_answer_count": (len(tracker.answers_by_agent.get(agent_id, [])) if tracker is not None and hasattr(tracker, "answers_by_agent") else 0),
+                "current_answer_label": (tracker.get_latest_answer_label(agent_id) if tracker is not None else None),
                 "enable_quality_rethink_on_iteration": bool(
                     getattr(
                         getattr(self.config, "coordination_config", None),
@@ -972,8 +1034,9 @@ class Orchestrator(ChatAgent):
                     or {},
                 ),
             }
+            resolved_items = list(items)
             backend._checklist_state = checklist_state
-            backend._checklist_items = list(items)
+            backend._checklist_items = resolved_items
 
             if getattr(backend, "supports_sdk_mcp", False):
                 # SDK path: in-process MCP server (ClaudeCode)
@@ -981,18 +1044,22 @@ class Orchestrator(ChatAgent):
                     agent_id,
                     backend,
                     checklist_state,
-                    items,
+                    resolved_items,
                 )
             else:
                 # Stdio path for backends with standard MCP infrastructure.
                 # Write specs and register stdio MCP so the agent gets submit_checklist.
                 if hasattr(backend, "mcp_servers"):
-                    self._init_checklist_tool_stdio(agent_id, backend, checklist_state, items)
+                    self._init_checklist_tool_stdio(agent_id, backend, checklist_state, resolved_items)
                 else:
                     # Codex-like backends handle their own config writing.
                     logger.info(
                         f"[Orchestrator] Checklist tool for agent {agent_id}: " f"stdio mode (specs written at execution time)",
                     )
+
+        if display_payload:
+            self._criteria_display_payload = display_payload
+            self._push_cached_criteria_to_display(force=True)
 
     def _init_checklist_tool_sdk(
         self,
@@ -1016,7 +1083,8 @@ class Orchestrator(ChatAgent):
         # Define tool schema — each score entry requires a reasoning string
         # to force the model to justify every item.
         _all_agent_ids = sorted(self.agents.keys())
-        _is_multi_agent = len(_all_agent_ids) > 1
+        _is_decomposition = self._is_decomposition_mode()
+        _is_multi_agent = len(_all_agent_ids) > 1 and not _is_decomposition
         if _is_multi_agent:
             _num_agents = len(_all_agent_ids)
             _anon_ids = [f"agent{i + 1}" for i in range(_num_agents)]
@@ -1033,7 +1101,15 @@ class Orchestrator(ChatAgent):
                 '{"score": N, "reasoning": "..."} objects.'
             )
         else:
-            _scores_desc = "Your confidence scores with reasoning for each checklist item. " "Use flat format: " '{"E1": {"score": N, "reasoning": "..."}, ...}.'
+            if _is_decomposition:
+                _scores_desc = (
+                    "Your confidence scores with reasoning for each checklist item for your current subtask output. "
+                    "Use flat format: "
+                    '{"E1": {"score": N, "reasoning": "..."}, ...}. '
+                    "You may use peer answers as evidence, but score your own current work rather than ranking all agents."
+                )
+            else:
+                _scores_desc = "Your confidence scores with reasoning for each checklist item. " "Use flat format: " '{"E1": {"score": N, "reasoning": "..."}, ...}.'
         input_schema = {
             "type": "object",
             "properties": {
@@ -1128,12 +1204,21 @@ class Orchestrator(ChatAgent):
         @tool(
             name="submit_checklist",
             description=(
-                "Submit your checklist evaluation. When multiple agents exist, "
-                "scores must use per-agent format: "
-                '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, '
-                '"agent2.1": {...}}. '
-                "Each score entry needs 'score' (0-10) and 'reasoning'. "
-                "Use 'report_path' to pass a markdown gap report when required."
+                (
+                    "Submit your checklist evaluation for your current subtask output. "
+                    'Use flat scores like {"E1": {"score": 8, "reasoning": "..."}, ...}. '
+                    "Each score entry needs 'score' (0-10) and 'reasoning'. "
+                    "Use 'report_path' to pass a markdown gap report when required."
+                )
+                if _is_decomposition
+                else (
+                    "Submit your checklist evaluation. When multiple agents exist, "
+                    "scores must use per-agent format: "
+                    '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, '
+                    '"agent2.1": {...}}. '
+                    "Each score entry needs 'score' (0-10) and 'reasoning'. "
+                    "Use 'report_path' to pass a markdown gap report when required."
+                )
             ),
             input_schema=input_schema,
         )
@@ -1184,11 +1269,10 @@ class Orchestrator(ChatAgent):
                 # but allow full latest context labels for model robustness.
                 using_recheck_exception = True
                 available_labels = set(_state.get("available_agent_labels") or [])
-                submitted_covers_full = bool(submitted_agent_labels) and (not available_labels or available_labels.issubset(submitted_agent_labels))
-                submitted_covers_delta = bool(submitted_agent_labels) and pending_recheck_labels.issubset(
-                    submitted_agent_labels,
-                )
-                if submitted_covers_delta and not submitted_covers_full:
+                is_decomposition = bool(_state.get("decomposition_mode", False))
+                submitted_covers_full = is_decomposition or (bool(submitted_agent_labels) and (not available_labels or available_labels.issubset(submitted_agent_labels)))
+                submitted_covers_delta = is_decomposition or (bool(submitted_agent_labels) and pending_recheck_labels.issubset(submitted_agent_labels))
+                if submitted_covers_delta and not submitted_covers_full and not is_decomposition:
                     state_for_eval = dict(_state)
                     state_for_eval["available_agent_labels"] = sorted(pending_recheck_labels)
 
@@ -1234,10 +1318,8 @@ class Orchestrator(ChatAgent):
                     },
                 )
                 agent_state.checklist_calls_this_round += 1
-                if (
-                    getattr(agent_state, "pending_checklist_recheck_labels", set())
-                    and submitted_agent_labels
-                    and getattr(agent_state, "pending_checklist_recheck_labels", set()).issubset(submitted_agent_labels)
+                if getattr(agent_state, "pending_checklist_recheck_labels", set()) and (
+                    bool(_state.get("decomposition_mode", False)) or (submitted_agent_labels and getattr(agent_state, "pending_checklist_recheck_labels", set()).issubset(submitted_agent_labels))
                 ):
                     setattr(agent_state, "pending_checklist_recheck_labels", set())
                 elif using_recheck_exception and getattr(agent_state, "pending_checklist_recheck_labels", set()):
@@ -1447,6 +1529,7 @@ class Orchestrator(ChatAgent):
             is_converging is True when 2+ consecutive checklist results show
             no meaningful score improvement (<=1 point gain).
         """
+        self._sync_stdio_checklist_state_from_specs(agent_id)
         state = self.agent_states.get(agent_id)
         if state is None:
             return False, 0
@@ -1461,7 +1544,59 @@ class Orchestrator(ChatAgent):
                 break
         return consecutive >= 2, consecutive
 
-    def _refresh_checklist_state_for_agent(self, agent_id: str) -> None:
+    def _sync_stdio_checklist_state_from_specs(self, agent_id: str) -> None:
+        """Sync accepted stdio checklist progress back into AgentState.
+
+        SDK-backed checklist calls mutate AgentState directly in-process. Stdio
+        checklist calls persist their runtime state into the specs JSON, so the
+        orchestrator needs to pull that state back in before using helper gates
+        like `_has_successful_checklist_submit_this_round`.
+        """
+        agent = self.agents.get(agent_id)
+        agent_state = self.agent_states.get(agent_id)
+        if not agent or not agent_state:
+            return
+        if bool(getattr(agent.backend, "supports_sdk_mcp", False)):
+            return
+
+        specs_path = getattr(agent.backend, "_checklist_specs_path", None)
+        if not specs_path:
+            return
+
+        try:
+            with open(specs_path, encoding="utf-8") as f:
+                specs_payload = json.load(f)
+        except Exception:
+            return
+
+        persisted_state = specs_payload.get("state") or {}
+
+        persisted_calls = persisted_state.get("checklist_calls_this_round")
+        if isinstance(persisted_calls, (int, float)):
+            agent_state.checklist_calls_this_round = max(
+                agent_state.checklist_calls_this_round,
+                int(persisted_calls),
+            )
+
+        persisted_history = persisted_state.get("checklist_history")
+        if isinstance(persisted_history, list) and len(persisted_history) >= len(agent_state.checklist_history):
+            agent_state.checklist_history = list(persisted_history)
+
+        raw_pending = persisted_state.get("pending_checklist_recheck_labels")
+        normalized_pending: set[str] = set()
+        if isinstance(raw_pending, str):
+            label = raw_pending.strip()
+            if label:
+                normalized_pending.add(label)
+        elif isinstance(raw_pending, (list, tuple, set)):
+            normalized_pending = {str(label).strip() for label in raw_pending if str(label).strip()}
+        agent_state.pending_checklist_recheck_labels = normalized_pending
+
+    def _refresh_checklist_state_for_agent(
+        self,
+        agent_id: str,
+        prefer_local_runtime_state: bool = False,
+    ) -> None:
         """Refresh the checklist tool's mutable state dict for an agent.
 
         Called after mid-stream injection so the submit_checklist tool sees
@@ -1471,6 +1606,9 @@ class Orchestrator(ChatAgent):
         agent = self.agents.get(agent_id)
         if not agent or not hasattr(agent.backend, "_checklist_state"):
             return
+
+        if not prefer_local_runtime_state:
+            self._sync_stdio_checklist_state_from_specs(agent_id)
 
         from massgen.system_prompt_sections import (
             _checklist_confidence_cutoff,
@@ -1486,6 +1624,16 @@ class Orchestrator(ChatAgent):
             self.coordination_tracker.answers_by_agent.get(agent_id),
         )
         state = agent.backend._checklist_state
+        agent_state = self.agent_states.get(agent_id)
+        criteria_agent_id = agent_id if self._is_decomposition_mode() else None
+        active_items, active_categories, active_verify_by, criteria_source = self._resolve_effective_checklist_criteria(
+            criteria_agent_id,
+        )
+        current_items = getattr(agent.backend, "_checklist_items", None)
+        if isinstance(current_items, list):
+            current_items[:] = list(active_items)
+        else:
+            agent.backend._checklist_items = list(active_items)
         effective_t = _checklist_effective_threshold(
             state.get("threshold", 5),
             _cl_remaining,
@@ -1520,6 +1668,16 @@ class Orchestrator(ChatAgent):
                 "remaining": _cl_remaining,
                 "has_existing_answers": _has_answers,
                 "agent_answer_count": len(self.coordination_tracker.answers_by_agent.get(agent_id, [])),
+                "current_answer_label": self.coordination_tracker.get_latest_answer_label(agent_id),
+                "checklist_first_answer": bool(
+                    getattr(self.config, "checklist_first_answer", False),
+                ),
+                "max_checklist_calls_per_round": int(
+                    getattr(self.config, "max_checklist_calls_per_round", 1) or 1,
+                ),
+                "checklist_calls_this_round": (agent_state.checklist_calls_this_round if agent_state is not None else 0),
+                "checklist_history": (list(agent_state.checklist_history) if agent_state is not None else []),
+                "decomposition_mode": self._is_decomposition_mode(),
                 "required": _checklist_required_true(
                     effective_t,
                     num_items=len(getattr(agent.backend, "_checklist_items", [])) or 4,
@@ -1537,6 +1695,9 @@ class Orchestrator(ChatAgent):
                     "cwd",
                     None,
                 ),
+                "item_categories": active_categories,
+                "item_verify_by": active_verify_by or {},
+                "criteria_source": criteria_source,
                 # Preserve novelty gating from initial state (config-driven, doesn't change)
                 "novelty_subagent_enabled": state.get("novelty_subagent_enabled", False),
                 # Preserve critic gating from initial state
@@ -1978,8 +2139,42 @@ class Orchestrator(ChatAgent):
             )
             if disable_fallback is True:
                 return False
-            return bool(getattr(self.config, "skip_final_presentation", False))
+            return not self._expects_final_presentation_stage()
         return False
+
+    def _get_final_answer_strategy(self) -> str:
+        """Return the effective final-answer strategy for the current run."""
+        configured_strategy = getattr(self.config, "final_answer_strategy", None)
+        valid_strategies = {"winner_reuse", "winner_present", "synthesize"}
+        if configured_strategy in valid_strategies:
+            return configured_strategy
+        if configured_strategy is not None:
+            logger.warning(
+                f"[Orchestrator] Unknown final_answer_strategy={configured_strategy!r}; falling back to legacy behavior",
+            )
+        if getattr(self.config, "skip_final_presentation", False):
+            return "winner_reuse"
+        return "winner_present"
+
+    def _expects_final_presentation_stage(self) -> bool:
+        """Return whether the current config expects an explicit presenter stage."""
+        if getattr(self.config, "coordination_mode", "voting") == "decomposition":
+            return True
+        if not getattr(self.config, "skip_final_presentation", False):
+            return True
+        if getattr(self.config, "skip_voting", False):
+            return False
+        return self._get_final_answer_strategy() in {"winner_present", "synthesize"}
+
+    def _should_skip_vote_rounds_for_synthesize(self) -> bool:
+        """Return whether quick multi-agent synthesize runs should skip vote rounds."""
+        if self._is_decomposition_mode():
+            return False
+        if len(self.agents) <= 1:
+            return False
+        if self._get_final_answer_strategy() != "synthesize":
+            return False
+        return getattr(self.config, "max_new_answers_per_agent", None) == 1
 
     def _is_round_verification_capture_enabled(self) -> bool:
         """Return whether round-time verification replay capture should be enabled."""
@@ -2403,6 +2598,10 @@ class Orchestrator(ChatAgent):
                 # Filter out non-serializable or internal keys
                 backend_cfg = {k: v for k, v in a.backend.config.items() if k not in ("mcp_servers", "_config_path")}
                 agent_cfg["backend"] = backend_cfg
+            runtime_agent_config = getattr(a, "config", None)
+            subagent_agents = getattr(runtime_agent_config, "subagent_agents", None)
+            if isinstance(subagent_agents, list) and subagent_agents:
+                agent_cfg["subagent_agents"] = json.loads(json.dumps(subagent_agents))
             agent_configs.append(agent_cfg)
 
         # Write agent configs to a deterministic file to avoid command line
@@ -2443,6 +2642,10 @@ class Orchestrator(ChatAgent):
                 parent_coordination_config["learning_capture_mode"] = coord_cfg.learning_capture_mode
             if hasattr(coord_cfg, "disable_final_only_round_capture_fallback"):
                 parent_coordination_config["disable_final_only_round_capture_fallback"] = coord_cfg.disable_final_only_round_capture_fallback
+            if hasattr(coord_cfg, "subagent_orchestrator"):
+                so_cfg = coord_cfg.subagent_orchestrator
+                if so_cfg:
+                    parent_coordination_config["subagent_orchestrator"] = so_cfg.to_dict()
             use_skills = getattr(coord_cfg, "use_skills", False)
             enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
             if use_skills or enabled_skill_names is not None:
@@ -2488,6 +2691,7 @@ class Orchestrator(ChatAgent):
         subagent_runtime_fallback_mode = ""
         subagent_host_launch_prefix: list[str] = []
         subagent_orchestrator_config_json = "{}"
+        subagent_orchestrator_config_path = ""
         if hasattr(self.config, "coordination_config"):
             if hasattr(self.config.coordination_config, "subagent_max_concurrent"):
                 max_concurrent = self.config.coordination_config.subagent_max_concurrent
@@ -2501,7 +2705,15 @@ class Orchestrator(ChatAgent):
             if hasattr(self.config.coordination_config, "subagent_orchestrator"):
                 so_config = self.config.coordination_config.subagent_orchestrator
                 if so_config:
-                    subagent_orchestrator_config_json = json.dumps(so_config.to_dict())
+                    so_payload = so_config.to_dict()
+                    subagent_orchestrator_config_json = json.dumps(so_payload)
+                    # Keep a file-based copy to avoid escaped JSON argument parsing
+                    # inconsistencies across MCP runtimes.
+                    subagent_orchestrator_config_path = str(
+                        mcp_temp_dir / f"{agent_id}_orchestrator_config.json",
+                    )
+                    with open(subagent_orchestrator_config_path, "w") as f:
+                        json.dump(so_payload, f)
             if hasattr(self.config.coordination_config, "subagent_runtime_mode"):
                 subagent_runtime_mode = self.config.coordination_config.subagent_runtime_mode or "isolated"
             if hasattr(self.config.coordination_config, "subagent_runtime_fallback_mode"):
@@ -2614,6 +2826,8 @@ class Orchestrator(ChatAgent):
             str(min_timeout),
             "--max-timeout",
             str(max_timeout),
+            "--orchestrator-config-file",
+            subagent_orchestrator_config_path,
             "--orchestrator-config",
             subagent_orchestrator_config_json,
             "--log-directory",
@@ -4723,6 +4937,17 @@ Your answer:"""
                     voting_threshold=pre_collab_voting_threshold,
                     has_planning_spec_context=bool(self._plan_session_id),
                 )
+                self._agent_subtask_criteria = {}
+                subtask_specs = getattr(decomposer, "last_subtask_specs", {}) or {}
+                if subtask_specs:
+                    from massgen.evaluation_criteria_generator import (
+                        criteria_from_inline,
+                    )
+
+                    for aid, spec in subtask_specs.items():
+                        criteria_inline = spec.get("criteria") or []
+                        if criteria_inline:
+                            self._agent_subtask_criteria[aid] = criteria_from_inline(criteria_inline)
 
                 source = getattr(decomposer, "last_generation_source", "unknown")
                 if display and decomposition_anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
@@ -4911,12 +5136,13 @@ Your answer:"""
                 current_answers,
             )
 
-        # Emit voting complete status for TUI event pipeline
-
+        # Emit selection status for TUI event pipeline
+        used_vote_selection = bool(votes)
         _vote_emitter = get_event_emitter()
         if _vote_emitter and self._selected_agent:
+            status_message = f"Voting complete - selected agent: {self._selected_agent}" if used_vote_selection else f"Presenter selected for synthesis: {self._selected_agent}"
             _vote_emitter.emit_status(
-                f"Voting complete - selected agent: {self._selected_agent}",
+                status_message,
                 level="info",
                 agent_id=self._selected_agent,
             )
@@ -4934,7 +5160,7 @@ Your answer:"""
             )
 
         log_coordination_step(
-            "Final agent selected",
+            "Final agent selected" if used_vote_selection else "Final presenter selected",
             {"selected_agent": self._selected_agent, "votes": votes},
         )
 
@@ -5017,13 +5243,18 @@ Your answer:"""
                     logger.info("[skip_voting] All agents have answered - skipping voting, proceeding to presentation")
                     return True
 
+            if self._should_skip_vote_rounds_for_synthesize():
+                all_answered = all(state.answer is not None for state in self.agent_states.values())
+                if all_answered:
+                    logger.info(
+                        "[synthesize] All agents have answered - skipping vote rounds and proceeding to final presentation",
+                    )
+                    return True
+
             return False
 
         # Stream agent outputs in real-time until coordination is complete
         while not _coordination_complete():
-            # Start new coordination iteration
-            self.coordination_tracker.start_new_iteration()
-
             # Check for cancellation - stop coordination immediately
             if hasattr(self, "cancellation_manager") and self.cancellation_manager and self.cancellation_manager.is_cancelled:
                 logger.info(
@@ -5036,6 +5267,16 @@ Your answer:"""
                 break
             # Start any agents that aren't running and haven't voted yet
             current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+            gate_ready = await self._run_round_evaluator_pre_round_if_needed(
+                current_answers,
+                conversation_context,
+            )
+            if gate_ready is False:
+                await asyncio.sleep(0.25)
+                continue
+
+            # Start new coordination iteration only after blocking pre-round gates complete.
+            self.coordination_tracker.start_new_iteration()
             for agent_id in self.agents.keys():
                 # Skip agents that are waiting for all answers before voting
                 if self._is_waiting_for_all_answers(agent_id):
@@ -5233,7 +5474,10 @@ Your answer:"""
                                 agent_id,
                                 [agent_id],
                             )
-                            self._refresh_checklist_state_for_agent(agent_id)
+                            self._refresh_checklist_state_for_agent(
+                                agent_id,
+                                prefer_local_runtime_state=True,
+                            )
                             # Attach changedoc from workspace if enabled
                             if self._is_changedoc_enabled() and agent and agent.backend.filesystem_manager:
                                 from massgen.changedoc import (
@@ -6618,18 +6862,44 @@ Your answer:"""
                 "",
                 *lines,
                 "=" * 60,
-                "RECOMMENDED ACTIONS:",
-                "=" * 60,
-                "",
-                "1. Read and understand their full work — maintain awareness of the entire project state",
-                "2. Keep ownership-first: spend most effort on your subtask; touch other areas only for adjacent integration",
-                "3. Integrate boundary dependencies (interfaces/contracts/shared assets) without taking over unrelated scopes",
-                "4. Continue refining your own work — fix issues, improve quality, incorporate insights",
-                "5. If you submit `new_answer`, include concrete deliverables + validation evidence + integration notes",
-                "6. Call `stop` only when you've reviewed everything and are satisfied — no new work to share",
-                "",
-                "=" * 60,
             ]
+            if is_checklist_mode:
+                injection_parts.extend(
+                    [
+                        "CHECKLIST-GATED ACTIONS (REQUIRED):",
+                        "=" * 60,
+                        "",
+                        "1. Read and understand their full work — maintain awareness of the entire project state",
+                        "2. Keep ownership-first: spend most effort on your subtask; touch other areas only for adjacent integration",
+                        "3. Integrate boundary dependencies (interfaces/contracts/shared assets) without taking over unrelated scopes",
+                        "4. Use submit_checklist with the newest labels shown above before deciding to `stop` or continue iterating",
+                        "5. If checklist was already accepted this round and this update is new:",
+                        "   - Preferred: submit only the injected newest labels (delta recheck)",
+                        "   - Also allowed: submit all latest labels in your current context",
+                        "6. If submit_checklist returns a validation error, fix payload/report and call submit_checklist again",
+                        "7. If checklist returns iterate (new_answer), call propose_improvements, implement, then call new_answer",
+                        "8. Call `stop` only after the latest checklist result supports stopping and you have no new work to share",
+                        "",
+                        "DO NOT ignore this update - checklist flow must be re-run on newest labels.",
+                        "=" * 60,
+                    ],
+                )
+            else:
+                injection_parts.extend(
+                    [
+                        "RECOMMENDED ACTIONS:",
+                        "=" * 60,
+                        "",
+                        "1. Read and understand their full work — maintain awareness of the entire project state",
+                        "2. Keep ownership-first: spend most effort on your subtask; touch other areas only for adjacent integration",
+                        "3. Integrate boundary dependencies (interfaces/contracts/shared assets) without taking over unrelated scopes",
+                        "4. Continue refining your own work — fix issues, improve quality, incorporate insights",
+                        "5. If you submit `new_answer`, include concrete deliverables + validation evidence + integration notes",
+                        "6. Call `stop` only when you've reviewed everything and are satisfied — no new work to share",
+                        "",
+                        "=" * 60,
+                    ],
+                )
         else:
             injection_parts = [
                 "",
@@ -6969,6 +7239,17 @@ Your answer:"""
             # at stream start). A full restart gives them updated tool schemas.
             if self._is_vote_only_mode(agent_id):
                 return None  # Let restart happen instead
+
+            if self._should_defer_peer_updates_until_restart(agent_id):
+                if self._has_unseen_answer_updates(agent_id):
+                    self.agent_states[agent_id].restart_pending = True
+                    logger.info(
+                        "[Orchestrator] Deferring peer answer update injection until restart for %s",
+                        agent_id,
+                    )
+                else:
+                    self.agent_states[agent_id].restart_pending = False
+                return None
 
             # Get CURRENT answers from agent_states
             current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
@@ -7326,60 +7607,70 @@ Your answer:"""
         if self._check_restart_pending(agent_id):
             if not self._should_defer_restart_for_first_answer(agent_id):
                 if not self._is_vote_only_mode(agent_id):
-                    current_answers = self._get_current_answers_snapshot()
-                    selected_answers, had_unseen_updates = self._select_midstream_answer_updates(
-                        agent_id,
-                        current_answers,
-                    )
-
-                    if selected_answers:
-                        if not self._should_skip_injection_due_to_timeout(agent_id):
-                            await self._copy_all_snapshots_to_temp_workspace(agent_id)
-
-                            answer_injection = self._build_tool_result_injection(
-                                agent_id,
-                                selected_answers,
-                                existing_answers=answers,
-                            )
-                            injection_parts.append(answer_injection)
-
-                            # Track the injection
-                            self.agent_states[agent_id].injection_count += 1
-                            self.agent_states[agent_id].midstream_injections_this_round += len(selected_answers)
-                            answers.update(selected_answers)
-                            self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
-                            self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
-                            self._mark_pending_checklist_recheck_labels(agent_id, list(selected_answers.keys()))
-                            # Update context labels BEFORE refreshing checklist state so
-                            # available_agent_labels reflects the newly-injected labels
-                            # (e.g. agent1.2 replacing agent1.1). Same ordering as the
-                            # mid-stream hook path at _build_injection_callback.
-                            self.coordination_tracker.update_agent_context_with_new_answers(
-                                agent_id,
-                                list(selected_answers.keys()),
-                            )
-                            self._refresh_checklist_state_for_agent(agent_id)
-                            self.agent_states[agent_id].restart_pending = self._has_unseen_answer_updates(agent_id)
-
+                    if self._should_defer_peer_updates_until_restart(agent_id):
+                        if self._has_unseen_answer_updates(agent_id):
+                            self.agent_states[agent_id].restart_pending = True
                             logger.info(
-                                "[Orchestrator] MCP hook: injecting %d peer answer(s) for %s",
-                                len(selected_answers),
+                                "[Orchestrator] Deferring MCP peer answer update injection until restart for %s",
                                 agent_id,
                             )
+                        else:
+                            self.agent_states[agent_id].restart_pending = False
+                    else:
+                        current_answers = self._get_current_answers_snapshot()
+                        selected_answers, _had_unseen_updates = self._select_midstream_answer_updates(
+                            agent_id,
+                            current_answers,
+                        )
 
-                            _inj_emitter = get_event_emitter()
-                            if _inj_emitter:
-                                _inj_emitter.emit_injection_received(
-                                    agent_id=agent_id,
-                                    source_agents=list(selected_answers.keys()),
-                                    injection_type="mid_stream",
+                        if selected_answers:
+                            if not self._should_skip_injection_due_to_timeout(agent_id):
+                                await self._copy_all_snapshots_to_temp_workspace(agent_id)
+
+                                answer_injection = self._build_tool_result_injection(
+                                    agent_id,
+                                    selected_answers,
+                                    existing_answers=answers,
+                                )
+                                injection_parts.append(answer_injection)
+
+                                # Track the injection
+                                self.agent_states[agent_id].injection_count += 1
+                                self.agent_states[agent_id].midstream_injections_this_round += len(selected_answers)
+                                answers.update(selected_answers)
+                                self.agent_states[agent_id].known_answer_ids.update(selected_answers.keys())
+                                self._register_injected_answer_updates(agent_id, list(selected_answers.keys()))
+                                self._mark_pending_checklist_recheck_labels(agent_id, list(selected_answers.keys()))
+                                # Update context labels BEFORE refreshing checklist state so
+                                # available_agent_labels reflects the newly-injected labels
+                                # (e.g. agent1.2 replacing agent1.1). Same ordering as the
+                                # mid-stream hook path at _build_injection_callback.
+                                self.coordination_tracker.update_agent_context_with_new_answers(
+                                    agent_id,
+                                    list(selected_answers.keys()),
+                                )
+                                self._refresh_checklist_state_for_agent(agent_id)
+                                self.agent_states[agent_id].restart_pending = self._has_unseen_answer_updates(agent_id)
+
+                                logger.info(
+                                    "[Orchestrator] MCP hook: injecting %d peer answer(s) for %s",
+                                    len(selected_answers),
+                                    agent_id,
                                 )
 
-                            self.coordination_tracker.track_agent_action(
-                                agent_id,
-                                ActionType.UPDATE_INJECTED,
-                                f"Mid-stream (MCP hook): {len(selected_answers)} answer(s)",
-                            )
+                                _inj_emitter = get_event_emitter()
+                                if _inj_emitter:
+                                    _inj_emitter.emit_injection_received(
+                                        agent_id=agent_id,
+                                        source_agents=list(selected_answers.keys()),
+                                        injection_type="mid_stream",
+                                    )
+
+                                self.coordination_tracker.track_agent_action(
+                                    agent_id,
+                                    ActionType.UPDATE_INJECTED,
+                                    f"Mid-stream (MCP hook): {len(selected_answers)} answer(s)",
+                                )
 
         # Write combined content to hook file
         if injection_parts:
@@ -7599,13 +7890,25 @@ Your answer:"""
         runtime_instructions_block: str,
     ) -> str:
         """Insert runtime instructions after the ORIGINAL/PARAPHRASED message section."""
-        runtime_block = (runtime_instructions_block or "").strip()
-        if not runtime_block:
+        return self._insert_runtime_context_blocks_after_original_message(
+            user_message,
+            [runtime_instructions_block],
+        )
+
+    def _insert_runtime_context_blocks_after_original_message(
+        self,
+        user_message: str,
+        context_blocks: Sequence[str | None],
+    ) -> str:
+        """Insert extra runtime context blocks after the ORIGINAL/PARAPHRASED message section."""
+        normalized_blocks = [str(block or "").strip() for block in context_blocks if str(block or "").strip()]
+        if not normalized_blocks:
             return user_message
 
+        merged_block = "\n\n".join(normalized_blocks)
         current_user_message = user_message or ""
         if not current_user_message:
-            return runtime_block
+            return merged_block
 
         end_paraphrased = "<END OF PARAPHRASED MESSAGE>"
         end_original = "<END OF ORIGINAL MESSAGE>"
@@ -7617,19 +7920,19 @@ Your answer:"""
             insertion_anchor = end_original
 
         if not insertion_anchor:
-            return runtime_block + "\n\n" + current_user_message
+            return merged_block + "\n\n" + current_user_message
 
         anchor_start = current_user_message.find(insertion_anchor)
         if anchor_start < 0:
-            return runtime_block + "\n\n" + current_user_message
+            return merged_block + "\n\n" + current_user_message
 
         anchor_end = anchor_start + len(insertion_anchor)
         before = current_user_message[:anchor_end]
         after = current_user_message[anchor_end:].lstrip("\n")
 
         if after:
-            return f"{before}\n\n{runtime_block}\n\n{after}"
-        return f"{before}\n\n{runtime_block}"
+            return f"{before}\n\n{merged_block}\n\n{after}"
+        return f"{before}\n\n{merged_block}"
 
     async def _prepare_no_hook_midstream_enforcement(
         self,
@@ -7646,6 +7949,7 @@ Your answer:"""
         has_runtime_sections = bool(runtime_sections)
 
         defer_answer_updates = self._should_defer_restart_for_first_answer(agent_id)
+        defer_peer_updates_until_restart = False
         selected_answers: dict[str, str] = {}
         had_unseen_updates = False
 
@@ -7656,6 +7960,17 @@ Your answer:"""
             if had_unseen_updates:
                 logger.info(
                     "[Orchestrator] No-hook mid-stream answer updates deferred (first-answer protection) for %s",
+                    agent_id,
+                )
+            elif not has_runtime_sections:
+                self.agent_states[agent_id].restart_pending = False
+                return None
+        elif self._should_defer_peer_updates_until_restart(agent_id):
+            defer_peer_updates_until_restart = True
+            had_unseen_updates = self._has_unseen_answer_updates(agent_id)
+            if had_unseen_updates:
+                logger.info(
+                    "[Orchestrator] No-hook peer answer updates deferred until restart for %s",
                     agent_id,
                 )
             elif not has_runtime_sections:
@@ -7674,12 +7989,18 @@ Your answer:"""
                 # Keep restart pending so orchestrator can retry delivery/restart.
                 self.agent_states[agent_id].restart_pending = True
                 if not has_runtime_sections:
-                    cap = getattr(self.config, "max_midstream_injections_per_round", 2)
-                    logger.info(
-                        "[Orchestrator] No-hook mid-stream fallback deferred for %s: per-round cap reached (%s)",
-                        agent_id,
-                        cap,
-                    )
+                    if defer_peer_updates_until_restart:
+                        logger.info(
+                            "[Orchestrator] No-hook mid-stream fallback waiting for restart to deliver peer updates for %s",
+                            agent_id,
+                        )
+                    else:
+                        cap = getattr(self.config, "max_midstream_injections_per_round", 2)
+                        logger.info(
+                            "[Orchestrator] No-hook mid-stream fallback deferred for %s: per-round cap reached (%s)",
+                            agent_id,
+                            cap,
+                        )
             else:
                 # Stale restart signal: no unseen updates remain.
                 self.agent_states[agent_id].restart_pending = False
@@ -7937,12 +8258,20 @@ Your answer:"""
                 parsed_content = cls._try_parse_json_dict_from_text(content_text)
                 if parsed_content is not None:
                     return parsed_content
+            for key in ("structuredContent", "structured_content"):
+                structured = raw_result.get(key)
+                if isinstance(structured, dict):
+                    return structured
             return raw_result
 
         if isinstance(raw_result, str):
             return cls._try_parse_json_dict_from_text(raw_result)
 
         # MCP CallToolResult-like object.
+        for attr_name in ("structuredContent", "structured_content"):
+            structured = getattr(raw_result, attr_name, None)
+            if isinstance(structured, dict):
+                return structured
         if hasattr(raw_result, "content"):
             content_text = cls._extract_text_from_mcp_content_payload(
                 getattr(raw_result, "content", None),
@@ -8636,6 +8965,17 @@ Your answer:"""
             if self._is_vote_only_mode(agent_id):
                 return None
 
+            if self._should_defer_peer_updates_until_restart(agent_id):
+                if self._has_unseen_answer_updates(agent_id):
+                    self.agent_states[agent_id].restart_pending = True
+                    logger.info(
+                        "[Orchestrator] Deferring native peer answer update injection until restart for %s",
+                        agent_id,
+                    )
+                else:
+                    self.agent_states[agent_id].restart_pending = False
+                return None
+
             # Get CURRENT answers from agent_states
             current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
             selected_answers, had_unseen_updates = self._select_midstream_answer_updates(
@@ -9136,6 +9476,37 @@ Your answer:"""
     def _is_fairness_enabled(self) -> bool:
         """Return True when fairness controls are enabled."""
         return bool(getattr(self.config, "fairness_enabled", True))
+
+    def _is_checklist_gated_mode(self) -> bool:
+        """Return True when checklist_gated coordination is active."""
+        return getattr(self.config, "voting_sensitivity", "balanced") == "checklist_gated"
+
+    def _allow_midstream_peer_updates_before_checklist_submit(self) -> bool:
+        """Resolve whether checklist mode allows pre-submit peer updates mid-stream."""
+        configured = getattr(
+            self.config,
+            "allow_midstream_peer_updates_before_checklist_submit",
+            None,
+        )
+        if configured is not None:
+            return bool(configured)
+        return not bool(getattr(self.config, "defer_peer_updates_until_restart", False))
+
+    def _has_successful_checklist_submit_this_round(self, agent_id: str) -> bool:
+        """Return True after the first accepted submit_checklist for the current answer."""
+        self._sync_stdio_checklist_state_from_specs(agent_id)
+        state = self.agent_states.get(agent_id)
+        return bool(state and state.checklist_calls_this_round > 0)
+
+    def _should_defer_peer_updates_until_restart(self, agent_id: str) -> bool:
+        """Return True when peer-answer updates should wait for the next restart."""
+        if not bool(getattr(self.config, "defer_peer_updates_until_restart", False)):
+            return False
+        if not self._is_checklist_gated_mode():
+            return True
+        if not self._allow_midstream_peer_updates_before_checklist_submit():
+            return True
+        return self._has_successful_checklist_submit_this_round(agent_id)
 
     def _update_fairness_pause_log_state(
         self,
@@ -9667,6 +10038,9 @@ Your answer:"""
                 )
             return False  # Don't switch to vote-only tools, agent is already stopped
 
+        if self._should_skip_vote_rounds_for_synthesize():
+            return False
+
         # If defer_voting_until_all_answered is enabled, also check that all agents have answered
         # unless global answer cap has already been reached.
         if self.config.defer_voting_until_all_answered and not hit_global_limit:
@@ -9714,7 +10088,7 @@ Your answer:"""
         Returns:
             True if agent should wait (not run), False otherwise.
         """
-        if not self.config.defer_voting_until_all_answered:
+        if not self.config.defer_voting_until_all_answered and not self._should_skip_vote_rounds_for_synthesize():
             return False
 
         # If global answer cap is reached, unblock voting immediately to avoid deadlock.
@@ -9735,9 +10109,308 @@ Your answer:"""
         if all_answered:
             return False  # Can proceed to voting
 
-        logger.debug(
-            f"[defer_voting] {agent_id} waiting for all agents to answer before voting",
+        if self._should_skip_vote_rounds_for_synthesize():
+            logger.debug(
+                f"[synthesize] {agent_id} waiting for all agents to answer before final presentation",
+            )
+        else:
+            logger.debug(
+                f"[defer_voting] {agent_id} waiting for all agents to answer before voting",
+            )
+        return True
+
+    def _is_round_evaluator_gate_enabled(self) -> bool:
+        """Return whether the orchestrator should run the round_evaluator gate itself."""
+        coord = getattr(self.config, "coordination_config", None)
+        return bool(
+            coord and getattr(coord, "round_evaluator_before_checklist", False) and getattr(coord, "orchestrator_managed_round_evaluator", False),
         )
+
+    def _get_round_evaluator_latest_labels(
+        self,
+        answers: dict[str, str],
+    ) -> tuple[str, ...]:
+        """Return the latest answer labels for the current revision set."""
+        labels: list[str] = []
+        for answering_agent_id in sorted(answers.keys()):
+            label = self.coordination_tracker.get_latest_answer_label(answering_agent_id)
+            if label:
+                labels.append(label)
+        return tuple(labels)
+
+    def _get_round_evaluator_upcoming_round(self, agent_id: str) -> int:
+        """Return the next user-facing round number for programmatic tool events."""
+        try:
+            restart_count = self.agent_states[agent_id].restart_count
+        except Exception:
+            restart_count = 0
+        try:
+            return max(1, int(restart_count) + 1)
+        except Exception:
+            return 1
+
+    def _get_round_evaluator_display_round(self, agent_id: str) -> int:
+        """Attach round-evaluator tool cards to the completed parent round they analyze."""
+        try:
+            return max(1, int(self.coordination_tracker.get_agent_round(agent_id)))
+        except Exception:
+            return 1
+
+    def _queue_round_start_context_block(self, agent_id: str, block: str) -> None:
+        """Queue a context block for the next parent round."""
+        normalized = str(block or "").strip()
+        if not normalized:
+            return
+        self._round_start_context_blocks.setdefault(agent_id, []).append(normalized)
+
+    def _consume_round_start_context_block(self, agent_id: str) -> str | None:
+        """Pop and combine queued round-start context blocks for an agent."""
+        blocks = self._round_start_context_blocks.pop(agent_id, [])
+        normalized = [str(block or "").strip() for block in blocks if str(block or "").strip()]
+        if not normalized:
+            return None
+        return "\n\n".join(normalized)
+
+    def _build_round_evaluator_task(
+        self,
+        parent_agent_id: str,
+        answers: dict[str, str],
+    ) -> str:
+        """Build the orchestrator-owned round_evaluator task brief."""
+        criteria_agent_id = parent_agent_id if self._is_decomposition_mode() else None
+        checklist_items, _, verify_by, _ = self._resolve_effective_checklist_criteria(criteria_agent_id)
+
+        criteria_lines: list[str] = []
+        for idx, item in enumerate(checklist_items or [], start=1):
+            criterion_id = f"E{idx}"
+            verify_line = ""
+            if verify_by and verify_by.get(criterion_id):
+                verify_line = f" (verify_by: {verify_by[criterion_id]})"
+            criteria_lines.append(f"- {criterion_id}: {item}{verify_line}")
+        criteria_block = "\n".join(criteria_lines) if criteria_lines else "- No explicit checklist criteria configured"
+
+        answer_label_mapping = self.coordination_tracker.get_answer_label_mapping()
+        normalized_answers = self._normalize_workspace_paths_in_answers(
+            answers,
+            viewing_agent_id=parent_agent_id,
+        )
+        answer_sections: list[str] = []
+        for answering_agent_id in sorted(normalized_answers.keys()):
+            label = answer_label_mapping.get(answering_agent_id) or answering_agent_id
+            answer_sections.append(
+                f"## {label}\n" f"Source agent: {answering_agent_id}\n\n" f"{normalized_answers[answering_agent_id]}",
+            )
+
+        answer_block = "\n\n".join(answer_sections) if answer_sections else "No answers available."
+        return (
+            "Produce one very critical cross-answer critique packet for the parent agent.\n\n"
+            f"ORIGINAL TASK:\n{self.current_task or 'Task coordination'}\n\n"
+            "EVALUATION CRITERIA:\n"
+            f"{criteria_block}\n\n"
+            "CANDIDATE ANSWERS:\n"
+            f"{answer_block}\n\n"
+            "Return critique/spec content only. Do not provide checklist payloads, numeric scores, "
+            "or parent workflow recommendations."
+        )
+
+    def _get_round_evaluator_context_paths(
+        self,
+        parent_agent_id: str,
+        temp_workspace_path: str | None = None,
+    ) -> list[str]:
+        """Collect explicit read-only context paths for the round_evaluator task."""
+        context_paths: list[str] = []
+        seen: set[str] = set()
+
+        def _add(path_value: Any) -> None:
+            normalized = str(path_value or "").strip()
+            if not normalized or normalized in seen:
+                return
+            seen.add(normalized)
+            context_paths.append(normalized)
+
+        _add(temp_workspace_path)
+
+        agent = self.agents.get(parent_agent_id)
+        filesystem_manager = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
+        if filesystem_manager is not None:
+            _add(getattr(filesystem_manager, "agent_temporary_workspace", None))
+            get_workspace = getattr(filesystem_manager, "get_current_workspace", None)
+            if callable(get_workspace):
+                try:
+                    workspace_path = get_workspace()
+                except Exception:
+                    workspace_path = None
+                _add(workspace_path)
+            _add(getattr(filesystem_manager, "cwd", None))
+
+        _add(self._agent_temporary_workspace)
+        return context_paths
+
+    def _emit_round_evaluator_spawn_event(
+        self,
+        *,
+        phase: str,
+        agent_id: str,
+        tool_call_id: str,
+        round_number: int,
+        args: dict[str, Any],
+        result: dict[str, Any] | None = None,
+        elapsed_seconds: float = 0.0,
+        is_error: bool = False,
+        status: str = "success",
+    ) -> None:
+        """Emit tool events so programmatic subagent launches reuse the TUI pipeline."""
+        emitter = get_event_emitter()
+        if not emitter:
+            return
+
+        if phase == "start":
+            emitter.emit_raw(
+                StructuredEventType.TOOL_START,
+                agent_id=agent_id,
+                round_number=round_number,
+                tool_id=tool_call_id,
+                tool_name="spawn_subagents",
+                args=args,
+                server_name=f"subagent_{agent_id}",
+            )
+            return
+
+        emitter.emit_raw(
+            StructuredEventType.TOOL_COMPLETE,
+            agent_id=agent_id,
+            round_number=round_number,
+            tool_id=tool_call_id,
+            tool_name="spawn_subagents",
+            result=json.dumps(result or {}, ensure_ascii=False),
+            elapsed_seconds=elapsed_seconds,
+            status=status,
+            is_error=is_error,
+        )
+
+    def _format_round_evaluator_result_block(
+        self,
+        subagent_id: str,
+        result: "SubagentResult",
+    ) -> str:
+        """Format the blocking round_evaluator result for next-round prompt injection."""
+        from .subagent.result_formatter import format_single_result
+
+        return (
+            "============================================================\n"
+            "ROUND EVALUATOR RESULT\n"
+            "============================================================\n"
+            "The orchestrator ran one blocking `round_evaluator` before this round.\n"
+            "Treat it as critique/spec context only. It does NOT decide your parent "
+            "workflow action for you.\n\n"
+            f"{format_single_result(subagent_id, result)}\n"
+            "============================================================"
+        )
+
+    async def _run_round_evaluator_pre_round_if_needed(
+        self,
+        answers: dict[str, str],
+        conversation_context: dict[str, Any] | None = None,
+    ) -> bool:
+        """Run the round_evaluator gate between answer rounds when configured."""
+        _ = conversation_context
+        if not self._is_round_evaluator_gate_enabled():
+            return True
+        if not answers:
+            return True
+        if len(self.agents) != 1:
+            return True
+        if not all(state.answer is not None for state in self.agent_states.values()):
+            return True
+
+        parent_agent_id = next(iter(self.agents.keys()))
+        latest_labels = self._get_round_evaluator_latest_labels(answers)
+        if not latest_labels:
+            return True
+        if self._round_evaluator_completed_labels.get(parent_agent_id) == latest_labels:
+            return True
+
+        upcoming_round = self._get_round_evaluator_upcoming_round(parent_agent_id)
+        display_round = self._get_round_evaluator_display_round(parent_agent_id)
+        temp_workspace_path = await self._copy_all_snapshots_to_temp_workspace(parent_agent_id)
+        spawn_args: dict[str, Any] = {
+            "tasks": [
+                {
+                    "subagent_id": f"round_eval_r{upcoming_round}",
+                    "task": self._build_round_evaluator_task(parent_agent_id, answers),
+                    "subagent_type": "round_evaluator",
+                    "context_paths": self._get_round_evaluator_context_paths(
+                        parent_agent_id,
+                        temp_workspace_path=temp_workspace_path,
+                    ),
+                },
+            ],
+            "background": False,
+            "refine": False,
+        }
+
+        tool_call_id = f"round_evaluator_pre_round_{parent_agent_id}_r{upcoming_round}_{int(time.time() * 1000)}"
+        self._emit_round_evaluator_spawn_event(
+            phase="start",
+            agent_id=parent_agent_id,
+            tool_call_id=tool_call_id,
+            round_number=display_round,
+            args=spawn_args,
+        )
+
+        started_at = time.time()
+        raw_result = await self._call_subagent_mcp_tool_async(
+            parent_agent_id=parent_agent_id,
+            tool_name="spawn_subagents",
+            params=spawn_args,
+        )
+        elapsed_seconds = max(0.0, time.time() - started_at)
+        normalized_result = raw_result if isinstance(raw_result, dict) else {}
+        success = bool(normalized_result.get("success"))
+        self._emit_round_evaluator_spawn_event(
+            phase="complete",
+            agent_id=parent_agent_id,
+            tool_call_id=tool_call_id,
+            round_number=display_round,
+            args=spawn_args,
+            result=normalized_result,
+            elapsed_seconds=elapsed_seconds,
+            is_error=not success,
+            status="success" if success else "error",
+        )
+
+        if not success:
+            logger.warning(
+                "[Orchestrator] round_evaluator gate failed for {}: {}",
+                parent_agent_id,
+                normalized_result,
+            )
+            return False
+
+        from .subagent.models import SubagentResult
+
+        results = normalized_result.get("results")
+        if not isinstance(results, list) or not results:
+            return False
+
+        try:
+            first_result = SubagentResult.from_dict(results[0])
+        except Exception as exc:
+            logger.warning(
+                "[Orchestrator] Failed to parse round_evaluator result payload for %s: %s",
+                parent_agent_id,
+                exc,
+            )
+            return False
+
+        if first_result.answer:
+            self._queue_round_start_context_block(
+                parent_agent_id,
+                self._format_round_evaluator_result_block(first_result.subagent_id, first_result),
+            )
+
+        self._round_evaluator_completed_labels[parent_agent_id] = latest_labels
         return True
 
     def _get_buffer_content(self, agent: "ChatAgent") -> tuple[str | None, int]:
@@ -10424,26 +11097,21 @@ Your answer:"""
                         f"fallback requires is_converging=True (got {is_converging})",
                     )
 
-            # Resolve custom criteria once for both system prompt and checklist tool state
-            _active_items, _active_categories, _active_verify_by = self._get_active_criteria()
+            # Resolve active criteria once for both system prompt and checklist tool state.
+            criteria_agent_id = agent_id if self._is_decomposition_mode() else None
+            _active_items, _active_categories, _active_verify_by, _criteria_source = self._resolve_effective_checklist_criteria(
+                criteria_agent_id,
+            )
 
             # Push criteria to TUI display on first round (non-checklist modes;
             # checklist_gated mode already pushes from _init_checklist_tool).
-            if not self._criteria_pushed_to_display and _active_items:
+            should_refresh_criteria_display = not self._criteria_pushed_to_display or (
+                self._is_decomposition_mode() and getattr(self.config, "voting_sensitivity", "") == "checklist_gated" and _criteria_source == "decomposition_subtask"
+            )
+            if should_refresh_criteria_display and _active_items:
                 try:
                     _ui_display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
                     if _ui_display and hasattr(_ui_display, "set_evaluation_criteria"):
-                        _inline = getattr(
-                            getattr(self.config, "coordination_config", None),
-                            "checklist_criteria_inline",
-                            None,
-                        )
-                        _preset = getattr(
-                            getattr(self.config, "coordination_config", None),
-                            "checklist_criteria_preset",
-                            None,
-                        )
-                        _src = "inline" if _inline else "generated" if self._generated_evaluation_criteria else (_preset or "default")
                         _crit_dicts = [
                             {
                                 "id": f"E{_i + 1}",
@@ -10453,7 +11121,11 @@ Your answer:"""
                             }
                             for _i, _t in enumerate(_active_items)
                         ]
-                        _ui_display.set_evaluation_criteria(_crit_dicts, source=_src)
+                        _ui_display.set_evaluation_criteria(_crit_dicts, source=_criteria_source)
+                        self._criteria_display_payload = {
+                            "criteria": _crit_dicts,
+                            "source": _criteria_source,
+                        }
                         self._criteria_pushed_to_display = True
                 except Exception:
                     pass  # TUI notification is non-critical
@@ -10625,12 +11297,12 @@ Your answer:"""
                 # Prepend restart context to user message
                 conversation["user_message"] = restart_context + "\n\n" + conversation["user_message"]
 
+            round_start_context = self._consume_round_start_context_block(agent_id)
             runtime_user_instructions = self._build_runtime_user_instructions_context(agent_id)
-            if runtime_user_instructions:
-                conversation["user_message"] = self._insert_runtime_user_instructions_after_original_message(
-                    conversation["user_message"],
-                    runtime_user_instructions,
-                )
+            conversation["user_message"] = self._insert_runtime_context_blocks_after_original_message(
+                conversation["user_message"],
+                [round_start_context, runtime_user_instructions],
+            )
 
             # Track all the context used for this agent execution
             # Now conversation["system_message"] contains the NEW structured message
@@ -10777,6 +11449,13 @@ Your answer:"""
             # Use while loop for retry attempts
             attempt = 0
             is_first_real_attempt = True  # Track first LLM call separately from attempt counter
+
+            def _restore_round_start_context_for_retry() -> None:
+                nonlocal round_start_context
+                if round_start_context:
+                    self._queue_round_start_context_block(agent_id, round_start_context)
+                    round_start_context = None
+
             while attempt < max_attempts:
                 logger.info(
                     f"[Orchestrator] Agent {agent_id} workflow enforcement attempt {attempt + 1}/{max_attempts}",
@@ -10841,12 +11520,25 @@ Your answer:"""
                         # Clear framework MCP state before restart (e.g., task plans)
                         await self._clear_framework_mcp_state(agent_id)
 
+                        if has_hook_delivery and self._should_defer_peer_updates_until_restart(agent_id):
+                            if self._has_unseen_answer_updates(agent_id):
+                                logger.info(
+                                    "[Orchestrator] Forcing restart for %s to deliver deferred peer updates on the next round",
+                                    agent_id,
+                                )
+                                _restore_round_start_context_for_retry()
+                                self.agent_states[agent_id].restart_pending = False
+                                yield ("done", None)
+                                return
+                            self.agent_states[agent_id].restart_pending = False
+
                         # In vote-only mode, always restart to get updated tool schemas.
                         # Mid-stream injection can't update the vote enum, so we need a full restart.
                         if self._is_vote_only_mode(agent_id):
                             logger.info(
                                 f"[Orchestrator] Agent {agent_id} in vote-only mode - forcing restart for updated vote options",
                             )
+                            _restore_round_start_context_for_retry()
                             self.agent_states[agent_id].restart_pending = False
                             yield ("done", None)
                             return
@@ -10879,6 +11571,7 @@ Your answer:"""
                                 logger.info(
                                     f"[Orchestrator] Agent {agent_id} backend has no hooks - restarting to apply new context",
                                 )
+                                _restore_round_start_context_for_retry()
                                 self.agent_states[agent_id].restart_pending = False
                                 self.agent_states[agent_id].injection_count += 1
                                 yield ("done", None)
@@ -12397,11 +13090,13 @@ Your answer:"""
             agent = self.agents.get(self._selected_agent)
             has_write_context_paths = self._has_write_context_paths(agent) if agent else False
             is_single_agent_mode = self.config.skip_voting  # skip_voting implies single-agent mode
+            final_answer_strategy = self._get_final_answer_strategy()
+            should_skip_presentation = is_single_agent_mode or (final_answer_strategy == "winner_reuse" and not has_write_context_paths)
 
             # Decision matrix:
             # - Single agent + write paths: Enable writes directly (no LLM call), skip presentation
-            # - Multi-agent + write paths: Need final presentation to copy files, fall through
-            # - Multi-agent + no write paths: Safe to skip, no files need copying
+            # - Multi-agent + winner_reuse + write paths: Need final presentation to copy files
+            # - Multi-agent + winner_present/synthesize: Keep presenter stage even without write paths
 
             if is_single_agent_mode and has_write_context_paths:
                 # Single agent mode with write context paths:
@@ -12410,20 +13105,19 @@ Your answer:"""
                 logger.info(
                     "[skip_final_presentation] Single agent mode with write context paths - writes already enabled at coordination start",
                 )
-                # Fall through to skip logic below
 
-            elif not is_single_agent_mode and has_write_context_paths:
-                # Multi-agent mode with write context paths:
-                # Need final presentation to copy winning agent's files to context paths
+            elif final_answer_strategy == "winner_reuse" and has_write_context_paths:
                 logger.info(
-                    "[skip_final_presentation] Multi-agent mode with write context paths - falling through to final presentation",
+                    "[skip_final_presentation] Multi-agent winner_reuse with write context paths - falling through to final presentation",
                 )
-                # Fall through to normal presentation (don't skip)
-                pass  # Continue to normal presentation logic below
 
-            # For all other cases (single agent without write paths, or multi-agent without write paths),
-            # we can skip the final presentation
-            if not (not is_single_agent_mode and has_write_context_paths):
+            elif final_answer_strategy in {"winner_present", "synthesize"}:
+                logger.info(
+                    "[skip_final_presentation] Keeping presenter stage because final_answer_strategy=%s",
+                    final_answer_strategy,
+                )
+
+            if should_skip_presentation:
                 # Use existing answer directly without an additional LLM call
                 existing_answer = self.agent_states[self._selected_agent].answer
                 if existing_answer:
@@ -12960,19 +13654,24 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             source=selected_agent_id,
         )
 
+        presentation_strategy = self._get_final_answer_strategy()
+
         # Prepare context about the voting
         vote_counts = vote_results.get("vote_counts", {})
         voter_details = vote_results.get("voter_details", {})
         is_tie = vote_results.get("is_tie", False)
 
         # Build voting summary -- note we only include the number of votes and reasons for the selected agent. There is no information about the distribution of votes beyond this.
-        voting_summary = f"You received {vote_counts.get(selected_agent_id, 0)} vote(s)"
-        if voter_details.get(selected_agent_id):
-            reasons = [v["reason"] for v in voter_details[selected_agent_id]]
-            voting_summary += f" with feedback: {'; '.join(reasons)}"
+        if presentation_strategy == "synthesize" and not vote_counts and not voter_details:
+            voting_summary = "No voting round was run. You were selected as the presenter to " "synthesize the final answer from all completed answers."
+        else:
+            voting_summary = f"You received {vote_counts.get(selected_agent_id, 0)} vote(s)"
+            if voter_details.get(selected_agent_id):
+                reasons = [v["reason"] for v in voter_details[selected_agent_id]]
+                voting_summary += f" with feedback: {'; '.join(reasons)}"
 
-        if is_tie:
-            voting_summary += " (tie-broken by registration order)"
+            if is_tie:
+                voting_summary += " (tie-broken by registration order)"
 
         # Get all answers for context
         all_answers = {aid: s.answer for aid, s in self.agent_states.items() if s.answer}
@@ -13005,6 +13704,10 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 "Ensure quality, fill any gaps, resolve conflicts, and answer the original query comprehensively."
             )
         else:
+            if presentation_strategy == "winner_reuse":
+                # If we still reached presenter stage, winner_reuse could not be honored directly
+                # (for example because write-path delivery requires a presentation pass).
+                presentation_strategy = "winner_present"
             # Gather changedocs for final presentation
             _pres_changedocs = self._gather_agent_changedocs()
             presentation_content = self.message_templates.build_final_presentation_message(
@@ -13013,6 +13716,7 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 all_answers=normalized_all_answers,
                 selected_agent_id=selected_agent_id,
                 agent_changedocs=_pres_changedocs,
+                final_answer_strategy=presentation_strategy,
             )
 
         # Add worktree location to presentation message

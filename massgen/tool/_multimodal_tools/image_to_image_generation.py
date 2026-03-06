@@ -1,5 +1,5 @@
 """
-Create variations based on multiple input images using OpenAI's gpt-5.2 API.
+Create variations based on multiple input images using OpenAI's gpt-5.4 API.
 """
 
 import base64
@@ -42,15 +42,15 @@ def _validate_path_access(path: Path, allowed_paths: list[Path] | None = None) -
 async def image_to_image_generation(
     base_image_paths: list[str],
     prompt: str = "Create a variation of the provided images",
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     storage_path: str | None = None,
     allowed_paths: list[str] | None = None,
     agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """
-    Create variations based on multiple input images using OpenAI's gpt-5.2 API.
+    Create variations based on multiple input images using OpenAI's gpt-5.4 API.
 
-    This tool generates image variations based on multiple base images using OpenAI's gpt-5.2 API
+    This tool generates image variations based on multiple base images using OpenAI's gpt-5.4 API
     and saves them to the workspace with automatic organization.
 
     Args:
@@ -58,7 +58,7 @@ async def image_to_image_generation(
                     - Relative path: Resolved relative to agent's workspace
                     - Absolute path: Must be within allowed directories
         prompt: Text description for the variation (default: "Create a variation of the provided images")
-        model: Model to use (default: "gpt-5.2")
+        model: Model to use (default: "gpt-5.4")
         storage_path: Directory path where to save variations (optional)
                      - Relative path: Resolved relative to agent's workspace
                      - Absolute path: Must be within allowed directories
@@ -198,7 +198,7 @@ async def image_to_image_generation(
         storage_dir.mkdir(parents=True, exist_ok=True)
 
         try:
-            # Generate variations using gpt-5.2 API with all images at once
+            # Generate variations using gpt-5.4 API with all images at once
             response = await client.responses.create(
                 model=model,
                 input=[

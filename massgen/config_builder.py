@@ -207,7 +207,7 @@ class ConfigBuilder:
             return None
 
         default_effort = "low" if "nano" in normalized_model else "medium"
-        if supports_xhigh and "gpt-5.3" in normalized_model:
+        if supports_xhigh and (normalized_model == "gpt-5.4" or normalized_model.startswith("gpt-5.4-") or "gpt-5.3" in normalized_model):
             default_effort = "xhigh"
         if supports_xhigh:
             choices = with_recommended(
@@ -480,7 +480,7 @@ class ConfigBuilder:
 
         if use_text_input:
             console.print(
-                "\n[dim]Type to search models (e.g., 'gpt-5.2', 'gpt-5-mini', 'gpt-5-nano')[/dim]",
+                "\n[dim]Type to search models (e.g., 'gpt-5.4', 'gpt-5-mini', 'gpt-5-nano')[/dim]",
             )
             console.print(
                 f"[dim]Searching through {len(fuzzy_match_models)} models...[/dim]",
@@ -1842,6 +1842,7 @@ class ConfigBuilder:
 
                     # Auto-add reasoning params for GPT-5 and o-series models
                     if selected_model in [
+                        "gpt-5.4",
                         "gpt-5",
                         "gpt-5-mini",
                         "gpt-5-nano",
@@ -1862,7 +1863,7 @@ class ConfigBuilder:
                         )
 
                         # Determine default based on model
-                        if selected_model in ["gpt-5", "o4"]:
+                        if selected_model in ["gpt-5.4", "gpt-5", "o4"]:
                             default_effort = "medium"  # Changed from high to medium
                         elif selected_model in ["gpt-5-mini", "o4-mini"]:
                             default_effort = "medium"
@@ -2762,6 +2763,7 @@ class ConfigBuilder:
 
                                 # Auto-add reasoning params for GPT-5 and o-series models
                                 if selected_model in [
+                                    "gpt-5.4",
                                     "gpt-5",
                                     "gpt-5-mini",
                                     "gpt-5-nano",
@@ -2782,7 +2784,7 @@ class ConfigBuilder:
                                     )
 
                                     # Determine default based on model
-                                    if selected_model in ["gpt-5", "o4"]:
+                                    if selected_model in ["gpt-5.4", "gpt-5", "o4"]:
                                         default_effort = "medium"  # Changed from high to medium
                                     elif selected_model in ["gpt-5-mini", "o4-mini"]:
                                         default_effort = "medium"
@@ -4689,15 +4691,26 @@ class ConfigBuilder:
                         "Subagent model:",
                         choices=[
                             questionary.Choice("Same as parent agents", value="inherit"),
+                            questionary.Choice("Inherit spawning parent agent exactly (single-agent)", value="inherit_spawning_parent"),
                             questionary.Choice("Choose different model(s)", value="custom"),
                         ],
+                        default="inherit",
                         style=questionary.Style([("question", "fg:cyan bold")]),
                     ).ask()
 
                     if subagent_model_choice is None:
                         raise KeyboardInterrupt
 
-                    if subagent_model_choice == "custom":
+                    if subagent_model_choice == "inherit_spawning_parent":
+                        coordination_settings["subagent_orchestrator"] = {
+                            "enabled": True,
+                            "inherit_spawning_agent_backend": True,
+                        }
+                        console.print(
+                            "\n  [dim]Subagents will inherit the exact backend/model from the spawning parent agent.[/dim]",
+                        )
+
+                    elif subagent_model_choice == "custom":
                         # Support multiple subagent backends
                         subagent_agents = []
 

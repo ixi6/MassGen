@@ -361,6 +361,8 @@ class TestSubagentOrchestratorConfig:
         assert config.agents == []
         assert config.coordination == {}
         assert config.parse_at_references is False
+        assert config.inherit_spawning_agent_backend is False
+        assert config.final_answer_strategy is None
 
     def test_enabled_with_custom_agents(self):
         """Test creating config with custom agent configs."""
@@ -407,6 +409,8 @@ class TestSubagentOrchestratorConfig:
             ],
             "coordination": {"voting": {"enabled": True}},
             "parse_at_references": False,
+            "inherit_spawning_agent_backend": False,
+            "final_answer_strategy": "synthesize",
         }
         config = SubagentOrchestratorConfig.from_dict(data)
         assert config.enabled is True
@@ -415,6 +419,8 @@ class TestSubagentOrchestratorConfig:
         assert config.agents[0]["backend"]["model"] == "gpt-4o-mini"
         assert config.coordination == {"voting": {"enabled": True}}
         assert config.parse_at_references is False
+        assert config.inherit_spawning_agent_backend is False
+        assert config.final_answer_strategy == "synthesize"
 
     def test_from_dict_with_defaults(self):
         """Test from_dict uses defaults for missing keys."""
@@ -435,12 +441,16 @@ class TestSubagentOrchestratorConfig:
             agents=agents,
             coordination={"planning": True},
             parse_at_references=False,
+            inherit_spawning_agent_backend=False,
+            final_answer_strategy="winner_present",
         )
         data = config.to_dict()
         assert data["enabled"] is True
         assert len(data["agents"]) == 2
         assert data["coordination"] == {"planning": True}
         assert data["parse_at_references"] is False
+        assert data["inherit_spawning_agent_backend"] is False
+        assert data["final_answer_strategy"] == "winner_present"
 
     def test_roundtrip_serialization(self):
         """Test that config survives serialization round-trip."""
@@ -454,6 +464,8 @@ class TestSubagentOrchestratorConfig:
             agents=agents,
             coordination={"broadcast": {"type": "always"}},
             parse_at_references=False,
+            inherit_spawning_agent_backend=False,
+            final_answer_strategy="synthesize",
         )
         data = original.to_dict()
         restored = SubagentOrchestratorConfig.from_dict(data)
@@ -462,6 +474,33 @@ class TestSubagentOrchestratorConfig:
         assert len(restored.agents) == len(original.agents)
         assert restored.coordination == original.coordination
         assert restored.parse_at_references == original.parse_at_references
+        assert restored.inherit_spawning_agent_backend == original.inherit_spawning_agent_backend
+        assert restored.final_answer_strategy == original.final_answer_strategy
+
+    def test_inherit_spawning_agent_backend_from_dict(self):
+        """inherit_spawning_agent_backend should parse from YAML dicts."""
+        config = SubagentOrchestratorConfig.from_dict(
+            {
+                "enabled": True,
+                "inherit_spawning_agent_backend": True,
+            },
+        )
+        assert config.enabled is True
+        assert config.inherit_spawning_agent_backend is True
+        assert config.agents == []
+
+    def test_allows_inherit_spawning_agent_backend_with_shared_common_agents(self):
+        """Shared common agents can coexist with inherit mode."""
+        config = SubagentOrchestratorConfig(
+            enabled=True,
+            inherit_spawning_agent_backend=True,
+            agents=[{"id": "shared_eval", "backend": {"type": "openai", "model": "gpt-4o"}}],
+        )
+
+        assert config.enabled is True
+        assert config.inherit_spawning_agent_backend is True
+        assert len(config.agents) == 1
+        assert config.agents[0]["id"] == "shared_eval"
 
     def test_get_agent_config(self):
         """Test get_agent_config method."""

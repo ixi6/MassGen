@@ -96,6 +96,8 @@ Errors are caught and logged but don't abort (fail-open), unless a hook has `fai
 
 Mid-stream answer injection messages include explicit answer-label transitions (for example `agent2.1 -> agent2.2`) so checklist scoring can target newest labels. In checklist-gated mode, injected guidance routes agents through `submit_checklist` re-evaluation first, then `propose_improvements` only after accepted iterate results.
 
+Peer-answer delivery can be configured independently from other runtime payloads. When `defer_peer_updates_until_restart: true`, peer answer updates are queued until the next safe restart instead of being injected mid-stream. Human input, background subagent completions, and background tool completions still use their normal delivery paths. In checklist-gated runs, `allow_midstream_peer_updates_before_checklist_submit` can keep peer updates mid-stream until the first accepted `submit_checklist` for the current answer.
+
 ### PreToolUse Hooks
 
 | Hook | Matcher | Purpose |

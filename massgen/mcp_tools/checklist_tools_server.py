@@ -428,16 +428,26 @@ def evaluate_proposed_improvements(
     # Single verify_preserve checkpoint at the END (not N individual preserve rows)
     if normalized_preserve:
         preserve_items = [{"criterion_id": cid, "what": p["what"], "source": p["source"]} for cid, p in normalized_preserve.items()]
-        task_plan.append(
-            {
-                "type": "verify_preserve",
-                "description": (
-                    "Before submitting: verify these strengths haven't regressed — " "confirm each preserved item is present in the actual output, " "and that passing criteria scores haven't dropped."
-                ),
-                "items": preserve_items,
-                "priority": "high",
-            },
+        verify_description = (
+            "Before submitting: verify these strengths haven't regressed — " "confirm each preserved item is present in the actual output, " "and that passing criteria scores haven't dropped."
         )
+        if bool(_state.get("subagents_enabled")):
+            verify_description += (
+                " If subagents are enabled, delegate this checkpoint to an evaluator or critic "
+                "subagent for explicit before-vs-after comparison and regression checks, "
+                "without revealing which answer is yours."
+            )
+
+        verify_task: dict[str, Any] = {
+            "type": "verify_preserve",
+            "description": verify_description,
+            "items": preserve_items,
+            "priority": "high",
+        }
+        if bool(_state.get("subagents_enabled")):
+            # Advisory: evaluator subagent is a strong fit for regression/comparison checks.
+            verify_task["subagent_name"] = "evaluator"
+        task_plan.append(verify_task)
 
     result: dict[str, Any] = {
         "valid": True,
@@ -680,6 +690,8 @@ def evaluate_checklist_submission(
     has_existing_answers = state.get("has_existing_answers", False)
     required = state.get("required", len(items))
     cutoff = state.get("cutoff", 70)
+    decomposition_mode = bool(state.get("decomposition_mode", False))
+    current_answer_label = str(state.get("current_answer_label") or "").strip()
 
     # Determine item prefix: use E-prefix (new default), but accept T-prefix
     # submissions for backwards compatibility
@@ -702,45 +714,77 @@ def evaluate_checklist_submission(
         )
 
     if _is_per_agent_scores(scores, item_prefix):
-        # Validate completeness for ALL agents before selecting best.
-        expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}
-        incomplete_agents = []
-        for agent_label, agent_scores in scores.items():
-            if not isinstance(agent_scores, dict):
-                continue
-            agent_keys = {k.replace("T", item_prefix, 1) if k.startswith("T") else k for k in agent_scores}
-            missing = sorted(expected_keys - agent_keys)
-            if missing:
-                incomplete_agents.append((agent_label, missing))
-        if incomplete_agents and has_existing_answers:
-            report_eval = _evaluate_gap_report(report_path, state)
-            details = "; ".join(f"{a}: missing {', '.join(m)}" for a, m in incomplete_agents)
-            return _validation_error_payload(
-                explanation=(f"Incomplete per-agent submission: {details}. " f"You must score ALL {len(items)} criteria for EVERY agent. " "Resubmit with complete scores."),
-                report_eval=report_eval,
-                required=required,
-                error_code="incomplete_agent_criteria",
-                incomplete_scores=True,
-            )
-        # Validate all available agents are covered when labels are known.
-        if available_agent_labels and has_existing_answers:
-            missing_agents = sorted(set(available_agent_labels) - set(scores.keys()))
-            if missing_agents:
+        if decomposition_mode:
+            if current_answer_label and isinstance(scores.get(current_answer_label), dict):
+                scores = scores[current_answer_label]
+            elif len(scores) == 1:
+                only_scores = next(iter(scores.values()))
+                if isinstance(only_scores, dict):
+                    scores = only_scores
+                else:
+                    report_eval = _evaluate_gap_report(report_path, state)
+                    return _validation_error_payload(
+                        explanation=(
+                            "Decomposition mode checklist evaluation must score your current "
+                            "subtask output. Submit flat scores (`E1`, `E2`, ...) or provide "
+                            f"your current answer label ({current_answer_label or 'current answer label'}) only."
+                        ),
+                        report_eval=report_eval,
+                        required=required,
+                        error_code="decomposition_scores_invalid",
+                    )
+            else:
                 report_eval = _evaluate_gap_report(report_path, state)
                 return _validation_error_payload(
                     explanation=(
-                        f"Missing scores for available agents: {', '.join(missing_agents)}. "
-                        "You must score ALL agents you have context for: "
-                        f"{', '.join(sorted(available_agent_labels))}. "
-                        "Resubmit with per-agent scores covering every agent."
+                        "Decomposition mode checklist evaluation must score your current "
+                        "subtask output, not rank all peer answers. Submit flat scores "
+                        f"(`E1`, `E2`, ...) or provide only your current answer label ({current_answer_label or 'current answer label'})."
                     ),
                     report_eval=report_eval,
                     required=required,
-                    error_code="missing_agent_scores",
+                    error_code="decomposition_scores_invalid",
+                )
+        else:
+            # Validate completeness for ALL agents before selecting best.
+            expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}
+            incomplete_agents = []
+            for agent_label, agent_scores in scores.items():
+                if not isinstance(agent_scores, dict):
+                    continue
+                agent_keys = {k.replace("T", item_prefix, 1) if k.startswith("T") else k for k in agent_scores}
+                missing = sorted(expected_keys - agent_keys)
+                if missing:
+                    incomplete_agents.append((agent_label, missing))
+            if incomplete_agents and has_existing_answers:
+                report_eval = _evaluate_gap_report(report_path, state)
+                details = "; ".join(f"{a}: missing {', '.join(m)}" for a, m in incomplete_agents)
+                return _validation_error_payload(
+                    explanation=(f"Incomplete per-agent submission: {details}. " f"You must score ALL {len(items)} criteria for EVERY agent. " "Resubmit with complete scores."),
+                    report_eval=report_eval,
+                    required=required,
+                    error_code="incomplete_agent_criteria",
                     incomplete_scores=True,
                 )
-        best_agent, scores, per_agent_scores = _extract_flat_scores(scores, item_prefix, len(items))
-    elif len(available_agent_labels) >= 2 and has_existing_answers:
+            # Validate all available agents are covered when labels are known.
+            if available_agent_labels and has_existing_answers:
+                missing_agents = sorted(set(available_agent_labels) - set(scores.keys()))
+                if missing_agents:
+                    report_eval = _evaluate_gap_report(report_path, state)
+                    return _validation_error_payload(
+                        explanation=(
+                            f"Missing scores for available agents: {', '.join(missing_agents)}. "
+                            "You must score ALL agents you have context for: "
+                            f"{', '.join(sorted(available_agent_labels))}. "
+                            "Resubmit with per-agent scores covering every agent."
+                        ),
+                        report_eval=report_eval,
+                        required=required,
+                        error_code="missing_agent_scores",
+                        incomplete_scores=True,
+                    )
+            best_agent, scores, per_agent_scores = _extract_flat_scores(scores, item_prefix, len(items))
+    elif len(available_agent_labels) >= 2 and has_existing_answers and not decomposition_mode:
         # Flat format submitted but multiple agents are available — require per-agent format.
         report_eval = _evaluate_gap_report(report_path, state)
         return _validation_error_payload(
@@ -1058,24 +1102,33 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
             )
         elif item["type"] == "verify_preserve":
             bullet_list = "; ".join(f"[{p['criterion_id']}] {p['what']} ({p['source']})" for p in item["items"])
-            tasks.append(
-                {
-                    "description": (
-                        f"Before submitting: verify preserved strengths haven't regressed — {bullet_list}. "
-                        "Confirm each preserved item is present in the actual output (run/render/screenshot, "
-                        "not just checking the code), and that passing criteria scores haven't dropped."
-                    ),
-                    "verification": (
-                        "All preserved elements verified in actual output (run/render/screenshot as appropriate), " "not just present in source files; passing criteria scores confirmed not dropped"
-                    ),
-                    "priority": "high",
-                    "metadata": {
-                        "type": "verify_preserve",
-                        "items": item["items"],
-                        "injected": True,
-                    },
+            blind_eval_suffix = ""
+            if item.get("subagent_name") in {"evaluator", "critic"}:
+                blind_eval_suffix = " For anti-bias comparison, pass all candidate answers with neutral labels " "without revealing which answer is yours."
+            task: dict[str, Any] = {
+                "description": (
+                    f"Before submitting: verify preserved strengths haven't regressed — {bullet_list}. "
+                    "Confirm each preserved item is present in the actual output (run/render/screenshot, "
+                    "not just checking the code), and that passing criteria scores haven't dropped."
+                    f"{blind_eval_suffix}"
+                ),
+                "verification": (
+                    "All preserved elements verified in actual output (run/render/screenshot as appropriate), " "not just present in source files; passing criteria scores confirmed not dropped"
+                ),
+                "priority": "high",
+                "metadata": {
+                    "type": "verify_preserve",
+                    "items": item["items"],
+                    "injected": True,
                 },
-            )
+            }
+            if item.get("subagent_name"):
+                task["subagent_name"] = item["subagent_name"]
+                task["metadata"]["subagent_name"] = item["subagent_name"]
+            if item.get("subagent_id"):
+                task["subagent_id"] = item["subagent_id"]
+                task["metadata"]["subagent_id"] = item["subagent_id"]
+            tasks.append(task)
     return tasks
 
 
@@ -1111,6 +1164,8 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
     # Read specs once at startup just for the tool schema
     specs = _read_specs(specs_path)
     items = specs.get("items", [])
+    schema_state = specs.get("state", {})
+    schema_decomposition_mode = bool(schema_state.get("decomposition_mode", False))
 
     # Track last failed criteria so propose_improvements can validate coverage
     _last_result: dict[str, Any] = {
@@ -1148,18 +1203,128 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
         current = _read_specs(specs_path)
         current_items = current.get("items", items)
         state = current.get("state", {})
+        decomposition_mode = bool(state.get("decomposition_mode", False))
         item_prefix = str(state.get("item_prefix", "E"))
         submitted_agent_labels = _extract_submitted_agent_labels(scores, item_prefix=item_prefix)
         pending_recheck_labels = _normalize_pending_recheck_labels(state.get("pending_checklist_recheck_labels"))
+        checklist_first_answer = bool(state.get("checklist_first_answer", False))
+        max_calls = int(state.get("max_checklist_calls_per_round", 1) or 1)
+        has_runtime_submit_state = any(
+            key in state
+            for key in (
+                "agent_answer_count",
+                "checklist_first_answer",
+                "max_checklist_calls_per_round",
+                "checklist_calls_this_round",
+            )
+        )
+        try:
+            raw_agent_answer_count = state.get("agent_answer_count", None)
+            if raw_agent_answer_count is None:
+                agent_answer_count = 1 if state.get("has_existing_answers", False) else 0
+            else:
+                agent_answer_count = int(raw_agent_answer_count or 0)
+        except (TypeError, ValueError):
+            agent_answer_count = 1 if state.get("has_existing_answers", False) else 0
+        current_answer_label = str(state.get("current_answer_label") or "").strip()
+        if agent_answer_count == 0 and current_answer_label and bool(state.get("has_existing_answers", False)):
+            agent_answer_count = 1
+        try:
+            checklist_calls_this_round = int(state.get("checklist_calls_this_round", 0) or 0)
+        except (TypeError, ValueError):
+            checklist_calls_this_round = 0
+
+        if raw_agent_answer_count is not None and not checklist_first_answer and agent_answer_count == 0:
+            return json.dumps(
+                {
+                    "error": (
+                        "submit_checklist is not available before your first answer is submitted. "
+                        "Build your initial answer, verify it, then call the `new_answer` workflow tool. "
+                        "Checklist evaluation begins from round 2."
+                    ),
+                },
+            )
+
+        state_for_eval = state
+        using_recheck_exception = False
+        if has_runtime_submit_state and checklist_calls_this_round >= max_calls:
+            if not pending_recheck_labels:
+                return json.dumps(
+                    {
+                        "error": (
+                            f"submit_checklist already called {checklist_calls_this_round} time(s) "
+                            f"this round (max: {max_calls}). You already have your improvement plan. "
+                            "Implement those improvements, verify your changes, then call the "
+                            "`new_answer` workflow tool to submit your completed work. "
+                            "Do not call `submit_checklist` again."
+                        ),
+                    },
+                )
+
+            using_recheck_exception = True
+            available_labels = set(state.get("available_agent_labels") or [])
+            submitted_covers_full = decomposition_mode or (bool(submitted_agent_labels) and (not available_labels or available_labels.issubset(submitted_agent_labels)))
+            submitted_covers_delta = decomposition_mode or (bool(submitted_agent_labels) and pending_recheck_labels.issubset(submitted_agent_labels))
+            if submitted_covers_delta and not submitted_covers_full and not decomposition_mode:
+                state_for_eval = dict(state)
+                state_for_eval["available_agent_labels"] = sorted(pending_recheck_labels)
+
         result = evaluate_checklist_submission(
             scores=scores,
             report_path=report_path,
             items=current_items,
-            state=state,
+            state=state_for_eval,
+            checklist_history=list(state.get("checklist_history") or []),
         )
+
+        result_status = str(
+            result.get("status", "accepted" if result.get("verdict") else "validation_error"),
+        )
+        iterate_action = state.get("iterate_action", "new_answer")
+        if result_status == "accepted" and result.get("verdict") == iterate_action:
+            result = dict(result)
+            result["explanation"] = (
+                result.get("explanation", "") + " NEXT: Call `propose_improvements` with specific improvements for each failing criterion. " + "Then implement your plan and call `new_answer`."
+            )
+
         report_data = result.get("report") if isinstance(result.get("report"), dict) else {}
         resolved_path = str(report_data.get("resolved_path") or "")
         fallback_path = str(report_data.get("path") or "")
+        result_status = str(
+            result.get("status", "accepted" if result.get("verdict") else "validation_error"),
+        )
+        submission_has_validation_error = bool(
+            (result_status != "accepted") or result.get("error") or result.get("incomplete_scores") or result.get("report_gate_triggered"),
+        )
+
+        if not submission_has_validation_error:
+            history = list(state.get("checklist_history") or [])
+            history.append(
+                {
+                    "verdict": result.get("verdict"),
+                    "true_count": result.get("true_count"),
+                    "total_score": sum(d["score"] for d in result.get("items", [])),
+                    "items_detail": result.get("items", []),
+                },
+            )
+            state["checklist_history"] = history
+            state["checklist_calls_this_round"] = checklist_calls_this_round + 1
+            submitted_covers_full = False
+            submitted_covers_delta = False
+            if decomposition_mode:
+                submitted_covers_full = True
+                submitted_covers_delta = True
+            elif pending_recheck_labels and submitted_agent_labels:
+                available_labels = set(state.get("available_agent_labels") or [])
+                submitted_covers_full = bool(available_labels) and available_labels.issubset(submitted_agent_labels)
+                submitted_covers_delta = pending_recheck_labels.issubset(submitted_agent_labels)
+            if pending_recheck_labels and ((submitted_agent_labels and (submitted_covers_delta or submitted_covers_full)) or (using_recheck_exception and decomposition_mode)):
+                state["pending_checklist_recheck_labels"] = []
+            try:
+                write_checklist_specs(current_items, state, specs_path)
+            except Exception as exc:
+                logger.warning(f"Failed to persist checklist runtime state: {exc}")
+
         _last_result["status"] = str(
             result.get("status", "accepted" if result.get("verdict") else "validation_error"),
         )
@@ -1172,32 +1337,31 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_d
         _last_result["checklist_explanation"] = str(result.get("explanation", ""))
         _last_result["diagnostic_report_path"] = resolved_path or fallback_path
         _last_result["diagnostic_report_artifact_paths"] = list(report_data.get("artifact_paths", []))
-        result_status = _last_result["status"]
-        if result_status == "accepted" and pending_recheck_labels and submitted_agent_labels:
-            available_labels = set(state.get("available_agent_labels") or [])
-            submitted_covers_full = bool(available_labels) and available_labels.issubset(submitted_agent_labels)
-            submitted_covers_delta = pending_recheck_labels.issubset(submitted_agent_labels)
-            if submitted_covers_delta or submitted_covers_full:
-                state["pending_checklist_recheck_labels"] = []
-                try:
-                    write_checklist_specs(current_items, state, specs_path)
-                except Exception as exc:
-                    logger.warning(f"Failed to persist cleared pending checklist labels: {exc}")
         return json.dumps(result)
 
-    submit_checklist.__doc__ = (
-        "Submit your checklist evaluation. "
-        "Score each agent's answer separately per criterion, then submit all "
-        "agent scores in 'scores' as a nested object: "
-        '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2.1": {...}}. '
-        "Use the exact agent labels from the <CURRENT ANSWERS> headers in your context "
-        "(labels follow the format agentX.Y — use the full label including the .Y suffix). "
-        "The verdict is determined by the strongest agent's scores — the agent "
-        "with the highest aggregate across all criteria. Include all agents so "
-        "the evaluation is transparent and auditable. "
-        "Use 'report_path' to provide a markdown gap report when report gating "
-        "is enabled."
-    )
+    if schema_decomposition_mode:
+        submit_checklist.__doc__ = (
+            "Submit your checklist evaluation for your current subtask output. "
+            "Use flat scores in 'scores' with criterion keys like "
+            '{"E1": {"score": 8, "reasoning": "..."}, "E2": {...}}. '
+            "If peer work changed your integration points, re-evaluate your current work "
+            "against the latest context before deciding whether to stop or iterate. "
+            "Use 'report_path' to provide a markdown gap report when report gating is enabled."
+        )
+    else:
+        submit_checklist.__doc__ = (
+            "Submit your checklist evaluation. "
+            "Score each agent's answer separately per criterion, then submit all "
+            "agent scores in 'scores' as a nested object: "
+            '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2.1": {...}}. '
+            "Use the exact agent labels from the <CURRENT ANSWERS> headers in your context "
+            "(labels follow the format agentX.Y — use the full label including the .Y suffix). "
+            "The verdict is determined by the strongest agent's scores — the agent "
+            "with the highest aggregate across all criteria. Include all agents so "
+            "the evaluation is transparent and auditable. "
+            "Use 'report_path' to provide a markdown gap report when report gating "
+            "is enabled."
+        )
 
     # Set proper signature so FastMCP sees all parameters
     sig = inspect.Signature(

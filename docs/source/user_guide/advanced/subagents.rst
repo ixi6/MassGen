@@ -44,7 +44,7 @@ Key characteristics:
 * **Workspace isolation**: Each subagent gets its own workspace directory.
 * **Explicit runtime mode**: Subagent runtime boundary is controlled by ``subagent_runtime_mode`` (default: ``isolated``). See :ref:`subagents-runtime-and-docker-behavior`.
 * **Parallel execution**: All subagents run concurrently
-* **Automatic inheritance**: Subagents use the same model/backend as parent by default
+* **Automatic inheritance**: By default, subagents inherit all parent agent backends; optional mode can inherit only the spawning parent's exact backend/model
 * **Result aggregation**: Parent receives structured results with workspace paths
 
 When to Use Subagents
@@ -140,6 +140,22 @@ By default, subagents inherit all parent agent configurations. To customize:
              backend:
                type: "gemini"
                model: "gemini-3-flash-preview"
+
+To inherit the exact backend/model from the spawning parent agent (single-agent subagent runs):
+
+.. code-block:: yaml
+
+   orchestrator:
+     coordination:
+       enable_subagents: true
+       subagent_orchestrator:
+         enabled: true
+         inherit_spawning_agent_backend: true
+
+.. note::
+
+   ``inherit_spawning_agent_backend: true`` and ``subagent_orchestrator.agents`` are mutually exclusive.
+   Use one mode or the other, not both.
 
 How Agents Use Subagents
 ------------------------

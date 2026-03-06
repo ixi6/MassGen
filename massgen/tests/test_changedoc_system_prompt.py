@@ -227,11 +227,11 @@ class TestChangedocChecklist:
         assert len(_CHECKLIST_ITEMS_CHANGEDOC) == 4
 
     def test_changedoc_checklist_items_content(self):
-        """Changedoc items mention changedoc, rationale, and traceability."""
+        """Changedoc checklist items stay output-focused, not changedoc-focused."""
         joined = " ".join(_CHECKLIST_ITEMS_CHANGEDOC).lower()
-        assert "changedoc" in joined
-        assert "rationale" in joined
-        assert "traceab" in joined  # traceability or traceable
+        assert "changedoc" not in joined
+        assert "traceab" not in joined  # traceability or traceable
+        assert "complete enough to be genuinely useful" in joined
 
     def test_changedoc_analysis_has_decision_audit(self):
         """_build_changedoc_checklist_analysis() mentions key steps."""
@@ -610,14 +610,14 @@ class TestAntiGlazingAndSynthesis:
         prompt = _build_changedoc_subsequent_round_prompt()
         assert "this was the best prior answer" in prompt
 
-    def test_changedoc_accuracy_requirement_in_t3(self):
-        """T3 checklist item must emphasize accuracy — Implementation fields describe what ACTUALLY EXISTS."""
+    def test_changedoc_t3_emphasizes_output_completeness(self):
+        """Changedoc-mode E3 should gate substantive output completeness, not changedoc truthfulness."""
         from massgen.system_prompt_sections import _CHECKLIST_ITEMS_CHANGEDOC
 
         t3_text = _CHECKLIST_ITEMS_CHANGEDOC[2]  # 0-indexed, T3 is the 3rd item
         lower = t3_text.lower()
-        # Must warn about fabrication or require verification of actual existence
-        assert "actually exist" in lower or "fabricat" in lower or "verified" in lower or "must exist" in lower, f"T3 must emphasize that implementation references must actually exist. Got: {t3_text}"
+        assert "complete enough" in lower or "genuinely useful" in lower, f"T3 should focus on output completeness. Got: {t3_text}"
+        assert "changedoc" not in lower, f"T3 should not focus on changedoc quality. Got: {t3_text}"
 
     def test_first_round_changedoc_verification_step(self):
         """First-round changedoc workflow must include a verification step."""

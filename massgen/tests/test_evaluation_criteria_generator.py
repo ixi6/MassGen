@@ -62,26 +62,26 @@ class TestDefaultCriteria:
 class TestChangedocDefaults:
     """Tests for changedoc mode defaults."""
 
-    def test_changedoc_adds_traceability_criterion(self):
-        """Changedoc mode should add traceability after quality/craft."""
+    def test_changedoc_no_longer_adds_extra_criterion(self):
+        """Changedoc mode should use the same default count as non-changedoc mode."""
         criteria = get_default_criteria(has_changedoc=True)
-        assert len(criteria) == 6
+        assert len(criteria) == 5
 
-    def test_changedoc_traceability_is_must(self):
-        """The changedoc traceability criterion should be tagged must."""
+    def test_changedoc_defaults_keep_sequential_ids(self):
+        """Changedoc mode should keep the same sequential E1-E5 defaults."""
         criteria = get_default_criteria(has_changedoc=True)
-        traceability = criteria[5]  # 6th item (after quality/craft at E5)
-        assert traceability.category == "must"
-        assert traceability.id == "E6"
+        ids = [c.id for c in criteria]
+        assert ids == ["E1", "E2", "E3", "E4", "E5"]
 
-    def test_changedoc_traceability_mentions_changedoc(self):
-        """Changedoc traceability criterion text should mention changedoc."""
+    def test_changedoc_defaults_do_not_mention_changedoc_traceability(self):
+        """Changedoc mode defaults should not append a changedoc-specific criterion."""
         criteria = get_default_criteria(has_changedoc=True)
-        traceability = criteria[5]
-        assert "changedoc" in traceability.text.lower() or "decision" in traceability.text.lower()
+        joined = " ".join(c.text.lower() for c in criteria)
+        assert "changedoc is honest" not in joined
+        assert "traceable" not in joined
 
     def test_changedoc_preserves_base_criteria(self):
-        """Changedoc mode should preserve all 5 base criteria (4 + quality/craft)."""
+        """Changedoc mode should preserve all 5 base criteria unchanged."""
         base = get_default_criteria(has_changedoc=False)
         changedoc = get_default_criteria(has_changedoc=True)
         for i in range(5):

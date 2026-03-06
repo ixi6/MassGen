@@ -225,8 +225,9 @@ class TuiModeState:
           skip_final_presentation=True (quick mode: one answer → done, no extra LLM call)
         - Multi-agent + refinement ON: Normal behavior
         - Multi-agent + refinement OFF: max_new_answers_per_agent=1, skip_final_presentation=True,
-          disable_injection=True, defer_voting_until_all_answered=True
-          (quick mode: agents work independently, vote once after all answered)
+          disable_injection=True, defer_voting_until_all_answered=True,
+          final_answer_strategy="synthesize"
+          (quick mode: agents work independently, answer once each, then synthesize in final presentation)
         """
         overrides: dict[str, Any] = {}
 
@@ -255,6 +256,8 @@ class TuiModeState:
                 overrides["disable_injection"] = True
                 # Defer voting until all agents have answered (avoid wasteful restarts)
                 overrides["defer_voting_until_all_answered"] = True
+                # Use a presenter-stage synthesize pass across all completed answers.
+                overrides["final_answer_strategy"] = "synthesize"
         # Note: Single agent + refinement ON keeps voting - vote signals "I'm done refining"
 
         return overrides

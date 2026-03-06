@@ -47,6 +47,7 @@ class CoordinationStage(Enum):
 MODEL_MAPPINGS = {
     "openai": [
         # GPT-5 variants
+        "gpt-5.4",
         "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",

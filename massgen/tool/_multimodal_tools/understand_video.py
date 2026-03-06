@@ -19,7 +19,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from massgen.backend.capabilities import has_capability
+from massgen.backend.capabilities import has_capability, normalize_backend_type
 from massgen.context.task_context import format_prompt_with_context
 from massgen.logger_config import logger
 from massgen.tool._multimodal_tools.backend_selector import BackendConfig, get_backend
@@ -147,7 +147,7 @@ async def _process_with_gemini(
 async def _process_with_openai(
     prompt: str,
     frames_base64: list[str],
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     system_prompt: str | None = None,
 ) -> str:
     """
@@ -396,7 +396,7 @@ async def understand_video(
                    Prefer video_extraction_config for new usage.
         model: Model to use. If not specified, uses default from backend selector:
                - Gemini: "gemini-3.1-pro-preview"
-               - OpenAI: "gpt-5.2"
+               - OpenAI: "gpt-5.4"
         backend_type: Preferred backend ("gemini" or "openai"). If specified and
                       has API key, this backend is used. Otherwise falls through
                       to priority list.
@@ -453,20 +453,22 @@ async def understand_video(
         else:
             load_dotenv()
 
+        normalized_backend_type = normalize_backend_type(backend_type)
+
         # If agent's backend supports video and a model is specified, use it directly
         # This avoids the backend_selector fallback and keeps the agent on its own backend
         backend_config: BackendConfig | None = None
-        if backend_type and model and has_capability(backend_type, "video_understanding"):
+        if normalized_backend_type and model and has_capability(normalized_backend_type, "video_understanding"):
             logger.info(
-                f"[understand_video] Agent backend {backend_type} has video_understanding, " f"using directly with model {model}",
+                f"[understand_video] Agent backend {normalized_backend_type} has video_understanding, " f"using directly with model {model}",
             )
-            selected_backend = backend_type
+            selected_backend = normalized_backend_type
             selected_model = model
         else:
             # Use backend selector to choose the best available backend
             backend_config = get_backend(
                 media_type="video",
-                preferred_backend=backend_type,
+                preferred_backend=normalized_backend_type,
                 preferred_model=model,
             )
 
@@ -484,7 +486,7 @@ async def understand_video(
             selected_model = backend_config.model
 
         logger.info(
-            f"[understand_video] Selected backend: {selected_backend}/{selected_model} " f"(preferred: {backend_type})",
+            f"[understand_video] Selected backend: {selected_backend}/{selected_model} " f"(preferred: {normalized_backend_type or backend_type})",
         )
 
         # Resolve video path

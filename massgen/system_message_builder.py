@@ -116,7 +116,11 @@ class SystemMessageBuilder:
             )
             if disable_fallback is True:
                 return False
-            return bool(getattr(self.config, "skip_final_presentation", False))
+            if not getattr(self.config, "skip_final_presentation", False):
+                return False
+            if getattr(self.config, "skip_voting", False):
+                return True
+            return getattr(self.config, "final_answer_strategy", None) not in {"winner_present", "synthesize"}
         return False
 
     @property
@@ -312,9 +316,19 @@ class SystemMessageBuilder:
                     custom_checklist_items=custom_checklist_items,
                     item_categories=item_categories,
                     item_verify_by=item_verify_by,
-                    has_existing_answers=bool(answers),
+                    has_existing_answers=bool(answers) or answers_used > 0,
                     builder_enabled=builder_enabled,
                     improvements_cfg=improvements_cfg,
+                    round_evaluator_before_checklist=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "round_evaluator_before_checklist",
+                        False,
+                    ),
+                    orchestrator_managed_round_evaluator=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "orchestrator_managed_round_evaluator",
+                        False,
+                    ),
                 ),
             )
 
@@ -534,6 +548,16 @@ class SystemMessageBuilder:
                         max_concurrent,
                         default_timeout=default_timeout,
                         specialized_subagents=specialized_subagents,
+                        round_evaluator_before_checklist=getattr(
+                            self.config.coordination_config,
+                            "round_evaluator_before_checklist",
+                            False,
+                        ),
+                        orchestrator_managed_round_evaluator=getattr(
+                            self.config.coordination_config,
+                            "orchestrator_managed_round_evaluator",
+                            False,
+                        ),
                     ),
                 )
                 logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent}, specialized_types: {len(specialized_subagents)})")

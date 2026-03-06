@@ -533,14 +533,14 @@ class TestQuickstartReasoningSettings:
         return ConfigBuilder()
 
     def test_reasoning_profile_for_openai_gpt5(self):
-        profile = ConfigBuilder.get_quickstart_reasoning_profile("openai", "gpt-5.2")
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("openai", "gpt-5.4")
         assert profile is not None
         assert profile["default_effort"] == "medium"
         efforts = [value for _, value in profile["choices"]]
         assert efforts == ["low", "medium", "high"]
 
     def test_reasoning_profile_for_codex_includes_xhigh(self):
-        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.3-codex")
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.4")
         assert profile is not None
         efforts = [value for _, value in profile["choices"]]
         assert efforts == ["low", "medium", "high", "xhigh"]
@@ -548,8 +548,8 @@ class TestQuickstartReasoningSettings:
         assert "recommended" in labels["xhigh"].lower()
         assert "recommended" not in labels["medium"].lower()
 
-    def test_reasoning_profile_for_codex53_defaults_xhigh(self):
-        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.3-codex")
+    def test_reasoning_profile_for_codex_gpt54_defaults_xhigh(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.4")
         assert profile is not None
         assert profile["default_effort"] == "xhigh"
 
@@ -586,13 +586,13 @@ class TestQuickstartReasoningSettings:
                 {
                     "id": "agent_a",
                     "type": "openai",
-                    "model": "gpt-5.2",
+                    "model": "gpt-5.4",
                     "reasoning_effort": "high",
                 },
                 {
                     "id": "agent_b",
                     "type": "codex",
-                    "model": "gpt-5.3-codex",
+                    "model": "gpt-5.4",
                     "reasoning_effort": "xhigh",
                 },
                 {

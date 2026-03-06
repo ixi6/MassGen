@@ -58,7 +58,7 @@ generate_media(prompt="A mountain landscape", mode="image",
 
 ## OpenAI
 
-**Model:** `gpt-5.2` (default)
+**Model:** `gpt-5.4` (default)
 
 **Size options** (via `size` param):
 - `"1024x1024"` - Square

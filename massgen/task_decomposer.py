@@ -43,6 +43,8 @@ class TaskDecomposer:
         self.config = config
         # Exposed for diagnostics/telemetry: "subagent" | "fallback"
         self.last_generation_source: str = "unknown"
+        # Rich metadata from the last successful parse keyed by agent ID.
+        self.last_subtask_specs: dict[str, dict[str, Any]] = {}
 
     @staticmethod
     def _build_agent_alias_map(agent_ids: list[str]) -> dict[str, str]:
@@ -54,6 +56,16 @@ class TaskDecomposer:
         """Canonical non-blocking execution clause for decomposition subtasks."""
         return "Start immediately in parallel using contract-first assumptions/stubs for boundaries; do not wait for another agent's deliverable."
 
+    @staticmethod
+    def _subtask_artifact_filenames() -> tuple[str, ...]:
+        """Known JSON artifact filenames produced by decomposition agents."""
+        return (
+            "decomposition.json",
+            "subtasks.json",
+            "decomposition_plan.json",
+            "subtask_assignment.json",
+        )
+
     def _build_decomposition_prompt(
         self,
         task: str,
@@ -64,7 +76,8 @@ class TaskDecomposer:
     ) -> str:
         """Build the decomposition prompt passed to the subagent."""
         n_agents = len(agent_ids)
-        schema = ", ".join(f'"{aid}": "subtask description"' for aid in agent_ids)
+        schema_entry = '{"subtask": "owned scope + integration touchpoints + quality bar", ' '"criteria": [{"text": "criterion text", "category": "must|should|could"}]}'
+        schema = ", ".join(f'"{aid}": {schema_entry}' for aid in agent_ids)
         planning_context_requirements = ""
         if has_planning_spec_context:
             planning_context_requirements = (
@@ -95,6 +108,9 @@ Requirements:
   1) primary owned scope,
   2) integration touchpoints with neighboring scopes,
   3) quality bar (tests/checks/accessibility or equivalent).
+- For each agent, also provide 4-6 checklist criteria tailored to that owned subtask.
+- Criteria should reinforce role discipline: owned-scope quality, relevant integration,
+  boundary discipline, regression safety, and meaningful improvement.
 - Return valid JSON only (no markdown/prose), using this schema:
 {{"subtasks": {{{schema}}}}}
 """
@@ -138,6 +154,7 @@ Requirements:
             Dictionary mapping agent_id to subtask description
         """
         self.last_generation_source = "unknown"
+        self.last_subtask_specs = {}
 
         if not agent_ids:
             logger.warning("[TaskDecomposer] No agent IDs provided; skipping decomposition")
@@ -270,16 +287,27 @@ Requirements:
                 refine=True,
             )
 
+            subtask_specs: dict[str, dict[str, Any]] = {}
             subtasks: dict[str, str] = {}
             if result.answer:
-                subtasks = self._parse_subtasks_from_text(result.answer, agent_ids)
+                subtask_specs = self._parse_subtask_specs_from_text(result.answer, agent_ids)
+                subtasks = {aid: spec["subtask"] for aid, spec in subtask_specs.items()}
 
             # Fallback parser: scan workspace for decomposition JSON files.
             if not subtasks and result.workspace_path:
-                subtasks = self._parse_subtasks_from_workspace(result.workspace_path, agent_ids)
+                subtask_specs = self._parse_subtask_specs_from_workspace(result.workspace_path, agent_ids)
+                subtasks = {aid: spec["subtask"] for aid, spec in subtask_specs.items()}
+
+            # Timeout recovery often persists artifacts in the subagent log directory
+            # even when the runtime workspace has already been cleaned up.
+            if not subtasks and log_directory:
+                log_workspace = Path(log_directory) / "subagents" / "task_decomposition"
+                subtask_specs = self._parse_subtask_specs_from_workspace(str(log_workspace), agent_ids)
+                subtasks = {aid: spec["subtask"] for aid, spec in subtask_specs.items()}
 
             if subtasks:
                 self.last_generation_source = "subagent"
+                self.last_subtask_specs = subtask_specs
                 logger.info(
                     f"[TaskDecomposer] Parsed {len(subtasks)} subtasks from decomposition subagent",
                 )
@@ -292,7 +320,9 @@ Requirements:
 
         # Fallback: generate generic subtasks based on system messages
         self.last_generation_source = "fallback"
-        return self._generate_fallback_subtasks(task, agent_ids, existing_system_messages)
+        fallback_subtasks = self._generate_fallback_subtasks(task, agent_ids, existing_system_messages)
+        self.last_subtask_specs = {aid: {"subtask": subtask, "criteria": []} for aid, subtask in fallback_subtasks.items()}
+        return fallback_subtasks
 
     @staticmethod
     def _build_subagent_parent_context_paths(
@@ -341,6 +371,15 @@ Requirements:
 
     def _parse_subtasks_from_text(self, text: str, agent_ids: list[str]) -> dict[str, str]:
         """Parse decomposition JSON from model text output."""
+        specs = self._parse_subtask_specs_from_text(text, agent_ids)
+        return {aid: spec["subtask"] for aid, spec in specs.items()}
+
+    def _parse_subtask_specs_from_text(
+        self,
+        text: str,
+        agent_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Parse decomposition JSON into per-agent subtask metadata."""
         candidates = [text.strip()]
 
         # Prefer fenced JSON if present.
@@ -364,7 +403,7 @@ Requirements:
             if isinstance(payload, dict):
                 subtasks_obj = payload.get("subtasks", payload)
                 if isinstance(subtasks_obj, dict):
-                    normalized = self._normalize_subtasks(subtasks_obj, agent_ids)
+                    normalized = self._normalize_subtask_specs(subtasks_obj, agent_ids)
                     if normalized:
                         return normalized
 
@@ -378,36 +417,20 @@ Requirements:
         2. Log final/ directories - the orchestrator archives agent workspaces
            to final/ before clearing them, so this is the reliable source.
         """
+        specs = self._parse_subtask_specs_from_workspace(workspace_path, agent_ids)
+        return {aid: spec["subtask"] for aid, spec in specs.items()}
+
+    def _parse_subtask_specs_from_workspace(
+        self,
+        workspace_path: str,
+        agent_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Parse decomposition JSON artifacts from subagent workspace."""
         workspace = Path(workspace_path)
         if not workspace.exists():
             return {}
 
-        candidate_files: list[Path] = [
-            workspace / "decomposition.json",
-            workspace / "subtasks.json",
-        ]
-        for agent_dir in workspace.glob("agent_*"):
-            candidate_files.extend(
-                [
-                    agent_dir / "decomposition.json",
-                    agent_dir / "subtasks.json",
-                    agent_dir / "workspace" / "decomposition.json",
-                    agent_dir / "workspace" / "subtasks.json",
-                ],
-            )
-
-        # Also search the subprocess log final/ directories.
-        # The orchestrator clears agent workspaces between rounds, but the
-        # final/ snapshot is always preserved in the log directory.
-        massgen_logs = workspace / ".massgen" / "massgen_logs"
-        if massgen_logs.exists():
-            for final_workspace in massgen_logs.glob("*/turn_*/attempt_*/final/*/workspace"):
-                candidate_files.extend(
-                    [
-                        final_workspace / "decomposition.json",
-                        final_workspace / "subtasks.json",
-                    ],
-                )
+        candidate_files = self._build_subtask_candidate_files(workspace)
 
         for path in candidate_files:
             if not path.exists() or not path.is_file():
@@ -420,30 +443,138 @@ Requirements:
             if isinstance(data, dict):
                 subtasks_obj = data.get("subtasks", data)
                 if isinstance(subtasks_obj, dict):
-                    normalized = self._normalize_subtasks(subtasks_obj, agent_ids)
+                    normalized = self._normalize_subtask_specs(subtasks_obj, agent_ids)
                     if normalized:
                         logger.info(f"[TaskDecomposer] Found subtasks in {path}")
                         return normalized
 
         return {}
 
+    def _build_subtask_candidate_files(self, workspace: Path) -> list[Path]:
+        """Build a prioritized list of candidate decomposition artifact files."""
+        artifact_names = self._subtask_artifact_filenames()
+        candidate_files: list[Path] = []
+        seen: set[str] = set()
+
+        def _add_candidate(path: Path) -> None:
+            key = str(path)
+            if key in seen:
+                return
+            seen.add(key)
+            candidate_files.append(path)
+
+        for artifact_name in artifact_names:
+            _add_candidate(workspace / artifact_name)
+            _add_candidate(workspace / "workspace" / artifact_name)
+
+        for agent_dir in workspace.glob("agent_*"):
+            for artifact_name in artifact_names:
+                _add_candidate(agent_dir / artifact_name)
+                _add_candidate(agent_dir / "workspace" / artifact_name)
+
+        # Also search the subprocess log final/ directories.
+        # The orchestrator clears agent workspaces between rounds, but the
+        # final/ snapshot is always preserved in the log directory.
+        massgen_logs = workspace / ".massgen" / "massgen_logs"
+        if massgen_logs.exists():
+            for final_workspace in massgen_logs.glob("*/turn_*/attempt_*/final/*/workspace"):
+                for artifact_name in artifact_names:
+                    _add_candidate(final_workspace / artifact_name)
+
+        recursive_roots = [
+            workspace / "workspace" / "snapshots",
+            workspace / "full_logs",
+            workspace / "workspaces",
+            massgen_logs,
+            workspace,
+        ]
+        for search_root in recursive_roots:
+            if not search_root.exists():
+                continue
+            for artifact_name in artifact_names:
+                for path in sorted(search_root.rglob(artifact_name)):
+                    _add_candidate(path)
+
+        return candidate_files
+
     def _normalize_subtasks(self, subtasks: dict[str, Any], agent_ids: list[str]) -> dict[str, str]:
         """Normalize parsed subtask map and ensure all agent IDs are covered."""
-        cleaned: dict[str, str] = {}
+        normalized = self._normalize_subtask_specs(subtasks, agent_ids)
+        return {aid: spec["subtask"] for aid, spec in normalized.items()}
+
+    def _normalize_subtask_specs(
+        self,
+        subtasks: dict[str, Any],
+        agent_ids: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Normalize parsed subtask metadata and ensure all agent IDs are covered."""
+        cleaned: dict[str, dict[str, Any]] = {}
 
         for aid in agent_ids:
             value = subtasks.get(aid)
-            if isinstance(value, str) and value.strip():
-                cleaned[aid] = value.strip()
+            normalized = self._normalize_single_subtask_spec(value)
+            if normalized is not None:
+                cleaned[aid] = normalized
 
         # If partial, fill missing entries with role-aware fallbacks.
         if cleaned and len(cleaned) < len(agent_ids):
-            existing_subtasks = ", ".join(f"{k}: {v[:60]}" for k, v in cleaned.items())
+            existing_subtasks = ", ".join(f"{k}: {spec['subtask'][:60]}" for k, spec in cleaned.items())
             for idx, aid in enumerate(agent_ids):
                 if aid not in cleaned:
-                    cleaned[aid] = f"Handle aspects of the task not covered by other agents " f"({existing_subtasks}). Focus on complementary work as agent '{aid}'."
+                    cleaned[aid] = {
+                        "subtask": ("Handle aspects of the task not covered by other agents " f"({existing_subtasks}). Focus on complementary work as agent '{aid}'."),
+                        "criteria": [],
+                    }
 
         return cleaned
+
+    @staticmethod
+    def _normalize_single_subtask_spec(value: Any) -> dict[str, Any] | None:
+        """Normalize one agent's parsed decomposition entry."""
+        if isinstance(value, str) and value.strip():
+            return {"subtask": value.strip(), "criteria": []}
+
+        if not isinstance(value, dict):
+            return None
+
+        subtask = value.get("subtask")
+        if not isinstance(subtask, str) or not subtask.strip():
+            return None
+
+        return {
+            "subtask": subtask.strip(),
+            "criteria": TaskDecomposer._normalize_agent_criteria(value.get("criteria")),
+        }
+
+    @staticmethod
+    def _normalize_agent_criteria(criteria: Any) -> list[dict[str, str]]:
+        """Normalize optional per-agent checklist criteria emitted by decomposition."""
+        if not isinstance(criteria, list):
+            return []
+
+        normalized: list[dict[str, str]] = []
+        for entry in criteria:
+            if not isinstance(entry, dict):
+                continue
+            text = str(entry.get("text") or "").strip()
+            if not text:
+                continue
+            category = str(entry.get("category") or "should").strip().lower()
+            if category == "core":
+                category = "must"
+            elif category == "stretch":
+                category = "could"
+            if category not in {"must", "should", "could"}:
+                category = "should"
+            normalized_entry = {
+                "text": text,
+                "category": category,
+            }
+            verify_by = str(entry.get("verify_by") or "").strip()
+            if verify_by:
+                normalized_entry["verify_by"] = verify_by
+            normalized.append(normalized_entry)
+        return normalized
 
     def _generate_fallback_subtasks(
         self,

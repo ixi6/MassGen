@@ -74,15 +74,15 @@ def test_provider_model_reasoning_defaults_to_opus_high_even_if_stale_medium():
 
 
 def test_tabbed_reasoning_defaults_to_codex_xhigh_even_if_stale_medium():
-    """GPT-5.3 Codex should force xhigh default in tabbed quickstart step."""
+    """Codex GPT-5.4 should force xhigh default in tabbed quickstart step."""
     step = TabbedProviderModelStep(WizardState(), agent_count=1)
     step._reasoning_selects["a"] = object()
     step._tab_selections["a"] = {
         "provider": "codex",
-        "model": "gpt-5.3-codex",
+        "model": "gpt-5.4",
         "reasoning_effort": "medium",
     }
 
-    step._update_reasoning_input("a", "codex", "gpt-5.3-codex")
+    step._update_reasoning_input("a", "codex", "gpt-5.4")
 
     assert step._tab_selections["a"]["reasoning_effort"] == "xhigh"

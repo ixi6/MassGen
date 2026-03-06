@@ -259,6 +259,29 @@ def test_show_subagent_card_from_spawn_uses_current_round_and_keeps_existing_car
     assert "." not in card.id
 
 
+def test_show_runtime_subagent_card_honors_explicit_round_number() -> None:
+    """Runtime-owned subagent cards should be placeable into a future round before model output begins."""
+    timeline = _ArgsTimeline()
+    panel = _SpawnPanel(timeline, current_round=1)
+
+    app_cls = textual_display_module.TextualApp
+    app = app_cls.__new__(app_cls)
+    app.agent_widgets = {"agent_a": panel}
+    app.coordination_display = SimpleNamespace(agent_ids=["agent_a"])
+    app._active_agent_id = "agent_a"
+
+    app.show_runtime_subagent_card(
+        agent_id="agent_a",
+        subagent_id="round_eval",
+        task="Critique answer v1",
+        timeout_seconds=300,
+        call_id="round_eval_call",
+        round_number=2,
+    )
+
+    assert timeline.added_round_number == 2
+
+
 def test_show_subagent_card_from_spawn_carries_context_paths(monkeypatch) -> None:
     """Spawn callback cards should keep task context paths for subagent top-bar display."""
     timeline = _SpawnTimeline(existing_cards=[])

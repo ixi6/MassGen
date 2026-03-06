@@ -55,12 +55,25 @@ def test_codex_model_reasoning_effort_takes_precedence(tmp_path: Path):
 def test_codex_skips_reasoning_effort_when_not_provided(tmp_path: Path):
     backend = CodexBackend(
         cwd=str(tmp_path),
+        model="gpt-5.3-codex",
         reasoning={"summary": "auto"},
     )
     backend._write_workspace_config()
 
     config = _read_workspace_codex_config(tmp_path)
     assert "model_reasoning_effort" not in config
+
+
+def test_codex_defaults_gpt54_to_xhigh_when_not_provided(tmp_path: Path):
+    backend = CodexBackend(
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+        reasoning={"summary": "auto"},
+    )
+    backend._write_workspace_config()
+
+    config = _read_workspace_codex_config(tmp_path)
+    assert config["model_reasoning_effort"] == "xhigh"
 
 
 def test_codex_disables_view_image_tool_in_workspace_config(tmp_path: Path):
@@ -146,6 +159,24 @@ def test_codex_writes_background_mcp_targets_into_custom_tool_specs(tmp_path: Pa
     background_names = {server["name"] for server in specs.get("background_mcp_servers", []) if isinstance(server, dict) and "name" in server}
     assert "command_line" in background_names
     assert "massgen_custom_tools" not in background_names
+
+
+def test_codex_passes_backend_context_to_massgen_custom_tools_server(tmp_path: Path):
+    """Codex should pass backend identity through the custom-tools server launch args."""
+    backend = CodexBackend(
+        cwd=str(tmp_path),
+        model="gpt-5.4",
+    )
+    backend._write_workspace_config()
+
+    config = _read_workspace_codex_config(tmp_path)
+    server = config["mcp_servers"]["massgen_custom_tools"]
+    args = server["args"]
+
+    assert "--backend-type" in args
+    assert args[args.index("--backend-type") + 1] == "codex"
+    assert "--model" in args
+    assert args[args.index("--model") + 1] == "gpt-5.4"
 
 
 def test_codex_writes_execution_trace_markdown(tmp_path: Path):

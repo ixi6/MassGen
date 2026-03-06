@@ -6,6 +6,7 @@ TODO: This file is outdated - check claude_code config and
 deprecated patterns. Update to reflect current backend architecture.
 """
 
+import copy
 import logging
 import warnings
 from dataclasses import dataclass, field
@@ -207,6 +208,8 @@ class CoordinationConfig:
     enable_changedoc: bool = True  # Write changedoc.md decision journal during coordination
     drift_conflict_policy: str = "skip"  # "skip" | "prefer_presenter" | "fail"
     subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
+    round_evaluator_before_checklist: bool = False  # Round 2+ must run round_evaluator before checklist submit
+    orchestrator_managed_round_evaluator: bool = False  # Gate orchestrator-owned round_evaluator launch; default prompt-guidance only
     enable_quality_rethink_on_iteration: bool = False  # Auto-inject quality_rethinking spawn task on iteration 2+
     enable_novelty_on_iteration: bool = False  # Auto-inject novelty/quality spawn task on iteration 2+
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
@@ -376,6 +379,11 @@ class AgentConfig:
         fairness_enabled: Enable fairness controls across all coordination modes (default: True)
         fairness_lead_cap_answers: Maximum allowed lead in answer revisions over slowest active peer
         max_midstream_injections_per_round: Maximum unseen source updates injected per agent per round
+        defer_peer_updates_until_restart: Queue unseen peer answer updates until the agent
+            restarts instead of injecting them mid-stream (default: False)
+        allow_midstream_peer_updates_before_checklist_submit: In checklist_gated mode, allow
+            peer updates mid-stream before the first accepted submit_checklist for the current
+            answer. ``None`` uses the orchestrator default policy.
         max_checklist_calls_per_round: Maximum submit_checklist calls per answer before blocking
             (default 1). After a new_answer verdict, the agent must implement and submit
             new_answer rather than calling submit_checklist again.
@@ -401,11 +409,14 @@ class AgentConfig:
     fairness_enabled: bool = True
     fairness_lead_cap_answers: int = 2
     max_midstream_injections_per_round: int = 2
+    defer_peer_updates_until_restart: bool = False
+    allow_midstream_peer_updates_before_checklist_submit: bool | None = None
     max_checklist_calls_per_round: int = 1
     checklist_first_answer: bool = False
 
     # Agent customization
     agent_id: str | None = None
+    subagent_agents: list[dict[str, Any]] = field(default_factory=list)
     _custom_system_instruction: str | None = field(default=None, init=False)
 
     # Timeout and resource limits
@@ -424,6 +435,16 @@ class AgentConfig:
     # Skip final presentation phase (used by TUI when refinement is OFF)
     # When True, uses the existing answer directly without an additional LLM call
     skip_final_presentation: bool = False
+
+    # Final answer strategy after coordination completes.
+    # None preserves legacy behavior:
+    # - winner_reuse when skip_final_presentation=True
+    # - winner_present otherwise
+    # Explicit values:
+    # - winner_reuse: use the selected answer directly when presentation can be skipped
+    # - winner_present: selected winner performs a final presentation pass
+    # - synthesize: selected presenter combines the strongest parts of all answers
+    final_answer_strategy: str | None = None
 
     # Disable injection of other agents' answers (used by TUI multi-agent refinement OFF)
     # When True, agents work independently without seeing each other's work mid-stream
@@ -1098,6 +1119,7 @@ class AgentConfig:
         result = {
             "backend_params": self.backend_params,
             "agent_id": self.agent_id,
+            "subagent_agents": copy.deepcopy(self.subagent_agents),
             # Access private attribute to avoid deprecation warning
             "custom_system_instruction": self._custom_system_instruction,
             "voting_sensitivity": self.voting_sensitivity,
@@ -1109,6 +1131,8 @@ class AgentConfig:
             "fairness_enabled": self.fairness_enabled,
             "fairness_lead_cap_answers": self.fairness_lead_cap_answers,
             "max_midstream_injections_per_round": self.max_midstream_injections_per_round,
+            "defer_peer_updates_until_restart": self.defer_peer_updates_until_restart,
+            "allow_midstream_peer_updates_before_checklist_submit": self.allow_midstream_peer_updates_before_checklist_submit,
             "max_checklist_calls_per_round": self.max_checklist_calls_per_round,
             "checklist_first_answer": self.checklist_first_answer,
             "timeout_config": {
@@ -1152,6 +1176,7 @@ class AgentConfig:
         # Extract basic fields
         backend_params = data.get("backend_params", {})
         agent_id = data.get("agent_id")
+        subagent_agents = data.get("subagent_agents", [])
         custom_system_instruction = data.get("custom_system_instruction")
         voting_sensitivity = data.get("voting_sensitivity", "lenient")
         voting_threshold = data.get("voting_threshold")
@@ -1162,6 +1187,10 @@ class AgentConfig:
         fairness_enabled = data.get("fairness_enabled", True)
         fairness_lead_cap_answers = data.get("fairness_lead_cap_answers", 2)
         max_midstream_injections_per_round = data.get("max_midstream_injections_per_round", 2)
+        defer_peer_updates_until_restart = data.get("defer_peer_updates_until_restart", False)
+        allow_midstream_peer_updates_before_checklist_submit = data.get(
+            "allow_midstream_peer_updates_before_checklist_submit",
+        )
         max_checklist_calls_per_round = data.get("max_checklist_calls_per_round", 1)
         checklist_first_answer = data.get("checklist_first_answer", False)
 
@@ -1192,6 +1221,7 @@ class AgentConfig:
             backend_params=backend_params,
             message_templates=message_templates,
             agent_id=agent_id,
+            subagent_agents=copy.deepcopy(subagent_agents),
             voting_sensitivity=voting_sensitivity,
             voting_threshold=voting_threshold,
             max_new_answers_per_agent=max_new_answers_per_agent,
@@ -1201,6 +1231,8 @@ class AgentConfig:
             fairness_enabled=fairness_enabled,
             fairness_lead_cap_answers=fairness_lead_cap_answers,
             max_midstream_injections_per_round=max_midstream_injections_per_round,
+            defer_peer_updates_until_restart=defer_peer_updates_until_restart,
+            allow_midstream_peer_updates_before_checklist_submit=allow_midstream_peer_updates_before_checklist_submit,
             max_checklist_calls_per_round=max_checklist_calls_per_round,
             checklist_first_answer=checklist_first_answer,
             timeout_config=timeout_config,

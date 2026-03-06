@@ -73,7 +73,31 @@ The system SHALL support enabling/disabling refinement via the Mode Bar.
 - **THEN** max_new_answers_per_agent is set to 1
 - **AND** disable_injection is set to True (agents work independently)
 - **AND** defer_voting_until_all_answered is set to True
-- **AND** skip_final_presentation is set to True
+- **AND** final_answer_strategy is set to `synthesize`
+
+### Requirement: Final Answer Strategy
+The orchestrator SHALL support selecting how the final answer is produced after coordination completes.
+
+#### Scenario: Winner reuse strategy
+- **WHEN** `final_answer_strategy` is `winner_reuse`
+- **THEN** the selected winner's existing answer is used directly when final presentation can be skipped
+- **AND** no additional synthesis LLM call is required
+
+#### Scenario: Winner present strategy
+- **WHEN** `final_answer_strategy` is `winner_present`
+- **THEN** the selected winner performs the normal final presentation pass
+- **AND** the final answer is derived from that presentation output
+
+#### Scenario: Synthesize strategy
+- **WHEN** `final_answer_strategy` is `synthesize`
+- **THEN** the selected presenter receives all completed agent answers in final presentation context
+- **AND** the presenter combines the strongest relevant parts into a single final answer
+- **AND** synthesis does not depend on write-context-path detection
+
+#### Scenario: Multi-agent quick mode defaults to synthesis
+- **WHEN** refinement is disabled and agent mode is multi
+- **THEN** `final_answer_strategy` defaults to `synthesize`
+- **AND** the system does not default to reusing the voted winner answer verbatim
 
 ### Requirement: Independent Agent Execution
 The orchestrator SHALL support disabling injection to allow agents to work independently.
@@ -138,15 +162,24 @@ The system SHALL enable context path write access appropriately when refinement 
 - **WHEN** refinement is disabled
 - **AND** agent mode is multi
 - **AND** context paths with write permission exist
-- **THEN** final presentation is executed (to copy winning agent's files)
+- **AND** `final_answer_strategy` is `winner_present` or `synthesize`
+- **THEN** final presentation is executed
 - **AND** write access is enabled during final presentation
 
 #### Scenario: Multi-agent with refinement OFF and no write context paths
 - **WHEN** refinement is disabled
 - **AND** agent mode is multi
 - **AND** no context paths with write permission exist
+- **AND** `final_answer_strategy` is `winner_reuse`
 - **THEN** final presentation is skipped
 - **AND** existing answer is used directly
+
+#### Scenario: Multi-agent synthesis without write context paths
+- **WHEN** refinement is disabled
+- **AND** agent mode is multi
+- **AND** no context paths with write permission exist
+- **AND** `final_answer_strategy` is `synthesize`
+- **THEN** final presentation still runs to produce a synthesized answer
 
 ### Requirement: Docker Container Recreation for Write Access
 The system SHALL recreate Docker containers with write-enabled mounts for final presentation.

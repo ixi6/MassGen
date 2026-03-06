@@ -13,7 +13,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from massgen.backend.capabilities import has_capability
+from massgen.backend.capabilities import has_capability, normalize_backend_type
 from massgen.logger_config import logger
 from massgen.tool._multimodal_tools.image_backends import (
     call_claude,
@@ -216,7 +216,7 @@ def _load_and_process_image(
 async def understand_image(
     image_path: str | None = None,
     prompt: str = "What's in this image? Please describe it in detail.",
-    model: str = "gpt-5.2",
+    model: str = "gpt-5.4",
     allowed_paths: list[str] | None = None,
     agent_cwd: str | None = None,
     task_context: str | None = None,
@@ -227,9 +227,9 @@ async def understand_image(
     conversation_messages: list[dict] | None = None,
 ) -> ExecutionResult:
     """
-    Understand and analyze one or more images using OpenAI's gpt-5.2 API.
+    Understand and analyze one or more images using OpenAI's gpt-5.4 API.
 
-    This tool processes images through OpenAI's gpt-5.2 API to extract insights,
+    This tool processes images through OpenAI's gpt-5.4 API to extract insights,
     descriptions, or answer questions about image content. Supports multiple images
     in a single call for comparison or joint analysis.
 
@@ -238,7 +238,7 @@ async def understand_image(
                    Use this for simple single-image analysis.
         prompt: Question or instruction about the image(s).
                 When using `images` dict, reference images by their keys.
-        model: Model to use (default: "gpt-5.2")
+        model: Model to use (default: "gpt-5.4")
         allowed_paths: List of allowed base paths for validation (optional)
         agent_cwd: Agent's current working directory (automatically injected)
         task_context: Task context for prompt augmentation (automatically injected)
@@ -303,6 +303,7 @@ async def understand_image(
 
         # Load images using the helper function
         loaded_images: list[LoadedImage] = []
+        normalized_backend_type = normalize_backend_type(backend_type)
 
         if image_path:
             # Single image mode
@@ -338,10 +339,10 @@ async def understand_image(
 
             # Route to the agent's native backend if it supports image understanding
             response_id: str | None = None
-            if backend_type and has_capability(backend_type, "image_understanding"):
+            if normalized_backend_type and has_capability(normalized_backend_type, "image_understanding"):
                 try:
-                    logger.info(f"[understand_image] Using native backend: {backend_type}")
-                    if backend_type == "claude":
+                    logger.info(f"[understand_image] Using native backend: {normalized_backend_type}")
+                    if normalized_backend_type == "claude":
                         response_text, response_id = await call_claude(
                             loaded_images,
                             augmented_prompt,
@@ -349,7 +350,7 @@ async def understand_image(
                             system_prompt=system_prompt,
                             conversation_messages=conversation_messages,
                         )
-                    elif backend_type == "gemini":
+                    elif normalized_backend_type == "gemini":
                         response_text, response_id = await call_gemini(
                             loaded_images,
                             augmented_prompt,
@@ -357,7 +358,7 @@ async def understand_image(
                             system_prompt=system_prompt,
                             conversation_messages=conversation_messages,
                         )
-                    elif backend_type == "grok":
+                    elif normalized_backend_type == "grok":
                         response_text, response_id = await call_grok(
                             loaded_images,
                             augmented_prompt,
@@ -365,7 +366,7 @@ async def understand_image(
                             system_prompt=system_prompt,
                             conversation_messages=conversation_messages,
                         )
-                    elif backend_type == "claude_code":
+                    elif normalized_backend_type == "claude_code":
                         response_text, response_id = await call_claude_code(
                             loaded_images,
                             augmented_prompt,
@@ -373,11 +374,12 @@ async def understand_image(
                             agent_cwd,
                             system_prompt=system_prompt,
                         )
-                    elif backend_type == "codex":
+                    elif normalized_backend_type == "codex":
                         response_text, response_id = await call_codex(
                             loaded_images,
                             augmented_prompt,
-                            agent_cwd,
+                            model=model,
+                            agent_cwd=agent_cwd,
                             system_prompt=system_prompt,
                         )
                     else:
@@ -391,24 +393,24 @@ async def understand_image(
                         )
                 except Exception as native_err:
                     logger.warning(
-                        f"[understand_image] Native backend {backend_type} failed: {native_err}. " "Falling back to OpenAI gpt-5.2",
+                        f"[understand_image] Native backend {normalized_backend_type} failed: {native_err}. " "Falling back to OpenAI gpt-5.4",
                     )
                     response_text, response_id = await call_openai(
                         loaded_images,
                         augmented_prompt,
-                        "gpt-5.2",
+                        "gpt-5.4",
                         system_prompt=system_prompt,
                         previous_response_id=previous_response_id,
                     )
             else:
                 # Fallback: OpenAI default (backward compat)
                 logger.info(
-                    f"[understand_image] Fallback to OpenAI (backend_type={backend_type})",
+                    f"[understand_image] Fallback to OpenAI (backend_type={normalized_backend_type or backend_type})",
                 )
                 response_text, response_id = await call_openai(
                     loaded_images,
                     augmented_prompt,
-                    "gpt-5.2",
+                    "gpt-5.4",
                     system_prompt=system_prompt,
                     previous_response_id=previous_response_id,
                 )
@@ -441,7 +443,7 @@ async def understand_image(
             return ExecutionResult(output_blocks=[TextContent(data=json.dumps(result, indent=2))])
 
         except Exception as api_error:
-            return _error(f"API error ({backend_type or 'openai'}): {str(api_error)}")
+            return _error(f"API error ({normalized_backend_type or backend_type or 'openai'}): {str(api_error)}")
 
     except Exception as e:
         return _error(f"Failed to understand image: {str(e)}")

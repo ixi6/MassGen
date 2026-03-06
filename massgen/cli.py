@@ -246,6 +246,52 @@ def _should_use_conversation_history_for_turn(
     return _has_evolving_skills_enabled(agents)
 
 
+def _apply_orchestrator_runtime_params(
+    orchestrator_config: AgentConfig,
+    orchestrator_cfg: dict[str, Any] | None,
+) -> None:
+    """Apply orchestrator-level runtime params from config onto an AgentConfig."""
+    if not orchestrator_cfg:
+        return
+
+    direct_fields = (
+        "voting_sensitivity",
+        "voting_threshold",
+        "max_new_answers_per_agent",
+        "max_new_answers_global",
+        "answer_novelty_requirement",
+        "fairness_enabled",
+        "fairness_lead_cap_answers",
+        "max_midstream_injections_per_round",
+        "defer_peer_updates_until_restart",
+        "allow_midstream_peer_updates_before_checklist_submit",
+        "defer_voting_until_all_answered",
+        "coordination_mode",
+        "presenter_agent",
+    )
+    for field_name in direct_fields:
+        if field_name in orchestrator_cfg:
+            setattr(orchestrator_config, field_name, orchestrator_cfg[field_name])
+
+    if "checklist_require_gap_report" in orchestrator_cfg:
+        orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
+    if "gap_report_mode" in orchestrator_cfg:
+        orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
+    elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
+        orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
+
+    if orchestrator_cfg.get("skip_coordination_rounds", False):
+        orchestrator_config.skip_coordination_rounds = True
+    if orchestrator_cfg.get("debug_final_answer"):
+        orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
+    if orchestrator_cfg.get("skip_final_presentation", False):
+        orchestrator_config.skip_final_presentation = True
+    if orchestrator_cfg.get("skip_voting", False):
+        orchestrator_config.skip_voting = True
+    if orchestrator_cfg.get("disable_injection", False):
+        orchestrator_config.disable_injection = True
+
+
 def _is_planning_turn(
     mode_state: Any | None,
     cli_plan_enabled: bool = False,
@@ -2315,6 +2361,7 @@ def create_agents_from_config(
             agent_config = AgentConfig(backend_params=backend_params)
 
         agent_config.agent_id = agent_id
+        agent_config.subagent_agents = copy.deepcopy(agent_data.get("subagent_agents", []))
 
         # System message handling: all backends use system_message at agent level
         system_msg = agent_data.get("system_message")
@@ -2944,6 +2991,7 @@ def apply_mode_flags_to_config(
             # Multi-agent + quick = independent work, deferred single vote
             orch["disable_injection"] = True
             orch["defer_voting_until_all_answered"] = True
+            orch["final_answer_strategy"] = "synthesize"
 
     # Personas
     if personas is not None:
@@ -3122,6 +3170,8 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
         enable_changedoc=coord_cfg.get("enable_changedoc", True),
         subagent_types=coord_cfg.get("subagent_types"),
+        round_evaluator_before_checklist=coord_cfg.get("round_evaluator_before_checklist", False),
+        orchestrator_managed_round_evaluator=coord_cfg.get("orchestrator_managed_round_evaluator", False),
         enable_quality_rethink_on_iteration=coord_cfg.get("enable_quality_rethink_on_iteration", False),
         enable_novelty_on_iteration=coord_cfg.get("enable_novelty_on_iteration", False),
         novelty_injection=coord_cfg.get("novelty_injection", "none"),
@@ -3414,63 +3464,13 @@ async def run_question_with_history(
             "[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)",
         )
 
-    # Apply voting sensitivity if specified
-    if "voting_sensitivity" in orchestrator_cfg:
-        orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
-    if "voting_threshold" in orchestrator_cfg:
-        orchestrator_config.voting_threshold = orchestrator_cfg["voting_threshold"]
-
-    # Apply answer count limit if specified
-    if "max_new_answers_per_agent" in orchestrator_cfg:
-        orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
-    if "max_new_answers_global" in orchestrator_cfg:
-        orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
-    if "checklist_require_gap_report" in orchestrator_cfg:
-        orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
-    if "gap_report_mode" in orchestrator_cfg:
-        orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
-    elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
-        # Backward compat: convert bool to gap_report_mode
-        orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
-
-    # Apply answer novelty requirement if specified
-    if "answer_novelty_requirement" in orchestrator_cfg:
-        orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
-    if "fairness_enabled" in orchestrator_cfg:
-        orchestrator_config.fairness_enabled = orchestrator_cfg["fairness_enabled"]
-    if "fairness_lead_cap_answers" in orchestrator_cfg:
-        orchestrator_config.fairness_lead_cap_answers = orchestrator_cfg["fairness_lead_cap_answers"]
-    if "max_midstream_injections_per_round" in orchestrator_cfg:
-        orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
+    _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
 
     # Get context sharing parameters
     snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
     agent_temporary_workspace = _scope_agent_temporary_workspace(
         orchestrator_cfg.get("agent_temporary_workspace"),
     )
-
-    # Get debug/test parameters
-    if orchestrator_cfg.get("skip_coordination_rounds", False):
-        orchestrator_config.skip_coordination_rounds = True
-
-    if orchestrator_cfg.get("debug_final_answer"):
-        orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
-
-    # Apply subagent/TUI orchestrator flags
-    if orchestrator_cfg.get("skip_final_presentation", False):
-        orchestrator_config.skip_final_presentation = True
-    if orchestrator_cfg.get("skip_voting", False):
-        orchestrator_config.skip_voting = True
-    if orchestrator_cfg.get("disable_injection", False):
-        orchestrator_config.disable_injection = True
-    if "defer_voting_until_all_answered" in orchestrator_cfg:
-        orchestrator_config.defer_voting_until_all_answered = orchestrator_cfg["defer_voting_until_all_answered"]
-
-    # Parse decomposition mode parameters
-    if "coordination_mode" in orchestrator_cfg:
-        orchestrator_config.coordination_mode = orchestrator_cfg["coordination_mode"]
-    if "presenter_agent" in orchestrator_cfg:
-        orchestrator_config.presenter_agent = orchestrator_cfg["presenter_agent"]
 
     # Parse coordination config if present
     if "coordination" in orchestrator_cfg:
@@ -3953,62 +3953,13 @@ async def run_single_question(
                 "[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)",
             )
 
-        # Apply voting sensitivity if specified
-        if "voting_sensitivity" in orchestrator_cfg:
-            orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
-        if "voting_threshold" in orchestrator_cfg:
-            orchestrator_config.voting_threshold = orchestrator_cfg["voting_threshold"]
-
-        # Apply answer count limit if specified
-        if "max_new_answers_per_agent" in orchestrator_cfg:
-            orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
-        if "max_new_answers_global" in orchestrator_cfg:
-            orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
-        if "checklist_require_gap_report" in orchestrator_cfg:
-            orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
-        if "gap_report_mode" in orchestrator_cfg:
-            orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
-        elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
-            orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
-
-        # Apply answer novelty requirement if specified
-        if "answer_novelty_requirement" in orchestrator_cfg:
-            orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
-        if "fairness_enabled" in orchestrator_cfg:
-            orchestrator_config.fairness_enabled = orchestrator_cfg["fairness_enabled"]
-        if "fairness_lead_cap_answers" in orchestrator_cfg:
-            orchestrator_config.fairness_lead_cap_answers = orchestrator_cfg["fairness_lead_cap_answers"]
-        if "max_midstream_injections_per_round" in orchestrator_cfg:
-            orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
+        _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
 
         # Get context sharing parameters
         snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
         agent_temporary_workspace = _scope_agent_temporary_workspace(
             orchestrator_cfg.get("agent_temporary_workspace"),
         )
-
-        # Get debug/test parameters
-        if orchestrator_cfg.get("skip_coordination_rounds", False):
-            orchestrator_config.skip_coordination_rounds = True
-
-        if orchestrator_cfg.get("debug_final_answer"):
-            orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
-
-        # Apply subagent/TUI orchestrator flags
-        if orchestrator_cfg.get("skip_final_presentation", False):
-            orchestrator_config.skip_final_presentation = True
-        if orchestrator_cfg.get("skip_voting", False):
-            orchestrator_config.skip_voting = True
-        if orchestrator_cfg.get("disable_injection", False):
-            orchestrator_config.disable_injection = True
-        if "defer_voting_until_all_answered" in orchestrator_cfg:
-            orchestrator_config.defer_voting_until_all_answered = orchestrator_cfg["defer_voting_until_all_answered"]
-
-        # Parse decomposition mode parameters
-        if "coordination_mode" in orchestrator_cfg:
-            orchestrator_config.coordination_mode = orchestrator_cfg["coordination_mode"]
-        if "presenter_agent" in orchestrator_cfg:
-            orchestrator_config.presenter_agent = orchestrator_cfg["presenter_agent"]
 
         # Parse coordination config if present
         if "coordination" in orchestrator_cfg:
@@ -6543,50 +6494,8 @@ async def run_textual_interactive_mode(
             if orchestrator_enable_nlip:
                 logger.info("[Textual] NLIP enabled for orchestrator")
             if orchestrator_cfg:
-                if "voting_sensitivity" in orchestrator_cfg:
-                    orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
-                if "voting_threshold" in orchestrator_cfg:
-                    orchestrator_config.voting_threshold = orchestrator_cfg["voting_threshold"]
-                if "max_new_answers_per_agent" in orchestrator_cfg:
-                    orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
-                if "max_new_answers_global" in orchestrator_cfg:
-                    orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
-                if "checklist_require_gap_report" in orchestrator_cfg:
-                    orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
-                if "gap_report_mode" in orchestrator_cfg:
-                    orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
-                elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
-                    orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
-                if "answer_novelty_requirement" in orchestrator_cfg:
-                    orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
-                if "fairness_enabled" in orchestrator_cfg:
-                    orchestrator_config.fairness_enabled = orchestrator_cfg["fairness_enabled"]
-                if "fairness_lead_cap_answers" in orchestrator_cfg:
-                    orchestrator_config.fairness_lead_cap_answers = orchestrator_cfg["fairness_lead_cap_answers"]
-                if "max_midstream_injections_per_round" in orchestrator_cfg:
-                    orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
-                if orchestrator_cfg.get("skip_coordination_rounds", False):
-                    orchestrator_config.skip_coordination_rounds = True
-                if orchestrator_cfg.get("debug_final_answer"):
-                    orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
+                _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
 
-                # Apply subagent/TUI orchestrator flags
-                if orchestrator_cfg.get("skip_final_presentation", False):
-                    orchestrator_config.skip_final_presentation = True
-                if orchestrator_cfg.get("skip_voting", False):
-                    orchestrator_config.skip_voting = True
-                if orchestrator_cfg.get("disable_injection", False):
-                    orchestrator_config.disable_injection = True
-                if "defer_voting_until_all_answered" in orchestrator_cfg:
-                    orchestrator_config.defer_voting_until_all_answered = orchestrator_cfg["defer_voting_until_all_answered"]
-
-                # Parse decomposition mode parameters
-                if "coordination_mode" in orchestrator_cfg:
-                    orchestrator_config.coordination_mode = orchestrator_cfg["coordination_mode"]
-                if "presenter_agent" in orchestrator_cfg:
-                    orchestrator_config.presenter_agent = orchestrator_cfg["presenter_agent"]
-
-                # Parse coordination config if present
                 if "coordination" in orchestrator_cfg:
                     coord_cfg = orchestrator_cfg["coordination"]
                     orchestrator_config.coordination_config = _parse_coordination_config(coord_cfg)

@@ -1,6 +1,7 @@
 """Unit tests for TaskDecomposer parsing helpers."""
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -37,6 +38,132 @@ def test_parse_subtasks_from_markdown_json_block() -> None:
     assert parsed == {
         "agent_a": "Design architecture",
         "agent_b": "Implement UI",
+    }
+
+
+def test_parse_subtask_specs_from_object_json_text_preserves_per_agent_criteria() -> None:
+    module = _load_task_decomposer_module()
+    decomposer = module.TaskDecomposer(module.TaskDecomposerConfig())
+
+    text = """
+    {
+      "subtasks": {
+        "agent_a": {
+          "subtask": "Own the API contract and persistence layer.",
+          "criteria": [
+            {"text": "API contract is complete", "category": "must"},
+            {"text": "Peer UI integration is preserved", "category": "should"}
+          ]
+        },
+        "agent_b": {
+          "subtask": "Own the UI shell and interaction polish.",
+          "criteria": [
+            {"text": "UI is polished", "category": "must"}
+          ]
+        }
+      }
+    }
+    """
+
+    parsed = decomposer._parse_subtask_specs_from_text(text, ["agent_a", "agent_b"])
+
+    assert parsed["agent_a"]["subtask"] == "Own the API contract and persistence layer."
+    assert parsed["agent_a"]["criteria"] == [
+        {"text": "API contract is complete", "category": "must"},
+        {"text": "Peer UI integration is preserved", "category": "should"},
+    ]
+    assert parsed["agent_b"]["criteria"] == [
+        {"text": "UI is polished", "category": "must"},
+    ]
+
+
+def test_parse_subtasks_from_object_json_text_returns_plain_subtask_strings() -> None:
+    module = _load_task_decomposer_module()
+    decomposer = module.TaskDecomposer(module.TaskDecomposerConfig())
+
+    text = """
+    {
+      "subtasks": {
+        "agent_a": {
+          "subtask": "Own the API contract and persistence layer.",
+          "criteria": [{"text": "API contract is complete", "category": "must"}]
+        },
+        "agent_b": {
+          "subtask": "Own the UI shell and interaction polish."
+        }
+      }
+    }
+    """
+
+    parsed = decomposer._parse_subtasks_from_text(text, ["agent_a", "agent_b"])
+
+    assert parsed == {
+        "agent_a": "Own the API contract and persistence layer.",
+        "agent_b": "Own the UI shell and interaction polish.",
+    }
+
+
+def test_parse_subtask_specs_from_workspace_recovers_snapshot_decomposition_plan(tmp_path: Path) -> None:
+    module = _load_task_decomposer_module()
+    decomposer = module.TaskDecomposer(module.TaskDecomposerConfig())
+
+    artifact = tmp_path / "task_decomposition" / "workspace" / "snapshots" / "log_20260305_152747_062436" / "agent_a" / "deliverable" / "decomposition_plan.json"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(
+        json.dumps(
+            {
+                "subtasks": {
+                    "agent_a": {
+                        "subtask": "Own the data model and persistence layer.",
+                        "criteria": [{"text": "Storage contract is correct", "category": "must"}],
+                    },
+                    "agent_b": {
+                        "subtask": "Own the UI shell and wire it to the stored data.",
+                    },
+                },
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = decomposer._parse_subtask_specs_from_workspace(
+        str(tmp_path / "task_decomposition"),
+        ["agent_a", "agent_b"],
+    )
+
+    assert parsed["agent_a"]["subtask"] == "Own the data model and persistence layer."
+    assert parsed["agent_a"]["criteria"] == [
+        {"text": "Storage contract is correct", "category": "must"},
+    ]
+    assert parsed["agent_b"]["subtask"] == "Own the UI shell and wire it to the stored data."
+
+
+def test_parse_subtask_specs_from_workspace_recovers_full_logs_subtask_assignment(tmp_path: Path) -> None:
+    module = _load_task_decomposer_module()
+    decomposer = module.TaskDecomposer(module.TaskDecomposerConfig())
+
+    artifact = tmp_path / "task_decomposition" / "full_logs" / "agent_b" / "20260305_152900" / "workspace" / "deliverable" / "subtask_assignment.json"
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_text(
+        json.dumps(
+            {
+                "subtasks": {
+                    "agent_a": "Own the backend contract and validation.",
+                    "agent_b": "Own the frontend state flow and integration checks.",
+                },
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    parsed = decomposer._parse_subtasks_from_workspace(
+        str(tmp_path / "task_decomposition"),
+        ["agent_a", "agent_b"],
+    )
+
+    assert parsed == {
+        "agent_a": "Own the backend contract and validation.",
+        "agent_b": "Own the frontend state flow and integration checks.",
     }
 
 

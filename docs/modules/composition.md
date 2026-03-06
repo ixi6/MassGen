@@ -12,7 +12,7 @@ MassGen provides composable primitives that each shape a different dimension of 
 |---|---|---|---|---|
 | **Persona generation** | Subagent spawn | WHO the agents are — perspective, values, approach | Per-agent persona text (strong + softened) | Prepended to system message each round |
 | **Evaluation criteria generation** | Subagent spawn | WHAT quality means — task-specific checklist gates | E1..EN criteria (core/stretch) | Replaces default E1-E4 in checklist tool + system message |
-| **Task decomposition** | Subagent spawn | WHAT each agent works on — subtask ownership | Agent-to-subtask mapping | Wraps user message with `[YOUR ASSIGNED SUBTASK: ...]` + fed into coordination system message |
+| **Task decomposition** | Subagent spawn | WHAT each agent works on — subtask ownership | Agent-to-subtask mapping plus optional per-agent execution criteria | Wraps user message with `[YOUR ASSIGNED SUBTASK: ...]` + fed into coordination system message |
 | **Planning mode analysis** | Inline (reuses agent) | HOW agents can act — tool access during coordination | Planning/execution mode flags | Sets `backend.set_planning_mode()`, blocks tool access |
 
 ### How Output Flows Into the System
@@ -23,7 +23,7 @@ Understanding where each primitive's output lands is critical for reasoning abou
 
 **Evaluation criteria** output flows into two places: (1) the **checklist tool state**, replacing the default E1-E4 items that gate the `submit_checklist` decision, and (2) the **system message** via `custom_checklist_items`, so agents know what they're being evaluated on. This means criteria control whether agents vote to converge or keep iterating.
 
-**Task decomposition** output flows into (1) the **user message** per agent, wrapping the original prompt with the agent's assigned subtask, and (2) the **coordination system message** so agents and the final presenter understand the decomposition. This means each agent sees a scoped version of the task rather than the full prompt.
+**Task decomposition** output flows into (1) the **user message** per agent, wrapping the original prompt with the agent's assigned subtask, (2) the **coordination system message** so agents and the final presenter understand the decomposition, and optionally (3) **per-agent checklist criteria** used when checklist-gated decomposition is active. This means each agent sees a scoped version of the task rather than the full prompt, and can be held to subtask-specific quality bars instead of one shared generic bar.
 
 **Planning mode** output flows into **backend state**, toggling tool availability. During coordination rounds, agents describe what they would do rather than doing it. Only the winning agent gets tools restored for final execution. This means agents compete on plans, not partially-executed actions.
 
@@ -90,7 +90,7 @@ Phase 2: Chunk execution (per plan section)
 
 ### Pattern 2: Decomposition with Per-Subtask Quality Gates
 
-Different subtasks need different quality standards. A creative writing subtask needs different evaluation criteria than a data analysis subtask. A decomposition primitive assigns ownership, then each subtask runs as its own coordination with appropriate primitives.
+Different subtasks need different quality standards. A creative writing subtask needs different evaluation criteria than a data analysis subtask. A decomposition primitive assigns ownership, and can now emit per-agent execution criteria alongside each subtask. When it does not, runtime fallback criteria still adapt to the owned subtask so checklist-gated stopping stays role-specific instead of collapsing back to one shared rubric.
 
 ```
 Phase 1: Task decomposition

@@ -413,6 +413,77 @@ async def test_stream_agent_execution_inserts_runtime_user_instructions_after_or
 
 
 @pytest.mark.asyncio
+async def test_stream_agent_execution_inserts_round_evaluator_context_before_current_answers(
+    mock_orchestrator,
+):
+    """Orchestrator-provided round-evaluator artifacts should be surfaced in the next round's user message."""
+    from massgen.subagent.models import SubagentResult
+
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Revise the draft using evaluator critique."
+    agent_id = "agent_a"
+
+    orchestrator.agent_states[agent_id].answer = "answer v1"
+    orchestrator._queue_round_start_context_block(
+        agent_id,
+        orchestrator._format_round_evaluator_result_block(
+            "round_eval",
+            SubagentResult.create_success(
+                subagent_id="round_eval",
+                answer=(
+                    "Answer label: agent1.1\n"
+                    "Workspace path: /tmp/temp_workspaces/agent1/round_evaluator\n"
+                    "Answer path: /tmp/temp_workspaces/agent1/round_evaluator/answer.txt\n"
+                    "Detailed critique packet"
+                ),
+                workspace_path="/tmp/temp_workspaces/agent1/round_evaluator",
+                execution_time_seconds=1.0,
+            ),
+        ),
+    )
+
+    _configure_agent_script(
+        orchestrator.agents[agent_id],
+        scripted_tool_calls=[
+            [{"name": "vote", "arguments": {"agent_id": agent_id, "reason": "ready"}}],
+        ],
+    )
+
+    captured_messages = []
+    original_stream = orchestrator.agents[agent_id].backend.stream_with_tools
+
+    async def _capture_stream(messages, tools=None, **kwargs):
+        captured_messages.append(messages)
+        async for chunk in original_stream(messages, tools=tools, **kwargs):
+            yield chunk
+
+    orchestrator.agents[agent_id].backend.stream_with_tools = _capture_stream
+
+    emitted = await _collect_stream(
+        orchestrator._stream_agent_execution(
+            agent_id,
+            orchestrator.current_task,
+            {agent_id: "answer v1"},
+        ),
+    )
+
+    assert ("result", ("vote", {"agent_id": agent_id, "reason": "ready"})) in emitted
+    assert captured_messages
+    first_user_message = next(
+        (msg.get("content", "") for msg in captured_messages[0] if msg.get("role") == "user"),
+        "",
+    )
+    assert "ROUND EVALUATOR RESULT" in first_user_message
+    assert "agent1.1" in first_user_message
+    assert "/tmp/temp_workspaces/agent1/round_evaluator/answer.txt" in first_user_message
+    assert "Detailed critique packet" in first_user_message
+    assert "<CURRENT ANSWERS from the agents>" in first_user_message
+    assert first_user_message.index("ROUND EVALUATOR RESULT") < first_user_message.index(
+        "<CURRENT ANSWERS from the agents>",
+    )
+
+
+@pytest.mark.asyncio
 async def test_stream_agent_execution_surfaces_external_tool_calls(mock_orchestrator):
     orchestrator = mock_orchestrator(num_agents=1)
     orchestrator.current_task = "External passthrough"

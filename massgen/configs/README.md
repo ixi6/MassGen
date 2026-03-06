@@ -227,7 +227,27 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.59 - Latest
+### v0.1.60 - Latest
+**New Features:** Verification & Decomposition Improvements — Decomp + Checklist Cooperation, GPT-5.4, read_media Rewrite
+
+**Key Features:**
+- **Decomp + Checklist Cooperation**: Decomposition mode now works with checklist workflow for quality-gated subtask iteration
+- **GPT-5.4 Support**: New OpenAI flagship model added to the model registry
+- **Multimodal Tool Improvements**: Rewritten `read_media` with clearer schema; media call ledger tracking
+- **Checklist & Prompt Fixes**: Improved proposal injections, system prompt refocused on entire output quality
+- **Infrastructure**: Codex prompt caching for pricing accuracy, hook framework for tool interception
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.60
+pip install --upgrade massgen
+
+# Decomp mode with checklist-gated quality rounds
+uv run massgen --coordination-mode decomposition \
+  "Build a full-stack todo app with React frontend and Python API backend"
+```
+
+### v0.1.59
 **New Features:** Quality Round Improvements — Planning, Evaluation, Subagents, Media Fixes
 
 **Key Features:**

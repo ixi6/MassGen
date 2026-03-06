@@ -1,4 +1,4 @@
-# MassGen v0.1.59 Release Announcement
+# MassGen v0.1.60 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,17 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Smarter planning with auto-added improvements and plan review. Agents now save replayable verification steps to `verification_latest.md`, auto-injected into future rounds so the next agent can replay the exact verification pipeline. Plus: checklist evaluation fixes, subagent enhancements, and media generation improvements.
+We're excited to release MassGen v0.1.60 — Verification & Decomposition Improvements! 🚀 Decomp mode now cooperates with the checklist workflow, enabling quality-gated subtask iteration with improved verification round time. Plus: GPT-5.4 support, rewritten read_media tool with clearer schema, media call ledger tracking, checklist and prompt injection fixes, and Codex prompt caching for pricing accuracy.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.59
+pip install massgen==0.1.60
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.59
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.60
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -29,26 +29,38 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.59 — Quality Round Improvements! 🚀 Smarter planning with auto-added improvements and plan review. Agents now save replayable verification steps to `verification_latest.md`, auto-injected into future rounds so the next agent can replay the exact verification pipeline. Plus: checklist evaluation fixes, subagent enhancements, and media generation improvements.
+We're excited to release MassGen v0.1.60 — Verification & Decomposition Improvements! 🚀 Decomp mode now cooperates with the checklist workflow, enabling quality-gated subtask iteration with improved verification round time. Plus: GPT-5.4 support, rewritten read_media tool with clearer schema, media call ledger tracking, checklist and prompt injection fixes, and Codex prompt caching for pricing accuracy.
 
 **Key Improvements:**
 
-**Planning Improvements** - Smarter quality rounds:
-- Auto-add improvements to task plan for better iteration tracking
-- Plan review enhancements for more thorough quality evaluation
-- Verification replay memories — agents save replayable verification steps (commands, scripts, artifacts) to `memory/short_term/verification_latest.md`, auto-injected into future rounds so the next agent can replay the exact verification pipeline
+🔄 **Verification & Decomposition** - Unified quality workflow:
+- Decomp mode now cooperates with the checklist workflow, enabling quality-gated subtask iteration
+- Improved verification round time with better verification_latest prompts
 
-**Checklist & Evaluation Enhancements** - More reliable evaluations:
-- Better eval gen config for more accurate quality assessments
-- Checklist fixes for consistent behavior across rounds
-- Gemini tool name normalization for MCP compatibility
+🧠 **GPT-5.4 Support** - New OpenAI flagship model:
+- Added GPT-5.4 to the model registry for immediate use across all coordination modes
 
-**Also in this release:**
-- Subagent Improvements: Adjusted subagent behavior, subagent manager enhancements, Docker skill write access fixes
-- Media Generation Fixes: Video gen skill adjustments (no fallback to animated on errors), video understanding criticality, impact metric restoration
-- Bug Fixes: Answer anonymization fix, quickstart and test updates, plan/Docker small fixes
+🛠️ **Multimodal Tool Improvements** - Clearer, more reliable media tools:
+- Rewritten read_media tool with clearer schema and better error handling
+- Media call ledger tracking for read/generate media calls
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.59
+✅ **Checklist & Prompt Fixes** - More accurate quality gating:
+- Proposal injection improvements for more reliable checklist behavior
+- System prompt refocused on evaluating entire output quality
+
+🔧 **Infrastructure** - Under-the-hood improvements:
+- Codex prompt caching for accurate pricing tracking
+- Hook framework for tool call interception (internal)
+- Skill prefix handling fixes
+
+**Getting Started:**
+
+```bash
+pip install massgen==0.1.60
+massgen --automation --config massgen/configs/basic/basic.yaml "Your task here"
+```
+
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.60
 
 Feature highlights:
 

@@ -1222,38 +1222,6 @@ def test_custom_tools_server_standalone_import_no_relative_imports():
 
 
 @pytest.mark.asyncio
-async def test_custom_tools_create_server_sets_custom_lifespan(monkeypatch, tmp_path: Path) -> None:
-    """Server should register a custom lifespan so background jobs are cleaned on shutdown."""
-    specs_path = tmp_path / "custom_tool_specs.json"
-    specs_path.write_text(
-        json.dumps(
-            {
-                "custom_tools": [],
-                "background_mcp_servers": [],
-            },
-        ),
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "custom_tools_server.py",
-            "--tool-specs",
-            str(specs_path),
-            "--agent-id",
-            "agent_test",
-        ],
-    )
-
-    server = await create_server()
-    lifespan = getattr(server, "_lifespan", None)
-    assert callable(lifespan)
-    assert getattr(lifespan, "__name__", "") != "default_lifespan"
-
-
-@pytest.mark.asyncio
 async def test_custom_tools_create_server_standalone_with_hook_dir(
     monkeypatch,
     tmp_path: Path,

@@ -259,18 +259,15 @@ class MassGenHookMiddleware(Middleware):
             *,
             content: list[Any],
             structured_content: dict[str, Any] | None = None,
-            meta: dict[str, Any] | None = None,
         ) -> Any:
             if _HAS_FASTMCP_TOOL_RESULT and FastMCPToolResult is not None:
                 return FastMCPToolResult(
                     content=content,
                     structured_content=structured_content,
-                    meta=meta,
                 )
             return _CompatToolResult(
                 content=content,
                 structured_content=structured_content,
-                meta=meta,
             )
 
         def _with_runtime_structured_content(structured_content: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -286,7 +283,6 @@ class MassGenHookMiddleware(Middleware):
                 structured_content=_with_runtime_structured_content(
                     getattr(result, "structured_content", None),
                 ),
-                meta=getattr(result, "meta", None),
             )
 
         if isinstance(result, str):

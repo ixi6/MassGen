@@ -3108,7 +3108,9 @@ class TestConvertTaskPlanToInjectFormat:
         assert "Warm conversational tone" in task["description"]
         assert "[E3]" in task["description"]
         assert task["priority"] == "high"
-        assert task["verification"] == "All preserved elements still present and intact in your output"
+        assert task["verification"] == (
+            "All preserved elements verified in actual output (run/render/screenshot as appropriate), " "not just present in source files; passing criteria scores confirmed not dropped"
+        )
         assert task["metadata"]["type"] == "verify_preserve"
         assert len(task["metadata"]["items"]) == 2
         assert task["metadata"]["injected"] is True

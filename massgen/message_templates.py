@@ -740,7 +740,13 @@ Please address these specific issues in your coordination and final answer.
         if final_answer_strategy == "synthesize":
             strategy_instruction = (
                 "Synthesize the strongest relevant parts across the completed answers into a single final answer. "
-                "Do not just repeat your own answer if another agent handled part of the task better."
+                "Do not just repeat your own answer if another agent handled part of the task better.\n\n"
+                "Preserve concrete details during synthesis: keep specific implementation details, exact values, "
+                "named elements, and actionable directives verbatim from whichever answer provided them. "
+                "Do not abstract concrete findings into vague generalizations — the synthesized output "
+                "should be at least as specific as the most detailed individual answer. "
+                "When answers overlap on a topic, combine them intelligently — keep the most specific "
+                "version and merge in any unique details from others rather than dropping either."
             )
         elif final_answer_strategy == "winner_present":
             strategy_instruction = "Use your answer as the primary basis for the final response. " "You may incorporate useful details from other answers when they improve completeness or accuracy."

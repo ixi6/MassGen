@@ -429,8 +429,8 @@ class TestExecuteDelegatedSuccess:
         assert result.answer == "A beautiful poem here."
 
     @pytest.mark.asyncio
-    async def test_delegated_round_evaluator_request_keeps_synthesize_presenter_stage(self, tmp_path):
-        """Delegated round_evaluator runs should carry synthesize + presenter-stage settings end to end."""
+    async def test_delegated_round_evaluator_request_synthesizes_by_default(self, tmp_path):
+        """Delegated round_evaluator runs use synthesis by default (no skip_synthesis flag)."""
         from massgen.subagent.manager import SubagentManager
         from massgen.subagent.models import SubagentConfig, SubagentOrchestratorConfig
 

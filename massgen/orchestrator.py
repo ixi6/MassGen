@@ -4803,6 +4803,17 @@ Your answer:"""
                                 logger.info(f"[Orchestrator] Cleaned {cleaned} orphaned branches in {ctx_path}")
                             break  # Only need to clean once per repo
 
+        # Restore state from a previous log BEFORE generating personas/criteria
+        # so the guard flags (_evaluation_criteria_generated, _personas_generated)
+        # are set and generation is skipped.
+        resume_cfg = getattr(
+            getattr(self.config, "coordination_config", None),
+            "resume_from_log",
+            None,
+        )
+        if resume_cfg:
+            await self._restore_from_previous_log(resume_cfg)
+
         # Generate personas and/or evaluation criteria if enabled (happens once per session)
         _persona_enabled = (
             hasattr(self.config, "coordination_config")
@@ -5222,15 +5233,6 @@ Your answer:"""
         When any agent provides new_answer, all other agents get restart_pending=True
         and gracefully terminate their current work before restarting.
         """
-        # Restore state from a previous log if resume_from_log is configured
-        resume_cfg = getattr(
-            getattr(self.config, "coordination_config", None),
-            "resume_from_log",
-            None,
-        )
-        if resume_cfg:
-            await self._restore_from_previous_log(resume_cfg)
-
         active_streams = {}
         active_tasks = {}  # Track active tasks to prevent duplicate task creation
 
@@ -6148,12 +6150,37 @@ Your answer:"""
                             )
                             for i, c in enumerate(criteria_data)
                         ]
+                        self._evaluation_criteria_generated = True
                         logger.info(
                             f"[Orchestrator] Loaded {len(self._generated_evaluation_criteria)} " "evaluation criteria from previous log",
                         )
                 except Exception as e:
                     logger.warning(
                         f"[Orchestrator] Failed to load evaluation criteria from log: {e}",
+                    )
+
+        # Load generated personas from the log if not already set
+        if not self._generated_personas:
+            personas_file = log_path / "generated_personas.yaml"
+            if personas_file.exists():
+                try:
+                    from .persona_generator import GeneratedPersona
+
+                    personas_data = _yaml.safe_load(personas_file.read_text())
+                    if isinstance(personas_data, dict):
+                        for agent_id, pdata in personas_data.items():
+                            self._generated_personas[agent_id] = GeneratedPersona(
+                                agent_id=agent_id,
+                                persona_text=pdata.get("persona_text", ""),
+                                attributes=pdata.get("attributes", {}),
+                            )
+                        self._personas_generated = True
+                        logger.info(
+                            f"[Orchestrator] Loaded {len(self._generated_personas)} " "personas from previous log",
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[Orchestrator] Failed to load personas from log: {e}",
                     )
 
         logger.info(
@@ -10336,16 +10363,17 @@ Your answer:"""
             criteria_lines.append(f"- {criterion_id}: {item}{verify_line}")
         criteria_block = "\n".join(criteria_lines) if criteria_lines else "- No explicit checklist criteria configured"
 
-        answer_label_mapping = self.coordination_tracker.get_answer_label_mapping()
         normalized_answers = self._normalize_workspace_paths_in_answers(
             answers,
             viewing_agent_id=parent_agent_id,
         )
+        # Use simple revision labels instead of internal agent labels (agent1.1)
+        # to avoid confusion — the evaluator subagent has its own agent numbering.
         answer_sections: list[str] = []
-        for answering_agent_id in sorted(normalized_answers.keys()):
-            label = answer_label_mapping.get(answering_agent_id) or answering_agent_id
+        for revision_idx, answering_agent_id in enumerate(sorted(normalized_answers.keys()), start=1):
+            label = f"Current answer (revision {revision_idx})" if len(normalized_answers) == 1 else f"Answer revision {revision_idx}"
             answer_sections.append(
-                f"## {label}\n" f"Source agent: {answering_agent_id}\n\n" f"{normalized_answers[answering_agent_id]}",
+                f"## {label}\n\n{normalized_answers[answering_agent_id]}",
             )
 
         answer_block = "\n\n".join(answer_sections) if answer_sections else "No answers available."
@@ -10444,6 +10472,7 @@ Your answer:"""
         self,
         subagent_id: str,
         result: "SubagentResult | RoundEvaluatorResult",
+        auto_injected: bool = False,
     ) -> str:
         """Format the blocking round_evaluator result for next-round prompt injection."""
         from .subagent.models import RoundEvaluatorResult
@@ -10455,31 +10484,252 @@ Your answer:"""
         return Orchestrator._format_round_evaluator_result_block_static(
             subagent_id=subagent_id,
             evaluator_result=evaluator_result,
+            auto_injected=auto_injected,
         )
 
     @staticmethod
     def _format_round_evaluator_result_block_static(
         subagent_id: str,
         evaluator_result: "RoundEvaluatorResult",
+        auto_injected: bool = False,
     ) -> str:
         """Format the blocking round_evaluator result for next-round prompt injection."""
         status = evaluator_result.status
-        packet_text = evaluator_result.packet_text or "(no packet produced)"
+        # Use clean text (verdict_block stripped) when available
+        packet_text = evaluator_result.clean_packet_text or evaluator_result.packet_text or "(no packet produced)"
+
+        if auto_injected:
+            instructions = (
+                "The evaluator has scored your work and improvement tasks have been\n"
+                "auto-injected into your task plan. Call `get_task_plan` to see them.\n"
+                "Implement each task, then call `new_answer` when done.\n"
+                "Do NOT call `submit_checklist` or `propose_improvements` — already handled.\n"
+            )
+        else:
+            instructions = (
+                "IMPORTANT: This evaluator packet is your sole diagnostic basis for\n"
+                "submit_checklist. Save it to your workspace (e.g., tasks/diagnostic_report.md)\n"
+                "and pass the path as report_path. Do NOT run a separate self-evaluation or\n"
+                "author a second diagnostic report from scratch.\n"
+            )
 
         return (
             "============================================================\n"
             f"ROUND EVALUATOR RESULT (status: {status})\n"
             "============================================================\n"
             "The orchestrator ran one blocking `round_evaluator` before this round.\n\n"
-            "IMPORTANT: This evaluator packet is your sole diagnostic basis for\n"
-            "submit_checklist. Save it to your workspace (e.g., tasks/diagnostic_report.md)\n"
-            "and pass the path as report_path. Do NOT run a separate self-evaluation or\n"
-            "author a second diagnostic report from scratch.\n\n"
+            f"{instructions}\n"
             f'<evaluator_packet subagent_id="{subagent_id}" status="{status}">\n'
             f"{packet_text}\n"
             "</evaluator_packet>\n"
             "============================================================"
         )
+
+    @staticmethod
+    def extract_all_evaluator_answers(
+        log_path: str,
+        workspace_path: str,
+    ) -> dict[str, str] | None:
+        """Read all evaluator agent answers from a round_evaluator's log directory.
+
+        Reads status.json to discover agent IDs and timestamps, then reads
+        each agent's answer.txt. Returns anonymized keys like
+        ``{"Evaluator A": "...", "Evaluator B": "...", ...}``.
+
+        Returns None if the log directory or status.json doesn't exist.
+        """
+        log_dir = Path(log_path)
+
+        # log_path may be the base dir or a resolved events.jsonl path.
+        # Walk up to find the directory containing full_logs/status.json.
+        full_logs = log_dir / "full_logs"
+        status_file = full_logs / "status.json"
+        if not status_file.exists():
+            # Try walking up from resolved path (e.g. .../full_logs/events.jsonl)
+            for parent in [log_dir.parent, log_dir.parent.parent]:
+                candidate = parent / "full_logs" / "status.json"
+                if candidate.exists():
+                    full_logs = parent / "full_logs"
+                    status_file = candidate
+                    break
+            else:
+                return None
+
+        try:
+            status_data = json.loads(status_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            logger.warning(
+                "[Orchestrator] Failed to read round_evaluator status.json from %s",
+                status_file,
+            )
+            return None
+
+        historical_list = status_data.get("historical_workspaces", [])
+        if not isinstance(historical_list, list) or not historical_list:
+            return None
+
+        answers: dict[str, str] = {}
+        anonymous_labels = iter(f"Evaluator {chr(65 + i)}" for i in range(26))
+
+        for ws_info in historical_list:
+            if not isinstance(ws_info, dict):
+                continue
+            agent_id = ws_info.get("agentId", "")
+            timestamp = ws_info.get("timestamp", "")
+            if not agent_id or not timestamp:
+                continue
+
+            # Try full_logs/{agentId}/{timestamp}/answer.txt
+            answer_file = full_logs / agent_id / timestamp / "answer.txt"
+            if answer_file.exists():
+                try:
+                    text = answer_file.read_text().strip()
+                    if text:
+                        label = next(anonymous_labels, f"Evaluator {len(answers)}")
+                        answers[label] = text
+                except OSError:
+                    pass
+
+        return answers if answers else None
+
+    @staticmethod
+    def extract_evaluator_workspace_paths(
+        log_path: str,
+    ) -> list[str]:
+        """Return workspace paths for each eval agent in a round_evaluator run.
+
+        Looks for ``full_logs/{agentId}/workspace/`` directories, which are
+        the persisted snapshots of each evaluator's workspace.
+        """
+        log_dir = Path(log_path)
+
+        # Same walk-up logic as extract_all_evaluator_answers
+        full_logs = log_dir / "full_logs"
+        if not full_logs.is_dir():
+            for parent in [log_dir.parent, log_dir.parent.parent]:
+                candidate = parent / "full_logs"
+                if candidate.is_dir():
+                    full_logs = candidate
+                    break
+            else:
+                return []
+
+        paths: list[str] = []
+        for child in sorted(full_logs.iterdir()):
+            if not child.is_dir():
+                continue
+            ws = child / "workspace"
+            if ws.is_dir():
+                paths.append(str(ws))
+        return paths
+
+    @staticmethod
+    def format_multi_evaluator_result_block(
+        all_answers: dict[str, str],
+        auto_injected: bool = False,
+    ) -> str:
+        """Format multiple evaluator critiques as separate tagged blocks.
+
+        Strips verdict_block JSON from each critique before injection so
+        the parent reads the prose analysis only.
+        """
+        from .subagent.models import RoundEvaluatorResult
+
+        n = len(all_answers)
+
+        if auto_injected:
+            instructions = (
+                "Improvement tasks have been auto-injected into your task plan.\n"
+                "Call `get_task_plan` to see them. Implement each task, then call `new_answer`.\n"
+                "Do NOT call `submit_checklist` or `propose_improvements` — already handled."
+            )
+        else:
+            instructions = (
+                "You received independent critiques from multiple evaluators.\n"
+                "Synthesize them yourself:\n"
+                "1. Read ALL critiques — each evaluator catches different issues.\n"
+                "2. For each criterion, adopt the HARSHEST score across evaluators.\n"
+                "3. Collect ALL unique concrete findings — even if only one evaluator mentions them.\n"
+                "4. When evaluators flag the SAME issue, merge into one finding:\n"
+                "   keep the most specific description, harshest severity, and\n"
+                "   combine distinct evidence.\n"
+                "5. Build one unified improvement plan from the combined findings.\n"
+                "6. Save the synthesized diagnostic to your workspace\n"
+                "   (e.g., tasks/diagnostic_report.md), then call `submit_checklist`\n"
+                "   with that path as report_path.\n"
+                "Do NOT discard findings just because other evaluators missed them.\n"
+                "Do NOT average scores — use the lowest (harshest) per criterion.\n\n"
+                "IMPORTANT: If any critique below is short or references a workspace\n"
+                "file (e.g., 'refer to critique_packet.md'), browse that evaluator's\n"
+                "workspace to read the full report. You have read-only access to all\n"
+                "evaluator workspaces. Do NOT skip a thin answer — the real critique\n"
+                "may be in the workspace."
+            )
+
+        parts = [
+            "============================================================",
+            f"ROUND EVALUATOR RESULTS ({n} independent evaluations)",
+            "============================================================",
+            instructions,
+            "",
+        ]
+
+        for label, critique_text in all_answers.items():
+            # Strip verdict_block from injected text (scores visible in prose)
+            clean_text = RoundEvaluatorResult.strip_verdict_block(critique_text)
+            parts.append(f'<evaluator_packet evaluator="{label}">')
+            parts.append(clean_text)
+            parts.append("</evaluator_packet>")
+            parts.append("")
+
+        parts.append("============================================================")
+        return "\n".join(parts)
+
+    @staticmethod
+    def build_task_plan_from_evaluator_verdict(
+        evaluator_result: "RoundEvaluatorResult",
+    ) -> list[dict]:
+        """Convert evaluator verdict improvements/preserve into a task_plan.
+
+        Returns a list in the same format as ``evaluate_proposed_improvements()``
+        output, ready for ``_write_inject_file()``.
+        """
+        if evaluator_result.verdict != "iterate" or not evaluator_result.improvements:
+            return []
+
+        task_plan: list[dict] = []
+
+        for imp in evaluator_result.improvements:
+            entry: dict = {
+                "type": "improve",
+                "criterion_id": imp.get("criterion_id", ""),
+                "criterion": imp.get("verification", ""),
+                "plan": imp.get("plan", ""),
+                "impact": imp.get("impact", "incremental"),
+                "sources": imp.get("sources", []),
+            }
+            detail = imp.get("detail", "")
+            if detail:
+                entry["detail"] = detail
+            task_plan.append(entry)
+
+        if evaluator_result.preserve:
+            task_plan.append(
+                {
+                    "type": "verify_preserve",
+                    "description": "Verify preserved strengths haven't regressed",
+                    "items": [
+                        {
+                            "criterion_id": p.get("criterion_id", ""),
+                            "what": p.get("what", ""),
+                            "source": p.get("source", ""),
+                        }
+                        for p in evaluator_result.preserve
+                    ],
+                },
+            )
+
+        return task_plan
 
     def _handle_round_evaluator_gate_failure(
         self,
@@ -10692,10 +10942,90 @@ Your answer:"""
                 },
             )
 
-        self._queue_round_start_context_block(
-            parent_agent_id,
-            self._format_round_evaluator_result_block(first_result.subagent_id, first_result),
+        # Check if skip_synthesis mode is enabled — when True, pass all raw
+        # critiques to the parent instead of using the synthesized single answer.
+        coord = getattr(self.config, "coordination_config", None)
+        skip_synthesis = bool(
+            coord and getattr(coord, "round_evaluator_skip_synthesis", False),
         )
+
+        all_eval_answers = None
+        use_multi_evaluator = False
+        if skip_synthesis:
+            all_eval_answers = self.extract_all_evaluator_answers(
+                log_path=first_result.log_path or "",
+                workspace_path=first_result.workspace_path or "",
+            )
+            use_multi_evaluator = bool(all_eval_answers and len(all_eval_answers) > 1)
+
+        # Auto-inject tasks from structured verdict block — only when we
+        # have a single merged answer (legacy/fallback path). With multiple
+        # raw critiques the parent must read all of them and decide itself.
+        auto_injected = False
+        if not use_multi_evaluator:
+            if evaluator_result.verdict == "iterate" and evaluator_result.improvements:
+                task_plan = self.build_task_plan_from_evaluator_verdict(evaluator_result)
+                if task_plan:
+                    self._write_planning_injection(parent_agent_id, task_plan)
+                    auto_injected = True
+                    logger.info(
+                        "[Orchestrator] Auto-injected %d tasks from evaluator verdict for %s",
+                        len(task_plan),
+                        parent_agent_id,
+                    )
+            elif evaluator_result.verdict == "converged":
+                logger.info(
+                    "[Orchestrator] Evaluator verdict: converged for %s",
+                    parent_agent_id,
+                )
+            elif evaluator_result.verdict is None:
+                logger.debug(
+                    "[Orchestrator] No verdict_block in evaluator packet for %s, " "using manual checklist flow",
+                    parent_agent_id,
+                )
+
+        if use_multi_evaluator:
+            logger.info(
+                "[Orchestrator] Multi-evaluator: injecting %d independent critiques for %s",
+                len(all_eval_answers),
+                parent_agent_id,
+            )
+            self._queue_round_start_context_block(
+                parent_agent_id,
+                self.format_multi_evaluator_result_block(
+                    all_eval_answers,
+                    auto_injected=False,  # Never auto-inject with multi-eval
+                ),
+            )
+
+            # Add evaluator workspaces as read-only context paths so the
+            # parent can browse artifacts (screenshots, scripts, etc.)
+            eval_ws_paths = self.extract_evaluator_workspace_paths(
+                first_result.log_path or "",
+            )
+            if eval_ws_paths:
+                parent_agent = self.agents.get(parent_agent_id)
+                if parent_agent and hasattr(parent_agent, "backend"):
+                    fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
+                    if fs_mgr:
+                        ppm = getattr(fs_mgr, "path_permission_manager", None)
+                        if ppm:
+                            ppm.add_context_paths([{"path": p, "permission": "read"} for p in eval_ws_paths])
+                            logger.info(
+                                "[Orchestrator] Added %d evaluator workspace paths as " "read-only context for %s",
+                                len(eval_ws_paths),
+                                parent_agent_id,
+                            )
+        else:
+            # Fallback: single answer — use existing flow
+            self._queue_round_start_context_block(
+                parent_agent_id,
+                self._format_round_evaluator_result_block(
+                    first_result.subagent_id,
+                    evaluator_result,
+                    auto_injected=auto_injected,
+                ),
+            )
 
         if emitter:
             emitter.emit_raw(

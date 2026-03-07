@@ -688,3 +688,126 @@ class TestPerAnswerAnalysis:
         assert "each existing answer" in content.lower() or "each answer" in content.lower()
         # Must ask about unique strengths per answer
         assert "uniquely well" in content.lower() or "does well" in content.lower()
+
+
+# ===========================================================================
+# Part E: Previous Answer as Reference Material, Not Starting Point
+# ===========================================================================
+
+
+class TestRefinementReframing:
+    """Previous answer is reference material, not a starting point.
+
+    Agents should feel free to rebuild or discard sections of prior work
+    rather than only patching/editing the existing deliverable.
+    """
+
+    def test_single_agent_decision_intro_reference_material(self):
+        """Single-agent _decision_intro frames prior work as reference, not starting point."""
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["E1 criterion", "E2 criterion"],
+            score_current_work_only=True,
+        )
+        assert "reference material" in prompt.lower()
+
+    def test_single_agent_decision_intro_rebuild_discard(self):
+        """Single-agent path mentions freedom to rebuild or discard sections."""
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["E1 criterion", "E2 criterion"],
+            score_current_work_only=True,
+        )
+        lower = prompt.lower()
+        assert "rebuild" in lower or "discard" in lower or "start fresh" in lower
+
+    def test_multi_agent_decision_intro_reference_material(self):
+        """Multi-agent _decision_intro frames prior answers as reference material."""
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["E1 criterion", "E2 criterion"],
+            score_current_work_only=False,
+        )
+        assert "reference material" in prompt.lower()
+
+    def test_multi_agent_decision_intro_rebuild_discard(self):
+        """Multi-agent path mentions freedom to rebuild or discard sections."""
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["E1 criterion", "E2 criterion"],
+            score_current_work_only=False,
+        )
+        lower = prompt.lower()
+        assert "rebuild" in lower or "discard" in lower or "start fresh" in lower
+
+
+class TestSubstantivenessRebuildExample:
+    """STRUCTURAL examples include rebuilding sections from scratch."""
+
+    def test_structural_definition_includes_rebuild(self):
+        """STRUCTURAL definition explicitly mentions rebuilding as an example."""
+        prompt = _build_checklist_gated_decision(
+            checklist_items=["E1 criterion"],
+        )
+        lower = prompt.lower()
+        # Find the STRUCTURAL section (between **STRUCTURAL** and **INCREMENTAL**)
+        structural_pos = lower.find("**structural**")
+        incremental_pos = lower.find("**incremental**")
+        structural_section = lower[structural_pos:incremental_pos]
+        assert "rebuild" in structural_section or "from scratch" in structural_section
+
+
+class TestTaskPlanDetail:
+    """Task plan entries carry detail from evaluator improvement specs."""
+
+    def test_task_plan_carries_detail_field(self):
+        """build_task_plan_from_evaluator_verdict includes detail when available."""
+        from massgen.orchestrator import Orchestrator
+        from massgen.subagent.models import RoundEvaluatorResult
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Replace hero section",
+                    "sources": ["agent1.1"],
+                    "impact": "structural",
+                    "verification": "Screenshot check",
+                    "detail": ("The hero section should show the product in action " "using a live demo preview, not just static text."),
+                },
+            ],
+            preserve=[],
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+        improve_tasks = [t for t in task_plan if t["type"] == "improve"]
+
+        assert len(improve_tasks) == 1
+        assert "detail" in improve_tasks[0]
+        assert "hero section should show the product" in improve_tasks[0]["detail"]
+
+    def test_task_plan_detail_absent_when_not_provided(self):
+        """detail field is empty string when not in improvement."""
+        from massgen.orchestrator import Orchestrator
+        from massgen.subagent.models import RoundEvaluatorResult
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Replace hero section",
+                    "sources": ["agent1.1"],
+                    "impact": "structural",
+                    "verification": "Screenshot check",
+                },
+            ],
+            preserve=[],
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+        improve_tasks = [t for t in task_plan if t["type"] == "improve"]
+        assert improve_tasks[0].get("detail", "") == ""

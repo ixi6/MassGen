@@ -886,18 +886,20 @@ Generate evaluation criteria now for the task above."""
             simplified = []
             for i, config in enumerate(agent_configs):
                 backend = config.get("backend", {})
+                backend_cfg: dict = {
+                    "type": backend.get("type", "openai"),
+                    "model": backend.get("model"),
+                    "enable_mcp_command_line": False,
+                    "enable_code_based_tools": False,
+                    # Without command-line MCP execution, keep file-operation MCPs available.
+                    "exclude_file_operation_mcps": False,
+                }
+                if backend.get("base_url"):
+                    backend_cfg["base_url"] = backend["base_url"]
                 simplified.append(
                     {
                         "id": config.get("id", f"criteria_agent_{i}"),
-                        "backend": {
-                            "type": backend.get("type", "openai"),
-                            "model": backend.get("model"),
-                            "base_url": backend.get("base_url"),
-                            "enable_mcp_command_line": False,
-                            "enable_code_based_tools": False,
-                            # Without command-line MCP execution, keep file-operation MCPs available.
-                            "exclude_file_operation_mcps": False,
-                        },
+                        "backend": backend_cfg,
                     },
                 )
 

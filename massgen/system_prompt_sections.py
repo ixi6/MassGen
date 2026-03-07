@@ -611,8 +611,10 @@ def _build_checklist_decision(
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
 - `{iterate_action}`: build a new answer, drawing the strongest elements from
-  each existing answer. Identify what each answer does well before you start —
-  do not anchor to any single answer as your base.
+  each existing answer. Existing answers are **reference material**, not starting
+  points — you are free to rebuild or discard entire sections rather than patching
+  what exists. Identify what each answer does well before you start — do not anchor
+  to any single answer as your base.
 - `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
@@ -681,8 +683,10 @@ def _build_checklist_scored_decision(
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
 - `{iterate_action}`: build a new answer, drawing the strongest elements from
-  each existing answer. Identify what each answer does well before you start —
-  do not anchor to any single answer as your base.
+  each existing answer. Existing answers are **reference material**, not starting
+  points — you are free to rebuild or discard entire sections rather than patching
+  what exists. Identify what each answer does well before you start — do not anchor
+  to any single answer as your base.
 - `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
@@ -938,6 +942,10 @@ def _build_checklist_gated_decision(
     if score_current_work_only:
         _decision_intro = (
             f"- `{iterate_action}`: improve your current work against the criteria. "
+            "Your previous answer is **reference material**, not a starting point — "
+            "you are free to rebuild, discard, or replace entire sections if the "
+            "evaluator's critique calls for it. Do not limit yourself to patching "
+            "what exists. "
             "Use useful ideas from other agents for adjacent integration, but score "
             "your own current work rather than ranking peers.\n"
             f"- `{terminate_action}`: stop only when your current work already clears "
@@ -979,8 +987,10 @@ Use this to fill in the `sources` and `preserve` fields accurately."""
     else:
         _decision_intro = (
             f"- `{iterate_action}`: build a new answer, drawing the strongest elements from\n"
-            "  each existing answer. Identify what each answer does well before you start —\n"
-            "  do not anchor to any single answer as your base.\n"
+            "  each existing answer. Existing answers are **reference material**, not starting\n"
+            "  points — you are free to rebuild, discard, or replace entire sections rather\n"
+            "  than patching what exists. Identify what each answer does well before you\n"
+            "  start, but do not anchor to any single answer as your base.\n"
             f"- `{terminate_action}`: select the answer with the strongest overall scores and stop."
         )
         _submit_scores_intro = "Call `submit_checklist` with per-item reasoning and a report path."
@@ -1065,19 +1075,44 @@ include:
 - `verification_plan` — concrete post-implementation checks
 - `evidence_gaps` — what uncertainty still remains
 
-Use that critique packet as the **sole diagnostic basis** for your scores when
-you call `submit_checklist`. Your scores MUST reflect the evaluator's findings.
-Save or copy that round-evaluator report into your workspace and use it as the
-diagnostic report you pass via `report_path`.
+You may receive **multiple independent critiques** (each in a separate
+`<evaluator_packet>` tag) rather than a single merged packet. When this
+happens YOU must synthesize them into one action plan:
+- Read ALL critiques — each evaluator catches different issues.
+- For each criterion, adopt the **harshest (lowest) score** across evaluators.
+- Collect ALL unique concrete findings — even if only one evaluator found it.
+- When multiple evaluators flag the **same issue**, merge into one finding:
+  keep the most specific description, the harshest severity, and combine any
+  distinct remediation steps or evidence.
+- Build one unified improvement plan from the combined findings.
+- Do NOT discard findings just because other evaluators missed them.
+- Do NOT average scores — use the worst per criterion.
+You will also have read-only access to evaluator workspaces so you can
+browse any artifacts they produced (screenshots, test scripts, etc.).
+If any critique is short or references a workspace file (e.g., "refer to
+critique_packet.md in my workspace"), browse that evaluator's workspace to
+read the full report. Do NOT skip a thin answer.
+
+**When the evaluator auto-injected tasks** (you will see "tasks have been
+auto-injected into your task plan" in the evaluator result header): the
+evaluator has already scored your work, decided iteration is needed, and
+populated your task plan with specific improvement tasks. Call `get_task_plan`
+to see them and start implementing immediately. Do NOT call `submit_checklist`
+or `propose_improvements` — this has been handled automatically. After
+implementing all tasks, call `new_answer` to submit your improved work.
+
+**When no auto-injection occurred** (you will see instructions about
+`submit_checklist` in the evaluator result header): use the critique packet(s)
+as the sole diagnostic basis for your scores when you call `submit_checklist`.
+Your scores MUST reflect the evaluator's findings. Save or copy the
+round-evaluator report(s) into your workspace and use as the diagnostic report
+you pass via `report_path`. If iteration is required, translate the critique(s)
+into your own `propose_improvements` call and use `improvement_spec` as the
+richer build brief while implementing.
+
 Do not run a separate self-evaluation pass, fresh interactive verification
 sweep, or second report-writing cycle unless the packet's `evidence_gaps`
 identify a concrete missing fact that blocks grounded checklist submission.
-The round evaluator is not a workflow proxy and does not decide your parent
-workflow for you.
-
-If iteration is required, translate the critique into your own
-`propose_improvements` call and use `improvement_spec` as the richer build brief
-while implementing.
 
 If no specialized subagents are available: do all evidence gathering and
 qualitative analysis inline, but keep the same parent-owned checklist flow.
@@ -1147,7 +1182,8 @@ Classify each planned change as:
   experience) counts as structural even when keeping the same theme, approach, or structure.
   *Quick test: would a demanding user say "much better"? → structural. "Nice touch, barely
   noticed"? → incremental.*
-  Examples: adding real-time collaboration to a single-user editor, introducing a caching
+  Examples: rebuilding a section from scratch because the current version cannot be fixed
+  incrementally, adding real-time collaboration to a single-user editor, introducing a caching
   layer that changes perceived performance, redesigning navigation to support a new workflow,
   adding offline support, building a new visualization that reveals patterns previously hidden,
   a rewrite that is dramatically more vivid, persuasive, or correct than the prior version.

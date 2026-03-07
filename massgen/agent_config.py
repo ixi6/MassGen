@@ -210,6 +210,7 @@ class CoordinationConfig:
     subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
     round_evaluator_before_checklist: bool = False  # Round 2+ must run round_evaluator before checklist submit
     orchestrator_managed_round_evaluator: bool = False  # Gate orchestrator-owned round_evaluator launch; default prompt-guidance only
+    round_evaluator_skip_synthesis: bool = False  # Skip synthesis stage; pass all raw critiques to parent directly
     enable_quality_rethink_on_iteration: bool = False  # Auto-inject quality_rethinking spawn task on iteration 2+
     enable_novelty_on_iteration: bool = False  # Auto-inject novelty/quality spawn task on iteration 2+
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"

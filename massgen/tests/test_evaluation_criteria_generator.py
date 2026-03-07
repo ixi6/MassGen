@@ -547,3 +547,51 @@ async def test_subagent_criteria_generation_keeps_file_operation_mcps_when_comma
     backend = captured["parent_agent_configs"][0]["backend"]
     assert backend["enable_mcp_command_line"] is False
     assert backend["exclude_file_operation_mcps"] is False
+
+
+@pytest.mark.asyncio
+async def test_subagent_criteria_generation_omits_null_base_url_for_claude_code(monkeypatch, tmp_path):
+    """base_url: null must not appear in simplified configs — claude_code rejects it."""
+    captured = {}
+
+    class _FakeSubagentManager:
+        def __init__(self, *args, **kwargs):
+            captured["parent_agent_configs"] = kwargs.get("parent_agent_configs")
+
+        async def spawn_subagent(self, **kwargs):
+            return SimpleNamespace(
+                success=True,
+                answer=json.dumps(
+                    {
+                        "criteria": [
+                            {"text": "Goal alignment", "category": "must"},
+                            {"text": "No defects", "category": "must"},
+                            {"text": "Depth and completeness", "category": "should"},
+                            {"text": "Intentional craft", "category": "should"},
+                        ],
+                    },
+                ),
+                error=None,
+                workspace_path=None,
+            )
+
+        def get_subagent_display_data(self, _subagent_id):
+            return None
+
+    monkeypatch.setattr("massgen.subagent.manager.SubagentManager", _FakeSubagentManager)
+
+    generator = EvaluationCriteriaGenerator()
+    criteria = await generator.generate_criteria_via_subagent(
+        task="Test task",
+        agent_configs=[{"id": "parent", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}}],
+        has_changedoc=False,
+        parent_workspace=str(tmp_path),
+        log_directory=None,
+        orchestrator_id="orch_test",
+        min_criteria=4,
+        max_criteria=7,
+    )
+
+    assert len(criteria) >= 4
+    backend = captured["parent_agent_configs"][0]["backend"]
+    assert "base_url" not in backend, "base_url: null leaked into claude_code simplified config"

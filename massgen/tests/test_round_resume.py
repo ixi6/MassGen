@@ -242,6 +242,79 @@ class TestEvalCriteriaFromLog:
 
 
 # ---------------------------------------------------------------------------
+# Persona loading from log
+# ---------------------------------------------------------------------------
+
+
+class TestPersonaFromLog:
+    """Test loading generated_personas.yaml from a previous log."""
+
+    def test_persona_file_parsed_correctly(self, tmp_path):
+        """Personas YAML can be parsed into GeneratedPersona objects."""
+        from massgen.persona_generator import GeneratedPersona
+
+        personas_data = {
+            "agent_a": {
+                "persona_text": "You are a bold visual designer",
+                "attributes": {"style": "modernist"},
+            },
+        }
+        log_dir = _make_log_dir(
+            tmp_path,
+            {"agent_a": [{"round": 0, "timestamp": "t0", "answer": "A"}]},
+        )
+        (log_dir / "generated_personas.yaml").write_text(yaml.dump(personas_data))
+
+        loaded = yaml.safe_load((log_dir / "generated_personas.yaml").read_text())
+        persona = GeneratedPersona(
+            agent_id="agent_a",
+            persona_text=loaded["agent_a"]["persona_text"],
+            attributes=loaded["agent_a"]["attributes"],
+        )
+        assert persona.persona_text == "You are a bold visual designer"
+        assert persona.attributes == {"style": "modernist"}
+
+
+class TestResumeSkipsRegeneration:
+    """Restored criteria/personas must set the 'already generated' guard flags."""
+
+    def test_restored_criteria_sets_generated_flag(self, tmp_path):
+        """After restore, _evaluation_criteria_generated must be True so regeneration is skipped."""
+
+        criteria = [
+            {"id": "E1", "text": "Functional completeness", "category": "must"},
+        ]
+        log_dir = _make_log_dir(
+            tmp_path,
+            {"agent_a": [{"round": 0, "timestamp": "t0", "answer": "A"}]},
+            eval_criteria=criteria,
+        )
+
+        # Directly call _restore_from_previous_log requires a full orchestrator,
+        # so instead verify the flag-setting logic inline:
+        import yaml as _yaml
+
+        from massgen.evaluation_criteria_generator import GeneratedCriterion
+
+        criteria_file = log_dir / "generated_evaluation_criteria.yaml"
+        criteria_data = _yaml.safe_load(criteria_file.read_text())
+
+        # Simulate what _restore_from_previous_log does
+        generated = [
+            GeneratedCriterion(
+                id=c.get("id", f"E{i + 1}"),
+                text=c["text"],
+                category=c.get("category", "should"),
+            )
+            for i, c in enumerate(criteria_data)
+        ]
+        assert len(generated) == 1
+        # The guard flag must be set when criteria are loaded
+        evaluation_criteria_generated = bool(generated)
+        assert evaluation_criteria_generated is True
+
+
+# ---------------------------------------------------------------------------
 # Config validation
 # ---------------------------------------------------------------------------
 

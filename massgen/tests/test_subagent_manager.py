@@ -1611,7 +1611,7 @@ class TestSubagentConfigInheritance:
         assert mock_spawn.await_args.kwargs["subagent_type"] == "round_evaluator"
 
     def test_round_evaluator_child_yaml_omits_checklist_settings_and_mounts_temp_root(self, tmp_path):
-        """round_evaluator child YAML should keep presenter-stage synthesis, omit checklist settings, and mount temp roots."""
+        """round_evaluator child YAML should omit checklist settings and mount temp roots."""
         from massgen.subagent.manager import SubagentManager
 
         parent_workspace = tmp_path / "workspace"
@@ -1660,6 +1660,7 @@ class TestSubagentConfigInheritance:
         assert "voting_threshold" not in orchestrator_cfg
         assert "checklist_require_gap_report" not in orchestrator_cfg
         assert "gap_report_mode" not in orchestrator_cfg
+        # Default mode: synthesize (no skip_synthesis flag)
         assert orchestrator_cfg["final_answer_strategy"] == "synthesize"
         assert orchestrator_cfg["skip_final_presentation"] is False
         assert str(temp_root.resolve()) in path_set
@@ -1840,8 +1841,8 @@ class TestRoundEvaluatorConfigEnforcement:
         assert backend_cfg["command_line_docker_enable_sudo"] is True
         assert backend_cfg["command_line_docker_credentials"] == {"env_file": ".env"}
 
-    def test_round_evaluator_multi_agent_enforces_synthesize(self, tmp_path):
-        """Multi-agent round_evaluator must always use final_answer_strategy=synthesize."""
+    def test_round_evaluator_multi_agent_skips_synthesis_when_flag_set(self, tmp_path):
+        """round_evaluator with skip_synthesis=True skips voting and presentation."""
         from massgen.subagent.manager import SubagentManager
 
         parent_workspace = tmp_path / "workspace"
@@ -1860,9 +1861,50 @@ class TestRoundEvaluatorConfigEnforcement:
                     {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
                     {"id": "eval_b", "backend": {"type": "gemini", "model": "gemini-3.1-pro-preview"}},
                 ],
-                # Intentionally set to non-synthesize to verify override
                 final_answer_strategy="winner_reuse",
             ),
+            parent_coordination_config={
+                "round_evaluator_skip_synthesis": True,
+            },
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate.",
+            parent_agent_id="parent-agent",
+            subagent_id="eval-synth-test",
+            metadata={"refine": False, "subagent_type": "round_evaluator"},
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        orch_cfg = yaml_config["orchestrator"]
+
+        assert orch_cfg["max_new_answers_per_agent"] == 1
+        assert orch_cfg["skip_final_presentation"] is True
+        assert orch_cfg["skip_voting"] is True
+
+    def test_round_evaluator_multi_agent_synthesizes_by_default(self, tmp_path):
+        """round_evaluator without skip_synthesis uses synthesize + presenter stage."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "parent", "backend": {"type": "codex", "model": "gpt-5.4"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "gemini", "model": "gemini-3.1-pro-preview"}},
+                ],
+                final_answer_strategy="winner_reuse",
+            ),
+            # No round_evaluator_skip_synthesis — defaults to False
         )
 
         config = SubagentConfig.create(
@@ -1876,7 +1918,6 @@ class TestRoundEvaluatorConfigEnforcement:
         orch_cfg = yaml_config["orchestrator"]
 
         assert orch_cfg["final_answer_strategy"] == "synthesize"
-        assert orch_cfg["max_new_answers_per_agent"] == 1
         assert orch_cfg["skip_final_presentation"] is False
 
 

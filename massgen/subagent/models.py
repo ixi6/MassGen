@@ -5,11 +5,15 @@ Provides dataclasses for configuring, tracking, and returning results from subag
 """
 
 import json
+import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 # Subagent timeout defaults (in seconds)
 # These are defaults; actual min/max are configurable via YAML
@@ -578,6 +582,11 @@ class RoundEvaluatorResult:
 
     The parent receives this from the evaluator stage and uses ``packet_text``
     as the sole diagnostic basis for ``submit_checklist``.
+
+    When the evaluator emits a structured ``verdict_block`` JSON section,
+    the orchestrator can auto-inject improvement tasks into the parent's
+    planning system without requiring the parent to manually call
+    ``submit_checklist`` and ``propose_improvements``.
     """
 
     packet_text: str | None = None
@@ -587,6 +596,42 @@ class RoundEvaluatorResult:
     error: str | None = None
     subagent_id: str = ""
     log_path: str | None = None
+    # Structured verdict fields (populated from verdict_block JSON)
+    verdict: str | None = None  # "iterate" | "converged"
+    scores: dict[str, int] | None = None
+    improvements: list[dict] | None = None
+    preserve: list[dict] | None = None
+    clean_packet_text: str | None = None  # packet_text with verdict_block stripped
+
+    _VERDICT_BLOCK_RE = re.compile(
+        r"(?:```|~~~)json\s+verdict_block\s*\n(.*?)\n(?:```|~~~)",
+        re.DOTALL,
+    )
+
+    @staticmethod
+    def parse_verdict_block(packet_text: str) -> dict | None:
+        """Extract and parse a structured verdict_block from critique text.
+
+        Returns the parsed dict if a valid verdict_block is found with the
+        required ``verdict`` key, otherwise returns None.
+        """
+        match = RoundEvaluatorResult._VERDICT_BLOCK_RE.search(packet_text)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(1))
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("[RoundEvaluatorResult] Malformed JSON in verdict_block, falling back to manual flow")
+            return None
+        if not isinstance(data, dict) or "verdict" not in data:
+            logger.warning("[RoundEvaluatorResult] verdict_block missing required 'verdict' key")
+            return None
+        return data
+
+    @staticmethod
+    def strip_verdict_block(packet_text: str) -> str:
+        """Return packet_text with the verdict_block fence removed."""
+        return RoundEvaluatorResult._VERDICT_BLOCK_RE.sub("", packet_text).strip()
 
     @classmethod
     def from_subagent_result(
@@ -596,6 +641,18 @@ class RoundEvaluatorResult:
     ) -> "RoundEvaluatorResult":
         """Build from a raw ``SubagentResult``."""
         if result.answer:
+            verdict_data = cls.parse_verdict_block(result.answer)
+            verdict = None
+            scores = None
+            improvements = None
+            preserve = None
+            clean_text = None
+            if verdict_data:
+                verdict = verdict_data.get("verdict")
+                scores = verdict_data.get("scores")
+                improvements = verdict_data.get("improvements")
+                preserve = verdict_data.get("preserve")
+                clean_text = cls.strip_verdict_block(result.answer)
             return cls(
                 packet_text=result.answer,
                 status="success",
@@ -603,6 +660,11 @@ class RoundEvaluatorResult:
                 execution_time_seconds=elapsed or result.execution_time_seconds,
                 subagent_id=result.subagent_id,
                 log_path=result.log_path,
+                verdict=verdict,
+                scores=scores,
+                improvements=improvements,
+                preserve=preserve,
+                clean_packet_text=clean_text,
             )
         return cls(
             status="degraded",
@@ -623,6 +685,11 @@ class RoundEvaluatorResult:
             "error": self.error,
             "subagent_id": self.subagent_id,
             "log_path": self.log_path,
+            "verdict": self.verdict,
+            "scores": self.scores,
+            "improvements": self.improvements,
+            "preserve": self.preserve,
+            "clean_packet_text": self.clean_packet_text,
         }
 
     @classmethod
@@ -636,6 +703,11 @@ class RoundEvaluatorResult:
             error=data.get("error"),
             subagent_id=data.get("subagent_id", ""),
             log_path=data.get("log_path"),
+            verdict=data.get("verdict"),
+            scores=data.get("scores"),
+            improvements=data.get("improvements"),
+            preserve=data.get("preserve"),
+            clean_packet_text=data.get("clean_packet_text"),
         )
 
 

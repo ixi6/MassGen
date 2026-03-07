@@ -81,7 +81,7 @@ def test_config_validator_rejects_orchestrator_managed_round_evaluator_without_p
     assert any("orchestrator_managed_round_evaluator" in e.location for e in result.errors)
 
 
-def test_config_validator_rejects_round_evaluator_loop_for_multi_parent_runs():
+def test_config_validator_accepts_round_evaluator_loop_for_multi_parent_runs():
     config = _make_round_evaluator_config()
     config["agents"].append(
         {
@@ -92,7 +92,7 @@ def test_config_validator_rejects_round_evaluator_loop_for_multi_parent_runs():
 
     result = ConfigValidator().validate_config(config)
 
-    assert any("single-parent" in e.message.lower() for e in result.errors)
+    assert result.is_valid(), result.format_errors()
 
 
 def test_config_validator_rejects_round_evaluator_loop_without_subagent_support():

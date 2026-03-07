@@ -180,3 +180,70 @@ def test_subagent_effective_child_team_uses_shared_common_and_parent_local_sourc
 
     assert [agent["id"] for agent in yaml_a["agents"]] == ["shared_eval", "a_local"]
     assert [agent["id"] for agent in yaml_b["agents"]] == ["shared_eval", "b_local"]
+
+
+def test_runtime_injected_keys_excluded_from_inherited_backend(tmp_path: Path):
+    """Runtime-injected keys like agent_id must not leak into inherited subagent configs.
+
+    When the CLI injects agent_id, instance_id, etc. into parent backend dicts
+    at startup, the passthrough loop in _generate_subagent_yaml_config must
+    exclude them.  Otherwise create_backend() receives agent_id twice and raises
+    "got multiple values for keyword argument 'agent_id'".
+    """
+    run_root = tmp_path / "run_root"
+    run_root.mkdir(parents=True, exist_ok=True)
+
+    # Simulate a parent backend dict that has runtime-injected keys
+    parent_agent_configs = [
+        {
+            "id": "agent_a",
+            "backend": {
+                "type": "codex",
+                "model": "gpt-5.4",
+                "reasoning": {"effort": "medium"},
+                # These are injected by the CLI at startup, not user config
+                "agent_id": "agent_a",
+                "instance_id": "abc12345",
+                "filesystem_session_id": "session_20260307_110221",
+                "session_storage_base": ".massgen/sessions",
+                "agent_temporary_workspace": ".massgen/temp_workspaces/log_123",
+                "enable_rate_limit": False,
+                "write_mode": "auto",
+            },
+        },
+    ]
+
+    workspace = run_root / "agent_a_workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    manager = _build_manager(
+        workspace=workspace,
+        parent_agent_id="agent_a",
+        parent_agent_configs=parent_agent_configs,
+    )
+
+    sub_cfg = SubagentConfig.create(
+        task="Evaluate draft",
+        parent_agent_id="agent_a",
+        subagent_id="round_eval_r2",
+    )
+
+    sub_ws = manager._create_workspace(sub_cfg.id)
+    yaml_cfg = manager._generate_subagent_yaml_config(sub_cfg, sub_ws, context_paths=[])
+
+    backend = yaml_cfg["agents"][0]["backend"]
+
+    # These runtime keys must NOT appear in the generated subagent backend
+    assert "agent_id" not in backend, "agent_id leaked into subagent backend config"
+    assert "instance_id" not in backend, "instance_id leaked into subagent backend config"
+    assert "filesystem_session_id" not in backend
+    assert "session_storage_base" not in backend
+    assert "agent_temporary_workspace" not in backend
+
+    # But user-level settings should still pass through
+    assert backend["type"] == "codex"
+    assert backend["model"] == "gpt-5.4"
+    assert backend["reasoning"] == {"effort": "medium"}
+    # enable_rate_limit and write_mode are non-excluded passthrough keys
+    assert backend.get("enable_rate_limit") is False
+    assert backend.get("write_mode") == "auto"

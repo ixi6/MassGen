@@ -1805,12 +1805,6 @@ class ConfigValidator:
                             "orchestrator.coordination.round_evaluator_before_checklist",
                             "Set orchestrator.voting_sensitivity: checklist_gated",
                         )
-                    if len(agents) != 1:
-                        result.add_error(
-                            "round_evaluator_before_checklist is currently supported only for single-parent top-level runs",
-                            "orchestrator.coordination.round_evaluator_before_checklist",
-                            "Use exactly one top-level agent for this v1 mode",
-                        )
                     if coordination.get("enable_subagents") is not True:
                         result.add_error(
                             "round_evaluator_before_checklist requires enable_subagents: true",

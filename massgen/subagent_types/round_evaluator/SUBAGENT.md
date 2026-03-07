@@ -95,6 +95,12 @@ Explain:
 - what no answer gets right yet
 - what combination would clearly beat every current candidate
 
+**Synthesis quality rule**: when multiple evaluators flag the same issue, keep
+the most concrete and actionable version — do not abstract specific findings
+into vague generalizations. When evaluators overlap on a topic,
+combine them intelligently: preserve the most specific directive and merge in
+any unique details from others.
+
 ### `preserve`
 
 List the exact ideas, implementation choices, visual treatments, arguments, or
@@ -130,6 +136,61 @@ Spell out the concrete checks the parent should rerun after implementation.
 List any missing evidence or unresolved uncertainty that prevented a stronger
 critique.
 
+### `verdict_block`
+
+After all other sections, emit a fenced JSON block tagged `verdict_block`.
+This block is **machine-parsed** by the orchestrator to auto-inject
+improvement tasks into the parent's planning system.
+
+````
+```json verdict_block
+{
+  "verdict": "iterate",
+  "scores": {
+    "E1": 4,
+    "E2": 7,
+    "E3": 8,
+    "E4": 3
+  },
+  "improvements": [
+    {
+      "criterion_id": "E1",
+      "plan": "Replace generic dark-mode orb hero with product-specific cognitive map visualization",
+      "detail": "The hero currently uses a generic particle animation that could belong to any AI product. Replace it with an interactive cognitive map that visualizes the product's knowledge graph — nodes represent domains, edges represent cross-domain connections. On load, animate 3-4 domains lighting up and connecting. This directly reinforces the product's 'Cognitive Resonance' identity instead of generic dark-mode aesthetics.",
+      "sources": ["agent1.1"],
+      "impact": "structural",
+      "verification": "read_media screenshot shows distinct product visualization, not generic particles"
+    }
+  ],
+  "preserve": [
+    {
+      "criterion_id": "E1",
+      "what": "Three-color brand palette (cyan, purple, gold)",
+      "source": "agent1.1"
+    }
+  ]
+}
+```
+````
+
+Rules:
+- `verdict`: `"iterate"` when improvements are needed, `"converged"` when the
+  quality bar is genuinely met across all criteria
+- `scores`: one entry per criterion ID (e.g. `E1`, `E2`), integer 1–10
+- `improvements`: one entry per failing or weak criterion
+  - `impact` must be `"incremental"`, `"structural"`, or `"transformative"`
+  - `plan` should be specific and actionable — a builder handoff, not vague advice
+  - `detail` (optional but strongly encouraged for structural/transformative changes):
+    the full implementation brief for this improvement — what's wrong with the current
+    version, what the improved version should look like, and why incremental edits won't
+    suffice. This text is injected directly into the parent's task plan, so make it
+    detailed enough to drive implementation without re-reading the full critique.
+  - `verification` describes how to confirm the fix worked
+- `preserve`: elements that must survive into the next revision
+- Emit valid JSON — the orchestrator parses this programmatically
+- Default to `"iterate"` unless the evidence clearly supports convergence
+- The rest of your critique packet remains human-readable markdown above this block
+
 ## Evaluation expectations
 
 - Evaluate **all candidate answers together**, not one at a time in isolation.
@@ -138,11 +199,13 @@ critique.
 - When relevant, inspect artifacts directly, compare visuals side by side, and run checks.
 - If only one answer exists, still critique it against the full quality bar rather than defaulting to approval.
 
-If you need fresh evidence:
+### Reuse existing verification evidence
 
-- run the requested checks directly
-- compare visual outputs side by side when applicable
-- keep observations factual and cite the evidence you used
+The parent agent writes `memory/short_term/verification_latest.md` with a
+replayable verification summary — including artifact paths, commands used, and
+coverage gaps. Check for this file in the temp workspace first and reuse the
+existing evidence instead of re-running verification from scratch.
+Only run new checks when the existing evidence doesn't cover what you need.
 
 ## Deliverable / output format
 
@@ -164,7 +227,8 @@ generic advice.
 
 ## Do not
 
-- Do not produce numeric ratings or pass/fail tables.
+- Do not produce numeric ratings or pass/fail tables in the prose sections
+  (scores belong only inside the `verdict_block` JSON).
 - Do not draft checklist tool arguments.
 - Do not predict terminal outcomes.
 - Do not recommend stopping just because the work is decent.

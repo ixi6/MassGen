@@ -1888,6 +1888,16 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     "model",
                     "enable_mcp_command_line",
                     "command_line_execution_mode",
+                    # Runtime-injected keys that must not leak from parent
+                    # to child configs (they are re-computed by the CLI for
+                    # each subagent run).  `agent_id` in particular causes
+                    # "got multiple values for keyword argument 'agent_id'"
+                    # in create_backend() when it is also passed explicitly.
+                    "agent_id",
+                    "instance_id",
+                    "filesystem_session_id",
+                    "session_storage_base",
+                    "agent_temporary_workspace",
                 }
                 for setting, value in source_backend.items():
                     if setting in passthrough_exclusions:
@@ -1983,14 +1993,22 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 orchestrator_config["defer_voting_until_all_answered"] = True
                 if "final_answer_strategy" not in orchestrator_config:
                     orchestrator_config["final_answer_strategy"] = "synthesize"
-                # round_evaluator must always synthesize: zero vote rounds,
-                # each evaluator produces one critique, presenter merges.
-                if is_round_evaluator:
+                # round_evaluator: optionally skip synthesis so the parent
+                # reads all raw critiques directly (no lossy merge step).
+                skip_synthesis = self._parent_coordination_config.get(
+                    "round_evaluator_skip_synthesis",
+                    False,
+                )
+                if is_round_evaluator and skip_synthesis:
+                    orchestrator_config["skip_final_presentation"] = True
+                    orchestrator_config["skip_voting"] = True
+                elif is_round_evaluator:
+                    # Synthesize mode: presenter merges all critiques
                     orchestrator_config["final_answer_strategy"] = "synthesize"
-                effective_final_answer_strategy = orchestrator_config.get("final_answer_strategy")
-                # round_evaluator packets are expected to come from an explicit
-                # presenter-stage merge when child synthesis/presentation is enabled.
-                orchestrator_config["skip_final_presentation"] = not (is_round_evaluator and effective_final_answer_strategy in {"winner_present", "synthesize"})
+                    orchestrator_config["skip_final_presentation"] = False
+                else:
+                    # Non-round-evaluator multi-agent quick subagents skip presentation
+                    orchestrator_config["skip_final_presentation"] = True
 
         # Merge context paths: parent context paths + task-specific context paths
         # Parent context paths are always read-only (subagents can read the codebase)

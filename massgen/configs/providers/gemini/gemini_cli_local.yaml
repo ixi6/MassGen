@@ -1,0 +1,9 @@
+#uv run massgen --config "massgen/configs/providers/gemini/gemini_cli_local.yaml" "whats the deep learning about?"
+agents:
+- id: agent_a
+  backend:
+    type: gemini_cli
+    model: gemini-3-flash-preview
+ui:
+  display_type: textual_terminal
+  logging_enabled: true

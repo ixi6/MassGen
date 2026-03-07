@@ -62,6 +62,7 @@ from .backend.claude_code import ClaudeCodeBackend
 from .backend.codex import CodexBackend
 from .backend.copilot import CopilotBackend
 from .backend.gemini import GeminiBackend
+from .backend.gemini_cli import GeminiCLIBackend
 from .backend.grok import GrokBackend
 from .backend.inference import InferenceBackend
 from .backend.lmstudio import LMStudioBackend
@@ -2087,6 +2088,13 @@ def create_backend(backend_type: str, **kwargs) -> Any:
 
         return CodexBackend(**kwargs)
 
+    elif backend_type == "gemini_cli":
+        # GeminiCLIBackend using Google Gemini CLI subprocess wrapper
+        # Authentication: CLI login (gemini) or GOOGLE_API_KEY/GEMINI_API_KEY
+        # Requires: npm install -g @google/gemini-cli
+
+        return GeminiCLIBackend(**kwargs)
+
     elif backend_type == "azure_openai":
         api_key = kwargs.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY")
         endpoint = kwargs.get("base_url") or os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -2351,6 +2359,8 @@ def create_agents_from_config(
             agent_config = AgentConfig.create_sglang_config(**backend_params)
         elif backend_type_lower == "claude_code":
             agent_config = AgentConfig.create_claude_code_config(**backend_params)
+        elif backend_type_lower == "gemini_cli":
+            agent_config = AgentConfig(backend_params=backend_params)
         elif backend_type_lower == "copilot":
             # Copilot maps to standard Config with minimal params?
             # Or dedicated config if needed. For now standard.
@@ -2407,6 +2417,7 @@ def create_agents_from_config(
                 "claude": "anthropic",
                 "google": "google",
                 "gemini": "google",
+                "gemini_cli": "google",
             }
             provider = provider_map.get(backend_type_lower, backend_type_lower)
 
@@ -10229,6 +10240,7 @@ Environment Variables:
             "chatcompletion",
             "claude",
             "gemini",
+            "gemini_cli",
             "grok",
             "openai",
             "azure_openai",

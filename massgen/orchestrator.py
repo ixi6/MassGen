@@ -12029,13 +12029,17 @@ Your answer:"""
                     elif chunk_type == "error":
                         # Stream error information to user interface
                         error_msg = getattr(chunk, "error", str(chunk.content)) if hasattr(chunk, "error") else str(chunk.content)
-                        yield ("content", f"❌ Error: {error_msg}\n")
+                        is_fatal_backend_error = getattr(chunk, "status", None) == "fatal"
+                        if is_fatal_backend_error:
+                            yield ("error", error_msg)
+                        else:
+                            yield ("content", f"❌ Error: {error_msg}\n")
 
                         # Track API/streaming error in reliability metrics
                         buffer_preview, buffer_chars = self._get_buffer_content(agent)
                         self.coordination_tracker.track_enforcement_event(
                             agent_id=agent_id,
-                            reason="api_error",
+                            reason="fatal_api_error" if is_fatal_backend_error else "api_error",
                             attempt=attempt + 1,
                             max_attempts=max_attempts,
                             tool_calls=[],
@@ -12043,6 +12047,9 @@ Your answer:"""
                             buffer_preview=buffer_preview,
                             buffer_chars=buffer_chars,
                         )
+                        if is_fatal_backend_error:
+                            yield ("done", None)
+                            return
                     elif chunk_type == "incomplete_response_recovery":
                         # Handle incomplete response recovery - API stream ended early
                         # Buffer content is preserved in chunk.content

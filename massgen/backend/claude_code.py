@@ -1857,6 +1857,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         servers_to_use = self._get_background_mcp_servers()
         if not servers_to_use:
             self._background_mcp_initialized = True
+            self._background_mcp_init_error = None
             return None
 
         try:
@@ -1865,14 +1866,16 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
                 allowed_tools=getattr(self, "allowed_tools", None),
                 exclude_tools=getattr(self, "exclude_tools", None),
                 circuit_breaker=getattr(self, "_mcp_tools_circuit_breaker", None),
-                timeout_seconds=400,
+                timeout_seconds=1800,  # Must exceed subagent_default_timeout for blocking spawn_subagents
                 backend_name=self.get_provider_name(),
                 agent_id=getattr(self, "agent_id", None),
             )
             self._background_mcp_initialized = True
+            self._background_mcp_init_error = None
             return self._background_mcp_client
         except Exception as e:  # noqa: BLE001
             self._background_mcp_initialized = True
+            self._background_mcp_init_error = str(e)
             logger.warning(
                 "[ClaudeCodeBackend] Failed to initialize background MCP client: %s",
                 e,

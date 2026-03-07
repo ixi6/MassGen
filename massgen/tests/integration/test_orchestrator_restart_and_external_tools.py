@@ -417,28 +417,31 @@ async def test_stream_agent_execution_inserts_round_evaluator_context_before_cur
     mock_orchestrator,
 ):
     """Orchestrator-provided round-evaluator artifacts should be surfaced in the next round's user message."""
-    from massgen.subagent.models import SubagentResult
+    from massgen.subagent.models import RoundEvaluatorResult, SubagentResult
 
     orchestrator = mock_orchestrator(num_agents=1)
     orchestrator.current_task = "Revise the draft using evaluator critique."
     agent_id = "agent_a"
 
     orchestrator.agent_states[agent_id].answer = "answer v1"
+    evaluator_result = RoundEvaluatorResult.from_subagent_result(
+        SubagentResult.create_success(
+            subagent_id="round_eval",
+            answer=(
+                "Answer label: agent1.1\n"
+                "Workspace path: /tmp/temp_workspaces/agent1/round_evaluator\n"
+                "Answer path: /tmp/temp_workspaces/agent1/round_evaluator/answer.txt\n"
+                "Detailed critique packet"
+            ),
+            workspace_path="/tmp/temp_workspaces/agent1/round_evaluator",
+            execution_time_seconds=1.0,
+        ),
+    )
     orchestrator._queue_round_start_context_block(
         agent_id,
         orchestrator._format_round_evaluator_result_block(
             "round_eval",
-            SubagentResult.create_success(
-                subagent_id="round_eval",
-                answer=(
-                    "Answer label: agent1.1\n"
-                    "Workspace path: /tmp/temp_workspaces/agent1/round_evaluator\n"
-                    "Answer path: /tmp/temp_workspaces/agent1/round_evaluator/answer.txt\n"
-                    "Detailed critique packet"
-                ),
-                workspace_path="/tmp/temp_workspaces/agent1/round_evaluator",
-                execution_time_seconds=1.0,
-            ),
+            evaluator_result,
         ),
     )
 

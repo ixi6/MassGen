@@ -46,8 +46,8 @@ async def test_call_subagent_mcp_tool_async_uses_background_client_structured_co
     captured: dict[str, object] = {}
 
     class _FakeBackgroundClient:
-        async def call_tool(self, name, arguments):
-            captured["name"] = name
+        async def call_tool(self, tool_name, arguments):
+            captured["tool_name"] = tool_name
             captured["arguments"] = arguments
             return SimpleNamespace(
                 content=None,
@@ -77,8 +77,196 @@ async def test_call_subagent_mcp_tool_async_uses_background_client_structured_co
         "operation": "spawn_subagents",
         "results": [{"subagent_id": "round_eval"}],
     }
-    assert captured["name"] == "mcp__subagent_agent_a__spawn_subagents"
+    assert captured["tool_name"] == "mcp__subagent_agent_a__spawn_subagents"
     assert captured["arguments"] == {"tasks": [{"subagent_id": "round_eval", "task": "critique"}]}
+
+
+@pytest.mark.asyncio
+async def test_call_subagent_mcp_tool_async_returns_structured_failure_when_all_paths_fail(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """Programmatic MCP bridge failures should surface a structured error payload."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    backend = orchestrator.agents[agent_id].backend
+
+    monkeypatch.setattr(
+        backend,
+        "_execute_mcp_function_with_retry",
+        AsyncMock(side_effect=RuntimeError("executor path failed")),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        backend,
+        "_get_background_mcp_client",
+        AsyncMock(side_effect=RuntimeError("background client init failed")),
+        raising=False,
+    )
+    monkeypatch.setattr(orchestrator.agents[agent_id], "mcp_client", None, raising=False)
+
+    result = await orchestrator._call_subagent_mcp_tool_async(
+        parent_agent_id=agent_id,
+        tool_name="spawn_subagents",
+        params={"tasks": [{"subagent_id": "round_eval", "task": "critique"}]},
+    )
+
+    assert result == {
+        "success": False,
+        "operation": "spawn_subagents",
+        "error": "executor path failed; background client init failed",
+    }
+
+
+@pytest.mark.asyncio
+async def test_background_client_call_tool_uses_correct_keyword_arg(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """Regression: call_tool must use tool_name= matching MCPClient.call_tool signature, not name=."""
+    import inspect
+
+    from massgen.mcp_tools.client import MCPClient
+
+    sig = inspect.signature(MCPClient.call_tool)
+    params = [p for p in sig.parameters.keys() if p != "self"]
+    # First param after self should be 'tool_name', not 'name'
+    assert params[0] == "tool_name", f"MCPClient.call_tool first param is '{params[0]}', " f"orchestrator uses tool_name= — keep them in sync"
+
+    # Also verify the orchestrator call site actually uses the right keyword
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+    backend = orchestrator.agents[agent_id].backend
+
+    received_kwargs: dict[str, object] = {}
+
+    class _StrictClient:
+        async def call_tool(self, **kwargs):
+            received_kwargs.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(text='{"success": true, "operation": "spawn_subagents", "results": []}')],
+                structuredContent=None,
+            )
+
+    monkeypatch.setattr(
+        backend,
+        "_get_background_mcp_client",
+        AsyncMock(return_value=_StrictClient()),
+        raising=False,
+    )
+    monkeypatch.delattr(backend, "_execute_mcp_function_with_retry", raising=False)
+
+    await orchestrator._call_subagent_mcp_tool_async(
+        parent_agent_id=agent_id,
+        tool_name="spawn_subagents",
+        params={"tasks": []},
+    )
+
+    assert "tool_name" in received_kwargs, f"Expected tool_name= keyword, got: {list(received_kwargs.keys())}"
+    assert "name" not in received_kwargs, "Must use tool_name=, not name="
+
+
+def test_round_evaluator_context_paths_are_always_absolute(mock_orchestrator):
+    """Regression: relative context_paths fail validation in the subagent MCP server."""
+    from pathlib import Path
+
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+
+    # Set a relative _agent_temporary_workspace (the bug scenario)
+    orchestrator._agent_temporary_workspace = ".massgen/temp_workspaces/some_session"
+
+    paths = orchestrator._get_round_evaluator_context_paths(
+        parent_agent_id=agent_id,
+        temp_workspace_path="/tmp/some_absolute_path",
+    )
+
+    for p in paths:
+        assert Path(p).is_absolute(), f"Context path '{p}' is relative — subagent MCP server will reject it"
+
+
+@pytest.mark.asyncio
+async def test_round_evaluator_rewrites_subagent_types_before_spawn(mock_orchestrator, monkeypatch):
+    """Regression: workspace may be cleared between rounds, so subagent type dirs
+    must be re-written before the evaluator spawn call."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+
+    # Enable the round evaluator gate
+    orchestrator.config.coordination_config.round_evaluator_before_checklist = True
+    orchestrator.config.coordination_config.orchestrator_managed_round_evaluator = True
+    orchestrator.config.coordination_config.enable_subagents = True
+    orchestrator.config.coordination_config.subagent_types = ["round_evaluator"]
+
+    # Set up a fake filesystem_manager with a workspace root
+    import tempfile
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        ws_root = Path(tmpdir)
+        fs_mgr = SimpleNamespace(
+            get_workspace_root=lambda: str(ws_root),
+            get_current_workspace=lambda: str(ws_root),
+            agent_temporary_workspace=str(ws_root / "temp"),
+            cwd=str(ws_root),
+        )
+        orchestrator.agents[agent_id].backend.filesystem_manager = fs_mgr
+
+        # Give the agent a completed answer so the gate triggers
+        orchestrator.agent_states[agent_id].answer = "draft answer v1"
+        # Register an answer label in the coordination tracker
+        orchestrator.coordination_tracker.add_agent_answer(
+            agent_id=agent_id,
+            answer="draft answer v1",
+        )
+
+        # Track calls to _write_subagent_type_dirs and _call_subagent_mcp_tool_async
+        call_order: list[str] = []
+
+        def tracking_write(workspace_root):
+            call_order.append("write_types")
+            # Don't actually scan — just verify it's called
+            return None
+
+        monkeypatch.setattr(orchestrator, "_write_subagent_type_dirs", tracking_write)
+        monkeypatch.setattr(
+            orchestrator,
+            "_copy_all_snapshots_to_temp_workspace",
+            AsyncMock(return_value="/tmp/temp_ws"),
+        )
+        monkeypatch.setattr(
+            orchestrator,
+            "_call_subagent_mcp_tool_async",
+            AsyncMock(
+                side_effect=lambda *a, **kw: (
+                    call_order.append("spawn_call"),
+                    {"success": True, "results": [{"subagent_id": "round_eval_r2", "answer": "critique"}]},
+                )[1],
+            ),
+        )
+        monkeypatch.setattr(orchestrator, "_emit_round_evaluator_spawn_event", lambda **kw: None)
+        monkeypatch.setattr(orchestrator, "_queue_round_start_context_block", lambda *a: None)
+
+        await orchestrator._run_round_evaluator_pre_round_if_needed(
+            answers={agent_id: "draft answer v1"},
+        )
+
+        # _write_subagent_type_dirs MUST be called BEFORE _call_subagent_mcp_tool_async
+        assert "write_types" in call_order, "subagent types were not re-written before spawn"
+        assert "spawn_call" in call_order, "spawn_subagents was not called"
+        assert call_order.index("write_types") < call_order.index("spawn_call"), f"write_types must come before spawn_call, got: {call_order}"
+
+        # CONTEXT.md must also be written for the SubagentManager
+        context_md = ws_root / "CONTEXT.md"
+        assert context_md.exists(), "CONTEXT.md was not created in workspace for round evaluator"
+        content = context_md.read_text()
+        assert "draft answer" not in content  # Should have the task, not the answer
+        assert "Task coordination" in content or (orchestrator.current_task and orchestrator.current_task in content)
+
+        # Subagent MCP config files must be re-written (workspace clear removes them)
+        mcp_dir = ws_root / ".massgen" / "subagent_mcp"
+        assert (mcp_dir / f"{agent_id}_agent_configs.json").exists(), "agent_configs.json not re-written before evaluator spawn"
 
 
 @pytest.mark.asyncio
@@ -313,6 +501,9 @@ async def test_round_evaluator_launches_between_round_one_and_round_two_and_inje
     orchestrator.config.coordination_config.enable_subagents = True
     orchestrator.config.coordination_config.subagent_types = ["round_evaluator"]
 
+    # Mock backend must look like it supports programmatic MCP for the gate guard
+    backend._execute_mcp_function_with_retry = AsyncMock()
+
     monkeypatch.setattr("massgen.orchestrator.get_log_session_dir", lambda: None)
     orchestrator._save_agent_snapshot = AsyncMock(return_value="snapshot-ts")
     orchestrator._copy_all_snapshots_to_temp_workspace = AsyncMock(
@@ -393,7 +584,7 @@ async def test_round_evaluator_launches_between_round_one_and_round_two_and_inje
     assert spawn_params["refine"] is False
     assert isinstance(spawn_params["tasks"], list)
     assert spawn_params["tasks"][0]["subagent_type"] == "round_evaluator"
-    assert "/tmp/temp_workspaces" in spawn_params["tasks"][0]["context_paths"]
+    assert any("temp_workspaces" in p for p in spawn_params["tasks"][0]["context_paths"])
 
     assert len(recorded_user_messages) >= 2
     assert "ROUND_EVAL_PACKET" not in recorded_user_messages[0]
@@ -408,13 +599,13 @@ async def test_round_evaluator_launches_between_round_one_and_round_two_and_inje
 
 
 @pytest.mark.asyncio
-async def test_round_evaluator_failure_blocks_parent_restart_until_retry_succeeds(
+async def test_round_evaluator_single_failure_terminates_coordination(
     mock_orchestrator,
     monkeypatch,
 ):
-    """A failed round_evaluator launch should block the next parent round until a retry succeeds."""
+    """A single round_evaluator launch failure should immediately stop coordination (no retries)."""
     orchestrator = mock_orchestrator(num_agents=1)
-    orchestrator.current_task = "Hold round 2 until the evaluator succeeds."
+    orchestrator.current_task = "Terminate on first evaluator failure."
     agent_id = next(iter(orchestrator.agents.keys()))
 
     orchestrator.config.voting_sensitivity = "checklist_gated"
@@ -422,6 +613,10 @@ async def test_round_evaluator_failure_blocks_parent_restart_until_retry_succeed
     orchestrator.config.coordination_config.orchestrator_managed_round_evaluator = True
     orchestrator.config.coordination_config.enable_subagents = True
     orchestrator.config.coordination_config.subagent_types = ["round_evaluator"]
+
+    # Mock backend must look like it supports programmatic MCP for the gate guard
+    backend = orchestrator.agents[agent_id].backend
+    backend._execute_mcp_function_with_retry = AsyncMock()
 
     monkeypatch.setattr("massgen.orchestrator.get_log_session_dir", lambda: None)
     orchestrator._save_agent_snapshot = AsyncMock(return_value="snapshot-ts")
@@ -447,30 +642,9 @@ async def test_round_evaluator_failure_blocks_parent_restart_until_retry_succeed
             yield ("done", None)
             return
 
-        yield ("result", ("vote", {"agent_id": agent_id, "reason": "ready"}))
-        yield ("done", None)
+        raise AssertionError("Round 2 should not start after evaluator failure")
 
     monkeypatch.setattr(orchestrator, "_stream_agent_execution", fake_stream_agent_execution)
-
-    gate_results = iter(
-        [
-            {"success": False, "error": "temporary evaluator launch failure"},
-            {
-                "success": True,
-                "mode": "blocking",
-                "results": [
-                    {
-                        "subagent_id": "round_eval",
-                        "status": "completed",
-                        "success": True,
-                        "answer": "ROUND_EVAL_PACKET: critical improvement spec",
-                        "workspace": "/tmp/round_eval",
-                        "execution_time_seconds": 0.75,
-                    },
-                ],
-            },
-        ],
-    )
 
     async def fake_subagent_call(
         parent_agent_id: str,
@@ -480,9 +654,97 @@ async def test_round_evaluator_failure_blocks_parent_restart_until_retry_succeed
         _ = params
         assert parent_agent_id == agent_id
         assert tool_name == "spawn_subagents"
-        result = next(gate_results)
-        sequence.append(("gate", bool(result.get("success"))))
-        return result
+        sequence.append(("gate", False))
+        return {
+            "success": False,
+            "operation": "spawn_subagents",
+            "error": "evaluator launch failure",
+        }
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_call_subagent_mcp_tool_async",
+        fake_subagent_call,
+    )
+
+    monkeypatch.setattr("massgen.orchestrator.asyncio.sleep", AsyncMock())
+
+    votes: dict[str, dict[str, object]] = {}
+    async for _chunk in orchestrator._stream_coordination_with_agents(votes, {}):
+        pass
+
+    # Single failure → terminal, no retry
+    assert sequence == [
+        ("stream", {}),
+        ("gate", False),
+    ]
+    assert stream_call_count["count"] == 1
+    assert orchestrator.agent_states[agent_id].is_killed is True
+
+
+@pytest.mark.asyncio
+async def test_round_evaluator_persistent_failure_stops_after_retry_limit(
+    mock_orchestrator,
+    monkeypatch,
+):
+    """Persistent evaluator launch failures should stop coordination instead of looping forever."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Stop after repeated evaluator launch failures."
+    agent_id = next(iter(orchestrator.agents.keys()))
+
+    orchestrator.config.voting_sensitivity = "checklist_gated"
+    orchestrator.config.coordination_config.round_evaluator_before_checklist = True
+    orchestrator.config.coordination_config.orchestrator_managed_round_evaluator = True
+    orchestrator.config.coordination_config.enable_subagents = True
+    orchestrator.config.coordination_config.subagent_types = ["round_evaluator"]
+
+    backend = orchestrator.agents[agent_id].backend
+    backend._execute_mcp_function_with_retry = AsyncMock()
+
+    monkeypatch.setattr("massgen.orchestrator.get_log_session_dir", lambda: None)
+    orchestrator._save_agent_snapshot = AsyncMock(return_value="snapshot-ts")
+    orchestrator._copy_all_snapshots_to_temp_workspace = AsyncMock(
+        return_value="/tmp/temp_workspaces",
+    )
+
+    sequence: list[tuple[str, object]] = []
+    stream_call_count = {"count": 0}
+
+    async def fake_stream_agent_execution(
+        aid: str,
+        task: str,
+        answers: dict[str, str],
+        conversation_context: dict[str, object] | None = None,
+        paraphrase: str | None = None,
+    ):
+        _ = (aid, task, conversation_context, paraphrase)
+        stream_call_count["count"] += 1
+        sequence.append(("stream", dict(answers)))
+        if stream_call_count["count"] == 1:
+            yield ("result", ("answer", "answer v1"))
+            yield ("done", None)
+            return
+
+        raise AssertionError("Round 2 should not start after repeated evaluator launch failures")
+
+    monkeypatch.setattr(orchestrator, "_stream_agent_execution", fake_stream_agent_execution)
+
+    async def fake_subagent_call(
+        parent_agent_id: str,
+        tool_name: str,
+        params: dict[str, object],
+    ):
+        _ = params
+        assert parent_agent_id == agent_id
+        assert tool_name == "spawn_subagents"
+        if len([entry for entry in sequence if entry[0] == "gate"]) >= 1:
+            raise AssertionError("Round evaluator gate retried more than the retry limit")
+        sequence.append(("gate", False))
+        return {
+            "success": False,
+            "operation": "spawn_subagents",
+            "error": "persistent evaluator launch failure",
+        }
 
     monkeypatch.setattr(
         orchestrator,
@@ -504,10 +766,13 @@ async def test_round_evaluator_failure_blocks_parent_restart_until_retry_succeed
     assert sequence == [
         ("stream", {}),
         ("gate", False),
-        ("gate", True),
-        ("stream", {agent_id: "answer v1"}),
     ]
-    assert sleep_calls
+    assert stream_call_count["count"] == 1
+    assert sleep_calls == []
+    assert orchestrator.agent_states[agent_id].is_killed is True
+    from massgen.coordination_tracker import EventType as TrackerEventType
+
+    assert any(event.event_type == TrackerEventType.AGENT_ERROR for event in orchestrator.coordination_tracker.events)
 
 
 @pytest.mark.asyncio

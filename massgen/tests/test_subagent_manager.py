@@ -96,6 +96,63 @@ class TestSubagentManagerCallbackRegistration:
 
 
 # =============================================================================
+# Timeout Auto-Adjustment Tests
+# =============================================================================
+
+
+class TestSubagentManagerTimeoutAutoAdjust:
+    """Tests that max_timeout auto-raises when default_timeout exceeds it."""
+
+    def test_default_timeout_exceeding_max_raises_max(self):
+        """When default_timeout > max_timeout, max_timeout should auto-raise."""
+        from massgen.subagent.manager import SubagentManager
+
+        manager = SubagentManager(
+            parent_workspace="/tmp/test",
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+            default_timeout=900,
+            max_timeout=600,
+        )
+
+        assert manager.max_timeout == 900
+        assert manager._clamp_timeout(None) == 900
+
+    def test_default_timeout_within_max_unchanged(self):
+        """When default_timeout <= max_timeout, max_timeout stays as-is."""
+        from massgen.subagent.manager import SubagentManager
+
+        manager = SubagentManager(
+            parent_workspace="/tmp/test",
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+            default_timeout=300,
+            max_timeout=600,
+        )
+
+        assert manager.max_timeout == 600
+        assert manager._clamp_timeout(None) == 300
+
+    def test_explicit_timeout_still_capped_at_raised_max(self):
+        """An explicit timeout_seconds beyond the auto-raised max is still capped."""
+        from massgen.subagent.manager import SubagentManager
+
+        manager = SubagentManager(
+            parent_workspace="/tmp/test",
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+            default_timeout=900,
+            max_timeout=600,
+        )
+
+        # max_timeout raised to 900, so 1200 should be capped to 900
+        assert manager._clamp_timeout(1200) == 900
+
+
+# =============================================================================
 # Callback Invocation Tests
 # =============================================================================
 
@@ -1607,6 +1664,90 @@ class TestSubagentConfigInheritance:
         assert orchestrator_cfg["skip_final_presentation"] is False
         assert str(temp_root.resolve()) in path_set
 
+    def test_child_backend_preserves_source_docker_settings(self, tmp_path):
+        """Explicit child docker settings should survive YAML generation, not just fallback-parent settings."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "parent", "backend": {"type": "codex", "model": "gpt-5.4"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {
+                        "id": "eval_a",
+                        "backend": {
+                            "type": "codex",
+                            "model": "gpt-5.4",
+                            "enable_mcp_command_line": True,
+                            "command_line_execution_mode": "docker",
+                            "command_line_docker_image": "massgen:test",
+                            "command_line_docker_network_mode": "bridge",
+                        },
+                    },
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate the candidate site.",
+            parent_agent_id="parent-agent",
+            subagent_id="docker-child",
+            metadata={"refine": False},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        backend_cfg = yaml_config["agents"][0]["backend"]
+
+        assert backend_cfg["command_line_execution_mode"] == "docker"
+        assert backend_cfg["command_line_docker_image"] == "massgen:test"
+        assert backend_cfg["command_line_docker_network_mode"] == "bridge"
+
+    def test_round_evaluator_result_persists_canonical_critique_packet(self, tmp_path):
+        """Successful round_evaluator runs should surface a stable root critique packet artifact."""
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentResult
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+        )
+
+        config = SubagentConfig.create(
+            task="Critique all candidate answers and produce a detailed improvement spec.",
+            parent_agent_id="parent-agent",
+            subagent_id="round-eval",
+            metadata={"refine": False, "subagent_type": "round_evaluator"},
+        )
+        workspace = manager._create_workspace(config.id)
+        result = SubagentResult.create_success(
+            subagent_id=config.id,
+            answer="# merged critique packet\n\nFull synthesized report",
+            workspace_path=str(workspace),
+            execution_time_seconds=1.5,
+        )
+
+        manager._persist_round_evaluator_packet_if_needed(config, workspace, result)
+
+        packet_path = workspace / "critique_packet.md"
+        assert packet_path.exists()
+        assert packet_path.read_text(encoding="utf-8") == "# merged critique packet\n\nFull synthesized report"
+
     def test_parent_voting_settings_not_promoted_without_subagent_orchestrator(self, tmp_path):
         """General subagents should not inherit voting/checklist settings from parent coordination."""
         from massgen.subagent.manager import SubagentManager
@@ -1642,6 +1783,101 @@ class TestSubagentConfigInheritance:
         assert "voting_threshold" not in orchestrator_cfg
         assert "checklist_require_gap_report" not in orchestrator_cfg
         assert "gap_report_mode" not in orchestrator_cfg
+
+
+class TestRoundEvaluatorConfigEnforcement:
+    """Tests for Docker propagation fix and zero-vote enforcement."""
+
+    def test_docker_settings_prefer_source_over_fallback(self, tmp_path):
+        """When source_backend has Docker fields but fallback_backend doesn't, generated config still has them."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        # Parent has NO docker settings (fallback_backend)
+        # Child agent (source_backend) has docker settings
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "parent", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {
+                        "id": "eval_a",
+                        "backend": {
+                            "type": "codex",
+                            "model": "gpt-5.4",
+                            "enable_mcp_command_line": True,
+                            "command_line_execution_mode": "docker",
+                            "command_line_docker_image": "massgen:child",
+                            "command_line_docker_network_mode": "bridge",
+                            "command_line_docker_enable_sudo": True,
+                            "command_line_docker_credentials": {"env_file": ".env"},
+                        },
+                    },
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate.",
+            parent_agent_id="parent-agent",
+            subagent_id="docker-source-test",
+            metadata={"refine": False},
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        backend_cfg = yaml_config["agents"][0]["backend"]
+
+        assert backend_cfg["command_line_execution_mode"] == "docker"
+        assert backend_cfg["command_line_docker_image"] == "massgen:child"
+        assert backend_cfg["command_line_docker_network_mode"] == "bridge"
+        assert backend_cfg["command_line_docker_enable_sudo"] is True
+        assert backend_cfg["command_line_docker_credentials"] == {"env_file": ".env"}
+
+    def test_round_evaluator_multi_agent_enforces_synthesize(self, tmp_path):
+        """Multi-agent round_evaluator must always use final_answer_strategy=synthesize."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "parent", "backend": {"type": "codex", "model": "gpt-5.4"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "gemini", "model": "gemini-3.1-pro-preview"}},
+                ],
+                # Intentionally set to non-synthesize to verify override
+                final_answer_strategy="winner_reuse",
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate.",
+            parent_agent_id="parent-agent",
+            subagent_id="eval-synth-test",
+            metadata={"refine": False, "subagent_type": "round_evaluator"},
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        orch_cfg = yaml_config["orchestrator"]
+
+        assert orch_cfg["final_answer_strategy"] == "synthesize"
+        assert orch_cfg["max_new_answers_per_agent"] == 1
+        assert orch_cfg["skip_final_presentation"] is False
 
 
 class TestSubagentManagerContextNormalization:

@@ -6331,6 +6331,7 @@ Type your question and press Enter to ask the agents.
             call_id: str,
             status_callback: Callable[[str], Any | None] | None = None,
             log_path: str | None = None,
+            round_number: int | None = None,
             _retry_count: int = 0,
         ) -> None:
             """Render a subagent card for orchestrator-owned runtime subagents."""
@@ -6404,6 +6405,7 @@ Type your question and press Enter to ask the agents.
                             call_id=call_id,
                             status_callback=status_callback,
                             log_path=log_path,
+                            round_number=round_number,
                             _retry_count=_retry_count + 1,
                         ),
                     )
@@ -6450,6 +6452,7 @@ Type your question and press Enter to ask the agents.
                             call_id=call_id,
                             status_callback=status_callback,
                             log_path=log_path,
+                            round_number=round_number,
                             _retry_count=_retry_count + 1,
                         ),
                     )
@@ -6475,6 +6478,7 @@ Type your question and press Enter to ask the agents.
                             call_id=call_id,
                             status_callback=status_callback,
                             log_path=log_path,
+                            round_number=round_number,
                             _retry_count=_retry_count + 1,
                         ),
                     )
@@ -6498,11 +6502,15 @@ Type your question and press Enter to ask the agents.
                     status_callback=status_callback,
                     id=card_id,
                 )
-                round_number = max(
-                    1,
-                    int(getattr(panel, "_current_round", getattr(timeline, "_viewed_round", 1)) or 1),
+                effective_round = (
+                    round_number
+                    if round_number is not None
+                    else max(
+                        1,
+                        int(getattr(panel, "_current_round", getattr(timeline, "_viewed_round", 1)) or 1),
+                    )
                 )
-                timeline.add_widget(card, round_number=round_number)
+                timeline.add_widget(card, round_number=effective_round)
 
         def update_runtime_subagent_card(
             self,

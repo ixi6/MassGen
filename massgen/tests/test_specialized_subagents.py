@@ -261,6 +261,25 @@ def test_round_evaluator_prompt_keeps_parent_workflow_out_of_returned_packet():
     assert "new_answer" in config.system_prompt
 
 
+def test_round_evaluator_prompt_requires_returning_full_synthesized_packet():
+    """round_evaluator should return the merged packet directly, not only point at a child artifact."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "return the full synthesized packet directly in your answer" in lower
+    assert "do not only point" in lower
+    assert "another agent's file" in lower
+    assert "critique_packet.md" in config.system_prompt
+
+
 def test_scanner_project_overrides_builtin(tmp_path):
     """Project type with same name replaces built-in."""
     from massgen.subagent.type_scanner import scan_subagent_types

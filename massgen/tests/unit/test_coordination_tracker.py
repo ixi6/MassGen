@@ -148,6 +148,43 @@ def test_anonymous_mapping_uses_sorted_agent_ids():
     assert real_to_anon["agent_c"] == "agent3"
 
 
+def test_answer_labels_consistent_with_anonymous_mapping():
+    """Answer labels (agent1.1) must use the same numbering as anonymous IDs (agent1).
+
+    Regression test: _get_agent_number used insertion order while
+    get_anonymous_agent_mapping used sorted order, causing agent1.1 to belong
+    to a different real agent than agent1.
+    """
+    # Config order deliberately differs from alphabetical
+    tracker = _init_tracker(["eval_codex", "eval_claude", "eval_gemini"])
+
+    # Anonymous mapping uses sorted order:
+    # agent1 -> eval_claude, agent2 -> eval_codex, agent3 -> eval_gemini
+    tracker.get_anonymous_agent_mapping()
+
+    # Record answers for each agent
+    tracker.add_agent_answer("eval_codex", "answer from codex")
+    tracker.add_agent_answer("eval_claude", "answer from claude")
+    tracker.add_agent_answer("eval_gemini", "answer from gemini")
+
+    # Answer labels must match anonymous mapping numbering
+    codex_label = tracker.get_latest_answer_label("eval_codex")
+    claude_label = tracker.get_latest_answer_label("eval_claude")
+    gemini_label = tracker.get_latest_answer_label("eval_gemini")
+
+    # eval_claude is agent1 in anon mapping -> label must be agent1.X
+    assert claude_label.startswith("agent1."), f"eval_claude is agent1 in anon mapping but got label {claude_label}"
+    # eval_codex is agent2 in anon mapping -> label must be agent2.X
+    assert codex_label.startswith("agent2."), f"eval_codex is agent2 in anon mapping but got label {codex_label}"
+    # eval_gemini is agent3 in anon mapping -> label must be agent3.X
+    assert gemini_label.startswith("agent3."), f"eval_gemini is agent3 in anon mapping but got label {gemini_label}"
+
+    # Also verify get_anonymous_id is consistent
+    assert tracker.get_anonymous_id("eval_claude") == "agent1"
+    assert tracker.get_anonymous_id("eval_codex") == "agent2"
+    assert tracker.get_anonymous_id("eval_gemini") == "agent3"
+
+
 def test_path_tokens_are_random_hex():
     tracker = CoordinationTracker()
     tracker.initialize_session(["agent_a", "agent_b"])

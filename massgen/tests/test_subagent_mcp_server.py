@@ -323,7 +323,7 @@ class TestSpawnSubagentsContextPathsRequirement:
         assert result["mode"] == "background"
 
     @pytest.mark.asyncio
-    async def test_context_paths_must_be_list(self, monkeypatch, tmp_path):
+    async def test_context_paths_string_is_normalized_to_singleton_list(self, monkeypatch, tmp_path):
         server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
         fake_manager = _FakeSubagentManager()
         monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
@@ -335,8 +335,8 @@ class TestSpawnSubagentsContextPathsRequirement:
             refine=False,
         )
 
-        assert result["success"] is False
-        assert "expected list" in result["error"]
+        assert result["success"] is True, result
+        assert fake_manager.background_calls[0]["context_paths"] == ["./"]
 
     @pytest.mark.asyncio
     async def test_empty_context_paths_is_valid_explicit_choice(self, monkeypatch, tmp_path):
@@ -380,6 +380,26 @@ class TestSpawnSubagentsContextPathsRequirement:
         assert len(fake_manager.background_calls) == 2
         for call in fake_manager.background_calls:
             assert str(shared) in call["context_paths"]
+
+    @pytest.mark.asyncio
+    async def test_top_level_context_paths_string_is_normalized_to_singleton_list(self, monkeypatch, tmp_path):
+        """Top-level string context_paths should be treated as a shared single path."""
+        shared = tmp_path / "shared"
+        shared.mkdir()
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[{"task": "Evaluate agent1 site", "subagent_id": "eval1"}],
+            context_paths=str(shared),
+            background=True,
+            refine=False,
+        )
+
+        assert result["success"] is True, result
+        assert fake_manager.background_calls[0]["context_paths"] == [str(shared)]
 
     @pytest.mark.asyncio
     async def test_top_level_context_paths_merged_with_per_task_paths(self, monkeypatch, tmp_path):
@@ -966,7 +986,7 @@ class TestLazySubagentTypeLoading:
             server._ensure_specialized_types_loaded()
 
         assert server._specialized_subagents == {}
-        assert server._subagent_types_loaded is True  # flag set even on miss
+        assert server._subagent_types_loaded is False  # NOT set on miss — allows rescan
 
     @pytest.mark.asyncio
     async def test_spawn_with_no_types_dir_reports_none_configured(self, monkeypatch, tmp_path):
@@ -1004,6 +1024,29 @@ class TestLazySubagentTypeLoading:
         # builder should NOT be present — scan was skipped
         assert "builder" not in server._specialized_subagents
         assert "evaluator" in server._specialized_subagents
+
+    @pytest.mark.asyncio
+    async def test_rescan_when_types_dir_appears_after_initial_miss(self, monkeypatch, tmp_path):
+        """If the types dir was missing on first scan, a later scan picks it up."""
+        from massgen.mcp_tools.subagent import _subagent_mcp_server as server
+
+        server._specialized_subagents = {}
+        server._subagent_types_loaded = False
+        server._workspace_path = tmp_path
+
+        # First scan: dir doesn't exist yet
+        server._ensure_specialized_types_loaded()
+        assert server._specialized_subagents == {}
+        assert server._subagent_types_loaded is False
+
+        # Now create the directory (orchestrator writes it before next round)
+        types_dir = tmp_path / ".massgen" / "subagent_types"
+        self._make_subagent_dir(types_dir, "round_evaluator", "Evaluates rounds")
+
+        # Second scan: dir exists now, should succeed
+        server._ensure_specialized_types_loaded()
+        assert "round_evaluator" in server._specialized_subagents
+        assert server._subagent_types_loaded is True
 
 
 class TestSpawnSubagentsSpecializedTypeResolution:
@@ -1117,6 +1160,43 @@ class TestSpawnSubagentsSpecializedTypeResolution:
         task = fake_manager.parallel_calls[0]["tasks"][0]
         assert task["system_prompt"] == "You are an evaluator."
         assert task["skills"] == ["webapp-testing", "agent-browser"]
+
+    async def test_subagent_name_alias_normalized_to_subagent_type(self, monkeypatch, tmp_path):
+        """Models sometimes send subagent_name instead of subagent_type. Both should work."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+        monkeypatch.setattr(
+            server,
+            "_specialized_subagents",
+            {
+                "round_evaluator": {
+                    "name": "round_evaluator",
+                    "description": "Round evaluator",
+                    "system_prompt": "You are a round evaluator.",
+                    "skills": [],
+                },
+            },
+        )
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {
+                    "task": "Evaluate round",
+                    "subagent_name": "round_evaluator",
+                    "context_paths": [],
+                },
+            ],
+            background=False,
+            refine=False,
+        )
+
+        assert result["success"] is True
+        assert len(fake_manager.parallel_calls) == 1
+        task = fake_manager.parallel_calls[0]["tasks"][0]
+        assert task["system_prompt"] == "You are a round evaluator."
+        assert task.get("subagent_type") == "round_evaluator"
 
 
 # =============================================================================
@@ -1459,6 +1539,37 @@ class TestSpawnSubagentsValidation:
         """Test that max_concurrent limit is respected."""
         # If max_concurrent=3, only 3 tasks should run at once
         pass  # Implementation will enforce
+
+    @pytest.mark.asyncio
+    async def test_normalizes_string_context_paths_for_task_and_top_level(self, monkeypatch, tmp_path):
+        """String context_paths should be normalized to one-item lists before manager execution."""
+        server, handler = await _build_spawn_subagents_handler(monkeypatch, tmp_path)
+        fake_manager = _FakeSubagentManager()
+        monkeypatch.setattr(server, "_get_manager", lambda: fake_manager)
+
+        shared_path = tmp_path / "shared"
+        task_path = tmp_path / "task"
+        shared_path.mkdir()
+        task_path.mkdir()
+
+        result = await _invoke_handler(
+            handler,
+            tasks=[
+                {
+                    "task": "Evaluate the candidate",
+                    "subagent_id": "eval_1",
+                    "context_paths": str(task_path),
+                },
+            ],
+            background=False,
+            refine=False,
+            context_paths=str(shared_path),
+        )
+
+        assert result["success"] is True
+        assert len(fake_manager.parallel_calls) == 1
+        forwarded_tasks = fake_manager.parallel_calls[0]["tasks"]
+        assert forwarded_tasks[0]["context_paths"] == [str(task_path), str(shared_path)]
 
 
 # =============================================================================

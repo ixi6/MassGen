@@ -79,7 +79,7 @@ def test_checklist_gated_decision_round_evaluator_mode_requires_packet_before_su
     assert "criteria_interpretation" in content
     assert "improvement_spec" in content
     assert "very critical" in lower
-    assert "use that critique packet as evidence" in lower
+    assert "sole diagnostic basis" in lower
     assert "before round 2" in lower
     assert "blocking `round_evaluator` subagent yourself" in lower
     assert "wait for its packet before" in lower

@@ -501,6 +501,81 @@ class TestSubagentMcpConfigEnv:
         assert payload["enabled"] is True
         assert payload["inherit_spawning_agent_backend"] is True
 
+    def test_subagent_mcp_omits_inline_orchestrator_config_when_file_exists(self, tmp_path):
+        """Large child-orchestrator payloads should be passed only by file, not inline args."""
+        from massgen.subagent.models import SubagentOrchestratorConfig
+
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.config.coordination_config.subagent_orchestrator = SubagentOrchestratorConfig(
+            enabled=True,
+            agents=[
+                {
+                    "id": "eval_codex",
+                    "backend": {
+                        "type": "codex",
+                        "model": "gpt-5.4",
+                        "enable_code_based_tools": True,
+                        "exclude_file_operation_mcps": True,
+                        "enable_mcp_command_line": True,
+                        "command_line_execution_mode": "docker",
+                        "command_line_docker_image": "massgen/mcp-runtime-sudo:latest",
+                        "exclude_custom_tools": [
+                            "_computer_use",
+                            "_claude_computer_use",
+                            "_gemini_computer_use",
+                            "_browser_automation",
+                        ],
+                    },
+                },
+                {
+                    "id": "eval_claude",
+                    "backend": {
+                        "type": "claude_code",
+                        "model": "claude-sonnet-4-6",
+                        "enable_code_based_tools": True,
+                        "exclude_file_operation_mcps": True,
+                        "enable_mcp_command_line": True,
+                        "command_line_execution_mode": "docker",
+                        "command_line_docker_image": "massgen/mcp-runtime-sudo:latest",
+                        "exclude_custom_tools": [
+                            "_computer_use",
+                            "_claude_computer_use",
+                            "_gemini_computer_use",
+                            "_browser_automation",
+                        ],
+                    },
+                },
+                {
+                    "id": "eval_gemini",
+                    "backend": {
+                        "type": "gemini",
+                        "model": "gemini-3.1-pro-preview",
+                        "enable_code_based_tools": True,
+                        "exclude_file_operation_mcps": True,
+                        "enable_mcp_command_line": True,
+                        "command_line_execution_mode": "docker",
+                        "command_line_docker_image": "massgen/mcp-runtime-sudo:latest",
+                        "exclude_custom_tools": [
+                            "_computer_use",
+                            "_claude_computer_use",
+                            "_gemini_computer_use",
+                            "_browser_automation",
+                        ],
+                    },
+                },
+            ],
+        )
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+        orchestrator_cfg_file = Path(self._get_arg(args, "--orchestrator-config-file"))
+        payload = json.loads(orchestrator_cfg_file.read_text())
+
+        assert orchestrator_cfg_file.exists()
+        assert payload["enabled"] is True
+        assert len(payload["agents"]) == 3
+        assert "--orchestrator-config" not in args
+
 
 class TestPlanningMcpConfigHooks:
     """Tests for planning MCP hook-dir wiring (Codex MCP hook delivery path)."""

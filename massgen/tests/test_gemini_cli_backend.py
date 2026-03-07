@@ -13,6 +13,7 @@ import pytest
 
 from massgen.backend.gemini_cli import (
     GEMINI_CLI_DEFAULT_MODEL,
+    GEMINI_FAIL_FAST_QUOTA_RETRY_THRESHOLD,
     GEMINI_WORKFLOW_MAX_SESSION_TURNS,
     GeminiCLIBackend,
 )
@@ -566,14 +567,14 @@ class TestAuthAndCredentials:
     async def test_ensure_authenticated_with_api_key(self, backend):
         """Should succeed with API key set."""
         backend.api_key = "test-key"
-        await backend._ensure_authenticated()  # Should not raise
+        await backend._ensure_authenticated()
 
     @pytest.mark.asyncio
     async def test_ensure_authenticated_with_cached_creds(self, backend):
         """Should succeed with cached credentials."""
         backend.api_key = None
         with patch.object(backend, "_has_cached_credentials", return_value=True):
-            await backend._ensure_authenticated()  # Should not raise
+            await backend._ensure_authenticated()
 
     @pytest.mark.asyncio
     async def test_ensure_authenticated_raises_without_auth(self, backend):
@@ -718,14 +719,14 @@ class TestRuntimeSignals:
     def test_build_fail_fast_runtime_error(self, backend):
         """Fail-fast should trigger when retry storm thresholds are exceeded."""
         err = backend._build_fail_fast_runtime_error(
-            {"quota_retry": 2, "network_retry": 0},
+            {"quota_retry": GEMINI_FAIL_FAST_QUOTA_RETRY_THRESHOLD, "network_retry": 0},
             workflow_call_seen=False,
         )
         assert err is not None
         assert "retry storm detected" in err
 
         suppressed = backend._build_fail_fast_runtime_error(
-            {"quota_retry": 4, "network_retry": 1},
+            {"quota_retry": GEMINI_FAIL_FAST_QUOTA_RETRY_THRESHOLD + 2, "network_retry": 1},
             workflow_call_seen=True,
         )
         assert suppressed is None
@@ -771,8 +772,6 @@ class TestWorkspaceConfigCleanup:
 
     def test_cleanup_when_nothing_written(self, backend):
         """Cleanup when nothing was written should not raise."""
-        backend._workspace_config_written = False
-        backend._custom_tools_specs_path = None
         backend._cleanup_workspace_config()
         cwd = Path(backend.cwd)
         assert not (cwd / ".gemini").exists() or not any((cwd / ".gemini").iterdir())
@@ -869,8 +868,6 @@ class TestStatefulLifecycle:
         backend._pending_workflow_instructions = "some instructions"
         backend._tool_call_context["tool-1"] = {"name": "vote", "arguments": {}}
         backend.mcp_servers.append({"name": "massgen_workflow_tools"})
-        backend._workspace_config_written = False
-        backend._custom_tools_specs_path = None
         await backend.reset_state()
         assert backend.session_id is None
         assert backend._pending_workflow_instructions == ""
@@ -884,8 +881,6 @@ class TestStatefulLifecycle:
         backend._pending_workflow_instructions = "pending"
         backend._tool_call_context["tool-1"] = {"name": "vote", "arguments": {}}
         backend.mcp_servers.append({"name": "massgen_workflow_tools"})
-        backend._workspace_config_written = False
-        backend._custom_tools_specs_path = None
         await backend.clear_history()
         assert backend.session_id is None
         assert backend._pending_workflow_instructions == ""
@@ -926,7 +921,6 @@ class TestStreamWithTools:
         backend.api_key = "test"
         backend._docker_execution = False
         backend.system_prompt = ""
-        # Empty messages list — no user or system content
         messages = []
         chunks = []
         async for chunk in backend.stream_with_tools(messages, []):
@@ -945,7 +939,6 @@ class TestStreamWithTools:
             {"role": "user", "content": "Hello"},
         ]
 
-        # Mock _stream_local to avoid actual subprocess
         async def mock_stream(prompt, resume_session):
             from massgen.backend.base import StreamChunk
 
@@ -1029,8 +1022,6 @@ class TestStreamWithTools:
         async def mock_stream(prompt, resume_session):
             from massgen.backend.base import StreamChunk
 
-            # Content intentionally contains JSON-looking workflow output,
-            # but MCP mode should avoid text fallback parsing.
             yield StreamChunk(type="content", content='{"tool_name":"vote","arguments":{"agent_id":"agent1"}}')
             yield StreamChunk(type="done", usage={})
 
@@ -1267,6 +1258,9 @@ class TestStreamWithTools:
                 self._idx += 1
                 return line
 
+            async def read(self):
+                return b""
+
         class _FakeProc:
             def __init__(self, lines):
                 self.stdout = _FakeStdout(lines)
@@ -1340,6 +1334,9 @@ class TestStreamWithTools:
                 self._idx += 1
                 return line
 
+            async def read(self):
+                return b""
+
         class _FakeProc:
             def __init__(self, lines):
                 self.stdout = _FakeStdout(lines)
@@ -1360,8 +1357,7 @@ class TestStreamWithTools:
 
         fake_proc = _FakeProc(
             [
-                "Attempt 1 failed with status 429. Retrying with backoff...\n",
-                "Attempt 2 failed with status 429. Retrying with backoff...\n",
+                *[f"Attempt {i + 1} failed with status 429. Retrying with backoff...\n" for i in range(GEMINI_FAIL_FAST_QUOTA_RETRY_THRESHOLD)],
                 json.dumps({"type": "message", "role": "assistant", "content": "late content"}) + "\n",
             ],
         )
@@ -1399,6 +1395,9 @@ class TestStreamWithTools:
                 line = self._lines[self._idx]
                 self._idx += 1
                 return line
+
+            async def read(self):
+                return b""
 
         class _FakeProc:
             def __init__(self, lines):

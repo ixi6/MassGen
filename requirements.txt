@@ -27,6 +27,7 @@ dspy>=2.4.0
 # playwright>=1.40.0  # For browser automation
 # docker>=7.0.0  # For Docker container automation
 # pillow>=10.0.0  # For image processing and optimization
+# modal>=1.3.4  # For Modal cloud jobs
 
 # Documentation dependencies
 sphinx>=7.0.0

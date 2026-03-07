@@ -43,6 +43,9 @@ MassGen supports these backend types (configured via ``type`` field in YAML):
    * - ``gemini``
      - Google
      - Gemini 2.5 Flash, Gemini 2.5 Pro
+   * - ``gemini_cli``
+     - Google (CLI)
+     - Gemini 3, Gemini 2.5 Models (via Gemini CLI)
    * - ``grok``
      - xAI
      - Grok-4, Grok-3, Grok-3-mini
@@ -143,6 +146,16 @@ Different backends support different built-in tools:
      - 🔧
      - ✅
      - ✅
+     - ✅
+   * - ``gemini_cli``
+     - ⭐
+     - ⭐
+     - ⭐
+     - 🔧
+     - 🔧
+     - 🔧
+     - ✅
+     - ⭐
      - ✅
    * - ``grok``
      - ⭐
@@ -460,6 +473,36 @@ If both ``model_reasoning_effort`` and ``reasoning.effort`` are provided,
          enable_mcp_command_line: true
          command_line_execution_mode: "docker"
          command_line_docker_network_mode: "bridge"  # Required for Codex
+
+Gemini CLI Backend
+~~~~~~~~~~~~~~~~~~
+
+The ``gemini_cli`` backend (alias: ``gemini-cli``) wraps Google's Gemini CLI (``@google/gemini-cli``) for local or Docker execution.
+
+**Basic Configuration (Local):**
+
+.. code-block:: yaml
+
+   agents:
+     - id: "gemini_cli_agent"
+       backend:
+         type: "gemini_cli"
+         model: "gemini-2.5-pro"
+         cwd: "workspace"
+
+**Authentication:**
+
+* **CLI login**: Run ``gemini`` interactively to login with Google (preferred)
+* **API key**: Set ``GOOGLE_API_KEY`` or ``GEMINI_API_KEY`` environment variable
+
+**Installation:** ``npm install -g @google/gemini-cli``
+
+**Docker Mode:** Requires ``command_line_docker_network_mode: "bridge"``. Add ``@google/gemini-cli`` to
+``command_line_docker_packages.preinstall.npm`` or use an image with Gemini CLI pre-installed.
+
+**Supported Models:** gemini-2.5-pro (default), gemini-2.5-flash, gemini-2.5-flash-lite, gemini-3-flash-preview, gemini-3-pro-preview, gemini-3.1-pro-preview
+
+**Example configs:** ``massgen/configs/providers/gemini/gemini_cli_local.yaml``, ``gemini_cli_docker.yaml``
 
 GitHub Copilot Backend
 ~~~~~~~~~~~~~~~~~~~~~~

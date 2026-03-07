@@ -636,7 +636,7 @@ Backend
      - string
      - Yes
      - All
-     - Backend type: ``claude``, ``claude_code``, ``codex``, ``gemini``, ``openai``, ``grok``, ``azure_openai``, ``zai``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``, ``ag2``
+     - Backend type: ``claude``, ``claude_code``, ``codex``, ``gemini``, ``gemini_cli``, ``openai``, ``grok``, ``azure_openai``, ``zai``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``, ``ag2`` 
    * - ``model``
      - string
      - Yes
@@ -744,9 +744,9 @@ Backend
      - Docker CPU limit (e.g., "2.0", default: "4.0")
    * - ``command_line_docker_network_mode``
      - string
-     - **Codex** (Docker mode)
+     - **Codex**, **Gemini CLI** (Docker mode)
      - All with MCP support
-     - Docker network mode: "bridge", "host", "none". **Required for Codex in Docker mode** (use "bridge").
+     - Docker network mode: "bridge", "host", "none". **Required for Codex and Gemini CLI in Docker mode** (use "bridge").
    * - ``model_reasoning_effort``
      - string
      - No

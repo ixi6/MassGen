@@ -274,9 +274,14 @@ class CoordinationTracker:
         return self._path_tokens.get(agent_id, secrets.token_hex(4))
 
     def _get_agent_number(self, agent_id: str) -> int | None:
-        """Get the 1-based number for an agent (1, 2, 3, etc.)."""
-        if agent_id in self.agent_ids:
-            return self.agent_ids.index(agent_id) + 1
+        """Get the 1-based number for an agent (1, 2, 3, etc.).
+
+        Uses sorted order to match get_anonymous_agent_mapping(), ensuring
+        agent1.X labels always belong to whoever is agent1 in the anon mapping.
+        """
+        sorted_ids = sorted(self.agent_ids)
+        if agent_id in sorted_ids:
+            return sorted_ids.index(agent_id) + 1
         return None
 
     def get_anonymous_agent_mapping(self) -> dict[str, str]:
@@ -1190,7 +1195,7 @@ class CoordinationTracker:
                             else:
                                 error = {
                                     "type": "error",
-                                    "message": "Agent was killed",
+                                    "message": getattr(agent_state, "error_reason", None) or "Agent was killed",
                                     "timestamp": time.time(),
                                 }
 

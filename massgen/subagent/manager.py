@@ -118,6 +118,13 @@ class SubagentManager:
         self.default_timeout = default_timeout
         self.min_timeout = min_timeout
         self.max_timeout = max_timeout
+        # Auto-raise max_timeout when default_timeout exceeds it to avoid
+        # silent capping (e.g. subagent_default_timeout: 900 capped to 600).
+        if self.default_timeout > self.max_timeout:
+            logger.info(
+                f"[SubagentManager] default_timeout ({self.default_timeout}s) > " f"max_timeout ({self.max_timeout}s), raising max_timeout to match",
+            )
+            self.max_timeout = self.default_timeout
         self._subagent_orchestrator_config = subagent_orchestrator_config
         self._parent_context_paths = self._normalize_parent_context_paths(parent_context_paths)
         self._parent_coordination_config = parent_coordination_config or {}
@@ -916,26 +923,26 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
         try:
             if runtime_mode == "delegated":
-                return await self._execute_delegated(
+                result = await self._execute_delegated(
+                    config,
+                    workspace,
+                    start_time,
+                    context_warning,
+                )
+            else:
+                # Always use orchestrator mode for non-delegated execution
+                result = await self._execute_with_orchestrator(
                     config,
                     workspace,
                     start_time,
                     context_warning,
                 )
 
-            # Always use orchestrator mode for non-delegated execution
-            return await self._execute_with_orchestrator(
-                config,
-                workspace,
-                start_time,
-                context_warning,
-            )
-
         except TimeoutError:
             execution_time = time.time() - start_time
             log_dir = self._get_subagent_log_dir(config.id)
             # Attempt to recover completed work from workspace
-            return self._create_timeout_result_with_recovery(
+            result = self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
                 workspace=workspace,
                 timeout_seconds=execution_time,
@@ -946,12 +953,36 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         except Exception as e:
             execution_time = time.time() - start_time
             logger.error(f"[SubagentManager] Error executing subagent {config.id}: {e}")
-            return SubagentResult.create_error(
+            result = SubagentResult.create_error(
                 subagent_id=config.id,
                 error=str(e),
                 workspace_path=str(workspace),
                 execution_time_seconds=execution_time,
                 warning=context_warning,
+            )
+
+        self._persist_round_evaluator_packet_if_needed(config, workspace, result)
+        return result
+
+    def _persist_round_evaluator_packet_if_needed(
+        self,
+        config: SubagentConfig,
+        workspace: Path,
+        result: SubagentResult,
+    ) -> None:
+        """Persist a stable synthesized critique packet for round_evaluator subagents."""
+        subagent_type = str((config.metadata or {}).get("subagent_type") or "").strip().lower()
+        if subagent_type != "round_evaluator" or not result.answer:
+            return
+
+        packet_path = workspace / "critique_packet.md"
+        try:
+            packet_path.write_text(result.answer, encoding="utf-8")
+        except OSError as exc:
+            logger.warning(
+                "[SubagentManager] Failed to persist canonical round_evaluator packet for %s: %s",
+                config.id,
+                exc,
             )
 
     async def _execute_with_orchestrator(
@@ -1792,7 +1823,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             elif "enable_web_search" in fallback_backend:
                 backend_config["enable_web_search"] = fallback_backend["enable_web_search"]
 
-            # Inherit Docker settings if using docker mode
+            # Inherit Docker settings if using docker mode.
+            # Prefer source_backend (explicit child config) over fallback_backend (parent).
             if backend_config.get("command_line_execution_mode") == "docker":
                 docker_settings = [
                     "command_line_docker_image",
@@ -1801,7 +1833,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     "command_line_docker_credentials",
                 ]
                 for setting in docker_settings:
-                    if setting in fallback_backend:
+                    if setting in source_backend:
+                        backend_config[setting] = source_backend[setting]
+                    elif setting in fallback_backend:
                         backend_config[setting] = fallback_backend[setting]
 
             # Inherit code-based tools settings
@@ -1948,6 +1982,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 orchestrator_config["disable_injection"] = True
                 orchestrator_config["defer_voting_until_all_answered"] = True
                 if "final_answer_strategy" not in orchestrator_config:
+                    orchestrator_config["final_answer_strategy"] = "synthesize"
+                # round_evaluator must always synthesize: zero vote rounds,
+                # each evaluator produces one critique, presenter merges.
+                if is_round_evaluator:
                     orchestrator_config["final_answer_strategy"] = "synthesize"
                 effective_final_answer_strategy = orchestrator_config.get("final_answer_strategy")
                 # round_evaluator packets are expected to come from an explicit

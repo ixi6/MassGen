@@ -116,6 +116,10 @@ class EventType:
     AGENT_RESTART = "agent_restart"
     PRESENTATION_START = "presentation_start"
 
+    # Round evaluator stage events
+    ROUND_EVALUATOR_STAGE_START = "round_evaluator_stage_start"
+    ROUND_EVALUATOR_STAGE_COMPLETE = "round_evaluator_stage_complete"
+
     # Pipeline gap events (for subagent parity)
     HOOK_EXECUTION = "hook_execution"
     POST_EVALUATION = "post_evaluation"

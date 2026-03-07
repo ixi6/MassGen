@@ -1065,9 +1065,10 @@ include:
 - `verification_plan` — concrete post-implementation checks
 - `evidence_gaps` — what uncertainty still remains
 
-Use that critique packet as evidence when you assign scores and call
-`submit_checklist`. Save or copy that round-evaluator report into your workspace
-and use it as the diagnostic report you pass via `report_path`.
+Use that critique packet as the **sole diagnostic basis** for your scores when
+you call `submit_checklist`. Your scores MUST reflect the evaluator's findings.
+Save or copy that round-evaluator report into your workspace and use it as the
+diagnostic report you pass via `report_path`.
 Do not run a separate self-evaluation pass, fresh interactive verification
 sweep, or second report-writing cycle unless the packet's `evidence_gaps`
 identify a concrete missing fact that blocks grounded checklist submission.
@@ -1104,9 +1105,10 @@ include:
 - `verification_plan` — concrete post-implementation checks
 - `evidence_gaps` — what uncertainty still remains
 
-Use that critique packet as evidence when you assign scores and call
-`submit_checklist`. Save or copy that round-evaluator report into your workspace
-and use it as the diagnostic report you pass via `report_path`.
+Use that critique packet as the **sole diagnostic basis** for your scores when
+you call `submit_checklist`. Your scores MUST reflect the evaluator's findings.
+Save or copy that round-evaluator report into your workspace and use it as the
+diagnostic report you pass via `report_path`.
 Do not run a separate self-evaluation pass, fresh interactive verification
 sweep, or second report-writing cycle unless the packet's `evidence_gaps`
 identify a concrete missing fact that blocks grounded checklist submission.

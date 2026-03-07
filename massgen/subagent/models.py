@@ -573,6 +573,73 @@ class SubagentResult:
 
 
 @dataclass
+class RoundEvaluatorResult:
+    """Typed result contract for blocking round_evaluator runs.
+
+    The parent receives this from the evaluator stage and uses ``packet_text``
+    as the sole diagnostic basis for ``submit_checklist``.
+    """
+
+    packet_text: str | None = None
+    status: Literal["success", "degraded", "error"] = "error"
+    degraded_fallback_used: bool = False
+    execution_time_seconds: float = 0.0
+    error: str | None = None
+    subagent_id: str = ""
+    log_path: str | None = None
+
+    @classmethod
+    def from_subagent_result(
+        cls,
+        result: "SubagentResult",
+        elapsed: float = 0.0,
+    ) -> "RoundEvaluatorResult":
+        """Build from a raw ``SubagentResult``."""
+        if result.answer:
+            return cls(
+                packet_text=result.answer,
+                status="success",
+                degraded_fallback_used=False,
+                execution_time_seconds=elapsed or result.execution_time_seconds,
+                subagent_id=result.subagent_id,
+                log_path=result.log_path,
+            )
+        return cls(
+            status="degraded",
+            degraded_fallback_used=True,
+            execution_time_seconds=elapsed or result.execution_time_seconds,
+            error=result.error or "No evaluator packet produced",
+            subagent_id=result.subagent_id,
+            log_path=result.log_path,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "packet_text": self.packet_text,
+            "status": self.status,
+            "degraded_fallback_used": self.degraded_fallback_used,
+            "execution_time_seconds": self.execution_time_seconds,
+            "error": self.error,
+            "subagent_id": self.subagent_id,
+            "log_path": self.log_path,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RoundEvaluatorResult":
+        """Deserialize from dictionary."""
+        return cls(
+            packet_text=data.get("packet_text"),
+            status=data.get("status", "error"),
+            degraded_fallback_used=data.get("degraded_fallback_used", False),
+            execution_time_seconds=data.get("execution_time_seconds", 0.0),
+            error=data.get("error"),
+            subagent_id=data.get("subagent_id", ""),
+            log_path=data.get("log_path"),
+        )
+
+
+@dataclass
 class SubagentPointer:
     """
     Pointer to a subagent for tracking in plan.json.

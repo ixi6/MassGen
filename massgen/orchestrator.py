@@ -46,7 +46,7 @@ if TYPE_CHECKING:
     from .dspy_paraphraser import QuestionParaphraser
     from .filesystem_manager import IsolationContextManager
     from .mcp_tools.hooks import RuntimeInboxPoller
-    from .subagent.models import SubagentResult
+    from .subagent.models import RoundEvaluatorResult, SubagentResult
 
 from .filesystem_manager import has_meaningful_content
 from .logger_config import get_log_session_dir  # Import to get log directory
@@ -120,6 +120,7 @@ class AgentState:
     restart_pending: bool = False
     is_killed: bool = False
     timeout_reason: str | None = None
+    error_reason: str | None = None
     last_context: dict[str, Any] | None = None  # Store the context sent to this agent
     paraphrase: str | None = None
     answer_count: int = 0  # Track number of answers for memory archiving
@@ -184,6 +185,7 @@ class Orchestrator(ChatAgent):
 
     # TODO: derive this cap dynamically from model context limits per backend.
     _ENFORCEMENT_RETRY_BUFFER_MAX_CHARS = 120_000
+    _ROUND_EVALUATOR_MAX_LAUNCH_FAILURES = 1
 
     def __init__(
         self,
@@ -365,6 +367,9 @@ class Orchestrator(ChatAgent):
         # Latest answer-label tuples already critiqued by the orchestrator-owned
         # round_evaluator gate. Prevents duplicate launches for unchanged revisions.
         self._round_evaluator_completed_labels: dict[str, tuple[str, ...]] = {}
+        # Tracks failed evaluator launches per answer-label set so deterministic
+        # launch failures don't get retried forever.
+        self._round_evaluator_launch_failures: dict[tuple[str, tuple[str, ...]], int] = {}
         # Context blocks inserted at the start of the next parent round.
         self._round_start_context_blocks: dict[str, list[str]] = {}
 
@@ -2701,6 +2706,10 @@ class Orchestrator(ChatAgent):
                 min_timeout = self.config.coordination_config.subagent_min_timeout
             if hasattr(self.config.coordination_config, "subagent_max_timeout"):
                 max_timeout = self.config.coordination_config.subagent_max_timeout
+            # Auto-raise max_timeout when default_timeout exceeds it to avoid
+            # silent capping (e.g. subagent_default_timeout: 900 capped to 600).
+            if default_timeout > max_timeout:
+                max_timeout = default_timeout
             # Get subagent_orchestrator config if present
             if hasattr(self.config.coordination_config, "subagent_orchestrator"):
                 so_config = self.config.coordination_config.subagent_orchestrator
@@ -2828,8 +2837,6 @@ class Orchestrator(ChatAgent):
             str(max_timeout),
             "--orchestrator-config-file",
             subagent_orchestrator_config_path,
-            "--orchestrator-config",
-            subagent_orchestrator_config_json,
             "--log-directory",
             log_directory,
             "--context-paths-file",
@@ -2845,6 +2852,13 @@ class Orchestrator(ChatAgent):
             "--delegation-directory",
             str(self._delegation_dir.resolve()) if self._delegation_dir is not None else "",
         ]
+        if not subagent_orchestrator_config_path:
+            args.extend(
+                [
+                    "--orchestrator-config",
+                    subagent_orchestrator_config_json,
+                ],
+            )
 
         # Pass hook directory for MCP server-level hook injection (Codex)
         if hasattr(agent.backend, "supports_mcp_server_hooks") and agent.backend.supports_mcp_server_hooks():
@@ -5274,6 +5288,8 @@ Your answer:"""
             if gate_ready is False:
                 await asyncio.sleep(0.25)
                 continue
+            if gate_ready == "terminal_error":
+                break
 
             # Start new coordination iteration only after blocking pre-round gates complete.
             self.coordination_tracker.start_new_iteration()
@@ -5751,6 +5767,7 @@ Your answer:"""
 
                     elif chunk_type == "error":
                         # Agent error
+                        self.agent_states[agent_id].error_reason = chunk_data
                         self.coordination_tracker.track_agent_action(
                             agent_id,
                             ActionType.ERROR,
@@ -5862,6 +5879,7 @@ Your answer:"""
                         await self._close_agent_stream(agent_id, active_streams)
 
                 except Exception as e:
+                    self.agent_states[agent_id].error_reason = f"Stream error - {e}"
                     self.coordination_tracker.track_agent_action(
                         agent_id,
                         ActionType.ERROR,
@@ -8299,15 +8317,21 @@ Your answer:"""
 
         full_tool_name = f"mcp__subagent_{parent_agent_id}__{tool_name}"
         backend = getattr(agent, "backend", None)
+        error_messages: list[str] = []
+        attempted_path = False
 
         # Preferred path for OpenAI-compatible/Claude/Gemini/Grok style backends.
         mcp_executor = getattr(backend, "_execute_mcp_function_with_retry", None)
         if callable(mcp_executor):
+            attempted_path = True
             try:
                 raw_result = await mcp_executor(full_tool_name, json.dumps(params))
                 normalized = self._normalize_subagent_mcp_result(raw_result)
                 if normalized is not None:
                     return normalized
+                error_messages.append(
+                    f"Unparseable MCP result from executor for {full_tool_name}",
+                )
             except Exception as exc:
                 logger.debug(
                     "[Orchestrator] Backend MCP executor call failed for %s (%s): %s",
@@ -8315,25 +8339,32 @@ Your answer:"""
                     parent_agent_id,
                     exc,
                 )
+                error_messages.append(str(exc))
 
         # Claude Code backend path uses a lazily initialized background MCP client.
         background_client_getter = getattr(backend, "_get_background_mcp_client", None)
         if callable(background_client_getter):
+            attempted_path = True
             try:
-
-                async def _call_with_background_client() -> Any:
-                    client = await background_client_getter()
-                    if not client:
-                        return None
-                    return await client.call_tool(
-                        name=full_tool_name,
+                client = await background_client_getter()
+                if not client:
+                    init_error = str(getattr(backend, "_background_mcp_init_error", "") or "").strip()
+                    error_messages.append(
+                        init_error or f"Background MCP client unavailable for {full_tool_name}",
+                    )
+                    raw_result = None
+                else:
+                    raw_result = await client.call_tool(
+                        tool_name=full_tool_name,
                         arguments=params,
                     )
-
-                raw_result = await _call_with_background_client()
                 normalized = self._normalize_subagent_mcp_result(raw_result)
                 if normalized is not None:
                     return normalized
+                if raw_result is not None:
+                    error_messages.append(
+                        f"Unparseable MCP result from background client for {full_tool_name}",
+                    )
             except Exception as exc:
                 logger.debug(
                     "[Orchestrator] Background MCP client call failed for %s (%s): %s",
@@ -8341,10 +8372,12 @@ Your answer:"""
                     parent_agent_id,
                     exc,
                 )
+                error_messages.append(str(exc))
 
         # Legacy/fallback path used by tests and older adapters.
         mcp_client = getattr(agent, "mcp_client", None)
         if mcp_client and hasattr(mcp_client, "call_tool"):
+            attempted_path = True
             try:
                 call_result = mcp_client.call_tool(full_tool_name, params)
                 if inspect.isawaitable(call_result):
@@ -8352,6 +8385,9 @@ Your answer:"""
                 normalized = self._normalize_subagent_mcp_result(call_result)
                 if normalized is not None:
                     return normalized
+                error_messages.append(
+                    f"Unparseable MCP result from legacy client for {full_tool_name}",
+                )
             except Exception as exc:
                 logger.debug(
                     "[Orchestrator] Legacy MCP client call failed for %s (%s): %s",
@@ -8359,8 +8395,26 @@ Your answer:"""
                     parent_agent_id,
                     exc,
                 )
+                error_messages.append(str(exc))
 
-        return None
+        if error_messages:
+            deduped_messages = list(dict.fromkeys(msg for msg in error_messages if msg))
+            return {
+                "success": False,
+                "operation": tool_name,
+                "error": "; ".join(deduped_messages),
+            }
+        if attempted_path:
+            return {
+                "success": False,
+                "operation": tool_name,
+                "error": f"No usable MCP result returned for {full_tool_name}",
+            }
+        return {
+            "success": False,
+            "operation": tool_name,
+            "error": f"No programmatic MCP client available for {full_tool_name}",
+        }
 
     def _call_subagent_mcp_tool(
         self,
@@ -10171,6 +10225,99 @@ Your answer:"""
             return None
         return "\n\n".join(normalized)
 
+    def _rewrite_subagent_mcp_config_files(
+        self,
+        workspace_root: Any,
+        agent_id: str,
+    ) -> None:
+        """Re-write the subagent MCP JSON config files that may have been lost
+        when the workspace was cleared between rounds.
+
+        These are the same files originally created by _create_subagent_mcp_config
+        and referenced by path in the MCP server args.
+        """
+        import json
+        from pathlib import Path as PathlibPath
+
+        mcp_temp_dir = PathlibPath(workspace_root) / ".massgen" / "subagent_mcp"
+        mcp_temp_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # agent_configs.json
+            agent_configs = []
+            for aid, a in self.agents.items():
+                agent_cfg: dict[str, Any] = {"id": aid}
+                if hasattr(a.backend, "config"):
+                    backend_cfg = {k: v for k, v in a.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+                    agent_cfg["backend"] = backend_cfg
+                runtime_agent_config = getattr(a, "config", None)
+                subagent_agents = getattr(runtime_agent_config, "subagent_agents", None)
+                if isinstance(subagent_agents, list) and subagent_agents:
+                    agent_cfg["subagent_agents"] = json.loads(json.dumps(subagent_agents))
+                agent_configs.append(agent_cfg)
+            with open(mcp_temp_dir / f"{agent_id}_agent_configs.json", "w") as f:
+                json.dump(agent_configs, f)
+
+            # coordination_config.json
+            coord_cfg = getattr(self.config, "coordination_config", None)
+            if coord_cfg:
+                parent_coordination_config: dict[str, Any] = {}
+                for attr in (
+                    "enable_agent_task_planning",
+                    "task_planning_filesystem_mode",
+                    "learning_capture_mode",
+                    "disable_final_only_round_capture_fallback",
+                ):
+                    if hasattr(coord_cfg, attr):
+                        parent_coordination_config[attr] = getattr(coord_cfg, attr)
+                so_cfg = getattr(coord_cfg, "subagent_orchestrator", None)
+                if so_cfg:
+                    parent_coordination_config["subagent_orchestrator"] = so_cfg.to_dict()
+                if parent_coordination_config:
+                    with open(mcp_temp_dir / f"{agent_id}_coordination_config.json", "w") as f:
+                        json.dump(parent_coordination_config, f)
+
+            # orchestrator_config.json
+            if coord_cfg:
+                so_cfg = getattr(coord_cfg, "subagent_orchestrator", None)
+                if so_cfg:
+                    with open(mcp_temp_dir / f"{agent_id}_orchestrator_config.json", "w") as f:
+                        json.dump(so_cfg.to_dict(), f)
+
+            logger.info(
+                f"[Orchestrator] Re-wrote subagent MCP config files to {mcp_temp_dir}",
+            )
+        except Exception as e:
+            logger.warning(f"[Orchestrator] Failed to re-write subagent MCP config files: {e}")
+
+    def _ensure_context_md_for_round_evaluator(
+        self,
+        workspace_root: Any,
+        parent_agent_id: str,
+    ) -> None:
+        """Write a CONTEXT.md into the parent workspace for the round evaluator.
+
+        The SubagentManager requires CONTEXT.md in the parent workspace so it
+        can auto-copy it into each evaluator subagent workspace.  When the
+        orchestrator manages the spawn, the parent agent may not have created
+        one (or it may have been cleared between rounds).
+        """
+        from pathlib import Path as PathlibPath
+
+        context_path = PathlibPath(workspace_root) / "CONTEXT.md"
+        if context_path.exists():
+            return  # Parent already wrote one — don't overwrite
+
+        task_summary = (self.current_task or "Task coordination")[:2000]
+        content = f"# Task Context\n\n## Task\n{task_summary}\n"
+        try:
+            context_path.write_text(content, encoding="utf-8")
+            logger.info(
+                f"[Orchestrator] Wrote CONTEXT.md to {workspace_root} for round evaluator",
+            )
+        except Exception as e:
+            logger.warning(f"[Orchestrator] Failed to write CONTEXT.md: {e}")
+
     def _build_round_evaluator_task(
         self,
         parent_agent_id: str,
@@ -10226,8 +10373,12 @@ Your answer:"""
             normalized = str(path_value or "").strip()
             if not normalized or normalized in seen:
                 return
-            seen.add(normalized)
-            context_paths.append(normalized)
+            # Resolve relative paths so the subagent MCP server can validate them.
+            resolved = str(Path(normalized).resolve()) if normalized else normalized
+            if resolved in seen:
+                return
+            seen.add(resolved)
+            context_paths.append(resolved)
 
         _add(temp_workspace_path)
 
@@ -10292,27 +10443,103 @@ Your answer:"""
     def _format_round_evaluator_result_block(
         self,
         subagent_id: str,
-        result: "SubagentResult",
+        result: "SubagentResult | RoundEvaluatorResult",
     ) -> str:
         """Format the blocking round_evaluator result for next-round prompt injection."""
-        from .subagent.result_formatter import format_single_result
+        from .subagent.models import RoundEvaluatorResult
+
+        if isinstance(result, RoundEvaluatorResult):
+            evaluator_result = result
+        else:
+            evaluator_result = RoundEvaluatorResult.from_subagent_result(result)
+        return Orchestrator._format_round_evaluator_result_block_static(
+            subagent_id=subagent_id,
+            evaluator_result=evaluator_result,
+        )
+
+    @staticmethod
+    def _format_round_evaluator_result_block_static(
+        subagent_id: str,
+        evaluator_result: "RoundEvaluatorResult",
+    ) -> str:
+        """Format the blocking round_evaluator result for next-round prompt injection."""
+        status = evaluator_result.status
+        packet_text = evaluator_result.packet_text or "(no packet produced)"
 
         return (
             "============================================================\n"
-            "ROUND EVALUATOR RESULT\n"
+            f"ROUND EVALUATOR RESULT (status: {status})\n"
             "============================================================\n"
-            "The orchestrator ran one blocking `round_evaluator` before this round.\n"
-            "Treat it as critique/spec context only. It does NOT decide your parent "
-            "workflow action for you.\n\n"
-            f"{format_single_result(subagent_id, result)}\n"
+            "The orchestrator ran one blocking `round_evaluator` before this round.\n\n"
+            "IMPORTANT: This evaluator packet is your sole diagnostic basis for\n"
+            "submit_checklist. Save it to your workspace (e.g., tasks/diagnostic_report.md)\n"
+            "and pass the path as report_path. Do NOT run a separate self-evaluation or\n"
+            "author a second diagnostic report from scratch.\n\n"
+            f'<evaluator_packet subagent_id="{subagent_id}" status="{status}">\n'
+            f"{packet_text}\n"
+            "</evaluator_packet>\n"
             "============================================================"
         )
+
+    def _handle_round_evaluator_gate_failure(
+        self,
+        *,
+        parent_agent_id: str,
+        latest_labels: tuple[str, ...],
+        display_round: int,
+        emitter: Any,
+        elapsed_seconds: float,
+        failure_payload: dict[str, Any] | None,
+    ) -> bool | str:
+        """Record a failed evaluator launch and decide whether to retry or abort."""
+        failure_key = (parent_agent_id, latest_labels)
+        attempt_number = self._round_evaluator_launch_failures.get(failure_key, 0) + 1
+        self._round_evaluator_launch_failures[failure_key] = attempt_number
+
+        payload = failure_payload if isinstance(failure_payload, dict) else {}
+        error_message = str(
+            payload.get("error") or payload.get("output") or "round_evaluator gate failed before producing a packet",
+        ).strip()
+
+        logger.warning(
+            "[Orchestrator] round_evaluator gate failed for %s on attempt %s/%s: %s",
+            parent_agent_id,
+            attempt_number,
+            self._ROUND_EVALUATOR_MAX_LAUNCH_FAILURES,
+            error_message,
+        )
+
+        if emitter:
+            emitter.emit_raw(
+                StructuredEventType.ROUND_EVALUATOR_STAGE_COMPLETE,
+                agent_id=parent_agent_id,
+                round_number=display_round,
+                status="error",
+                execution_time_seconds=elapsed_seconds,
+                packet_text_length=0,
+                error=error_message,
+            )
+
+        if attempt_number < self._ROUND_EVALUATOR_MAX_LAUNCH_FAILURES:
+            return False
+
+        terminal_message = "Managed round evaluator failed " f"{attempt_number} time(s) for the current answer set. Last error: {error_message}"
+        agent_state = self.agent_states.get(parent_agent_id)
+        if agent_state is not None:
+            agent_state.is_killed = True
+            agent_state.error_reason = terminal_message
+        self.coordination_tracker.track_agent_action(
+            parent_agent_id,
+            ActionType.ERROR,
+            terminal_message,
+        )
+        return "terminal_error"
 
     async def _run_round_evaluator_pre_round_if_needed(
         self,
         answers: dict[str, str],
         conversation_context: dict[str, Any] | None = None,
-    ) -> bool:
+    ) -> bool | str:
         """Run the round_evaluator gate between answer rounds when configured."""
         _ = conversation_context
         if not self._is_round_evaluator_gate_enabled():
@@ -10333,6 +10560,22 @@ Your answer:"""
 
         upcoming_round = self._get_round_evaluator_upcoming_round(parent_agent_id)
         display_round = self._get_round_evaluator_display_round(parent_agent_id)
+
+        # Re-write subagent type dirs and CONTEXT.md to the workspace — the
+        # workspace may have been cleared between rounds, and the MCP server
+        # rescans lazily.  CONTEXT.md is required by the SubagentManager; the
+        # orchestrator creates it on behalf of the parent since the parent
+        # doesn't know the evaluator spawn is about to happen.
+        parent_agent = self.agents.get(parent_agent_id)
+        if parent_agent:
+            fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
+            if fs_mgr:
+                ws_root = fs_mgr.get_workspace_root() if hasattr(fs_mgr, "get_workspace_root") else getattr(fs_mgr, "cwd", None)
+                if ws_root:
+                    self._write_subagent_type_dirs(ws_root)
+                    self._rewrite_subagent_mcp_config_files(ws_root, parent_agent_id)
+                    self._ensure_context_md_for_round_evaluator(ws_root, parent_agent_id)
+
         temp_workspace_path = await self._copy_all_snapshots_to_temp_workspace(parent_agent_id)
         spawn_args: dict[str, Any] = {
             "tasks": [
@@ -10351,6 +10594,13 @@ Your answer:"""
         }
 
         tool_call_id = f"round_evaluator_pre_round_{parent_agent_id}_r{upcoming_round}_{int(time.time() * 1000)}"
+        emitter = get_event_emitter()
+        if emitter:
+            emitter.emit_raw(
+                StructuredEventType.ROUND_EVALUATOR_STAGE_START,
+                agent_id=parent_agent_id,
+                round_number=display_round,
+            )
         self._emit_round_evaluator_spawn_event(
             phase="start",
             agent_id=parent_agent_id,
@@ -10381,35 +10631,83 @@ Your answer:"""
         )
 
         if not success:
-            logger.warning(
-                "[Orchestrator] round_evaluator gate failed for {}: {}",
-                parent_agent_id,
-                normalized_result,
+            return self._handle_round_evaluator_gate_failure(
+                parent_agent_id=parent_agent_id,
+                latest_labels=latest_labels,
+                display_round=display_round,
+                emitter=emitter,
+                elapsed_seconds=elapsed_seconds,
+                failure_payload=normalized_result,
             )
-            return False
 
-        from .subagent.models import SubagentResult
+        from .subagent.models import RoundEvaluatorResult, SubagentResult
 
         results = normalized_result.get("results")
         if not isinstance(results, list) or not results:
-            return False
+            return self._handle_round_evaluator_gate_failure(
+                parent_agent_id=parent_agent_id,
+                latest_labels=latest_labels,
+                display_round=display_round,
+                emitter=emitter,
+                elapsed_seconds=elapsed_seconds,
+                failure_payload={
+                    "success": False,
+                    "operation": "spawn_subagents",
+                    "error": "round_evaluator returned no result payloads",
+                },
+            )
 
         try:
             first_result = SubagentResult.from_dict(results[0])
         except Exception as exc:
-            logger.warning(
-                "[Orchestrator] Failed to parse round_evaluator result payload for %s: %s",
-                parent_agent_id,
-                exc,
+            return self._handle_round_evaluator_gate_failure(
+                parent_agent_id=parent_agent_id,
+                latest_labels=latest_labels,
+                display_round=display_round,
+                emitter=emitter,
+                elapsed_seconds=elapsed_seconds,
+                failure_payload={
+                    "success": False,
+                    "operation": "spawn_subagents",
+                    "error": f"Failed to parse round_evaluator result payload: {exc}",
+                },
             )
-            return False
 
-        if first_result.answer:
-            self._queue_round_start_context_block(
-                parent_agent_id,
-                self._format_round_evaluator_result_block(first_result.subagent_id, first_result),
+        evaluator_result = RoundEvaluatorResult.from_subagent_result(
+            first_result,
+            elapsed=elapsed_seconds,
+        )
+
+        if evaluator_result.status != "success" or not evaluator_result.packet_text:
+            return self._handle_round_evaluator_gate_failure(
+                parent_agent_id=parent_agent_id,
+                latest_labels=latest_labels,
+                display_round=display_round,
+                emitter=emitter,
+                elapsed_seconds=elapsed_seconds,
+                failure_payload={
+                    "success": False,
+                    "operation": "spawn_subagents",
+                    "error": evaluator_result.error or "round_evaluator produced no packet",
+                },
             )
 
+        self._queue_round_start_context_block(
+            parent_agent_id,
+            self._format_round_evaluator_result_block(first_result.subagent_id, first_result),
+        )
+
+        if emitter:
+            emitter.emit_raw(
+                StructuredEventType.ROUND_EVALUATOR_STAGE_COMPLETE,
+                agent_id=parent_agent_id,
+                round_number=display_round,
+                status=evaluator_result.status,
+                execution_time_seconds=elapsed_seconds,
+                packet_text_length=len(evaluator_result.packet_text or ""),
+            )
+
+        self._round_evaluator_launch_failures.pop((parent_agent_id, latest_labels), None)
         self._round_evaluator_completed_labels[parent_agent_id] = latest_labels
         return True
 
@@ -10860,6 +11158,7 @@ Your answer:"""
         # Initialize agent state
         self.agent_states[agent_id].is_killed = False
         self.agent_states[agent_id].timeout_reason = None
+        self.agent_states[agent_id].error_reason = None
         self.agent_states[agent_id].midstream_injections_this_round = 0
 
         # Track whether we've notified TUI of new round (done once per real execution)
@@ -16062,6 +16361,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             state.restart_pending = False
             state.is_killed = False
             state.timeout_reason = None
+            state.error_reason = None
             state.answer_count = 0
             state.injection_count = 0
             state.midstream_injections_this_round = 0

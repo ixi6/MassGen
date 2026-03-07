@@ -284,6 +284,18 @@ class TestSpecificBackends:
         assert caps.filesystem_support == "mcp"
         assert caps.env_var == "GEMINI_API_KEY"
 
+    def test_gemini_cli_capabilities(self):
+        """Test Gemini CLI backend capabilities."""
+        caps = get_capabilities("gemini_cli")
+        assert caps is not None
+        assert caps.backend_type == "gemini_cli"
+        assert "bash" in caps.supported_capabilities
+        assert "mcp" in caps.supported_capabilities
+        assert "filesystem_native" in caps.supported_capabilities
+        assert caps.filesystem_support == "native"
+        assert caps.env_var == "GOOGLE_API_KEY"
+        assert "gemini-2.5-pro" in caps.models
+
     def test_local_backends_no_api_key(self):
         """Test local backends don't require API keys."""
         local_backends = ["lmstudio", "inference", "chatcompletion"]

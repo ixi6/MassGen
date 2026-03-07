@@ -27,11 +27,10 @@ from .cli_base import CLIBackend
 from .codex import CodexBackend
 from .copilot import CopilotBackend
 from .gemini import GeminiBackend
+from .gemini_cli import GeminiCLIBackend
 from .grok import GrokBackend
 from .lmstudio import LMStudioBackend
 from .response import ResponseBackend
-
-# from .gemini_cli import GeminiCLIBackend
 
 # Azure OpenAI backend (optional)
 try:
@@ -56,7 +55,7 @@ __all__ = [
     "ClaudeCodeBackend",
     "CodexBackend",
     "CopilotBackend",
-    # "GeminiCLIBackend",
+    "GeminiCLIBackend",
 ]
 
 # Add Azure OpenAI if available

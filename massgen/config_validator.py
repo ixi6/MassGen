@@ -614,6 +614,17 @@ class ConfigValidator:
                         "Add 'command_line_docker_network_mode: bridge' (required for Codex Docker execution)",
                     )
 
+        # Validate Gemini CLI Docker mode requirements
+        if backend_type == "gemini_cli":
+            execution_mode = backend_config.get("command_line_execution_mode")
+            if execution_mode == "docker":
+                if "command_line_docker_network_mode" not in backend_config:
+                    result.add_error(
+                        "Gemini CLI backend in Docker mode requires 'command_line_docker_network_mode'",
+                        f"{location}.command_line_docker_network_mode",
+                        "Add 'command_line_docker_network_mode: bridge' (required for Gemini CLI Docker execution)",
+                    )
+
     def _validate_tool_filtering(
         self,
         backend_config: dict[str, Any],

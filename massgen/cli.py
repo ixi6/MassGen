@@ -361,7 +361,7 @@ def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path
     from .cloud.modal_launcher import ModalCloudJobLauncher
     from .cloud.utils import process_context_paths
 
-    config_copy = config.deepcopy()
+    config_copy = copy.deepcopy(config)
 
     cloud_job_id = uuid.uuid4().hex[:8]
 

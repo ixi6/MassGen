@@ -4,7 +4,6 @@
 
 import base64
 import json
-import secrets
 import subprocess
 import threading
 from pathlib import Path
@@ -22,7 +21,7 @@ class ModalCloudJobLauncher(CloudJobLauncher):
 
     def launch(self, request: CloudJobRequest) -> CloudJobResult:
         """Run cloud job through `modal run` and return extracted artifacts."""
-        print("Launching cloud job...")
+        print(f"Launching cloud job {request.cloud_job_id}")
 
         payload = {
             "prompt": request.prompt,
@@ -93,7 +92,7 @@ class ModalCloudJobLauncher(CloudJobLauncher):
                 raise CloudJobError(f"Cloud job timeout: {reason}")
             raise CloudJobError(f"Cloud job execution failure: {reason}")
 
-        job_dir = self.workspace_root / f"job_{secrets.token_hex(6)}"
+        job_dir = self.workspace_root / f"job_{request.cloud_job_id}"
         job_dir.mkdir(parents=True, exist_ok=True)
         artifacts_dir = job_dir / "artifacts"
         artifacts_dir.mkdir(parents=True, exist_ok=True)

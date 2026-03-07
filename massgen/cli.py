@@ -353,17 +353,34 @@ def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path
     if not _is_single_agent_config(config):
         raise ConfigurationError("--cloud MVP currently supports single-agent configs only")
 
+    import uuid
+
     import yaml
 
     from .cloud.cloud_job import CloudJobRequest
     from .cloud.modal_launcher import ModalCloudJobLauncher
+    from .cloud.utils import process_context_paths
+
+    config_copy = config.deepcopy()
+
+    cloud_job_id = uuid.uuid4().hex[:8]
+
+    # Package context path files and rewrite config paths for remote
+    orchestrator_cfg = config_copy.get("orchestrator", {})
+    context_paths = orchestrator_cfg.get("context_paths", [])
+    if context_paths:
+        rewritten_paths = process_context_paths(context_paths, cloud_job_id=cloud_job_id)
+        if rewritten_paths:
+            orchestrator_cfg["context_paths"] = rewritten_paths
+            config_copy["orchestrator"] = orchestrator_cfg
 
     launcher = ModalCloudJobLauncher()
     request = CloudJobRequest(
         prompt=args.question,
-        config_yaml=yaml.safe_dump(config, sort_keys=False),
+        config_yaml=yaml.safe_dump(config_copy, sort_keys=False),
         timeout_seconds=args.cloud_timeout,
         env=ModalCloudJobLauncher.collect_cloud_env(),
+        cloud_job_id=cloud_job_id,
     )
     result = launcher.launch(request)
 
@@ -8481,6 +8498,9 @@ async def main(args):
         # Apply CLI override for CWD context path before validating paths.
         apply_cli_cwd_context_path(config, args.cwd_context)
 
+        # Validate that all context paths exist before proceeding
+        validate_context_paths(config)
+
         # Cloud execution path (Modal MVP)
         if getattr(args, "cloud", False):
             if not args.automation:
@@ -8492,9 +8512,6 @@ async def main(args):
                 config_path_label=str(resolved_path) if resolved_path else None,
             )
             return
-
-        # Validate that all context paths exist before proceeding
-        validate_context_paths(config)
 
         # Relocate all filesystem paths to .massgen/ directory
         relocate_filesystem_paths(config)

@@ -35,6 +35,9 @@ def make_tar_gz_b64(source_dir: Path) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+CONTEXT_VOLUME_NAME = "massgen-context"
+CONTEXT_MOUNT_PATH = "/context"
+
 app = modal.App(APP_NAME)
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -52,9 +55,10 @@ image = (
         "build-essential",
     )
 )
+context_vol = modal.Volume.from_name(CONTEXT_VOLUME_NAME, create_if_missing=True)
 
 
-@app.function(image=image, timeout=60 * 60)
+@app.function(image=image, timeout=60 * 60, volumes={CONTEXT_MOUNT_PATH: context_vol})
 def run_massgen_job(payload_b64: str) -> dict:
     """Local entrypoint for Modal job."""
     payload: Dict[str, object] = json.loads(base64.b64decode(payload_b64).decode("utf-8"))
@@ -78,6 +82,9 @@ def run_massgen_job(payload_b64: str) -> dict:
 
     config_path = workspace / "config.yaml"
     config_path.write_text(config_yaml, encoding="utf-8")
+
+    # Make context volume contents visible (uploaded by the launcher before this runs)
+    context_vol.reload()
 
     output_file = workspace / output_filename
     print(f"Running massgen with config: {config_path}")

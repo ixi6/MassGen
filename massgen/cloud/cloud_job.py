@@ -21,6 +21,7 @@ class CloudJobRequest:
     timeout_seconds: int
     env: Dict[str, str]
     output_filename: str = "final_answer.txt"
+    cloud_job_id: str = ""
 
 
 @dataclass

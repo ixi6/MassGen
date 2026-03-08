@@ -84,7 +84,7 @@ def run_massgen_job(payload_b64: str) -> dict:
 
     prompt = str(payload["prompt"])
     config_yaml = str(payload["config_yaml"])
-    output_filename = str(payload.get("output_filename", "final_answer.txt"))
+    output_filename = "final_answer.txt"
 
     workspace = Path("/tmp/massgen_cloud_job")
     if workspace.exists():

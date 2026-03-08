@@ -25,7 +25,6 @@ class ModalCloudJobLauncher(CloudJobLauncher):
             "prompt": request.prompt,
             "config_yaml": request.config_yaml,
             "timeout_seconds": request.timeout_seconds,
-            "output_filename": request.output_filename,
         }
         payload_b64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
 

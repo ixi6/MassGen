@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
 
 
 class CloudJobError(RuntimeError):
@@ -18,7 +16,6 @@ class CloudJobRequest:
     prompt: str
     config_yaml: str
     timeout_seconds: int
-    output_filename: str = "final_answer.txt"
     cloud_job_id: str = ""
 
 
@@ -28,9 +25,9 @@ class CloudJobResult:
 
     final_answer: str
     artifacts_dir: Path
-    local_log_dir: Optional[Path]
-    local_events_path: Optional[Path]
-    remote_log_dir: Optional[str]
+    local_log_dir: Path | None
+    local_events_path: Path | None
+    remote_log_dir: str | None
 
 
 class CloudJobLauncher:
@@ -38,7 +35,7 @@ class CloudJobLauncher:
 
     RESULT_MARKER = "__MASSGEN_CLOUD_JOB_RESULT__"
 
-    def __init__(self, workspace_root: Optional[Path] = None):
+    def __init__(self, workspace_root: Path | None = None):
         base = workspace_root or (Path.cwd() / ".massgen" / "cloud_jobs")
         self.workspace_root = base
         self.workspace_root.mkdir(parents=True, exist_ok=True)
@@ -47,7 +44,7 @@ class CloudJobLauncher:
         raise NotImplementedError
 
     @classmethod
-    def _extract_marker_payload(cls, stdout: str) -> Optional[Dict[str, object]]:
+    def _extract_marker_payload(cls, stdout: str) -> dict[str, object] | None:
         for line in reversed(stdout.splitlines()):
             if line.startswith(cls.RESULT_MARKER):
                 raw = line[len(cls.RESULT_MARKER) :].strip()

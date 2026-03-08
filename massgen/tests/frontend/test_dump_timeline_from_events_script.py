@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for scripts/dump_timeline_from_events.py mode selection and filtering."""
 
 from __future__ import annotations

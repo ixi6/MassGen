@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Content Handlers for MassGen TUI.
 
@@ -10,14 +9,15 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .content_normalizer import ContentNormalizer, NormalizedContent
 from .shared import get_tool_category as shared_get_tool_category
 from .shared.tool_registry import format_tool_display_name  # noqa: F401 - re-export
+from .shared.tui_debug import tui_log
 
 
-def get_mcp_server_name(tool_name: str) -> Optional[str]:
+def get_mcp_server_name(tool_name: str) -> str | None:
     """Extract MCP server name from mcp__server__tool format.
 
     Args:
@@ -33,7 +33,7 @@ def get_mcp_server_name(tool_name: str) -> Optional[str]:
     return None
 
 
-def get_mcp_tool_name(tool_name: str) -> Optional[str]:
+def get_mcp_tool_name(tool_name: str) -> str | None:
     """Extract the actual tool name from mcp__server__tool format.
 
     Handles custom tools: mcp__server__custom_tool__name -> name
@@ -66,20 +66,21 @@ class ToolDisplayData:
     color: str
     status: str  # running, success, error, background
     start_time: datetime
-    end_time: Optional[datetime] = None
-    args_summary: Optional[str] = None  # Truncated for card display
-    args_full: Optional[str] = None  # Full args for modal
-    result_summary: Optional[str] = None  # Truncated for card display
-    result_full: Optional[str] = None  # Full result for modal
-    error: Optional[str] = None
-    elapsed_seconds: Optional[float] = None
-    async_id: Optional[str] = None  # ID for background operations (e.g., shell_id)
+    end_time: datetime | None = None
+    args_summary: str | None = None  # Truncated for card display
+    args_full: str | None = None  # Full args for modal
+    result_summary: str | None = None  # Truncated for card display
+    result_full: str | None = None  # Full result for modal
+    error: str | None = None
+    elapsed_seconds: float | None = None
+    async_id: str | None = None  # ID for background operations (e.g., shell_id)
+    server_name: str | None = None  # Server name from event (e.g., "codex", "filesystem")
 
 
 # Tool category utilities imported from shared module
 
 
-def get_tool_category(tool_name: str) -> Dict[str, str]:
+def get_tool_category(tool_name: str) -> dict[str, str]:
     """Get category info for a tool name.
 
     Wrapper around shared.get_tool_category() that adds 'icon' field
@@ -106,7 +107,7 @@ def get_tool_category(tool_name: str) -> Dict[str, str]:
     return result
 
 
-def summarize_args(args: Dict[str, Any], max_len: int = 80) -> str:
+def summarize_args(args: dict[str, Any], max_len: int = 80) -> str:
     """Summarize tool arguments for display."""
     if not args:
         return ""
@@ -193,7 +194,7 @@ class ThinkingContentHandler(BaseContentHandler):
     def __init__(self):
         self._compiled_filters = [re.compile(p) for p in self.EXTRA_FILTER_PATTERNS]
 
-    def process(self, normalized: NormalizedContent) -> Optional[str]:
+    def process(self, normalized: NormalizedContent) -> str | None:
         """Process thinking content and return cleaned text."""
         if not normalized.should_display:
             return None
@@ -228,7 +229,7 @@ class StatusContentHandler(BaseContentHandler):
         "waiting": ("○", "dim", "Waiting"),
     }
 
-    def process(self, normalized: NormalizedContent) -> Optional[Dict[str, str]]:
+    def process(self, normalized: NormalizedContent) -> dict[str, str] | None:
         """Process status content and return display info."""
         content_lower = normalized.cleaned_content.lower()
 
@@ -262,7 +263,7 @@ class StatusContentHandler(BaseContentHandler):
 class PresentationContentHandler(BaseContentHandler):
     """Handler for final presentation content."""
 
-    def process(self, normalized: NormalizedContent) -> Optional[str]:
+    def process(self, normalized: NormalizedContent) -> str | None:
         """Process presentation content."""
         if not normalized.should_display:
             return None
@@ -290,9 +291,9 @@ class ToolBatchTracker:
     """
 
     def __init__(self):
-        self._current_server: Optional[str] = None
-        self._current_batch_id: Optional[str] = None
-        self._pending_tool_id: Optional[str] = None  # First tool, not yet batched
+        self._current_server: str | None = None
+        self._current_batch_id: str | None = None
+        self._pending_tool_id: str | None = None  # First tool, not yet batched
         self._batch_counter = 0
         self._batched_tool_ids: set = set()  # Track which tools are in batches
         self._content_since_last_tool: bool = False  # True if non-tool content arrived
@@ -305,7 +306,7 @@ class ToolBatchTracker:
         """
         self._content_since_last_tool = True
 
-    def process_tool(self, tool_data: ToolDisplayData) -> tuple[str, Optional[str], Optional[str], Optional[str]]:
+    def process_tool(self, tool_data: ToolDisplayData) -> tuple[str, str | None, str | None, str | None]:
         """Determine how to handle an incoming tool call.
 
         Returns:
@@ -324,15 +325,33 @@ class ToolBatchTracker:
             self._content_since_last_tool = False
 
         server_name = get_mcp_server_name(tool_data.tool_name)
+        # Fallback to event-provided server_name for non-mcp__ prefixed tools
+        if server_name is None and tool_data.server_name:
+            server_name = tool_data.server_name
 
-        # Non-MCP tools get standalone treatment
+        # Tools without any server context get standalone treatment
         if server_name is None:
             self._finalize_pending()
-            return ("standalone", None, None, None)
+            result = ("standalone", None, None, None)
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server=None "
+                f"event_server={tool_data.server_name} "
+                f"pending={self._pending_tool_id} current_server={self._current_server} "
+                f"content_since_last={self._content_since_last_tool} "
+                f"-> action=standalone",
+            )
+            return result
 
         # Check if this is an update (not "running")
         if tool_data.status != "running":
             if tool_data.tool_id in self._batched_tool_ids:
+                action = "update_batch"
+            else:
+                action = "update_standalone"
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"status={tool_data.status} -> action={action}",
+            )
+            if action == "update_batch":
                 return ("update_batch", server_name, self._current_batch_id, None)
             return ("update_standalone", server_name, None, None)
 
@@ -341,6 +360,9 @@ class ToolBatchTracker:
         # Already have an active batch for this server?
         if self._current_batch_id and self._current_server == server_name:
             self._batched_tool_ids.add(tool_data.tool_id)
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"batch_id={self._current_batch_id} -> action=add_to_batch",
+            )
             return ("add_to_batch", server_name, self._current_batch_id, None)
 
         # Have a pending tool from same server? → Convert to batch
@@ -351,12 +373,18 @@ class ToolBatchTracker:
             self._batched_tool_ids.add(pending_id)
             self._batched_tool_ids.add(tool_data.tool_id)
             self._pending_tool_id = None
+            tui_log(
+                f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"batch_id={self._current_batch_id} pending_id={pending_id} " f"-> action=convert_to_batch",
+            )
             return ("convert_to_batch", server_name, self._current_batch_id, pending_id)
 
         # Different server or first tool → finalize and track as pending
         self._finalize_pending()
         self._current_server = server_name
         self._pending_tool_id = tool_data.tool_id
+        tui_log(
+            f"[BATCH] tool={tool_data.tool_name} mcp_server={server_name} " f"-> action=pending (first tool from this server)",
+        )
         return ("pending", server_name, None, None)
 
     def _finalize_pending(self) -> None:
@@ -365,7 +393,7 @@ class ToolBatchTracker:
         self._current_server = None
         self._current_batch_id = None
 
-    def finalize_current_batch(self) -> Optional[str]:
+    def finalize_current_batch(self) -> str | None:
         """Called when non-tool content arrives to finalize tracking."""
         finalized_id = self._current_batch_id
         self._finalize_pending()
@@ -380,11 +408,11 @@ class ToolBatchTracker:
         self._content_since_last_tool = False
 
     @property
-    def current_batch_id(self) -> Optional[str]:
+    def current_batch_id(self) -> str | None:
         """Get the current batch ID if any."""
         return self._current_batch_id
 
     @property
-    def current_server(self) -> Optional[str]:
+    def current_server(self) -> str | None:
         """Get the current server name if batching."""
         return self._current_server

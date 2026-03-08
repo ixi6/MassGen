@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Integration test for async subagent execution.
 
@@ -14,7 +13,6 @@ Usage:
 import argparse
 import asyncio
 import sys
-from typing import List, Tuple
 
 # Add parent directory to path
 sys.path.insert(0, ".")
@@ -31,7 +29,7 @@ def test_callback_mechanism():
     print("\n=== Test 1: Callback Mechanism ===")
 
     # Track callback invocations
-    callback_results: List[Tuple[str, SubagentResult]] = []
+    callback_results: list[tuple[str, SubagentResult]] = []
 
     def on_complete(subagent_id: str, result: SubagentResult):
         callback_results.append((subagent_id, result))

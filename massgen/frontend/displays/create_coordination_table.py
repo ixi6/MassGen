@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Multi-Agent Coordination Event Table Generator
 
@@ -11,7 +10,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional
 
 try:
     from rich import box
@@ -25,7 +24,7 @@ except ImportError:
 
 def display_scrollable_content_macos(
     console: Console,
-    content_items: List[Any],
+    content_items: list[Any],
     title: str = "",
 ) -> None:
     """
@@ -64,7 +63,7 @@ def display_scrollable_content_macos(
 
 def display_with_native_pager(
     console: Console,
-    content_items: List[Any],
+    content_items: list[Any],
     title: str = "",
 ) -> None:
     """
@@ -153,11 +152,11 @@ class AgentState:
     """Track state for a single agent"""
 
     status: str = "idle"
-    current_answer: Optional[str] = None
-    answer_preview: Optional[str] = None
-    vote: Optional[str] = None
-    vote_reason: Optional[str] = None
-    context: List[str] = field(default_factory=list)
+    current_answer: str | None = None
+    answer_preview: str | None = None
+    vote: str | None = None
+    vote_reason: str | None = None
+    context: list[str] = field(default_factory=list)
     round: int = 0
     is_final: bool = False
     has_final_answer: bool = False
@@ -171,11 +170,11 @@ class RoundData:
 
     round_num: int
     round_type: str  # "R0", "R1", "R2", ... "FINAL"
-    agent_states: Dict[str, AgentState]
+    agent_states: dict[str, AgentState]
 
 
 class CoordinationTableBuilder:
-    def __init__(self, data: Union[List[Dict[str, Any]], Dict[str, Any]]):
+    def __init__(self, data: list[dict[str, Any]] | dict[str, Any]):
         # Handle both old format (list of events) and new format (dict with
         # metadata)
         if isinstance(data, dict) and "events" in data:
@@ -194,7 +193,7 @@ class CoordinationTableBuilder:
         self.rounds = self._process_events()
         self.user_question = self._extract_user_question()
 
-    def _extract_agents(self) -> List[str]:
+    def _extract_agents(self) -> list[str]:
         """Extract unique agent IDs from events using original orchestrator order"""
         # First try to get agent order from session metadata
         metadata_agents = self.session_metadata.get("agent_ids", [])
@@ -209,7 +208,7 @@ class CoordinationTableBuilder:
                 agents.add(agent_id)
         return sorted(list(agents))
 
-    def _create_agent_mapping(self) -> Dict[str, str]:
+    def _create_agent_mapping(self) -> dict[str, str]:
         """Create explicit mapping from agent_id to agent_number for answer labels"""
         mapping = {}
         for i, agent_id in enumerate(self.agents, 1):
@@ -222,7 +221,7 @@ class CoordinationTableBuilder:
             self.session_metadata.get("user_prompt", "No user prompt found"),
         )
 
-    def _extract_answer_previews(self) -> Dict[str, str]:
+    def _extract_answer_previews(self) -> dict[str, str]:
         """Extract the actual answer text for each agent using explicit mapping"""
         answers = {}
 
@@ -259,7 +258,7 @@ class CoordinationTableBuilder:
 
         return answers
 
-    def _find_final_winner(self) -> Optional[str]:
+    def _find_final_winner(self) -> str | None:
         """Find which agent was selected as the final winner"""
         for event in self.events:
             if event["event_type"] == "final_agent_selected":
@@ -267,7 +266,7 @@ class CoordinationTableBuilder:
                 return agent_id if agent_id is not None else None
         return None
 
-    def _find_final_round_number(self) -> Optional[int]:
+    def _find_final_round_number(self) -> int | None:
         """Find which round number is the final round"""
         for event in self.events:
             if event["event_type"] == "final_round_start":
@@ -284,7 +283,7 @@ class CoordinationTableBuilder:
 
         return None
 
-    def _track_vote_rounds(self) -> Dict[str, int]:
+    def _track_vote_rounds(self) -> dict[str, int]:
         """Track which round each agent cast their vote"""
         vote_rounds = {}
         for event in self.events:
@@ -296,7 +295,7 @@ class CoordinationTableBuilder:
                     vote_rounds[agent_id] = round_num
         return vote_rounds
 
-    def _process_events(self) -> List[RoundData]:
+    def _process_events(self) -> list[RoundData]:
         """Process events into rounds with proper organization"""
         # Find all unique rounds
         all_rounds = set()
@@ -435,7 +434,7 @@ class CoordinationTableBuilder:
         round_type: str,
         agent_id: str,
         round_num: int,
-    ) -> List[str]:
+    ) -> list[str]:
         """Build the content for an agent's cell in a round"""
         lines = []
 
@@ -569,7 +568,7 @@ class CoordinationTableBuilder:
         )
 
         # Process events chronologically
-        agent_states: Dict[str, Dict[str, Any]] = {
+        agent_states: dict[str, dict[str, Any]] = {
             agent: {
                 "status": "idle",
                 "context": [],
@@ -1309,7 +1308,7 @@ class CoordinationTableBuilder:
 
         return "\n".join(lines)
 
-    def _create_rich_legend(self) -> Optional[Any]:
+    def _create_rich_legend(self) -> Any | None:
         """Create Rich legend panel using shared legend content"""
         try:
             from rich import box
@@ -1361,7 +1360,7 @@ class CoordinationTableBuilder:
             padding=(1, 2),
         )
 
-    def generate_rich_event_table(self) -> Optional[tuple]:
+    def generate_rich_event_table(self) -> tuple | None:
         """Generate a rich event-driven table with legend
 
         Returns:
@@ -1411,7 +1410,7 @@ class CoordinationTableBuilder:
         table.add_row(*question_row)
 
         # Process events chronologically
-        agent_states: Dict[str, Dict[str, Any]] = {
+        agent_states: dict[str, dict[str, Any]] = {
             agent: {
                 "status": "idle",
                 "context": [],
@@ -1590,7 +1589,7 @@ class CoordinationTableBuilder:
         self,
         event_num: int,
         active_agent: str,
-        agent_states: Dict[str, Any],
+        agent_states: dict[str, Any],
         event_type: str,
         *args: Any,
     ) -> list:
@@ -1875,7 +1874,7 @@ class CoordinationTableBuilder:
         round_type: str,
         agent_id: str,
         round_num: int,
-    ) -> List[str]:
+    ) -> list[str]:
         """Build Rich-formatted content for an agent's cell in a round."""
         lines = []
 
@@ -1983,7 +1982,7 @@ def main() -> None:
 
     try:
         # Load events
-        with open(filename, "r") as f:
+        with open(filename) as f:
             events = json.load(f)
 
         # Build and print table

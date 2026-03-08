@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Native Tool Backend Mixin — standardized interface for backends with built-in tools.
 
@@ -16,7 +15,7 @@ Usage:
 """
 
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -32,13 +31,13 @@ class NativeToolBackendMixin:
 
     def __init_native_tool_mixin__(self):
         """Initialize mixin state. Call from subclass __init__."""
-        self._native_hook_adapter: Optional[Any] = None
-        self._massgen_hooks_config: Optional[Dict[str, Any]] = None
+        self._native_hook_adapter: Any | None = None
+        self._massgen_hooks_config: dict[str, Any] | None = None
 
     # ── Tool Filtering ──────────────────────────────────────────────────
 
     @abstractmethod
-    def get_disallowed_tools(self, config: Dict[str, Any]) -> List[str]:
+    def get_disallowed_tools(self, config: dict[str, Any]) -> list[str]:
         """Return list of native tools to disable.
 
         These are backend-native tools that MassGen replaces with its own
@@ -55,7 +54,7 @@ class NativeToolBackendMixin:
         """
 
     @abstractmethod
-    def get_tool_category_overrides(self) -> Dict[str, str]:
+    def get_tool_category_overrides(self) -> dict[str, str]:
         """Return tool category overrides for this backend.
 
         Maps MassGen MCP tool categories to override behavior:
@@ -79,7 +78,7 @@ class NativeToolBackendMixin:
         """
         return self._native_hook_adapter is not None
 
-    def get_native_hook_adapter(self) -> Optional[Any]:
+    def get_native_hook_adapter(self) -> Any | None:
         """Get the native hook adapter for this backend.
 
         Returns:
@@ -87,7 +86,7 @@ class NativeToolBackendMixin:
         """
         return self._native_hook_adapter
 
-    def set_native_hooks_config(self, config: Dict[str, Any]) -> None:
+    def set_native_hooks_config(self, config: dict[str, Any]) -> None:
         """Set MassGen hooks converted to native format.
 
                 Called by the orchestrator to set up MassGen hooks (MidStreamInjection,
@@ -128,10 +127,10 @@ class NativeToolBackendMixin:
 
     def _setup_workflow_tools(
         self,
-        tools: List[Dict[str, Any]],
+        tools: list[dict[str, Any]],
         mcp_base_path: str,
         mcp_tool_prefix: str = "",
-    ) -> tuple[Optional[Dict[str, Any]], str]:
+    ) -> tuple[dict[str, Any] | None, str]:
         """Setup workflow tools as MCP server with text fallback.
 
         Shared logic for configuring MassGen workflow tools (new_answer, vote, etc.)

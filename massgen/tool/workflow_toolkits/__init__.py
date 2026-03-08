@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 Workflow toolkits for MassGen coordination.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseToolkit, ToolType
 from .broadcast import BroadcastToolkit
@@ -26,16 +25,16 @@ __all__ = [
 
 
 def get_workflow_tools(
-    valid_agent_ids: Optional[List[str]] = None,
-    template_overrides: Optional[Dict] = None,
+    valid_agent_ids: list[str] | None = None,
+    template_overrides: dict | None = None,
     api_format: str = "chat_completions",
-    orchestrator: Optional[Any] = None,
-    broadcast_mode: Optional[str] = None,
+    orchestrator: Any | None = None,
+    broadcast_mode: str | None = None,
     broadcast_wait_by_default: bool = True,
     vote_only: bool = False,
-    anon_agent_ids: Optional[List[str]] = None,
+    anon_agent_ids: list[str] | None = None,
     decomposition_mode: bool = False,
-) -> List[Dict]:
+) -> list[dict]:
     """
     Get workflow tool definitions with proper formatting.
 
@@ -100,9 +99,9 @@ def get_workflow_tools(
 
 
 def get_post_evaluation_tools(
-    template_overrides: Optional[Dict] = None,
+    template_overrides: dict | None = None,
     api_format: str = "chat_completions",
-) -> List[Dict]:
+) -> list[dict]:
     """
     Get post-evaluation tool definitions (submit and restart_orchestration).
 

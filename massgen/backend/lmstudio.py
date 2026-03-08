@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 LM Studio backend using an OpenAI-compatible Chat Completions API.
 
@@ -9,6 +8,7 @@ Defaults are tailored for a local LM Studio server:
 This backend delegates most behavior to ChatCompletionsBackend, only
 customizing provider naming, API key resolution, and cost calculation.
 """
+
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
@@ -16,7 +16,8 @@ import platform
 import shutil
 import subprocess
 import time
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import lmstudio as lms
 
@@ -27,12 +28,12 @@ from .chat_completions import ChatCompletionsBackend
 class LMStudioBackend(ChatCompletionsBackend):
     """LM Studio backend (OpenAI-compatible, local server)."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         super().__init__(api_key="lm-studio", **kwargs)  # Override to avoid environment-variable enforcement; LM Studio accepts any key
         self._models_attempted = set()  # Track models this instance has attempted to load
         self.start_lmstudio_server(**kwargs)
 
-    async def stream_with_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk, None]:
+    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk]:
         """Stream response using OpenAI-compatible Chat Completions API.
 
         LM Studio does not require special message conversions; this delegates to
@@ -48,7 +49,7 @@ class LMStudioBackend(ChatCompletionsBackend):
 
         # self.end_lmstudio_server()
 
-    def get_supported_builtin_tools(self) -> List[str]:  # type: ignore[override]
+    def get_supported_builtin_tools(self) -> list[str]:  # type: ignore[override]
         # LM Studio (local OpenAI-compatible) does not provide provider-builtins
         return []
 

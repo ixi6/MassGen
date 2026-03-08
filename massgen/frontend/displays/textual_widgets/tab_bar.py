@@ -1,11 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 Agent Tab Bar Widget for MassGen TUI.
 
 Provides a horizontal tab bar for switching between agent panels.
 """
-
-from typing import Dict, List, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -36,7 +33,7 @@ class SessionInfoClicked(Message):
         self,
         turn: int,
         question: str,
-        subtask: Optional[str] = None,
+        subtask: str | None = None,
         assignment_kind: str = "Subtask",
     ) -> None:
         """Initialize the message.
@@ -56,19 +53,9 @@ class SessionInfoClicked(Message):
 
 def _tab_log(msg: str) -> None:
     """Log to TUI debug file."""
-    try:
-        import logging
+    from massgen.frontend.displays.shared.tui_debug import tui_log
 
-        log = logging.getLogger("massgen.tui.debug")
-        if not log.handlers:
-            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-            handler.setFormatter(logging.Formatter("%(asctime)s [TAB] %(message)s", datefmt="%H:%M:%S"))
-            log.addHandler(handler)
-            log.setLevel(logging.DEBUG)
-            log.propagate = False
-        log.debug(msg)
-    except Exception:
-        pass
+    tui_log(f"[TAB] {msg}")
 
 
 class SessionInfoWidget(Static):
@@ -81,13 +68,13 @@ class SessionInfoWidget(Static):
         turn: int = 1,
         question: str = "",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(id=id, classes=classes)
         self._turn = turn
         self._question = question
-        self._assignment: Optional[str] = None
+        self._assignment: str | None = None
         self._assignment_kind: str = "Subtask"
 
     def render(self) -> Text:
@@ -121,11 +108,11 @@ class SessionInfoWidget(Static):
         self._question = question
         self.refresh()
 
-    def update_subtask(self, subtask: Optional[str]) -> None:
+    def update_subtask(self, subtask: str | None) -> None:
         """Update the displayed subtask label."""
         self.update_assignment(subtask, kind="Subtask")
 
-    def update_assignment(self, assignment: Optional[str], kind: str = "Subtask") -> None:
+    def update_assignment(self, assignment: str | None, kind: str = "Subtask") -> None:
         """Update the displayed agent assignment label."""
         self._assignment = assignment
         self._assignment_kind = kind
@@ -188,6 +175,7 @@ class AgentTab(Static):
         "done": "done",  # Dim checkmark - final presentation happening
         "error": "error",
         "cancelled": "cancelled",
+        "canceled": "cancelled",
         "idle": "waiting",
     }
 
@@ -197,8 +185,8 @@ class AgentTab(Static):
         key_index: int = 0,
         model_name: str = "",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the agent tab.
 
@@ -215,6 +203,7 @@ class AgentTab(Static):
         self.model_name = model_name
         self._status = "waiting"
         self._disabled = False  # For single-agent mode
+        self._pending_injection_count = 0
 
     def compose(self) -> ComposeResult:
         """No child widgets needed - we use renderable."""
@@ -225,11 +214,12 @@ class AgentTab(Static):
         # Map raw status to our icon states, default to working if unknown
         mapped_status = self.STATUS_MAP.get(self._status, "working")
         status_icon = self.STATUS_ICONS.get(mapped_status, "◉")
+        pending_badge = f" Q{self._pending_injection_count}" if self._pending_injection_count > 0 else ""
         # Two-line display: agent name with status on first line, model on second
         if self.model_name:
             short_model = self._shorten_model_name(self.model_name)
-            return f" {status_icon} {self.agent_id}\n   {short_model} "
-        return f" {status_icon} {self.agent_id}\n "
+            return f" {status_icon} {self.agent_id}{pending_badge}\n   {short_model} "
+        return f" {status_icon} {self.agent_id}{pending_badge}\n "
 
     def _shorten_model_name(self, model: str) -> str:
         """Shorten model name for compact display."""
@@ -296,6 +286,11 @@ class AgentTab(Static):
         """Check if this tab is disabled."""
         return self._disabled
 
+    def set_pending_injection_count(self, count: int) -> None:
+        """Set queued runtime-injection count for this agent tab."""
+        self._pending_injection_count = max(0, int(count))
+        self.refresh()
+
     async def on_click(self) -> None:
         """Handle click to select this tab.
 
@@ -344,14 +339,14 @@ class AgentTabBar(Widget):
 
     def __init__(
         self,
-        agent_ids: List[str],
-        agent_models: Optional[Dict[str, str]] = None,
+        agent_ids: list[str],
+        agent_models: dict[str, str] | None = None,
         turn: int = 1,
         question: str = "",
         tab_id_prefix: str = "",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the tab bar.
 
@@ -367,12 +362,12 @@ class AgentTabBar(Widget):
         super().__init__(id=id, classes=classes)
         self._agent_ids = agent_ids
         self._agent_models = agent_models or {}
-        self._tabs: Dict[str, AgentTab] = {}
+        self._tabs: dict[str, AgentTab] = {}
         self._turn = turn
         self._question = question
         self._tab_id_prefix = tab_id_prefix
-        self._session_info_widget: Optional[SessionInfoWidget] = None
-        self._agent_assignments: Dict[str, str] = {}
+        self._session_info_widget: SessionInfoWidget | None = None
+        self._agent_assignments: dict[str, str] = {}
         self._assignment_kind: str = "Subtask"
 
     def compose(self) -> ComposeResult:
@@ -455,7 +450,7 @@ class AgentTabBar(Widget):
                 kind=self._assignment_kind,
             )
 
-    def set_agent_subtasks(self, subtasks: Dict[str, str]) -> None:
+    def set_agent_subtasks(self, subtasks: dict[str, str]) -> None:
         """Set per-agent subtask assignments for decomposition mode.
 
         Args:
@@ -463,11 +458,11 @@ class AgentTabBar(Widget):
         """
         self._set_agent_assignments(subtasks, kind="Subtask")
 
-    def set_agent_personas(self, personas: Dict[str, str]) -> None:
+    def set_agent_personas(self, personas: dict[str, str]) -> None:
         """Set per-agent persona assignments for parallel mode."""
         self._set_agent_assignments(personas, kind="Persona")
 
-    def _set_agent_assignments(self, assignments: Dict[str, str], kind: str) -> None:
+    def _set_agent_assignments(self, assignments: dict[str, str], kind: str) -> None:
         """Set and render per-agent assignment labels."""
         self._agent_assignments = assignments
         self._assignment_kind = kind
@@ -487,6 +482,11 @@ class AgentTabBar(Widget):
         """
         if agent_id in self._tabs:
             self._tabs[agent_id].update_status(status)
+
+    def set_pending_injection_counts(self, counts: dict[str, int]) -> None:
+        """Update per-agent queued runtime-injection counts shown on tabs."""
+        for agent_id, tab in self._tabs.items():
+            tab.set_pending_injection_count(int(counts.get(agent_id, 0)))
 
     def set_winner(self, agent_id: str) -> None:
         """Mark an agent as winner, dimming all others.
@@ -514,8 +514,8 @@ class AgentTabBar(Widget):
 
     def update_agents(
         self,
-        agent_ids: List[str],
-        agent_models: Optional[Dict[str, str]] = None,
+        agent_ids: list[str],
+        agent_models: dict[str, str] | None = None,
     ) -> None:
         """Update the tabs with a new set of agents.
 
@@ -564,7 +564,7 @@ class AgentTabBar(Widget):
         if agent_ids:
             self.set_active(agent_ids[0])
 
-    def get_next_agent(self) -> Optional[str]:
+    def get_next_agent(self) -> str | None:
         """Get the next agent ID after the currently active one.
 
         Returns:
@@ -579,7 +579,7 @@ class AgentTabBar(Widget):
         except ValueError:
             return self._agent_ids[0] if self._agent_ids else None
 
-    def get_previous_agent(self) -> Optional[str]:
+    def get_previous_agent(self) -> str | None:
         """Get the previous agent ID before the currently active one.
 
         Returns:
@@ -594,7 +594,7 @@ class AgentTabBar(Widget):
         except ValueError:
             return self._agent_ids[-1] if self._agent_ids else None
 
-    def get_agent_by_index(self, index: int) -> Optional[str]:
+    def get_agent_by_index(self, index: int) -> str | None:
         """Get agent ID by 1-based index.
 
         Args:
@@ -608,7 +608,7 @@ class AgentTabBar(Widget):
             return self._agent_ids[zero_index]
         return None
 
-    def set_single_agent_mode(self, enabled: bool, selected_agent: Optional[str] = None) -> None:
+    def set_single_agent_mode(self, enabled: bool, selected_agent: str | None = None) -> None:
         """Enable or disable single-agent mode with visual feedback.
 
         In single-agent mode, only the selected agent tab is enabled (not greyed out).
@@ -642,7 +642,7 @@ class AgentTabBar(Widget):
         """Check if any tabs are disabled (single-agent mode indicator)."""
         return any(tab.is_disabled() for tab in self._tabs.values())
 
-    def get_enabled_agents(self) -> List[str]:
+    def get_enabled_agents(self) -> list[str]:
         """Get list of enabled (non-disabled) agent IDs.
 
         Returns:

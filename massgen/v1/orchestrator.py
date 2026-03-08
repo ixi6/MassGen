@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import json
 import logging
 import threading
@@ -6,7 +5,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .logging import get_log_manager
 from .types import AgentState, SystemState, TaskInput, VoteRecord
@@ -49,9 +48,9 @@ class MassOrchestrator:
             thread_pool_timeout: Timeout for shutting down thread pool executor (seconds)
             streaming_orchestrator: Optional streaming orchestrator for real-time display
         """
-        self.agents: Dict[int, Any] = {}  # agent_id -> MassAgent instance
-        self.agent_states: Dict[int, AgentState] = {}  # agent_id -> AgentState instance
-        self.votes: List[VoteRecord] = []
+        self.agents: dict[int, Any] = {}  # agent_id -> MassAgent instance
+        self.agent_states: dict[int, AgentState] = {}  # agent_id -> AgentState instance
+        self.votes: list[VoteRecord] = []
         self.system_state = SystemState()
         self.max_duration = max_duration
         self.consensus_threshold = consensus_threshold
@@ -65,8 +64,8 @@ class MassOrchestrator:
         self._stop_event = threading.Event()
 
         # Communication and logging
-        self.communication_log: List[Dict[str, Any]] = []
-        self.final_response: Optional[str] = None
+        self.communication_log: list[dict[str, Any]] = []
+        self.final_response: str | None = None
 
         # Initialize log manager
         self.log_manager = get_log_manager()
@@ -83,7 +82,7 @@ class MassOrchestrator:
             self.agent_states[agent.agent_id] = agent.state
             agent.orchestrator = self
 
-    def _log_event(self, event_type: str, data: Dict[str, Any]):
+    def _log_event(self, event_type: str, data: dict[str, Any]):
         """Log an orchestrator event."""
         self.communication_log.append({"timestamp": time.time(), "event_type": event_type, "data": data})
 
@@ -146,7 +145,7 @@ class MassOrchestrator:
         """
         return len([s for s in self.agent_states.values() if s.status == "voted"])
 
-    def _get_voting_status(self) -> Dict[str, Any]:
+    def _get_voting_status(self) -> dict[str, Any]:
         """Get current voting status and distribution."""
         vote_counts = self._get_current_vote_counts()
         total_agents = len(self.agents)
@@ -164,7 +163,7 @@ class MassOrchestrator:
             "leading_agent": vote_counts.most_common(1)[0] if vote_counts else None,
         }
 
-    def get_system_status(self) -> Dict[str, Any]:
+    def get_system_status(self) -> dict[str, Any]:
         """Get comprehensive system status information."""
         return {
             "phase": self.system_state.phase,
@@ -496,7 +495,7 @@ class MassOrchestrator:
             },
         )
 
-    def export_detailed_session_log(self) -> Dict[str, Any]:
+    def export_detailed_session_log(self) -> dict[str, Any]:
         """
         Export complete detailed session information for comprehensive analysis.
         Includes all outputs, metrics, and evaluation results.
@@ -628,7 +627,7 @@ class MassOrchestrator:
         # Run the workflow
         return self._run_mass_workflow(task)
 
-    def _run_mass_workflow(self, task: TaskInput) -> Dict[str, Any]:
+    def _run_mass_workflow(self, task: TaskInput) -> dict[str, Any]:
         """
         Run the MassGen workflow with dynamic agent restart support:
         1. All agents work in parallel
@@ -738,7 +737,7 @@ class MassOrchestrator:
         agent_id: int,
         task: TaskInput,
         executor: ThreadPoolExecutor,
-        active_futures: Dict,
+        active_futures: dict,
     ):
         """Start an agent if it's in working status and not already running."""
         if self.agent_states[agent_id].status == "working" and agent_id not in active_futures:
@@ -906,7 +905,7 @@ The final answer must be self-contained, complete, well-sourced, compelling, and
 
             self._reach_consensus(winning_agent_id)
 
-    def _finalize_session(self) -> Dict[str, Any]:
+    def _finalize_session(self) -> dict[str, Any]:
         """
         Finalize the session and return comprehensive results.
         """

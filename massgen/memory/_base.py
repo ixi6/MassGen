@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base classes for MassGen memory system.
 
@@ -7,7 +6,7 @@ must follow, ensuring consistency across different storage backends.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Union
+from typing import Any
 
 
 class MemoryBase(ABC):
@@ -65,7 +64,7 @@ class MemoryBase(ABC):
         """Clear all content from memory."""
 
     @abstractmethod
-    async def get_messages(self, *args: Any, **kwargs: Any) -> List[Dict[str, Any]]:
+    async def get_messages(self, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
         """
         Get the stored messages in a format suitable for LLM consumption.
 
@@ -74,7 +73,7 @@ class MemoryBase(ABC):
         """
 
     @abstractmethod
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """
         Export memory state for serialization.
 
@@ -83,7 +82,7 @@ class MemoryBase(ABC):
         """
 
     @abstractmethod
-    def load_state_dict(self, state_dict: Dict[str, Any], strict: bool = True) -> None:
+    def load_state_dict(self, state_dict: dict[str, Any], strict: bool = True) -> None:
         """
         Load memory state from serialized data.
 
@@ -107,7 +106,7 @@ class PersistentMemoryBase(ABC):
 
     async def record(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         **kwargs: Any,
     ) -> None:
         """
@@ -126,7 +125,7 @@ class PersistentMemoryBase(ABC):
 
     async def retrieve(
         self,
-        query: Union[str, Dict[str, Any], List[Dict[str, Any]]],
+        query: str | dict[str, Any] | list[dict[str, Any]],
         **kwargs: Any,
     ) -> str:
         """
@@ -149,9 +148,9 @@ class PersistentMemoryBase(ABC):
     async def save_to_memory(
         self,
         thinking: str,
-        content: List[str],
+        content: list[str],
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Agent tool interface: Save important information to memory.
 
@@ -172,9 +171,9 @@ class PersistentMemoryBase(ABC):
 
     async def recall_from_memory(
         self,
-        keywords: List[str],
+        keywords: list[str],
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Agent tool interface: Recall information based on keywords.
 

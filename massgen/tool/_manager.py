@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tool management system for MassGen."""
 
 import asyncio
@@ -8,10 +7,11 @@ import inspect
 import json
 import sys
 import time
+from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, Generator, List, Optional, Type
+from typing import Any
 
 from docstring_parser import parse
 from pydantic import BaseModel, ConfigDict, Field, create_model
@@ -41,7 +41,7 @@ class ToolCategory:
     category_desc: str
     """Description of the tool category."""
 
-    usage_hints: Optional[str] = None
+    usage_hints: str | None = None
     """Usage guidelines for tools in this category."""
 
 
@@ -58,15 +58,15 @@ class ToolManager:
 
     def __init__(self) -> None:
         """Initialize the tool manager."""
-        self.registered_tools: Dict[str, RegisteredToolEntry] = {}
-        self.tool_categories: Dict[str, ToolCategory] = {}
+        self.registered_tools: dict[str, RegisteredToolEntry] = {}
+        self.tool_categories: dict[str, ToolCategory] = {}
 
     def setup_category(
         self,
         category_name: str,
         description: str,
         enabled: bool = False,
-        usage_hints: Optional[str] = None,
+        usage_hints: str | None = None,
     ) -> None:
         """Create a new tool category.
 
@@ -88,7 +88,7 @@ class ToolManager:
             is_enabled=enabled,
         )
 
-    def modify_categories(self, category_list: List[str], enabled: bool) -> None:
+    def modify_categories(self, category_list: list[str], enabled: bool) -> None:
         """Update the activation status of categories.
 
         Args:
@@ -102,7 +102,7 @@ class ToolManager:
             if cat_name in self.tool_categories:
                 self.tool_categories[cat_name].is_enabled = enabled
 
-    def delete_categories(self, category_list: List[str]) -> None:
+    def delete_categories(self, category_list: list[str]) -> None:
         """Remove categories and their associated tools.
 
         Args:
@@ -125,16 +125,16 @@ class ToolManager:
 
     def add_tool_function(
         self,
-        path: Optional[str] = None,
-        func: Optional[Callable] = None,
+        path: str | None = None,
+        func: Callable | None = None,
         category: str = "default",
-        preset_args: Optional[Dict[str, Any]] = None,
-        description: Optional[str] = None,
-        tool_schema: Optional[dict] = None,
+        preset_args: dict[str, Any] | None = None,
+        description: str | None = None,
+        tool_schema: dict | None = None,
         include_full_desc: bool = True,
         allow_var_args: bool = False,
         allow_var_kwargs: bool = False,
-        post_processor: Optional[Callable] = None,
+        post_processor: Callable | None = None,
     ) -> None:
         """Register a tool function.
 
@@ -262,7 +262,7 @@ class ToolManager:
         """
         self.registered_tools.pop(tool_name, None)
 
-    def fetch_tool_schemas(self) -> List[dict]:
+    def fetch_tool_schemas(self) -> list[dict]:
         """Get JSON schemas for all active tools.
 
         Returns:
@@ -280,7 +280,7 @@ class ToolManager:
     def apply_extension_model(
         self,
         tool_name: str,
-        model_class: Optional[Type[BaseModel]],
+        model_class: type[BaseModel] | None,
     ) -> None:
         """Apply an extension model to a tool's schema.
 
@@ -296,10 +296,67 @@ class ToolManager:
         else:
             raise ValueError(f"Tool '{tool_name}' not found.")
 
+    @staticmethod
+    def _read_media_inputs_example_from_path(file_path: Any) -> str:
+        """Return inputs-only shape hint inferred from a legacy file_path value."""
+        media_key = "image_0"
+        media_path = "image.png"
+        if isinstance(file_path, str):
+            suffix = Path(file_path).suffix.lower()
+            if suffix in {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"}:
+                media_key = "video_0"
+                media_path = "clip.mp4"
+            elif suffix in {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"}:
+                media_key = "audio_0"
+                media_path = "voice.mp3"
+            elif suffix:
+                media_path = f"image{suffix}"
+        return f'inputs=[{{"files":{{"{media_key}":"{media_path}"}}}}]'
+
+    @staticmethod
+    def _is_read_media_tool_name(tool_name: Any) -> bool:
+        normalized = str(tool_name or "").strip().lower()
+        return normalized in {"read_media", "custom_tool__read_media"}
+
+    @classmethod
+    def _normalize_legacy_read_media_input(
+        cls,
+        tool_name: Any,
+        tool_input: Any,
+    ) -> tuple[Any, ExecutionResult | None]:
+        """Normalize or reject deprecated read_media legacy input keys.
+
+        Enforces inputs-first semantics:
+        - If `file_path` is present with non-empty `inputs`, drop `file_path`.
+        - If only `file_path` is present, return a migration error result.
+        """
+        if not cls._is_read_media_tool_name(tool_name):
+            return tool_input, None
+        if not isinstance(tool_input, dict):
+            return tool_input, None
+        if "file_path" not in tool_input:
+            return tool_input, None
+
+        normalized_input = dict(tool_input)
+        legacy_file_path = normalized_input.pop("file_path", None)
+        if normalized_input.get("inputs"):
+            logger.info("[ToolManager] Ignoring deprecated read_media `file_path` because canonical `inputs` is present")
+            return normalized_input, None
+
+        hint = cls._read_media_inputs_example_from_path(legacy_file_path)
+        error_payload = {
+            "success": False,
+            "operation": "read_media",
+            "error": f"`file_path` is no longer supported for read_media. Use {hint}",
+        }
+        return normalized_input, ExecutionResult(
+            output_blocks=[TextContent(data=json.dumps(error_payload, indent=2))],
+        )
+
     async def execute_tool(
         self,
         tool_request: dict,
-        execution_context: Optional[Dict[str, Any]] = None,
+        execution_context: dict[str, Any] | None = None,
     ) -> AsyncGenerator[ExecutionResult, None]:
         """Execute a tool and return results as async generator.
 
@@ -324,6 +381,16 @@ class ToolManager:
                 ],
             )
             return
+
+        normalized_input, migration_error = self._normalize_legacy_read_media_input(
+            tool_name,
+            tool_request.get("input", {}) or {},
+        )
+        if migration_error is not None:
+            yield migration_error
+            return
+        if normalized_input != (tool_request.get("input", {}) or {}):
+            tool_request = {**tool_request, "input": normalized_input}
 
         tool_entry = self.registered_tools[tool_name]
 
@@ -570,7 +637,7 @@ class ToolManager:
         self.registered_tools.clear()
         self.tool_categories.clear()
 
-    def _load_builtin_function(self, func_name: str) -> Optional[Callable]:
+    def _load_builtin_function(self, func_name: str) -> Callable | None:
         """Load a built-in function from the tool folder.
 
         Args:
@@ -626,8 +693,8 @@ class ToolManager:
     def _load_function_from_path(
         self,
         path: str,
-        func_name: Optional[str] = None,
-    ) -> Optional[Callable]:
+        func_name: str | None = None,
+    ) -> Callable | None:
         """Load a function from a given path.
 
         Args:
@@ -766,7 +833,7 @@ class ToolManager:
                 if not include_varkwargs:
                     continue
                 param_fields[param_name] = (
-                    Dict[str, Any] if param_info.annotation == inspect.Parameter.empty else Dict[str, param_info.annotation],
+                    dict[str, Any] if param_info.annotation == inspect.Parameter.empty else dict[str, param_info.annotation],
                     Field(
                         description=param_docs.get(param_name),
                         default={} if param_info.default is param_info.empty else param_info.default,

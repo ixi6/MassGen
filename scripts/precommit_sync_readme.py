@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Pre-commit hook wrapper for syncing README_PYPI.md when README.md changes.
 

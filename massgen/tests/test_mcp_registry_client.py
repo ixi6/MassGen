@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for MCP registry client."""
 
 from unittest.mock import MagicMock, patch

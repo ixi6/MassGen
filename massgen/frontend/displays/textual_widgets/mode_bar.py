@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Mode Bar Widget for MassGen TUI.
 
@@ -38,7 +37,7 @@ class ModeChanged(Message):
 class PlanConfigChanged(Message):
     """Message emitted when plan configuration changes."""
 
-    def __init__(self, depth: Optional["PlanDepth"] = None, auto_execute: Optional[bool] = None) -> None:
+    def __init__(self, depth: Optional["PlanDepth"] = None, auto_execute: bool | None = None) -> None:
         """Initialize the message.
 
         Args:
@@ -72,19 +71,9 @@ class SkillsClicked(Message):
 
 def _mode_log(msg: str) -> None:
     """Log to TUI debug file."""
-    try:
-        import logging
+    from massgen.frontend.displays.shared.tui_debug import tui_log
 
-        log = logging.getLogger("massgen.tui.debug")
-        if not log.handlers:
-            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-            handler.setFormatter(logging.Formatter("%(asctime)s [MODE] %(message)s", datefmt="%H:%M:%S"))
-            log.addHandler(handler)
-            log.setLevel(logging.DEBUG)
-            log.propagate = False
-        log.debug(msg)
-    except Exception:
-        pass
+    tui_log(f"[MODE] {msg}")
 
 
 class ModeToggle(Static):
@@ -97,7 +86,7 @@ class ModeToggle(Static):
 
     # Icons for different modes - using radio indicators for clean look
     ICONS = {
-        "plan": {"normal": "○", "plan": "◉", "execute": "◉", "analysis": "◉"},
+        "plan": {"normal": "○", "plan": "◉", "spec": "◉", "execute": "◉", "analysis": "◉"},
         "agent": {"multi": "◉", "single": "○"},
         "coordination": {"parallel": "◉", "decomposition": "○"},
         "refinement": {"on": "◉", "off": "○"},
@@ -106,7 +95,7 @@ class ModeToggle(Static):
 
     # Labels for states - concise without redundant ON/OFF
     LABELS = {
-        "plan": {"normal": "Normal", "plan": "Planning", "execute": "Executing", "analysis": "Analyzing"},
+        "plan": {"normal": "Normal", "plan": "Planning", "spec": "Spec", "execute": "Executing", "analysis": "Analyzing"},
         "agent": {"multi": "Multi-Agent", "single": "Single"},
         "coordination": {"parallel": "Parallel", "decomposition": "Decomposition"},
         "refinement": {"on": "Refine", "off": "Refine OFF"},
@@ -114,7 +103,7 @@ class ModeToggle(Static):
     }
 
     COMPACT_LABELS = {
-        "plan": {"normal": "Norm", "plan": "Plan", "execute": "Exec", "analysis": "Anly"},
+        "plan": {"normal": "Norm", "plan": "Plan", "spec": "Spec", "execute": "Exec", "analysis": "Anly"},
         "agent": {"multi": "Multi", "single": "Single"},
         "coordination": {"parallel": "Par", "decomposition": "Decomp"},
         "refinement": {"on": "Refine", "off": "Refine Off"},
@@ -127,8 +116,8 @@ class ModeToggle(Static):
         initial_state: str,
         states: list[str],
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the mode toggle.
 
@@ -215,11 +204,13 @@ class ModeToggle(Static):
 
         _mode_log(f"ModeToggle.on_click: {self.mode_type} current={self._current_state}")
 
-        # For plan mode, cycle through: normal -> plan -> execute -> analysis -> normal
+        # For plan mode, cycle through: normal -> plan -> spec -> execute -> analysis -> normal
         if self.mode_type == "plan":
             if self._current_state == "normal":
                 new_state = "plan"
             elif self._current_state == "plan":
+                new_state = "spec"
+            elif self._current_state == "spec":
                 new_state = "execute"
             elif self._current_state == "execute":
                 new_state = "analysis"
@@ -262,22 +253,22 @@ class ModeBar(Widget):
     def __init__(
         self,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the mode bar."""
         super().__init__(id=id, classes=classes)
-        self._plan_toggle: Optional[ModeToggle] = None
-        self._agent_toggle: Optional[ModeToggle] = None
-        self._coordination_toggle: Optional[ModeToggle] = None
-        self._refinement_toggle: Optional[ModeToggle] = None
-        self._persona_toggle: Optional[ModeToggle] = None
-        self._subtasks_btn: Optional[Button] = None
-        self._mode_help_btn: Optional[Button] = None
-        self._override_btn: Optional[Button] = None
-        self._plan_info: Optional[Label] = None
-        self._plan_settings_btn: Optional[Button] = None
-        self._plan_status: Optional[Static] = None
+        self._plan_toggle: ModeToggle | None = None
+        self._agent_toggle: ModeToggle | None = None
+        self._coordination_toggle: ModeToggle | None = None
+        self._refinement_toggle: ModeToggle | None = None
+        self._persona_toggle: ModeToggle | None = None
+        self._subtasks_btn: Button | None = None
+        self._mode_help_btn: Button | None = None
+        self._override_btn: Button | None = None
+        self._plan_info: Label | None = None
+        self._plan_settings_btn: Button | None = None
+        self._plan_status: Static | None = None
         self._last_responsive_width: int = 0
         self._compact_labels_active: bool = False
 
@@ -289,7 +280,7 @@ class ModeBar(Widget):
                 self._plan_toggle = ModeToggle(
                     mode_type="plan",
                     initial_state="normal",
-                    states=["normal", "plan", "execute", "analysis"],
+                    states=["normal", "plan", "spec", "execute", "analysis"],
                     id="plan_toggle",
                 )
                 yield self._plan_toggle
@@ -363,10 +354,17 @@ class ModeBar(Widget):
 
     def on_mount(self) -> None:
         """Initialize responsive labels once layout is available."""
+        app_width = self.app.size.width if self.app is not None else 0
+        _mode_log(
+            "layout refresh: " f"source=on_mount widget_width={self.size.width} app_width={app_width} " f"last_width={self._last_responsive_width}",
+        )
         self.call_after_refresh(self._refresh_responsive_labels)
 
     def on_resize(self, event: events.Resize) -> None:
         """Keep toggle labels readable on narrow terminals."""
+        _mode_log(
+            "layout refresh: " f"source=on_resize event_width={event.size.width} widget_width={self.size.width} " f"last_width={self._last_responsive_width}",
+        )
         del event
         self._refresh_responsive_labels()
 
@@ -386,6 +384,20 @@ class ModeBar(Widget):
             effective_width = min(width, app_width)
         else:
             effective_width = width or app_width
+
+        _mode_log(
+            "layout refresh: "
+            f"source=responsive_pass widget_width={self.size.width} app_width={app_width} "
+            f"derived_width={width} effective_width={effective_width} "
+            f"last_width={self._last_responsive_width} compact_active={self._compact_labels_active}",
+        )
+
+        # During cold-start layout, both widget/app width can be temporarily
+        # unavailable. Avoid forcing the conservative stacked fallback here;
+        # keep the current layout until a real width arrives.
+        if effective_width <= 0:
+            _mode_log("layout decision: unresolved_width keep_current_layout")
+            return
 
         # Compute full-label footprint first, then apply hysteresis so tiny
         # width changes don't flip labels between compact/non-compact states.
@@ -420,6 +432,13 @@ class ModeBar(Widget):
             self.add_class("compact-layout")
         else:
             self.remove_class("compact-layout")
+
+        _mode_log(
+            "layout decision: "
+            f"compact_labels={compact_labels} full_required={full_required} "
+            f"required_width={required_width} utilization={utilization:.3f} "
+            f"stacked_layout={stacked_layout} has_compact_class={self.has_class('compact-layout')}",
+        )
 
     def _apply_compact_labels(self, compact_labels: bool) -> None:
         """Apply compact/full labels across toggles and dependent buttons."""

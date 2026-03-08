@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for prompt parser @filename syntax.
 
 This module tests the PromptParser that extracts @path references from prompts

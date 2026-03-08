@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Integration tests for backend cost tracking with litellm.
 
@@ -14,7 +13,7 @@ Run with:
 
 import asyncio
 import os
-from typing import Any, Optional, Tuple
+from typing import Any
 
 import pytest
 
@@ -49,10 +48,10 @@ async def _collect_stream_response(
     *,
     model: str,
     max_tokens: int,
-) -> Tuple[str, Optional[str], bool]:
+) -> tuple[str, str | None, bool]:
     """Run a single backend stream call and collect content/error state."""
     response_content = ""
-    stream_error: Optional[str] = None
+    stream_error: str | None = None
     saw_done = False
 
     async for chunk in backend.stream_with_tools(messages, [], model=model, max_tokens=max_tokens):
@@ -76,7 +75,7 @@ async def _run_usage_tracking_with_retry(
     attempts: int = 3,
 ) -> str:
     """Run live API call with retry/skip behavior for transient provider instability."""
-    last_error: Optional[str] = None
+    last_error: str | None = None
     last_response = ""
 
     for attempt in range(1, attempts + 1):

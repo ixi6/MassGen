@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
 """
 Utility functions for AG2 (AutoGen) adapter.
 """
+
 import os
 import time
 
 # Suppress autogen deprecation warnings
 import warnings
-from typing import Any, Dict, List
+from typing import Any
 
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="autogen")
 warnings.filterwarnings("ignore", message=".*jsonschema.*")
@@ -23,7 +23,7 @@ def setup_api_keys() -> None:
         os.environ["GOOGLE_GEMINI_API_KEY"] = os.environ["GEMINI_API_KEY"]
 
 
-def validate_agent_config(cfg: Dict[str, Any], require_llm_config: bool = True) -> None:
+def validate_agent_config(cfg: dict[str, Any], require_llm_config: bool = True) -> None:
     """
     Validate required fields in agent configuration.
 
@@ -56,7 +56,7 @@ def create_llm_config(llm_config_data: Any) -> LLMConfig:
         raise ValueError(f"llm_config must be a dict or list, got {type(llm_config_data)}")
 
 
-def create_code_executor(executor_config: Dict[str, Any]) -> Any:
+def create_code_executor(executor_config: dict[str, Any]) -> Any:
     """Create code executor from configuration."""
     executor_type = executor_config.get("type")
 
@@ -93,7 +93,7 @@ def create_code_executor(executor_config: Dict[str, Any]) -> Any:
         )
 
 
-def build_agent_kwargs(cfg: Dict[str, Any], llm_config: LLMConfig, code_executor: Any = None) -> Dict[str, Any]:
+def build_agent_kwargs(cfg: dict[str, Any], llm_config: LLMConfig, code_executor: Any = None) -> dict[str, Any]:
     """Build kwargs for agent initialization."""
     agent_kwargs = {
         "name": cfg["name"],
@@ -108,7 +108,7 @@ def build_agent_kwargs(cfg: Dict[str, Any], llm_config: LLMConfig, code_executor
     return agent_kwargs
 
 
-def setup_agent_from_config(config: Dict[str, Any], default_llm_config: Any = None) -> ConversableAgent:
+def setup_agent_from_config(config: dict[str, Any], default_llm_config: Any = None) -> ConversableAgent:
     """
     Set up a ConversableAgent from configuration.
 
@@ -159,7 +159,7 @@ def setup_agent_from_config(config: Dict[str, Any], default_llm_config: Any = No
         )
 
 
-def get_group_initial_message() -> Dict[str, Any] | None:
+def get_group_initial_message() -> dict[str, Any] | None:
     """
     Create the initial system message for group chat.
 
@@ -215,7 +215,7 @@ def get_user_agent_default_description() -> str:
     return description
 
 
-def postprocess_group_chat_results(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def postprocess_group_chat_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for message in messages:
         if message["content"]:
             message["content"] = f"<SENDER>: {message['name']} </SENDER> \n" + message["content"]
@@ -224,13 +224,13 @@ def postprocess_group_chat_results(messages: List[Dict[str, Any]]) -> List[Dict[
     return messages
 
 
-def unregister_tools_for_agent(tools: List[Dict[str, Any]], agent: ConversableAgent) -> None:
+def unregister_tools_for_agent(tools: list[dict[str, Any]], agent: ConversableAgent) -> None:
     """Unregister all tools from single agent."""
     for tool in tools:
         agent.update_tool_signature(tool_sig=tool, is_remove=True, silent_override=True)
 
 
-def register_tools_for_agent(tools: List[Dict[str, Any]], agent: ConversableAgent) -> None:
+def register_tools_for_agent(tools: list[dict[str, Any]], agent: ConversableAgent) -> None:
     """Register all tools to single agent."""
     for tool in tools:
         agent.update_tool_signature(tool_sig=tool, is_remove=False, silent_override=True)

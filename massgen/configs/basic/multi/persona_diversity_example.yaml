@@ -98,6 +98,7 @@ orchestrator:
     persona_generator:
       enabled: true
       diversity_mode: perspective
+      after_first_answer: drop  # "drop" (default), "soften", or "keep"
   context_paths: []
   voting_sensitivity: lenient
   answer_novelty_requirement: lenient

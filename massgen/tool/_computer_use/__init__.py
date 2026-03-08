@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Computer use tool module for OpenAI computer-use-preview integration.
 """

@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 Gemini-specific structured output models for coordination actions (voting and answer submission).
 """
 
 import enum
-from typing import Optional
 
 try:
     from pydantic import BaseModel, Field
@@ -72,9 +70,9 @@ class CoordinationResponse(BaseModel):
     """Structured response for coordination actions."""
 
     action_type: ActionType = Field(description="Type of action to take")
-    vote_data: Optional[VoteAction] = Field(default=None, description="Vote data if action is vote")
-    answer_data: Optional[NewAnswerAction] = Field(default=None, description="Answer data if action is new_answer")
-    ask_others_data: Optional[AskOthersAction] = Field(default=None, description="Ask others data if action is ask_others")
+    vote_data: VoteAction | None = Field(default=None, description="Vote data if action is vote")
+    answer_data: NewAnswerAction | None = Field(default=None, description="Answer data if action is new_answer")
+    ask_others_data: AskOthersAction | None = Field(default=None, description="Ask others data if action is ask_others")
 
 
 class VoteOnlyVoteAction(BaseModel):
@@ -118,8 +116,8 @@ class DecompositionCoordinationResponse(BaseModel):
     """
 
     action_type: DecompositionActionType = Field(description="Type of action to take")
-    stop_data: Optional[StopAction] = Field(default=None, description="Stop data if action is stop")
-    answer_data: Optional[DecompositionNewAnswerAction] = Field(default=None, description="Answer data if action is new_answer")
+    stop_data: StopAction | None = Field(default=None, description="Stop data if action is stop")
+    answer_data: DecompositionNewAnswerAction | None = Field(default=None, description="Answer data if action is new_answer")
 
 
 class SubmitAction(BaseModel):
@@ -141,5 +139,5 @@ class PostEvaluationResponse(BaseModel):
     """Structured response for post-evaluation actions."""
 
     action_type: PostEvaluationActionType = Field(description="Type of post-evaluation action to take")
-    submit_data: Optional[SubmitAction] = Field(default=None, description="Submit data if action is submit")
-    restart_data: Optional[RestartAction] = Field(default=None, description="Restart data if action is restart")
+    submit_data: SubmitAction | None = Field(default=None, description="Submit data if action is submit")
+    restart_data: RestartAction | None = Field(default=None, description="Restart data if action is restart")

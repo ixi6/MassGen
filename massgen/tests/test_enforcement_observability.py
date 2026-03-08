@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for enforcement observability feature.
 
 This module tests the enforcement event tracking functionality in the

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 NLIP Usage Example for MassGen
 

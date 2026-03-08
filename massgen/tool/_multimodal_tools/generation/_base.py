@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base types and protocols for unified media generation.
 
@@ -12,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class MediaType(Enum):
@@ -28,32 +27,75 @@ class GenerationConfig:
     """Configuration passed to generation backends.
 
     Attributes:
-        prompt: Text description of what to generate
+        prompt: Text description of what to generate. For audio/speech this is
+            the literal text to speak (not speaking instructions).
         output_path: Where to save the generated media
         media_type: Type of media being generated
         backend: Preferred backend (None for auto-selection)
         model: Override default model for the backend
         quality: Quality setting ("standard", "hd", etc.)
         duration: For video/audio - length in seconds
-        voice: For audio - voice ID
+        voice: For audio - voice name or UUID. ElevenLabs names are resolved
+            to UUIDs automatically.
         aspect_ratio: For image/video - aspect ratio string
-        extra_params: Backend-specific parameters
+        size: Image dimensions (OpenAI: "1024x1024" etc; Gemini: "512px"/"1K"/"2K"/"4K")
+        extra_params: Backend-specific parameters (e.g., instructions, audio_type)
         input_images: Optional input images (image-to-image)
         input_image_paths: Resolved input image paths (for metadata)
+        continue_from: Continuation ID from a previous generation result for
+            multi-turn editing. OpenAI: response ID; Gemini: chat store ID.
+        mask_path: Path to mask image for inpainting operations.
+        edit_mode: Editing operation type (e.g., "inpaint", "style_transfer").
+        output_format: Override output format ("png", "jpeg", "webp").
+        background: Background handling ("transparent", color hex).
+        negative_prompt: What to exclude from generation.
+        seed: Reproducibility seed for deterministic output.
+        guidance_scale: Prompt adherence strength (higher = more literal).
     """
 
     prompt: str
     output_path: Path
     media_type: MediaType
-    backend: Optional[str] = None
-    model: Optional[str] = None
-    quality: Optional[str] = None
-    duration: Optional[int] = None
-    voice: Optional[str] = None
-    aspect_ratio: Optional[str] = None
-    extra_params: Dict[str, Any] = field(default_factory=dict)
-    input_images: List[Dict[str, str]] = field(default_factory=list)
-    input_image_paths: List[str] = field(default_factory=list)
+    backend: str | None = None
+    model: str | None = None
+    quality: str | None = None
+    duration: int | None = None
+    voice: str | None = None
+    aspect_ratio: str | None = None
+    size: str | None = None
+    extra_params: dict[str, Any] = field(default_factory=dict)
+    input_images: list[dict[str, str]] = field(default_factory=list)
+    input_image_paths: list[str] = field(default_factory=list)
+    continue_from: str | None = None
+    # Editing fields (MAS-333: multimedia editing capabilities)
+    mask_path: Path | None = None
+    edit_mode: str | None = None
+    output_format: str | None = None
+    background: str | None = None
+    negative_prompt: str | None = None
+    seed: int | None = None
+    guidance_scale: float | None = None
+    # Audio editing fields (MAS-334: audio understanding and editing)
+    input_audio_path: Path | None = None
+    voice_samples: list[Path] = field(default_factory=list)
+    target_language: str | None = None
+    source_language: str | None = None
+    # Google advanced editing fields (MAS-333 Phase 5)
+    style_image_path: Path | None = None
+    style_description: str | None = None
+    control_image_path: Path | None = None
+    control_type: str | None = None
+    subject_image_path: Path | None = None
+    subject_type: str | None = None
+    subject_description: str | None = None
+    mask_mode: str | None = None
+    segmentation_classes: list[int] | None = None
+    # Advanced TTS fields (MAS-334 Phase 5)
+    speed: float | None = None
+    voice_stability: float | None = None
+    voice_similarity: float | None = None
+    # Veo 3.1 video reference images (up to 3 for style/content guidance)
+    video_reference_images: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -73,44 +115,53 @@ class GenerationResult:
     """
 
     success: bool
-    output_path: Optional[Path] = None
-    media_type: Optional[MediaType] = None
+    output_path: Path | None = None
+    media_type: MediaType | None = None
     backend_name: str = ""
     model_used: str = ""
-    file_size_bytes: Optional[int] = None
-    duration_seconds: Optional[float] = None
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    file_size_bytes: int | None = None
+    duration_seconds: float | None = None
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # API key environment variable mappings for each backend
-BACKEND_API_KEYS: Dict[str, List[str]] = {
+BACKEND_API_KEYS: dict[str, list[str]] = {
     "openai": ["OPENAI_API_KEY"],
     "google": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY"],
+    "elevenlabs": ["ELEVENLABS_API_KEY"],
+    "grok": ["XAI_API_KEY"],
 }
 
 # Default models for each backend and media type
-DEFAULT_MODELS: Dict[str, Dict[MediaType, str]] = {
+DEFAULT_MODELS: dict[str, dict[MediaType, str]] = {
     "openai": {
-        MediaType.IMAGE: "gpt-5",
+        MediaType.IMAGE: "gpt-5.4",
         MediaType.VIDEO: "sora-2",
         MediaType.AUDIO: "gpt-4o-mini-tts",
     },
     "google": {
-        MediaType.IMAGE: "imagen-4.0-fast-generate-001",  # gemini-3-pro-image-preview
+        MediaType.IMAGE: "gemini-3.1-flash-image-preview",  # Nano Banana 2
         MediaType.VIDEO: "veo-3.1-generate-preview",
     },
     "openrouter": {
-        MediaType.IMAGE: "google/gemini-2.5-flash-image-preview",
+        MediaType.IMAGE: "google/gemini-3.1-flash-image-preview",  # Nano Banana 2
+    },
+    "elevenlabs": {
+        MediaType.AUDIO: "eleven_multilingual_v2",
+    },
+    "grok": {
+        MediaType.IMAGE: "grok-imagine-image",
+        MediaType.VIDEO: "grok-imagine-video",
     },
 }
 
 # Priority order for auto-selection per media type
-BACKEND_PRIORITY: Dict[MediaType, List[str]] = {
-    MediaType.IMAGE: ["openai", "google", "openrouter"],
-    MediaType.VIDEO: ["openai", "google"],
-    MediaType.AUDIO: ["openai"],
+BACKEND_PRIORITY: dict[MediaType, list[str]] = {
+    MediaType.IMAGE: ["google", "openai", "grok", "openrouter"],
+    MediaType.VIDEO: ["grok", "google", "openai"],
+    MediaType.AUDIO: ["elevenlabs", "openai"],
 }
 
 
@@ -127,7 +178,7 @@ def has_api_key(backend_name: str) -> bool:
     return any(os.getenv(var) for var in env_vars)
 
 
-def get_api_key(backend_name: str) -> Optional[str]:
+def get_api_key(backend_name: str) -> str | None:
     """Get the API key for a backend.
 
     Args:
@@ -143,7 +194,7 @@ def get_api_key(backend_name: str) -> Optional[str]:
     return None
 
 
-def get_default_model(backend_name: str, media_type: MediaType) -> Optional[str]:
+def get_default_model(backend_name: str, media_type: MediaType) -> str | None:
     """Get the default model for a backend and media type.
 
     Args:

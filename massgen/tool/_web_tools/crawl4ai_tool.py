@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Crawl4AI Web Scraping Tools - Custom tool wrapper for crawl4ai REST API.
 
@@ -24,7 +23,6 @@ Prerequisites:
 """
 
 import json
-from typing import List, Optional
 from urllib.parse import urlparse
 
 import httpx
@@ -137,8 +135,8 @@ def require_docker(func):
 async def crawl4ai_md(
     url: str,
     filter_type: str = "fit",
-    query: Optional[str] = None,
-    agent_cwd: Optional[str] = None,
+    query: str | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """Extract clean markdown text content from a webpage.
 
@@ -277,7 +275,7 @@ async def crawl4ai_md(
 @require_docker
 async def crawl4ai_html(
     url: str,
-    agent_cwd: Optional[str] = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """Extract preprocessed HTML from a webpage.
 
@@ -330,8 +328,8 @@ async def crawl4ai_html(
 async def crawl4ai_screenshot(
     url: str,
     wait_seconds: float = 2.0,
-    output_filename: Optional[str] = None,
-    agent_cwd: Optional[str] = None,
+    output_filename: str | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """Capture a screenshot of a webpage.
 
@@ -433,8 +431,8 @@ async def crawl4ai_screenshot(
 @require_docker
 async def crawl4ai_pdf(
     url: str,
-    output_filename: Optional[str] = None,
-    agent_cwd: Optional[str] = None,
+    output_filename: str | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """Generate a PDF from a webpage.
 
@@ -528,8 +526,8 @@ async def crawl4ai_pdf(
 @require_docker
 async def crawl4ai_execute_js(
     url: str,
-    scripts: List[str],
-    agent_cwd: Optional[str] = None,
+    scripts: list[str],
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """Execute JavaScript on a webpage and return results.
 
@@ -597,9 +595,9 @@ async def crawl4ai_execute_js(
 
 @require_docker
 async def crawl4ai_crawl(
-    urls: List[str],
+    urls: list[str],
     max_urls: int = 100,
-    agent_cwd: Optional[str] = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """Crawl multiple URLs in parallel.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Phase Indicator Bar Widget for MassGen TUI.
 
@@ -6,7 +5,6 @@ Shows the coordination flow progress for multi-agent mode.
 """
 
 import logging
-from typing import Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -71,8 +69,8 @@ class PhaseIndicatorBar(Widget):
     def __init__(
         self,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(id=id, classes=classes)
         self._completed_phases: set = set()

@@ -1,0 +1,64 @@
+# Gemini 3.1 Pro Preview — Google's most advanced Pro model (Feb 2026)
+# uv run massgen --config @examples/providers/gemini/gemini-3-1-pro "Generate an SVG of a sliding toggle switch where hovering over the sun icon turns it into a glowing moon, smoothly fading the background from light to dark. Clean flat UI style"
+agents:
+- id: agent_a
+  backend:
+    type: gemini
+    model: gemini-3.1-pro-preview
+    cwd: workspace
+    enable_code_based_tools: true
+    exclude_file_operation_mcps: true
+    enable_mcp_command_line: true
+    command_line_execution_mode: docker
+    # command_line_execution_mode: local  # docker
+    # command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
+    command_line_docker_image: massgen/mcp-runtime-sudo:latest  # bc we changed task plan for bcodex, we used `bash massgen/docker/build.sh --sudo`
+    command_line_docker_network_mode: bridge
+    command_line_docker_enable_sudo: true
+    command_line_docker_credentials:
+      env_file: .env
+      # These must be passed for subagents to work if we are using a backend launched in docker, e.g. codex.
+      env_vars_from_file:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - GOOGLE_API_KEY
+      - GEMINI_API_KEY
+      - OPENROUTER_API_KEY
+    shared_tools_directory: shared_tools
+    auto_discover_custom_tools: true
+    exclude_custom_tools:
+    - _computer_use
+    - _claude_computer_use
+    - _gemini_computer_use
+    - _browser_automation
+orchestrator:
+  snapshot_storage: snapshots
+  agent_temporary_workspace: temp_workspaces
+  max_new_answers_per_agent: 5
+  fairness_enabled: true
+  fairness_lead_cap_answers: 2
+  max_midstream_injections_per_round: 2
+  enable_multimodal_tools: true
+  image_generation_backend: openai
+  video_generation_backend: openai
+  audio_generation_backend: openai
+  voting_sensitivity: checklist_gated
+  voting_threshold: 2
+  coordination:
+    max_orchestration_restarts: 0
+    use_skills: true
+    skills_directory: .agent/skills
+    enable_agent_task_planning: true
+    task_planning_filesystem_mode: true
+    enable_memory_filesystem_mode: true
+    enable_changedoc: true
+    write_mode: auto
+  context_paths: []
+timeout_settings:
+  orchestrator_timeout_seconds: 5400
+  initial_round_timeout_seconds: 1800
+  subsequent_round_timeout_seconds: 1800
+  round_timeout_grace_seconds: 450
+ui:
+  display_type: textual_terminal
+  logging_enabled: true

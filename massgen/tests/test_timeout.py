@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Simple test script to verify timeout mechanisms work correctly.
 This creates a fast timeout config and runs a test to demonstrate the timeout fallback.
@@ -8,6 +7,8 @@ This creates a fast timeout config and runs a test to demonstrate the timeout fa
 import asyncio
 import sys
 from pathlib import Path
+
+import pytest
 
 from massgen.agent_config import AgentConfig, TimeoutConfig
 from massgen.backend.claude_code import ClaudeCodeBackend
@@ -18,6 +19,8 @@ from massgen.orchestrator import Orchestrator
 sys.path.insert(0, str(Path(__file__).parent))
 
 
+@pytest.mark.integration
+@pytest.mark.live_api
 async def test_orchestrator_timeout():
     """Test orchestrator-level timeout."""
     print("\n🧪 Testing Orchestrator Timeout Mechanism")

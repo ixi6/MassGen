@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Path handling module for @filename syntax in MassGen prompts.
 
 This module provides:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Backend and model selection logic for media generation.
 
@@ -8,7 +7,7 @@ Selects the best available backend and model based on:
 3. First available in priority list with valid API key / default model
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from massgen.logger_config import logger
 from massgen.tool._multimodal_tools.generation._base import (
@@ -21,10 +20,10 @@ from massgen.tool._multimodal_tools.generation._base import (
 
 def select_backend_and_model(
     media_type: MediaType,
-    preferred_backend: Optional[str] = None,
-    preferred_model: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
-) -> Tuple[Optional[str], Optional[str]]:
+    preferred_backend: str | None = None,
+    preferred_model: str | None = None,
+    config: dict[str, Any] | None = None,
+) -> tuple[str | None, str | None]:
     """Select the best available backend and model for a media type.
 
     Priority order for backend:
@@ -114,9 +113,9 @@ def select_backend_and_model(
 
 def select_backend(
     media_type: MediaType,
-    preferred: Optional[str] = None,
-    config: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
+    preferred: str | None = None,
+    config: dict[str, Any] | None = None,
+) -> str | None:
     """Select the best available backend for a media type.
 
     This is a convenience wrapper around select_backend_and_model that only

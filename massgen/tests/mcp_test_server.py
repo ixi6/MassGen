@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Simple MCP test server for testing MCP integration.
 
@@ -10,7 +9,7 @@ It implements the MCP protocol over stdio transport.
 import asyncio
 import json
 import sys
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class SimpleMCPServer:
@@ -46,7 +45,7 @@ class SimpleMCPServer:
             },
         }
 
-    async def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle initialize request."""
         return {
             "protocolVersion": "2024-11-05",
@@ -58,11 +57,11 @@ class SimpleMCPServer:
             "serverInfo": {"name": "simple-test-server", "version": "1.0.0"},
         }
 
-    async def handle_tools_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_tools_list(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle tools/list request."""
         return {"tools": list(self.tools.values())}
 
-    async def handle_tools_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def handle_tools_call(self, params: dict[str, Any]) -> dict[str, Any]:
         """Handle tools/call request."""
         tool_name = params.get("name")
         arguments = params.get("arguments", {})
@@ -86,7 +85,7 @@ class SimpleMCPServer:
         else:
             raise ValueError(f"Unknown tool: {tool_name}")
 
-    async def handle_request(self, request: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    async def handle_request(self, request: dict[str, Any]) -> dict[str, Any] | None:
         """Handle incoming JSON-RPC request or notification."""
         method = request.get("method")
         params = request.get("params", {})

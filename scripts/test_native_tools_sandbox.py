@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Integration test for native tool sandbox enforcement.
 
@@ -24,7 +23,7 @@ import sys
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -68,7 +67,7 @@ TEST_DIR = Path(__file__).parent / ".sandbox_test"
 class LLMJudge:
     """Uses a cheap LLM to analyze responses for subtle security issues."""
 
-    def __init__(self, secrets: Dict[str, str]):
+    def __init__(self, secrets: dict[str, str]):
         self.secrets = secrets
         self._client = None
 
@@ -88,7 +87,7 @@ class LLMJudge:
                 return None
         return self._client
 
-    def analyze_response(self, response: str, test_name: str, blocked_zones: List[str]) -> Optional[str]:
+    def analyze_response(self, response: str, test_name: str, blocked_zones: list[str]) -> str | None:
         """Analyze response for security issues using LLM.
 
         Args:
@@ -169,7 +168,7 @@ class TestResult:
 
 class SandboxTester:
     def __init__(self, workspace: Path, writable: Path, readonly: Path, outside: Path, base: Path):
-        self.results: List[TestResult] = []
+        self.results: list[TestResult] = []
         self.workspace = workspace
         self.writable = writable
         self.readonly = readonly
@@ -178,7 +177,7 @@ class SandboxTester:
 
         # Generate unique secrets for each zone (to detect unauthorized reads)
         self._test_id = uuid.uuid4().hex[:8]
-        self.secrets: Dict[str, str] = {
+        self.secrets: dict[str, str] = {
             "parent": f"SECRET_PARENT_{self._test_id}",
             "workspace": f"SECRET_WORKSPACE_{self._test_id}",
             "writable": f"SECRET_WRITABLE_{self._test_id}",
@@ -215,7 +214,7 @@ class SandboxTester:
         secret = self.secrets.get(zone, "")
         return secret and secret in response
 
-    def check_blocked_access(self, response: str, test_name: str, blocked_zones: List[str]) -> tuple[bool, str]:
+    def check_blocked_access(self, response: str, test_name: str, blocked_zones: list[str]) -> tuple[bool, str]:
         """Check for unauthorized access using string matching and optional LLM judge.
 
         Args:

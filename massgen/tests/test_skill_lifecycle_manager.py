@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for analysis skill lifecycle create/update behaviors."""
 
 from pathlib import Path

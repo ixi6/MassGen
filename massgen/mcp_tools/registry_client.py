@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MCP Registry Client
 
@@ -14,7 +13,7 @@ import json
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import requests
 
@@ -22,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # In-memory cache for registry lookups within a session
 # This prevents repeated HTTP requests when building system messages for multiple agents
-_SESSION_CACHE: Dict[str, Any] = {}
+_SESSION_CACHE: dict[str, Any] = {}
 
 # Flag to track if warmup is in progress (prevent duplicate warmups)
 _WARMUP_IN_PROGRESS: bool = False
@@ -30,7 +29,7 @@ _WARMUP_IN_PROGRESS: bool = False
 # NPM packages that are NOT in the public MCP registry.
 # Without this skip list, each package triggers a full registry scan (~18 seconds)
 # before returning "not found". Maps package name -> fallback description.
-_PACKAGES_NOT_IN_REGISTRY: Dict[str, str] = {
+_PACKAGES_NOT_IN_REGISTRY: dict[str, str] = {
     # MCP reference implementations (official but not in public registry)
     "@modelcontextprotocol/server-filesystem": "Secure file operations with configurable access controls",
     # Tool wrappers used by MassGen
@@ -38,7 +37,7 @@ _PACKAGES_NOT_IN_REGISTRY: Dict[str, str] = {
 }
 
 
-def _description_cache_key(server: Dict[str, Any]) -> str:
+def _description_cache_key(server: dict[str, Any]) -> str:
     """Create a stable cache key for server description lookups.
 
     Using only server name is too coarse: different configurations can reuse
@@ -52,7 +51,7 @@ def _description_cache_key(server: Dict[str, Any]) -> str:
     return f"desc:{digest}"
 
 
-def warmup_mcp_registry_cache(config: Optional[Dict[str, Any]] = None) -> None:
+def warmup_mcp_registry_cache(config: dict[str, Any] | None = None) -> None:
     """
     Pre-warm the MCP registry cache by fetching descriptions for all servers.
 
@@ -82,7 +81,7 @@ def warmup_mcp_registry_cache(config: Optional[Dict[str, Any]] = None) -> None:
     _WARMUP_IN_PROGRESS = True
     try:
         # Collect all unique MCP servers to warm up
-        all_mcp_servers: List[Dict[str, Any]] = []
+        all_mcp_servers: list[dict[str, Any]] = []
         seen_servers: set = set()
 
         # 1. Add auto-discovery servers from MCP_SERVER_REGISTRY
@@ -131,7 +130,7 @@ def warmup_mcp_registry_cache(config: Optional[Dict[str, Any]] = None) -> None:
         _WARMUP_IN_PROGRESS = False
 
 
-def extract_package_info_from_config(mcp_config: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+def extract_package_info_from_config(mcp_config: dict[str, Any]) -> tuple[str, str] | None:
     """
     Extract package name and registry type from MCP server config.
 
@@ -192,10 +191,10 @@ def extract_package_info_from_config(mcp_config: Dict[str, Any]) -> Optional[Tup
 
 
 def get_mcp_server_descriptions(
-    mcp_servers: List[Dict[str, Any]],
-    fallback_descriptions: Optional[Dict[str, str]] = None,
+    mcp_servers: list[dict[str, Any]],
+    fallback_descriptions: dict[str, str] | None = None,
     use_cache: bool = True,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """
     Fetch descriptions for all MCP servers from the registry.
 
@@ -312,7 +311,7 @@ class MCPRegistryClient:
 
     BASE_URL = "https://registry.modelcontextprotocol.io/v0"
 
-    def __init__(self, cache_dir: Optional[Path] = None):
+    def __init__(self, cache_dir: Path | None = None):
         """
         Initialize MCP registry client.
 
@@ -334,7 +333,7 @@ class MCPRegistryClient:
         """Get path to cache file for a given key."""
         return self.cache_dir / f"{cache_key}.json"
 
-    def _read_cache(self, package_name: str, registry_type: str) -> Optional[Dict[Any, Any]]:
+    def _read_cache(self, package_name: str, registry_type: str) -> dict[Any, Any] | None:
         """
         Read cached server info if available and not expired.
 
@@ -363,11 +362,11 @@ class MCPRegistryClient:
             logger.debug(f"Cache hit for {package_name}")
             return cached.get("data")
 
-        except (json.JSONDecodeError, IOError) as e:
+        except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to read cache for {package_name}: {e}")
             return None
 
-    def _write_cache(self, package_name: str, registry_type: str, data: Optional[Dict]) -> None:
+    def _write_cache(self, package_name: str, registry_type: str, data: dict | None) -> None:
         """
         Write server info to cache.
 
@@ -392,7 +391,7 @@ class MCPRegistryClient:
                     indent=2,
                 )
             logger.debug(f"Cached result for {package_name}")
-        except IOError as e:
+        except OSError as e:
             logger.warning(f"Failed to write cache for {package_name}: {e}")
 
     def find_server_by_package(
@@ -400,7 +399,7 @@ class MCPRegistryClient:
         package_name: str,
         registry_type: str = "npm",
         use_cache: bool = True,
-    ) -> Optional[Dict[Any, Any]]:
+    ) -> dict[Any, Any] | None:
         """
         Find a server in the MCP registry by its package name.
 
@@ -441,7 +440,7 @@ class MCPRegistryClient:
         self,
         package_name: str,
         registry_type: str,
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """
         List all servers and find by package identifier.
 

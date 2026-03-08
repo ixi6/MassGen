@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Streaming buffer mixin for compression recovery.
 
 This module provides a mixin class that adds streaming buffer functionality
@@ -8,10 +7,11 @@ it can be included in compression summaries when context limits are exceeded.
 Also provides execution trace functionality for persisting structured execution
 history to files for context recovery and cross-agent coordination.
 """
+
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 
@@ -108,7 +108,7 @@ class StreamingBufferMixin:
                     model = self.config.get("model", "unknown")
                 self._init_execution_trace(agent_id=agent_id, model=model)
 
-    def _finalize_streaming_buffer(self, agent_id: Optional[str] = None) -> None:
+    def _finalize_streaming_buffer(self, agent_id: str | None = None) -> None:
         """Finalize and optionally save the streaming buffer.
 
         Call this at the end of streaming to save the buffer if enabled.
@@ -132,7 +132,7 @@ class StreamingBufferMixin:
 
     def _append_tool_call_to_buffer(
         self,
-        tool_calls: List[Dict[str, Any]],
+        tool_calls: list[dict[str, Any]],
     ) -> None:
         """Append tool call requests to the streaming buffer.
 
@@ -220,7 +220,7 @@ class StreamingBufferMixin:
                 self._in_reasoning_block = True
             self._streaming_buffer += reasoning_text
 
-    def _get_streaming_buffer(self) -> Optional[str]:
+    def _get_streaming_buffer(self) -> str | None:
         """Get buffer content for compression, or None if empty.
 
         Returns:
@@ -228,7 +228,7 @@ class StreamingBufferMixin:
         """
         return self._streaming_buffer if self._streaming_buffer else None
 
-    def _save_streaming_buffer(self, agent_id: Optional[str] = None) -> None:
+    def _save_streaming_buffer(self, agent_id: str | None = None) -> None:
         """Save the streaming buffer to a file if saving is enabled.
 
         Args:
@@ -308,7 +308,7 @@ class StreamingBufferMixin:
         if self._execution_trace:
             self._execution_trace.start_round(round_num=round_num, answer_label=answer_label)
 
-    def _add_tool_call_to_trace(self, name: str, args: Dict[str, Any]) -> None:
+    def _add_tool_call_to_trace(self, name: str, args: dict[str, Any]) -> None:
         """Add a tool call to the execution trace.
 
         Args:
@@ -351,9 +351,9 @@ class StreamingBufferMixin:
     def _add_vote_to_trace(
         self,
         voted_for_agent: str,
-        voted_for_label: Optional[str],
+        voted_for_label: str | None,
         reason: str,
-        available_options: Optional[List[str]] = None,
+        available_options: list[str] | None = None,
     ) -> None:
         """Add a vote submission to the execution trace.
 
@@ -371,7 +371,7 @@ class StreamingBufferMixin:
                 available_options=available_options,
             )
 
-    def _save_execution_trace(self, snapshot_dir: Path) -> Optional[Path]:
+    def _save_execution_trace(self, snapshot_dir: Path) -> Path | None:
         """Save the execution trace to the snapshot directory.
 
         Args:

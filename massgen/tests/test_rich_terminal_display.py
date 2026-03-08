@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Test script for MassGen Rich Terminal Display.
 Tests RichTerminalDisplay functionality with two-agent coordination.

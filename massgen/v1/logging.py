@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MassGen Logging System
 
@@ -15,7 +14,7 @@ import time
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .types import AnswerRecord, LogEntry, VoteRecord
 
@@ -48,7 +47,7 @@ class MassLogManager:
     def __init__(
         self,
         log_dir: str = "logs",
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         non_blocking: bool = False,
     ):
         """
@@ -95,8 +94,8 @@ class MassLogManager:
         self.system_log_file = self.display_dir / "system.txt"
 
         # In-memory log storage for real-time access
-        self.log_entries: List[LogEntry] = []
-        self.agent_logs: Dict[int, List[LogEntry]] = {}
+        self.log_entries: list[LogEntry] = []
+        self.agent_logs: dict[int, list[LogEntry]] = {}
 
         # MassGen-specific event counters
         self.event_counters = {
@@ -225,7 +224,7 @@ class MassLogManager:
 {'=' * 80}
 """
 
-    def _write_agent_answers(self, agent_id: int, answer_records: List[AnswerRecord]):
+    def _write_agent_answers(self, agent_id: int, answer_records: list[AnswerRecord]):
         """Write agent's answer history to the answers folder."""
         if self.non_blocking:
             return
@@ -273,7 +272,7 @@ class MassLogManager:
         except Exception as e:
             print(f"Warning: Failed to write answers for agent {agent_id}: {e}")
 
-    def _write_agent_votes(self, agent_id: int, vote_records: List[VoteRecord]):
+    def _write_agent_votes(self, agent_id: int, vote_records: list[VoteRecord]):
         """Write agent's vote history to the votes folder."""
         if self.non_blocking:
             return
@@ -333,9 +332,9 @@ class MassLogManager:
     def log_event(
         self,
         event_type: str,
-        agent_id: Optional[int] = None,
+        agent_id: int | None = None,
         phase: str = "unknown",
-        data: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
     ):
         """
         Log a general system event.
@@ -541,7 +540,7 @@ class MassLogManager:
     def log_consensus_reached(
         self,
         winning_agent_id: int,
-        vote_distribution: Dict[int, int],
+        vote_distribution: dict[int, int],
         is_fallback: bool = False,
         phase: str = "unknown",
     ):
@@ -578,7 +577,7 @@ class MassLogManager:
         for agent_id in vote_distribution.keys():
             self._write_agent_display_log(agent_id, consensus_entry)
 
-    def log_phase_transition(self, old_phase: str, new_phase: str, additional_data: Dict[str, Any] = None):
+    def log_phase_transition(self, old_phase: str, new_phase: str, additional_data: dict[str, Any] = None):
         """
         Log system phase transitions.
 
@@ -676,7 +675,7 @@ class MassLogManager:
 
         self.log_event("debate_started", phase=phase, data=data)
 
-    def log_task_completion(self, final_solution: Dict[str, Any]):
+    def log_task_completion(self, final_solution: dict[str, Any]):
         """
         Log task completion with final results.
 
@@ -704,7 +703,7 @@ class MassLogManager:
         except Exception as e:
             print(f"Warning: Failed to write log entry: {e}")
 
-    def _write_agent_display_log(self, agent_id: int, data: Dict[str, Any]):
+    def _write_agent_display_log(self, agent_id: int, data: dict[str, Any]):
         """Write agent-specific display log entry."""
         # Skip file operations in non-blocking mode
         if self.non_blocking:
@@ -751,12 +750,12 @@ class MassLogManager:
         except Exception as e:
             print(f"Error writing to system log: {e}")
 
-    def get_agent_history(self, agent_id: int) -> List[LogEntry]:
+    def get_agent_history(self, agent_id: int) -> list[LogEntry]:
         """Get complete history for a specific agent."""
         with self._lock:
             return self.agent_logs.get(agent_id, []).copy()
 
-    def get_session_summary(self) -> Dict[str, Any]:
+    def get_session_summary(self) -> dict[str, Any]:
         """Get comprehensive session summary."""
         with self._lock:
             # Count events by type
@@ -831,7 +830,7 @@ class MassLogManager:
             },
         )
 
-    def get_session_statistics(self) -> Dict[str, Any]:
+    def get_session_statistics(self) -> dict[str, Any]:
         """
         Get comprehensive session statistics.
 
@@ -856,10 +855,10 @@ class MassLogManager:
 
 
 # Global log manager instance
-_log_manager: Optional[MassLogManager] = None
+_log_manager: MassLogManager | None = None
 
 
-def initialize_logging(log_dir: str = "logs", session_id: Optional[str] = None, non_blocking: bool = False) -> MassLogManager:
+def initialize_logging(log_dir: str = "logs", session_id: str | None = None, non_blocking: bool = False) -> MassLogManager:
     """Initialize the global logging system."""
     global _log_manager
 
@@ -877,7 +876,7 @@ def initialize_logging(log_dir: str = "logs", session_id: Optional[str] = None, 
     return _log_manager
 
 
-def get_log_manager() -> Optional[MassLogManager]:
+def get_log_manager() -> MassLogManager | None:
     """Get the current log manager instance."""
     return _log_manager
 

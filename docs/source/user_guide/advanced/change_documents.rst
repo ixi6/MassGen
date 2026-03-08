@@ -52,6 +52,23 @@ Each agent follows this workflow during coordination:
 
 When agents build on prior answers, they **inherit** the previous agent's changedoc and extend it with their own decisions.
 
+Self-Reference Placeholder
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When writing a changedoc, agents use ``[SELF]`` wherever they would reference their own work. The orchestrator automatically replaces ``[SELF]`` with the agent's real answer label (e.g., ``agent1.2``) when the answer is submitted. This means:
+
+* Agents don't need to know their own label in advance
+* Other agents always see real labels, never placeholders
+* The provenance chain is consistent and machine-readable
+
+.. code-block:: markdown
+
+   # What the agent writes:
+   **Origin:** [SELF] --- NEW
+
+   # What the next agent sees:
+   **Origin:** agent1.2 --- NEW
+
 Observation Flow
 ~~~~~~~~~~~~~~~~
 

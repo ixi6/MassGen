@@ -1,6 +1,6 @@
 [1] separator: Round 1
-[1] tool pending | filesystem/read_text_file | id=t1 | status=running | args={"path": "/tmp/a.txt"}
+[1] tool pending | filesystem/read_text_file | id=t1 | status=running | server=filesystem | args={"path": "/tmp/a.txt"}
 [1] content-inline: interleaved content
-[1] tool pending | filesystem/write_file | id=t2 | status=running | args={"path": "/tmp/b.txt"}
-[1] tool update_standalone | filesystem/read_text_file | id=t1 | status=success | result=done
-[1] tool update_standalone | filesystem/write_file | id=t2 | status=success | result=ok
+[1] tool pending | filesystem/write_file | id=t2 | status=running | server=filesystem | args={"path": "/tmp/b.txt"}
+[1] tool update_standalone | filesystem/read_text_file | id=t1 | status=success | server=filesystem | result=done
+[1] tool update_standalone | filesystem/write_file | id=t2 | status=success | server=filesystem | result=ok

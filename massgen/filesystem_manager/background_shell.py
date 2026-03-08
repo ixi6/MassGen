@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Background shell execution manager for MassGen.
 
@@ -32,7 +31,7 @@ import time
 import uuid
 from collections import deque
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..logger_config import logger
 
@@ -62,7 +61,7 @@ class RingBuffer:
         with self._lock:
             self._buffer.append(line)
 
-    def get_all(self) -> List[str]:
+    def get_all(self) -> list[str]:
         """Get all lines from the buffer (thread-safe).
 
         Returns:
@@ -85,7 +84,7 @@ class BackgroundShell:
         shell_id: str,
         command: str,
         process: subprocess.Popen,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         max_output_lines: int = 10000,
     ):
         """Initialize background shell.
@@ -102,8 +101,8 @@ class BackgroundShell:
         self.process = process
         self.cwd = cwd
         self.start_time = datetime.now()
-        self.end_time: Optional[datetime] = None
-        self.exit_code: Optional[int] = None
+        self.end_time: datetime | None = None
+        self.exit_code: int | None = None
 
         # Output buffers
         self.stdout_buffer = RingBuffer(maxlen=max_output_lines)
@@ -159,7 +158,7 @@ class BackgroundShell:
         else:
             return "stopped"
 
-    def update_exit_code(self) -> Optional[int]:
+    def update_exit_code(self) -> int | None:
         """Update and return exit code if process has finished.
 
         Returns:
@@ -207,7 +206,7 @@ class DockerBackgroundShell:
         command: str,
         container: Any,  # docker.models.containers.Container
         exec_id: str,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         max_output_lines: int = 10000,
     ):
         """Initialize Docker background shell.
@@ -226,8 +225,8 @@ class DockerBackgroundShell:
         self.exec_id = exec_id
         self.cwd = cwd
         self.start_time = datetime.now()
-        self.end_time: Optional[datetime] = None
-        self.exit_code: Optional[int] = None
+        self.end_time: datetime | None = None
+        self.exit_code: int | None = None
         self._is_docker = True  # Flag to identify Docker shells
 
         # Output buffers
@@ -237,7 +236,7 @@ class DockerBackgroundShell:
         # Socket for reading output
         self._socket = None
         self._stop_capture = threading.Event()
-        self._capture_thread: Optional[threading.Thread] = None
+        self._capture_thread: threading.Thread | None = None
 
     def start_capture(self, socket: Any) -> None:
         """Start capturing output from the Docker exec socket.
@@ -321,7 +320,7 @@ class DockerBackgroundShell:
         else:
             return "stopped"
 
-    def update_exit_code(self) -> Optional[int]:
+    def update_exit_code(self) -> int | None:
         """Update and return exit code if process has finished.
 
         Returns:
@@ -392,7 +391,7 @@ class BackgroundShellManager:
         if self._initialized:
             return
 
-        self._shells: Dict[str, BackgroundShell] = {}
+        self._shells: dict[str, BackgroundShell] = {}
         self._shells_lock = threading.RLock()
         self._max_concurrent = 10  # Default max concurrent shells
         self._max_output_lines = 10000  # Default max output lines per shell
@@ -406,8 +405,8 @@ class BackgroundShellManager:
     def start_shell(
         self,
         command: str,
-        cwd: Optional[str] = None,
-        env: Optional[Dict[str, str]] = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
     ) -> str:
         """Start a command in the background.
 
@@ -464,7 +463,7 @@ class BackgroundShellManager:
         self,
         command: str,
         container: Any,  # docker.models.containers.Container
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
     ) -> str:
         """Start a command in the background inside a Docker container.
 
@@ -531,7 +530,7 @@ class BackgroundShellManager:
                 logger.error(f"Failed to start Docker background shell: {e}")
                 raise RuntimeError(f"Failed to start Docker background shell: {e}")
 
-    def get_output(self, shell_id: str) -> Dict[str, Any]:
+    def get_output(self, shell_id: str) -> dict[str, Any]:
         """Get output from a background shell.
 
         Args:
@@ -558,7 +557,7 @@ class BackgroundShellManager:
                 "exit_code": bg_shell.exit_code,
             }
 
-    def get_status(self, shell_id: str) -> Dict[str, Any]:
+    def get_status(self, shell_id: str) -> dict[str, Any]:
         """Get status of a background shell.
 
         Args:
@@ -609,7 +608,7 @@ class BackgroundShellManager:
                 "is_docker": is_docker,
             }
 
-    def kill_shell(self, shell_id: str) -> Dict[str, Any]:
+    def kill_shell(self, shell_id: str) -> dict[str, Any]:
         """Kill a background shell.
 
         Args:
@@ -643,7 +642,7 @@ class BackgroundShellManager:
                     "message": "Process already terminated",
                 }
 
-    def list_shells(self) -> List[Dict[str, Any]]:
+    def list_shells(self) -> list[dict[str, Any]]:
         """List all background shells.
 
         Returns:
@@ -683,7 +682,7 @@ class BackgroundShellManager:
 
 
 # Convenience functions for easy import
-def start_shell(command: str, cwd: Optional[str] = None, env: Optional[Dict[str, str]] = None) -> str:
+def start_shell(command: str, cwd: str | None = None, env: dict[str, str] | None = None) -> str:
     """Start a command in the background.
 
     Args:
@@ -698,7 +697,7 @@ def start_shell(command: str, cwd: Optional[str] = None, env: Optional[Dict[str,
     return manager.start_shell(command, cwd=cwd, env=env)
 
 
-def start_docker_shell(command: str, container: Any, cwd: Optional[str] = None) -> str:
+def start_docker_shell(command: str, container: Any, cwd: str | None = None) -> str:
     """Start a command in the background inside a Docker container.
 
     Args:
@@ -713,7 +712,7 @@ def start_docker_shell(command: str, container: Any, cwd: Optional[str] = None) 
     return manager.start_docker_shell(command, container=container, cwd=cwd)
 
 
-def get_shell_output(shell_id: str) -> Dict[str, Any]:
+def get_shell_output(shell_id: str) -> dict[str, Any]:
     """Get output from a background shell.
 
     Args:
@@ -726,7 +725,7 @@ def get_shell_output(shell_id: str) -> Dict[str, Any]:
     return manager.get_output(shell_id)
 
 
-def get_shell_status(shell_id: str) -> Dict[str, Any]:
+def get_shell_status(shell_id: str) -> dict[str, Any]:
     """Get status of a background shell.
 
     Args:
@@ -739,7 +738,7 @@ def get_shell_status(shell_id: str) -> Dict[str, Any]:
     return manager.get_status(shell_id)
 
 
-def kill_shell(shell_id: str) -> Dict[str, Any]:
+def kill_shell(shell_id: str) -> dict[str, Any]:
     """Kill a background shell.
 
     Args:
@@ -752,7 +751,7 @@ def kill_shell(shell_id: str) -> Dict[str, Any]:
     return manager.kill_shell(shell_id)
 
 
-def list_shells() -> List[Dict[str, Any]]:
+def list_shells() -> list[dict[str, Any]]:
     """List all background shells.
 
     Returns:

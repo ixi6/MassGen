@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Claude Code native hook adapter.
 
 This module provides the adapter for converting MassGen's hook framework
@@ -7,7 +6,8 @@ for both PreToolUse and PostToolUse events.
 """
 
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from ...logger_config import logger
 from .base import NativeHookAdapter
@@ -37,7 +37,7 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
     1. Wraps MassGen PatternHook instances as Claude-compatible async functions
     2. Converts HookResult to Claude's response format
     3. Supports both PreToolUse and PostToolUse
-    4. Handles injection content for PostToolUse (appends to tool result)
+    4. Handles PostToolUse injection content via additional context
 
     Example usage:
         adapter = ClaudeCodeNativeHookAdapter()
@@ -59,7 +59,7 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
                 "claude_agent_sdk is required for ClaudeCodeNativeHookAdapter. " "Install with: pip install claude-code-sdk-python",
             )
         # Cache for wrapped hooks to avoid recreating on each call
-        self._wrapped_hooks: Dict[str, Callable] = {}
+        self._wrapped_hooks: dict[str, Callable] = {}
 
     def supports_hook_type(self, hook_type: "HookType") -> bool:
         """Check if this adapter supports the given hook type.
@@ -80,7 +80,7 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
         self,
         hook: "PatternHook",
         hook_type: "HookType",
-        context_factory: Optional[Callable[[], Dict[str, Any]]] = None,
+        context_factory: Callable[[], dict[str, Any]] | None = None,
     ) -> "HookMatcher":
         """Convert a MassGen PatternHook to Claude's HookMatcher format.
 
@@ -116,7 +116,7 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
         self,
         hook: "PatternHook",
         hook_type: "HookType",
-        context_factory: Optional[Callable[[], Dict[str, Any]]] = None,
+        context_factory: Callable[[], dict[str, Any]] | None = None,
     ) -> Callable:
         """Create Claude SDK compatible wrapper function for a MassGen hook.
 
@@ -130,10 +130,10 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
         """
 
         async def hook_wrapper(
-            input_data: Dict[str, Any],
-            tool_use_id: Optional[str],
+            input_data: dict[str, Any],
+            tool_use_id: str | None,
             context: Any,  # HookContext from SDK
-        ) -> Dict[str, Any]:
+        ) -> dict[str, Any]:
             """Claude SDK compatible hook wrapper."""
             # Build context dict
             ctx = context_factory() if context_factory else {}
@@ -189,14 +189,14 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
         self,
         result: "HookResult",
         hook_type: "HookType",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Convert MassGen HookResult to Claude SDK response format.
 
         Claude SDK response format:
         - {} : Allow without modifications
         - {"hookSpecificOutput": {"permissionDecision": "deny", ...}}: Deny
         - {"hookSpecificOutput": {"updatedInput": {...}}}: Modify input
-        - {"hookSpecificOutput": {"modifiedOutput": "..."}}: Inject into output
+        - {"hookSpecificOutput": {"additionalContext": "..."}}: Inject context after tool use
 
         Args:
             result: MassGen HookResult from hook execution
@@ -248,14 +248,14 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
         # Handle PostToolUse with injection
         if hook_type == HT.POST_TOOL_USE and result.inject:
             inject_content = result.inject.get("content", "")
-            inject_strategy = result.inject.get("strategy", "tool_result")
+            if not inject_content:
+                return {}
 
-            # Claude Code appends to tool result via modifiedOutput
+            # Claude SDK expects PostToolUse injections via additionalContext.
             return {
                 "hookSpecificOutput": {
                     "hookEventName": "PostToolUse",
-                    "modifiedOutput": inject_content,
-                    "injectionStrategy": inject_strategy,
+                    "additionalContext": inject_content,
                 },
             }
 
@@ -265,9 +265,9 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
     def build_native_hooks_config(
         self,
         hook_manager: "GeneralHookManager",
-        agent_id: Optional[str] = None,
-        context_factory: Optional[Callable[[], Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        agent_id: str | None = None,
+        context_factory: Callable[[], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Build complete Claude Code hooks config from GeneralHookManager.
 
         Iterates through all hooks registered in the GeneralHookManager,
@@ -285,7 +285,7 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
         """
         from ..hooks import HookType as HT
 
-        config: Dict[str, List] = {
+        config: dict[str, list] = {
             "PreToolUse": [],
             "PostToolUse": [],
         }
@@ -309,8 +309,8 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
 
     def merge_native_configs(
         self,
-        *configs: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        *configs: dict[str, Any],
+    ) -> dict[str, Any]:
         """Merge multiple Claude Code hook configs.
 
         Combines HookMatcher lists from each config. All hooks from all
@@ -322,7 +322,7 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
         Returns:
             Merged config with combined HookMatcher lists
         """
-        merged: Dict[str, List] = {
+        merged: dict[str, list] = {
             "PreToolUse": [],
             "PostToolUse": [],
         }

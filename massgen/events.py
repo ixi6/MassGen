@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Unified Event System for MassGen.
 
@@ -20,10 +19,11 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Callable, Generator
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Optional, Union
+from typing import Any
 
 # Type for event listeners
 EventListener = Callable[["MassGenEvent"], None]
@@ -43,16 +43,16 @@ class MassGenEvent:
 
     timestamp: str
     event_type: str
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
     round_number: int = 0
-    data: Dict[str, Any] = field(default_factory=dict)
+    data: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> str:
         """Serialize event to JSON string."""
         return json.dumps(asdict(self), ensure_ascii=False, default=str)
 
     @classmethod
-    def from_json(cls, json_str: str) -> "MassGenEvent":
+    def from_json(cls, json_str: str) -> MassGenEvent:
         """Deserialize event from JSON string."""
         data = json.loads(json_str)
         return cls(**data)
@@ -61,10 +61,10 @@ class MassGenEvent:
     def create(
         cls,
         event_type: str,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         round_number: int = 0,
         **kwargs: Any,
-    ) -> "MassGenEvent":
+    ) -> MassGenEvent:
         """Factory method to create an event with current timestamp.
 
         Args:
@@ -156,7 +156,7 @@ class EventEmitter:
         emitter.emit_tool_complete("tool_123", "read_file", "file contents", 0.5)
     """
 
-    def __init__(self, log_dir: Optional[Union[str, Path]] = None):
+    def __init__(self, log_dir: str | Path | None = None):
         """Initialize the event emitter.
 
         Args:
@@ -165,12 +165,12 @@ class EventEmitter:
                     log directory is not yet initialized).
         """
         self._log_dir = Path(log_dir) if log_dir else None
-        self._file_path: Optional[Path] = None
+        self._file_path: Path | None = None
         self._file_handle = None
         self._lock = threading.Lock()
-        self._listeners: List[EventListener] = []
-        self._current_agent_id: Optional[str] = None
-        self._current_round_numbers: Dict[str, int] = {}
+        self._listeners: list[EventListener] = []
+        self._current_agent_id: str | None = None
+        self._current_round_numbers: dict[str, int] = {}
         self._default_round_number: int = 0
 
         # Initialize file if log_dir provided
@@ -185,7 +185,7 @@ class EventEmitter:
             # Open file in append mode with line buffering
             self._file_handle = open(self._file_path, "a", encoding="utf-8", buffering=1)
 
-    def set_log_dir(self, log_dir: Union[str, Path]) -> None:
+    def set_log_dir(self, log_dir: str | Path) -> None:
         """Update the log directory (e.g., when attempt changes).
 
         Args:
@@ -200,7 +200,7 @@ class EventEmitter:
             self._log_dir = Path(log_dir)
             self._init_file()
 
-    def set_context(self, agent_id: Optional[str] = None, round_number: Optional[int] = None) -> None:
+    def set_context(self, agent_id: str | None = None, round_number: int | None = None) -> None:
         """Set the current context for events.
 
         Args:
@@ -288,9 +288,9 @@ class EventEmitter:
         self,
         tool_id: str,
         tool_name: str,
-        args: Dict[str, Any],
-        server_name: Optional[str] = None,
-        agent_id: Optional[str] = None,
+        args: dict[str, Any],
+        server_name: str | None = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a tool start event.
 
@@ -318,7 +318,8 @@ class EventEmitter:
         elapsed_seconds: float,
         status: str = "success",
         is_error: bool = False,
-        agent_id: Optional[str] = None,
+        async_id: str | None = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a tool completion event.
 
@@ -329,6 +330,7 @@ class EventEmitter:
             elapsed_seconds: How long the tool took
             status: Status string (success, error, etc.)
             is_error: Whether this is an error result
+            async_id: Optional async/background job ID for long-running operations
             agent_id: Override agent ID
         """
         result_str = str(result)
@@ -341,6 +343,7 @@ class EventEmitter:
             elapsed_seconds=elapsed_seconds,
             status=status,
             is_error=is_error,
+            async_id=async_id,
             agent_id=agent_id,
         )
 
@@ -348,7 +351,7 @@ class EventEmitter:
         self,
         content: str,
         is_redacted: bool = False,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a thinking/reasoning content event.
 
@@ -364,7 +367,7 @@ class EventEmitter:
             agent_id=agent_id,
         )
 
-    def emit_text(self, content: str, agent_id: Optional[str] = None) -> None:
+    def emit_text(self, content: str, agent_id: str | None = None) -> None:
         """Emit a text content event.
 
         Args:
@@ -381,7 +384,7 @@ class EventEmitter:
         self,
         message: str,
         level: str = "info",
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a status update event.
 
@@ -397,7 +400,7 @@ class EventEmitter:
             agent_id=agent_id,
         )
 
-    def emit_round_start(self, round_number: int, agent_id: Optional[str] = None) -> None:
+    def emit_round_start(self, round_number: int, agent_id: str | None = None) -> None:
         """Emit a round start event.
 
         Args:
@@ -414,7 +417,7 @@ class EventEmitter:
             agent_id=agent_id,
         )
 
-    def emit_final_answer(self, content: str, agent_id: Optional[str] = None) -> None:
+    def emit_final_answer(self, content: str, agent_id: str | None = None) -> None:
         """Emit a final answer event.
 
         Args:
@@ -429,9 +432,9 @@ class EventEmitter:
 
     def emit_hook_execution(
         self,
-        tool_call_id: Optional[str],
+        tool_call_id: str | None,
         hook_info: Any,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a hook execution event.
 
@@ -450,9 +453,9 @@ class EventEmitter:
     def emit_post_evaluation(
         self,
         phase: str,
-        content: Optional[str] = None,
-        winner: Optional[str] = None,
-        agent_id: Optional[str] = None,
+        content: str | None = None,
+        winner: str | None = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a post-evaluation event.
 
@@ -473,7 +476,7 @@ class EventEmitter:
     def emit_system_status(
         self,
         message: str,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a system status event.
 
@@ -487,7 +490,7 @@ class EventEmitter:
             agent_id=agent_id,
         )
 
-    def emit_error(self, error: str, agent_id: Optional[str] = None) -> None:
+    def emit_error(self, error: str, agent_id: str | None = None) -> None:
         """Emit an error event.
 
         Args:
@@ -503,7 +506,7 @@ class EventEmitter:
     def emit_injection_received(
         self,
         agent_id: str,
-        source_agents: List[str],
+        source_agents: list[str],
         injection_type: str = "mid_stream",
     ) -> None:
         """Emit an injection_received event.
@@ -524,7 +527,7 @@ class EventEmitter:
         self,
         action_type: str,
         params: Any = None,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a workspace action event (new_answer, vote, etc.)."""
         self.emit_raw(
@@ -540,7 +543,7 @@ class EventEmitter:
         content: Any,
         answer_number: int,
         answer_label: str,
-        workspace_path: Optional[str] = None,
+        workspace_path: str | None = None,
     ) -> None:
         """Emit an answer_submitted coordination event."""
         self.emit_raw(
@@ -556,9 +559,9 @@ class EventEmitter:
         self,
         voter_id: str,
         target_id: str,
-        reason: Optional[str] = None,
-        vote_label: Optional[str] = None,
-        voted_for_label: Optional[str] = None,
+        reason: str | None = None,
+        vote_label: str | None = None,
+        voted_for_label: str | None = None,
     ) -> None:
         """Emit a vote coordination event."""
         self.emit_raw(
@@ -599,7 +602,7 @@ class EventEmitter:
     def emit_context_received(
         self,
         agent_id: str,
-        context_labels: Optional[Any] = None,
+        context_labels: Any | None = None,
     ) -> None:
         """Emit a context_received coordination event."""
         self.emit_raw(
@@ -611,8 +614,8 @@ class EventEmitter:
     def emit_final_presentation_start(
         self,
         agent_id: str,
-        vote_counts: Optional[Dict[str, Any]] = None,
-        answer_labels: Optional[Dict[str, str]] = None,
+        vote_counts: dict[str, Any] | None = None,
+        answer_labels: dict[str, str] | None = None,
         is_tie: bool = False,
     ) -> None:
         """Emit a final_presentation_start event."""
@@ -659,7 +662,7 @@ class EventEmitter:
     def emit_phase_change(
         self,
         phase: str,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Emit a phase change event."""
         self.emit_raw(
@@ -687,8 +690,8 @@ class EventEmitter:
     def emit_agent_restart(
         self,
         round_number: int,
-        agent_id: Optional[str] = None,
-        restart_reason: Optional[str] = None,
+        agent_id: str | None = None,
+        restart_reason: str | None = None,
     ) -> None:
         """Emit an agent restart event and update round tracking.
 
@@ -710,7 +713,7 @@ class EventEmitter:
 
     def emit_presentation_start(
         self,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
         vote_counts: Any = None,
         answer_labels: Any = None,
     ) -> None:
@@ -726,9 +729,9 @@ class EventEmitter:
         self,
         timeout_reason: str,
         available_answers: int,
-        selected_agent: Optional[str] = None,
+        selected_agent: str | None = None,
         selection_reason: str = "",
-        agent_answer_summary: Optional[Dict[str, Any]] = None,
+        agent_answer_summary: dict[str, Any] | None = None,
     ) -> None:
         """Emit an orchestrator timeout event.
 
@@ -759,7 +762,7 @@ class EventEmitter:
                 self._file_handle = None
 
     @property
-    def file_path(self) -> Optional[Path]:
+    def file_path(self) -> Path | None:
         """Get the path to the events.jsonl file."""
         return self._file_path
 
@@ -781,7 +784,7 @@ class EventReader:
             update_display(event)
     """
 
-    def __init__(self, file_path: Union[str, Path]):
+    def __init__(self, file_path: str | Path):
         """Initialize the event reader.
 
         Args:
@@ -794,7 +797,7 @@ class EventReader:
         """Check if the events file exists."""
         return self._file_path.exists()
 
-    def read_all(self) -> List[MassGenEvent]:
+    def read_all(self) -> list[MassGenEvent]:
         """Read all events from the file.
 
         Returns:
@@ -804,7 +807,7 @@ class EventReader:
         if not self._file_path.exists():
             return events
 
-        with open(self._file_path, "r", encoding="utf-8") as f:
+        with open(self._file_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if line:
@@ -816,7 +819,7 @@ class EventReader:
 
         return events
 
-    def read_since(self, position: int = 0) -> tuple[List[MassGenEvent], int]:
+    def read_since(self, position: int = 0) -> tuple[list[MassGenEvent], int]:
         """Read events from a specific file position.
 
         Args:
@@ -831,7 +834,7 @@ class EventReader:
         if not self._file_path.exists():
             return events, new_position
 
-        with open(self._file_path, "r", encoding="utf-8") as f:
+        with open(self._file_path, encoding="utf-8") as f:
             f.seek(position)
             for line in f:
                 line_stripped = line.strip()
@@ -844,7 +847,7 @@ class EventReader:
 
         return events, new_position
 
-    def get_new_events(self) -> List[MassGenEvent]:
+    def get_new_events(self) -> list[MassGenEvent]:
         """Get events added since last read.
 
         Returns:
@@ -854,7 +857,7 @@ class EventReader:
         self._last_position = new_position
         return events
 
-    def stream(self, poll_interval: float = 0.5) -> Generator[MassGenEvent, None, None]:
+    def stream(self, poll_interval: float = 0.5) -> Generator[MassGenEvent]:
         """Stream events as they are written (blocking generator).
 
         Args:
@@ -865,13 +868,12 @@ class EventReader:
         """
         while True:
             events = self.get_new_events()
-            for event in events:
-                yield event
+            yield from events
 
             if not events:
                 time.sleep(poll_interval)
 
-    def filter_by_type(self, event_types: List[str]) -> List[MassGenEvent]:
+    def filter_by_type(self, event_types: list[str]) -> list[MassGenEvent]:
         """Read events filtered by type.
 
         Args:
@@ -882,7 +884,7 @@ class EventReader:
         """
         return [e for e in self.read_all() if e.event_type in event_types]
 
-    def filter_by_agent(self, agent_id: str) -> List[MassGenEvent]:
+    def filter_by_agent(self, agent_id: str) -> list[MassGenEvent]:
         """Read events filtered by agent.
 
         Args:
@@ -893,14 +895,14 @@ class EventReader:
         """
         return [e for e in self.read_all() if e.agent_id == agent_id]
 
-    def get_tools_summary(self) -> List[Dict[str, Any]]:
+    def get_tools_summary(self) -> list[dict[str, Any]]:
         """Get a summary of all tool calls.
 
         Returns:
             List of tool call summaries with name, args, result, duration
         """
         all_events = self.read_all()
-        tool_starts: Dict[str, MassGenEvent] = {}
+        tool_starts: dict[str, MassGenEvent] = {}
         summaries = []
 
         for event in all_events:
@@ -920,6 +922,7 @@ class EventReader:
                         "elapsed_seconds": event.data.get("elapsed_seconds"),
                         "status": event.data.get("status"),
                         "is_error": event.data.get("is_error", False),
+                        "async_id": event.data.get("async_id"),
                         "agent_id": event.agent_id,
                     },
                 )
@@ -937,15 +940,28 @@ class EventReader:
 
 
 # Global event emitter instance (initialized by logger_config.py)
-_global_emitter: Optional[EventEmitter] = None
+_global_emitter: EventEmitter | None = None
 
 
-def get_event_emitter() -> Optional[EventEmitter]:
-    """Get the global event emitter instance.
+def get_event_emitter() -> EventEmitter | None:
+    """Get the event emitter for the current logging session.
+
+    When a ``LoggingSession`` is active in the current context (set via
+    ``massgen.logger_config.set_current_session``), returns that session's
+    emitter so concurrent ``massgen.run()`` calls stay isolated.
+    Falls back to the legacy global emitter for backward compatibility.
 
     Returns:
-        The global EventEmitter, or None if not initialized
+        The session-scoped EventEmitter, or the global one if no session is active
     """
+    try:
+        from .logger_config import get_current_session
+
+        session = get_current_session()
+        if session is not None and session.event_emitter is not None:
+            return session.event_emitter
+    except Exception:
+        pass
     return _global_emitter
 
 
@@ -960,14 +976,15 @@ def set_event_emitter(emitter: EventEmitter) -> None:
 
 
 def emit_event(event_type: str, **kwargs: Any) -> None:
-    """Convenience function to emit an event using the global emitter.
+    """Emit an event using the current session's emitter (or the global fallback).
 
     Args:
         event_type: Type of event
         **kwargs: Event data
     """
-    if _global_emitter:
-        _global_emitter.emit_raw(event_type, **kwargs)
+    emitter = get_event_emitter()
+    if emitter:
+        emitter.emit_raw(event_type, **kwargs)
 
 
 # Export public API

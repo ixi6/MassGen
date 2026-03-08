@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """File rendering utilities for syntax highlighting and previews.
 
 Single source of truth for file preview rendering. Previously located in:
@@ -9,7 +8,7 @@ highlighting, handling binary files, and detecting file types.
 """
 
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any
 
 # Language mapping for syntax highlighting
 FILE_LANG_MAP = {
@@ -91,7 +90,7 @@ def render_file_preview(
     file_path: Path,
     max_size: int = 50000,
     theme: str = "monokai",
-) -> Tuple[Any, bool]:
+) -> tuple[Any, bool]:
     """Render file content with syntax highlighting or markdown.
 
     Args:

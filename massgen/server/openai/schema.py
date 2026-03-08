@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,10 +22,10 @@ class ChatCompletionRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     model: str = Field(default="massgen")
-    messages: List[Dict[str, Any]]
+    messages: list[dict[str, Any]]
     stream: bool = False
 
     # Tool calling (OpenAI-style)
-    tools: Optional[List[Dict[str, Any]]] = None
-    tool_choice: Optional[Any] = None
-    parallel_tool_calls: Optional[bool] = None
+    tools: list[dict[str, Any]] | None = None
+    tool_choice: Any | None = None
+    parallel_tool_calls: bool | None = None

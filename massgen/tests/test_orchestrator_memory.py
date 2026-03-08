@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Tests for Orchestrator Shared Memory.
 
@@ -8,7 +7,6 @@ including how agents can access and contribute to shared memory that
 all agents can see.
 """
 
-from typing import List
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -21,7 +19,7 @@ from massgen.orchestrator import Orchestrator
 
 
 # Helper functions
-def create_mock_backend(agent_responses: List[str] = None):
+def create_mock_backend(agent_responses: list[str] = None):
     """Create a mock backend with predefined responses."""
     if agent_responses is None:
         agent_responses = ["Test response"]

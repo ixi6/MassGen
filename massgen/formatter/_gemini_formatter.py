@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Gemini formatter for message formatting, coordination prompts, and structured output parsing.
 """
@@ -6,7 +5,7 @@ Gemini formatter for message formatting, coordination prompts, and structured ou
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ._formatter_base import FormatterBase
 
@@ -14,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiFormatter(FormatterBase):
-    def format_messages(self, messages: List[Dict[str, Any]]) -> str:
+    def format_messages(self, messages: list[dict[str, Any]]) -> str:
         """
         Build conversation content string from message history.
 
@@ -46,7 +45,7 @@ class GeminiFormatter(FormatterBase):
         full_content += conversation_content
         return full_content
 
-    def format_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Gemini uses SDK-native tool format, not reformatting.
         """
@@ -54,9 +53,9 @@ class GeminiFormatter(FormatterBase):
 
     def format_mcp_tools(
         self,
-        mcp_functions: Dict[str, Any],
+        mcp_functions: dict[str, Any],
         return_sdk_objects: bool = True,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """
         Convert MCP Function objects to Gemini FunctionDeclaration format.
 
@@ -106,7 +105,7 @@ class GeminiFormatter(FormatterBase):
 
     # Coordination helpers
 
-    def has_coordination_tools(self, tools: List[Dict[str, Any]]) -> bool:
+    def has_coordination_tools(self, tools: list[dict[str, Any]]) -> bool:
         """Detect if tools contain vote/stop/new_answer coordination tools.
 
         Returns True if:
@@ -130,7 +129,7 @@ class GeminiFormatter(FormatterBase):
         # Decomposition mode: stop replaces vote
         return "vote" in tool_names or "stop" in tool_names
 
-    def has_post_evaluation_tools(self, tools: List[Dict[str, Any]]) -> bool:
+    def has_post_evaluation_tools(self, tools: list[dict[str, Any]]) -> bool:
         """Detect if tools contain submit/restart_orchestration post-evaluation tools."""
         if not tools:
             return False
@@ -148,7 +147,7 @@ class GeminiFormatter(FormatterBase):
     def build_structured_output_prompt(
         self,
         base_content: str,
-        valid_agent_ids: Optional[List[str]] = None,
+        valid_agent_ids: list[str] | None = None,
         broadcast_enabled: bool = False,
         vote_only: bool = False,
         decomposition_mode: bool = False,
@@ -299,7 +298,7 @@ If you want to RESTART with improvements:
 
 Make your decision and include the JSON at the very end of your response."""
 
-    def extract_structured_response(self, response_text: str) -> Optional[Dict[str, Any]]:
+    def extract_structured_response(self, response_text: str) -> dict[str, Any] | None:
         """Extract structured JSON response from model output."""
         try:
             # Strategy 0: Look for JSON inside markdown code blocks first
@@ -381,7 +380,7 @@ Make your decision and include the JSON at the very end of your response."""
         except Exception:
             return None
 
-    def convert_structured_to_tool_calls(self, structured_response: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def convert_structured_to_tool_calls(self, structured_response: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert structured response to tool call format."""
         action_type = structured_response.get("action_type")
 
@@ -482,9 +481,9 @@ Make your decision and include the JSON at the very end of your response."""
 
     def format_custom_tools(
         self,
-        custom_tools: List[Dict[str, Any]],
+        custom_tools: list[dict[str, Any]],
         return_sdk_objects: bool = True,
-    ) -> List[Any]:
+    ) -> list[Any]:
         """
         Convert custom tools from OpenAI Chat Completions format to Gemini format.
 
@@ -519,7 +518,7 @@ Make your decision and include the JSON at the very end of your response."""
         # Step 2: Convert dictionaries to SDK FunctionDeclaration objects
         return self._convert_to_function_declarations(gemini_dicts)
 
-    def _convert_to_gemini_dict_format(self, custom_tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_to_gemini_dict_format(self, custom_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Convert OpenAI format to Gemini dictionary format (intermediate step).
 
@@ -554,7 +553,7 @@ Make your decision and include the JSON at the very end of your response."""
 
         return converted_tools
 
-    def _convert_to_function_declarations(self, tools_dicts: List[Dict[str, Any]]) -> List[Any]:
+    def _convert_to_function_declarations(self, tools_dicts: list[dict[str, Any]]) -> list[Any]:
         """
         Convert Gemini-format tool dictionaries to FunctionDeclaration objects.
 
@@ -608,7 +607,7 @@ Make your decision and include the JSON at the very end of your response."""
 
         return function_declarations
 
-    def _build_schema_recursive(self, param_schema: Dict[str, Any]) -> Any:
+    def _build_schema_recursive(self, param_schema: dict[str, Any]) -> Any:
         """
         Recursively build a Gemini Schema object from JSON Schema format.
 

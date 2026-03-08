@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 MassGen (Multi-Agent Scaling System) - Programmatic Interface
 
@@ -28,7 +27,7 @@ import logging
 import os
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from .agents import create_agent
 from .config import create_config_from_models
@@ -45,7 +44,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def _run_single_agent_simple(question: str, config: MassConfig) -> Dict[str, Any]:
+def _run_single_agent_simple(question: str, config: MassConfig) -> dict[str, Any]:
     """
     Simple single-agent processing that bypasses the multi-agent orchestration system.
 
@@ -171,7 +170,7 @@ def _run_single_agent_simple(question: str, config: MassConfig) -> Dict[str, Any
                 logger.warning(f"⚠️ Error cleaning up log manager: {e}")
 
 
-def run_mass_with_config(question: str, config: MassConfig) -> Dict[str, Any]:
+def run_mass_with_config(question: str, config: MassConfig) -> dict[str, Any]:
     """
     Run MassGen system with a complete configuration object.
 
@@ -284,7 +283,7 @@ class MassSystem:
         """
         self.config = config
 
-    def run(self, question: str) -> Dict[str, Any]:
+    def run(self, question: str) -> dict[str, Any]:
         """
         Run MassGen system on a question using the configured setup.
 
@@ -317,12 +316,12 @@ class MassSystem:
 
 def run_mass_agents(
     question: str,
-    models: List[str],
+    models: list[str],
     max_duration: int = 600,
     consensus_threshold: float = 0.0,
     streaming_display: bool = True,
     **kwargs,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Simple function to run MassGen agents on a question (backward compatibility).
 

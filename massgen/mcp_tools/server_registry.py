@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MCP Server Registry
 
@@ -13,10 +12,10 @@ Available servers:
 
 import os
 from copy import deepcopy
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Registry of recommended MCP servers
-MCP_SERVER_REGISTRY: Dict[str, Dict[str, Any]] = {
+MCP_SERVER_REGISTRY: dict[str, dict[str, Any]] = {
     "context7": {
         "name": "context7",
         "type": "stdio",
@@ -63,7 +62,7 @@ def is_api_key_available(env_var_name: str) -> bool:
     return value is not None and value.strip() != ""
 
 
-def get_server_config(server_name: str, apply_api_key_logic: bool = True) -> Optional[Dict[str, Any]]:
+def get_server_config(server_name: str, apply_api_key_logic: bool = True) -> dict[str, Any] | None:
     """Get configuration for a specific MCP server from registry.
 
     Args:
@@ -95,7 +94,7 @@ def get_server_config(server_name: str, apply_api_key_logic: bool = True) -> Opt
     return config
 
 
-def get_available_servers(check_api_keys: bool = True) -> List[str]:
+def get_available_servers(check_api_keys: bool = True) -> list[str]:
     """Get list of registry server names that are available for use.
 
     Args:
@@ -133,7 +132,7 @@ def get_available_servers(check_api_keys: bool = True) -> List[str]:
     return available
 
 
-def get_auto_discovery_servers() -> List[Dict[str, Any]]:
+def get_auto_discovery_servers() -> list[dict[str, Any]]:
     """Get list of MCP server configurations to include when auto-discovery is enabled.
 
     Only includes servers where:
@@ -160,7 +159,7 @@ def get_auto_discovery_servers() -> List[Dict[str, Any]]:
     return configs
 
 
-def get_missing_api_keys() -> Dict[str, str]:
+def get_missing_api_keys() -> dict[str, str]:
     """Get information about registry servers that require missing API keys.
 
     Returns:
@@ -183,7 +182,7 @@ def get_missing_api_keys() -> Dict[str, str]:
     return missing
 
 
-def get_registry_info() -> Dict[str, Any]:
+def get_registry_info() -> dict[str, Any]:
     """Get summary information about the MCP server registry.
 
     Returns:

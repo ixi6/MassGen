@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Claude Computer Use tool for automating browser and desktop interactions using Anthropic's Claude Computer Use API.
 

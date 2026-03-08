@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Agent Status Ribbon Widget for MassGen TUI.
 
@@ -7,7 +6,7 @@ activity indicator, timeout display, tasks progress, and token/cost tracking.
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -29,7 +28,7 @@ class ViewSelected(Message):
         self,
         view_type: str,
         agent_id: str,
-        round_number: Optional[int] = None,
+        round_number: int | None = None,
     ) -> None:
         """Initialize ViewSelected message.
 
@@ -94,6 +93,32 @@ class TasksLabel(Label):
     async def on_click(self) -> None:
         """Handle click on tasks label."""
         self.post_message(TasksClicked(self._agent_id))
+
+
+class BackgroundTasksClicked(Message):
+    """Message emitted when background tasks section is clicked."""
+
+    def __init__(self, agent_id: str) -> None:
+        self.agent_id = agent_id
+        super().__init__()
+
+
+class BackgroundTasksLabel(Label):
+    """Clickable background tasks label that emits BackgroundTasksClicked."""
+
+    can_focus = True
+
+    def __init__(self, agent_id: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self._agent_id = agent_id
+
+    def set_agent_id(self, agent_id: str) -> None:
+        """Update the agent ID."""
+        self._agent_id = agent_id
+
+    async def on_click(self) -> None:
+        """Handle click on background tasks label."""
+        self.post_message(BackgroundTasksClicked(self._agent_id))
 
 
 class DropdownItem(Label):
@@ -181,9 +206,9 @@ class ViewDropdown(Vertical):
     def __init__(
         self,
         agent_id: str,
-        rounds: List[Tuple[int, bool]],
+        rounds: list[tuple[int, bool]],
         current_round: int,
-        viewed_round: Optional[int],
+        viewed_round: int | None,
         has_final_answer: bool = False,
         viewing_final_answer: bool = False,
         **kwargs,
@@ -407,6 +432,28 @@ class AgentStatusRibbon(Widget):
     AgentStatusRibbon #tasks_divider.hidden {
         display: none;
     }
+
+    AgentStatusRibbon #background_tasks_display {
+        color: $text-muted;
+        width: auto;
+    }
+
+    AgentStatusRibbon #background_tasks_display:hover {
+        color: $primary;
+        text-style: underline;
+    }
+
+    AgentStatusRibbon #background_tasks_display.has-background {
+        color: $warning;
+    }
+
+    AgentStatusRibbon #background_tasks_display.hidden {
+        display: none;
+    }
+
+    AgentStatusRibbon #background_tasks_divider.hidden {
+        display: none;
+    }
     """
 
     # Reactive attributes
@@ -435,30 +482,31 @@ class AgentStatusRibbon(Widget):
         self,
         agent_id: str = "",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(id=id, classes=classes)
         self.current_agent = agent_id
-        self._rounds: Dict[str, List[Tuple[int, bool]]] = {}  # agent_id -> [(round_num, is_context_reset)]
-        self._current_round: Dict[str, int] = {}  # agent_id -> current round (live)
-        self._viewed_round: Dict[str, int] = {}  # agent_id -> round being viewed
-        self._tasks_complete: Dict[str, int] = {}
-        self._tasks_total: Dict[str, int] = {}
-        self._tokens: Dict[str, int] = {}
-        self._cost: Dict[str, float] = {}
-        self._timeout_remaining: Dict[str, Optional[int]] = {}
-        self._timeout_state: Dict[str, Dict[str, Any]] = {}  # agent_id -> full timeout state from orchestrator
-        self._start_time: Optional[float] = None
+        self._rounds: dict[str, list[tuple[int, bool]]] = {}  # agent_id -> [(round_num, is_context_reset)]
+        self._current_round: dict[str, int] = {}  # agent_id -> current round (live)
+        self._viewed_round: dict[str, int] = {}  # agent_id -> round being viewed
+        self._tasks_complete: dict[str, int] = {}
+        self._tasks_total: dict[str, int] = {}
+        self._background_jobs: dict[str, int] = {}
+        self._tokens: dict[str, int] = {}
+        self._cost: dict[str, float] = {}
+        self._timeout_remaining: dict[str, int | None] = {}
+        self._timeout_state: dict[str, dict[str, Any]] = {}  # agent_id -> full timeout state from orchestrator
+        self._start_time: float | None = None
         self._timer_handle = None
-        self._agent_start_times: Dict[str, float] = {}  # agent_id -> start timestamp for total elapsed time
-        self._round_start_times: Dict[str, float] = {}  # agent_id -> start timestamp for current round
-        self._frozen_round_elapsed: Dict[str, int] = {}  # agent_id -> frozen elapsed seconds (when stopped)
+        self._agent_start_times: dict[str, float] = {}  # agent_id -> start timestamp for total elapsed time
+        self._round_start_times: dict[str, float] = {}  # agent_id -> start timestamp for current round
+        self._frozen_round_elapsed: dict[str, int] = {}  # agent_id -> frozen elapsed seconds (when stopped)
 
         # View state tracking
-        self._has_final_answer: Dict[str, bool] = {}  # agent_id -> has final answer
-        self._viewing_final_answer: Dict[str, bool] = {}  # agent_id -> viewing final answer
-        self._final_presentation_rounds: Dict[str, Set[int]] = {}  # agent_id -> set of final presentation round numbers
+        self._has_final_answer: dict[str, bool] = {}  # agent_id -> has final answer
+        self._viewing_final_answer: dict[str, bool] = {}  # agent_id -> viewing final answer
+        self._final_presentation_rounds: dict[str, set[int]] = {}  # agent_id -> set of final presentation round numbers
         self._dropdown_open = False
 
     def compose(self) -> ComposeResult:
@@ -472,6 +520,8 @@ class AgentStatusRibbon(Widget):
             yield Static("│", classes="ribbon-divider", id="context_divider")
             yield TasksLabel(agent_id=self.current_agent, id="tasks_display", classes="ribbon-section")
             yield Static("│", classes="ribbon-divider", id="tasks_divider")
+            yield BackgroundTasksLabel(agent_id=self.current_agent, id="background_tasks_display", classes="ribbon-section hidden")
+            yield Static("│", classes="ribbon-divider hidden", id="background_tasks_divider")
             yield Label("⏱ --:--", id="timeout_display", classes="ribbon-section")
             yield Static("│", classes="ribbon-divider")
             yield Label("-", id="token_count", classes="ribbon-section")
@@ -671,7 +721,7 @@ class AgentStatusRibbon(Widget):
         if agent_id == self.current_agent:
             self._update_round_display()
 
-    def get_view_state(self, agent_id: str) -> Tuple[str, Optional[int]]:
+    def get_view_state(self, agent_id: str) -> tuple[str, int | None]:
         """Get the current view state for an agent.
 
         Returns:
@@ -778,7 +828,35 @@ class AgentStatusRibbon(Widget):
         except Exception:
             pass
 
-    def set_timeout(self, agent_id: str, remaining_seconds: Optional[int]) -> None:
+    def set_background_jobs(self, agent_id: str, count: int) -> None:
+        """Set the active background job count for an agent."""
+        self._background_jobs[agent_id] = max(0, int(count))
+        if agent_id == self.current_agent:
+            self._update_background_display()
+
+    def _update_background_display(self) -> None:
+        """Update background job display in ribbon."""
+        try:
+            bg_label = self.query_one("#background_tasks_display", BackgroundTasksLabel)
+            bg_divider = self.query_one("#background_tasks_divider", Static)
+
+            bg_label.set_agent_id(self.current_agent)
+            count = self._background_jobs.get(self.current_agent, 0)
+
+            if count > 0:
+                bg_label.update(f"BG {count}")
+                bg_label.remove_class("hidden")
+                bg_divider.remove_class("hidden")
+                bg_label.add_class("has-background")
+            else:
+                bg_label.update("")
+                bg_label.add_class("hidden")
+                bg_divider.add_class("hidden")
+                bg_label.remove_class("has-background")
+        except Exception:
+            pass
+
+    def set_timeout(self, agent_id: str, remaining_seconds: int | None) -> None:
         """Set the timeout remaining for an agent (legacy, called from update_agent_timeout).
 
         Args:
@@ -810,7 +888,7 @@ class AgentStatusRibbon(Widget):
         for agent_id in list(self._round_start_times.keys()):
             self.stop_round_timer(agent_id)
 
-    def set_timeout_state(self, agent_id: str, timeout_state: Dict[str, Any]) -> None:
+    def set_timeout_state(self, agent_id: str, timeout_state: dict[str, Any]) -> None:
         """Set the full timeout state for an agent.
 
         Args:
@@ -824,7 +902,7 @@ class AgentStatusRibbon(Widget):
         if agent_id == self.current_agent:
             self._update_timeout_display()
 
-    def _get_total_elapsed(self, agent_id: str) -> Optional[int]:
+    def _get_total_elapsed(self, agent_id: str) -> int | None:
         """Get total elapsed time in seconds since agent first started."""
         if agent_id not in self._agent_start_times:
             return None
@@ -950,6 +1028,7 @@ class AgentStatusRibbon(Widget):
         self._update_activity_display()
         self._update_timeout_display()
         self._update_tasks_display()
+        self._update_background_display()
         self._update_token_display()
         self._update_cost_display()
 

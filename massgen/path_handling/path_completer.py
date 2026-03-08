@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Path completer for @filename syntax in MassGen prompts.
 
 This module provides a custom prompt_toolkit Completer that triggers
@@ -12,8 +11,8 @@ Example:
 """
 
 import os
+from collections.abc import Callable, Iterable
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
 
 from prompt_toolkit.completion import (
     CompleteEvent,
@@ -43,10 +42,10 @@ class AtPathCompleter(Completer):
 
     def __init__(
         self,
-        base_path: Optional[Path] = None,
+        base_path: Path | None = None,
         only_directories: bool = False,
         expanduser: bool = True,
-        file_filter: Optional[callable] = None,
+        file_filter: Callable | None = None,
     ):
         """Initialize AtPathCompleter.
 
@@ -187,7 +186,7 @@ class AtPathCompleter(Completer):
                     display_meta=f"{display_meta} (write)",
                 )
 
-    def _find_at_position(self, text: str) -> Optional[Tuple[int, bool]]:
+    def _find_at_position(self, text: str) -> tuple[int, bool] | None:
         """Find the position of the last @ that starts a path reference.
 
         Args:

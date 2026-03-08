@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Test script to examine how conversation context is built for LLM input.
 Shows the exact message templates and context structure without making API calls.
@@ -7,7 +6,7 @@ Shows the exact message templates and context structure without making API calls
 
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 # Add project root to path
 project_root = Path(__file__).parent.parent.parent.parent
@@ -16,7 +15,7 @@ sys.path.insert(0, str(project_root))
 from massgen.message_templates import MessageTemplates  # noqa: E402
 
 
-def print_message_structure(title: str, conversation: Dict[str, Any]):
+def print_message_structure(title: str, conversation: dict[str, Any]):
     """Print the structure of a conversation message in a readable format."""
     print(f"\n{'='*80}")
     print(f"🔍 {title}")

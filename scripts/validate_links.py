@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Documentation Link Validation Script
 
@@ -20,7 +19,6 @@ Features:
 import re
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 
 class LinkValidator:
@@ -29,8 +27,8 @@ class LinkValidator:
     def __init__(self, docs_path: Path, check_external: bool = False):
         self.docs_path = docs_path / "source"
         self.check_external = check_external
-        self.errors: List[Tuple[Path, str, str]] = []
-        self.warnings: List[Tuple[Path, str, str]] = []
+        self.errors: list[tuple[Path, str, str]] = []
+        self.warnings: list[tuple[Path, str, str]] = []
 
     def check_doc_reference(self, file_path: Path, ref: str):
         """Check if a :doc: reference is valid."""
@@ -181,7 +179,7 @@ class LinkValidator:
             report_lines.append("")
 
             # Group by file
-            by_file: Dict[Path, List[Tuple[str, str]]] = {}
+            by_file: dict[Path, list[tuple[str, str]]] = {}
             for file_path, link, error in self.errors:
                 if file_path not in by_file:
                     by_file[file_path] = []
@@ -202,7 +200,7 @@ class LinkValidator:
             report_lines.append("")
 
             # Group by file
-            by_file: Dict[Path, List[Tuple[str, str]]] = {}
+            by_file: dict[Path, list[tuple[str, str]]] = {}
             for file_path, link, warning in self.warnings:
                 if file_path not in by_file:
                     by_file[file_path] = []
@@ -242,7 +240,7 @@ class LinkValidator:
             if self.errors:
                 print(f"\n✗ {len(self.errors)} broken links found")
                 print("\nTop files with errors:")
-                by_file: Dict[Path, int] = {}
+                by_file: dict[Path, int] = {}
                 for file_path, _, _ in self.errors:
                     by_file[file_path] = by_file.get(file_path, 0) + 1
 

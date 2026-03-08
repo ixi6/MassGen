@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Standalone MCP server that exposes MassGen workflow tools as real MCP tools.
 
 This allows CLI-based backends (Codex, Claude Code) to use workflow tools
@@ -24,7 +23,7 @@ import argparse
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import fastmcp
 
@@ -71,7 +70,7 @@ async def create_server() -> fastmcp.FastMCP:
 
 def _register_workflow_tool(
     mcp: fastmcp.FastMCP,
-    tool_def: Dict[str, Any],
+    tool_def: dict[str, Any],
 ) -> None:
     """Register a single workflow tool as an MCP tool on the server.
 
@@ -132,7 +131,7 @@ def _register_workflow_tool(
 
 
 def write_workflow_specs(
-    tools: List[Dict[str, Any]],
+    tools: list[dict[str, Any]],
     output_path: Path,
 ) -> Path:
     """Write workflow tool specifications to a JSON file for the server to load.
@@ -156,7 +155,7 @@ def write_workflow_specs(
 def build_server_config(
     tool_specs_path: Path,
     tool_timeout_sec: int = 120,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build an MCP server config dict for use in .codex/config.toml or mcp_servers list.
 
     Args:
@@ -185,7 +184,7 @@ def build_server_config(
     }
 
 
-def is_workflow_tool_result(mcp_result: Dict[str, Any]) -> bool:
+def is_workflow_tool_result(mcp_result: dict[str, Any]) -> bool:
     """Check if an MCP tool result is from the workflow tools server.
 
     Args:
@@ -197,7 +196,7 @@ def is_workflow_tool_result(mcp_result: Dict[str, Any]) -> bool:
     return isinstance(mcp_result, dict) and mcp_result.get("server") == SERVER_NAME and mcp_result.get("status") == "ok"
 
 
-def extract_workflow_tool_call(mcp_result: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def extract_workflow_tool_call(mcp_result: dict[str, Any]) -> dict[str, Any] | None:
     """Extract a standard workflow tool call from an MCP result.
 
     Converts the MCP passthrough result into the format expected by the

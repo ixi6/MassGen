@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Rate limiter for API requests to respect provider rate limits.
 
@@ -9,7 +8,7 @@ are made within a given time window.
 import asyncio
 import time
 from collections import deque
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ..logger_config import logger
 
@@ -118,9 +117,9 @@ class MultiRateLimiter:
 
     def __init__(
         self,
-        rpm: Optional[int] = None,
-        tpm: Optional[int] = None,
-        rpd: Optional[int] = None,
+        rpm: int | None = None,
+        tpm: int | None = None,
+        rpd: int | None = None,
     ):
         """
         Initialize multi-dimensional rate limiter.
@@ -140,7 +139,7 @@ class MultiRateLimiter:
         self.token_usage: deque = deque()  # For TPM: (timestamp, tokens)
 
         # Lazy initialization of lock to ensure it's created in the correct event loop
-        self._lock: Optional[asyncio.Lock] = None
+        self._lock: asyncio.Lock | None = None
 
     async def __aenter__(self):
         """Context manager entry - waits until request is allowed."""
@@ -267,7 +266,7 @@ class GlobalRateLimiter:
     for the same provider.
     """
 
-    _limiters: Dict[str, Any] = {}
+    _limiters: dict[str, Any] = {}
     _lock = asyncio.Lock()
 
     @classmethod
@@ -292,9 +291,9 @@ class GlobalRateLimiter:
     def get_multi_limiter_sync(
         cls,
         provider: str,
-        rpm: Optional[int] = None,
-        tpm: Optional[int] = None,
-        rpd: Optional[int] = None,
+        rpm: int | None = None,
+        tpm: int | None = None,
+        rpd: int | None = None,
     ) -> MultiRateLimiter:
         """
         Get or create a multi-dimensional rate limiter for a specific provider.

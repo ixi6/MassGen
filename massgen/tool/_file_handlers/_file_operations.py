@@ -1,15 +1,13 @@
-# -*- coding: utf-8 -*-
 """File operation tools for reading and writing."""
 
 import os
-from typing import List, Optional
 
 from .._result import ExecutionResult, TextContent
 
 
 async def read_file_content(
     target_path: str,
-    line_range: Optional[List[int]] = None,
+    line_range: list[int] | None = None,
 ) -> ExecutionResult:
     """Read file contents with optional line range specification.
 
@@ -40,7 +38,7 @@ async def read_file_content(
         )
 
     try:
-        with open(target_path, "r", encoding="utf-8") as file:
+        with open(target_path, encoding="utf-8") as file:
             all_lines = file.readlines()
 
         if line_range:
@@ -139,7 +137,7 @@ async def save_file_content(
 async def append_file_content(
     target_path: str,
     additional_content: str,
-    line_position: Optional[int] = None,
+    line_position: int | None = None,
 ) -> ExecutionResult:
     """Append content to a file or insert at specific line.
 
@@ -162,7 +160,7 @@ async def append_file_content(
         )
 
     try:
-        with open(target_path, "r", encoding="utf-8") as file:
+        with open(target_path, encoding="utf-8") as file:
             current_lines = file.readlines()
 
         if line_position is None:

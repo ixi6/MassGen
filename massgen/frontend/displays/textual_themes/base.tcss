@@ -652,6 +652,17 @@ ModeToggle.state-plan:focus {
     border-bottom: tall $success;
 }
 
+ModeToggle.state-spec {
+    color: $success;
+    border-bottom: tall $success;
+}
+
+ModeToggle.state-spec:hover,
+ModeToggle.state-spec:focus {
+    color: $success;
+    border-bottom: tall $success;
+}
+
 ModeToggle.state-execute {
     color: $success;
     border-bottom: tall $success;
@@ -1080,6 +1091,66 @@ HeaderWidget.hidden {
     background: $background;
 }
 
+#queued_input_region {
+    layout: vertical;
+    width: 100%;
+    height: auto;
+    margin: 0;
+    padding: 0;
+    align: left top;
+    display: none;
+}
+
+#queued_input_region.visible {
+    display: block;
+}
+
+#queued_input_row {
+    layout: horizontal;
+    width: 100%;
+    height: auto;
+    align: left top;
+    margin: 0 1;
+    padding: 0;
+    background: $panel;
+    border: none;
+    border-left: thick $primary-lighten-1;
+}
+
+#queued_input_actions {
+    layout: horizontal;
+    width: auto;
+    height: 1;
+    min-height: 1;
+    align: right top;
+    margin: 0 1 0 0;
+    padding: 0;
+}
+
+#queued_input_actions > Button {
+    margin-left: 1;
+}
+
+#queue_cancel_latest_button,
+#queue_clear_button {
+    height: 1;
+    min-height: 1;
+    width: auto;
+    border: none;
+    margin-left: 1;
+    padding: 0 1;
+    background: $surface;
+    color: $text-muted;
+}
+
+#queue_cancel_latest_button:hover,
+#queue_clear_button:hover,
+#queue_cancel_latest_button:focus,
+#queue_clear_button:focus {
+    background: $panel;
+    color: $text;
+}
+
 /* Execution bar - hidden (keeping input area consistent in all states) */
 #execution_bar {
     display: none;
@@ -1173,29 +1244,45 @@ SuggestionRow.selected {
 }
 
 /* Question input - multi-line TextArea with rounded card style */
-#question_input {
-    background: transparent;
+#question_input_row,
+.shared-question-input-row {
+    layout: horizontal;
+    width: 100%;
+    height: auto;
+    align: left middle;
+    margin: 0 1;
+    padding: 0 1;
     border: round $surface-lighten-2;
+    background: transparent;
+}
+
+#question_input,
+.shared-question-input {
+    background: transparent;
+    border: none;
+    width: 1fr;
     height: auto;
     min-height: 1;
     max-height: 10;
-    margin: 0 1;
+    margin: 0;
     margin-top: 0;
-    padding: 0 1;
+    padding: 0 1 0 0;
 }
 
-#question_input:focus {
-    /* Subtle border on focus - main blue line is at top of input_header */
-    border: round $primary-lighten-1;
+#question_input:focus,
+.shared-question-input:focus {
     background: transparent;
+    border: none;
 }
 
 /* Hide line numbers in the question input */
-#question_input .text-area--line-number-gutter {
+#question_input .text-area--line-number-gutter,
+.shared-question-input .text-area--line-number-gutter {
     display: none;
 }
 
-#question_input .text-area--placeholder {
+#question_input .text-area--placeholder,
+.shared-question-input .text-area--placeholder {
     color: $text-muted;
     text-style: italic;
 }
@@ -1241,6 +1328,14 @@ SuggestionRow.selected {
     overflow-y: hidden;
 }
 
+#input_meta_primary {
+    layout: horizontal;
+    width: auto;
+    height: 1;
+    align: right middle;
+    overflow: hidden hidden;
+}
+
 #input_modes_row.meta-stacked #mode_bar {
     width: 100%;
 }
@@ -1256,6 +1351,35 @@ SuggestionRow.selected {
     width: auto;
     min-width: 0;
     text-align: right;
+}
+
+#inject_target_button,
+.shared-inject-target-button {
+    height: 1;
+    min-height: 1;
+    width: auto;
+    min-width: 10;
+    margin-left: 1;
+    margin-right: 0;
+    padding: 0 1;
+    border: none;
+    background: transparent;
+    color: $text-muted;
+    align: right middle;
+}
+
+#inject_target_button:hover,
+#inject_target_button:focus,
+.shared-inject-target-button:hover,
+.shared-inject-target-button:focus {
+    background: $surface;
+    color: $text;
+}
+
+#inject_target_button.mode-current,
+.shared-inject-target-button.mode-current {
+    background: $primary 18%;
+    color: $text;
 }
 
 #input_modes_row.meta-stacked #input_meta_panel Static {
@@ -1319,25 +1443,26 @@ SuggestionRow.selected {
 }
 
 /* Vim normal mode - input border */
-#question_input.vim-normal {
+#question_input.vim-normal,
+.shared-question-input.vim-normal {
     border: solid $warning;
 }
 
-#question_input.vim-normal:focus {
+#question_input.vim-normal:focus,
+.shared-question-input.vim-normal:focus {
     border: solid $warning;
 }
 
 /* === Queued Input Banner === */
 /* Shows above input bar when input is queued for injection during execution */
 #queued_input_banner {
-    height: auto;
-    max-height: 5;
-    background: $panel;
-    border: solid $surface-lighten-1;
-    border-left: thick $primary;
+    height: 1;
+    width: 1fr;
+    background: transparent;
+    border: none;
     padding: 0 1;
-    margin-left: 1;
-    margin-bottom: 0;
+    margin: 0;
+    overflow: hidden hidden;
     display: none;
 }
 
@@ -1346,14 +1471,13 @@ SuggestionRow.selected {
 }
 
 QueuedInputBanner {
-    height: auto;
-    max-height: 5;
-    background: $panel;
-    border: solid $surface-lighten-1;
-    border-left: thick $primary;
+    height: 1;
+    width: 1fr;
+    background: transparent;
+    border: none;
     padding: 0 1;
-    margin-left: 1;
-    margin-bottom: 0;
+    margin: 0;
+    overflow: hidden hidden;
     display: none;
 }
 
@@ -3505,6 +3629,17 @@ StatusBar > Static {
     margin-right: 2;
 }
 
+#status_tools {
+    width: auto;
+    color: $warning;
+    margin-right: 2;
+}
+
+#status_tools.clickable:hover {
+    color: $text;
+    text-style: underline;
+}
+
 /* Spacer to push right-side elements to the edge */
 #status_spacer {
     width: 1fr;
@@ -5310,6 +5445,22 @@ SubagentScreen, SubagentView {
     background: $background;
 }
 
+SubagentView.cancelled-state,
+SubagentView.canceled-state {
+    background: $error 10%;
+}
+
+SubagentView.cancelled-state SubagentPanel,
+SubagentView.canceled-state SubagentPanel {
+    border-left: thick $error;
+    opacity: 0.6;
+}
+
+SubagentView.cancelled-state TimelineSection,
+SubagentView.canceled-state TimelineSection {
+    opacity: 0.7;
+}
+
 SubagentScreen #subagent-content,
 SubagentView #subagent-content {
     width: 100%;
@@ -5389,6 +5540,11 @@ SubagentStatusLine.completed {
 }
 
 SubagentStatusLine.error {
+    color: $error;
+}
+
+SubagentStatusLine.canceled,
+SubagentStatusLine.cancelled {
     color: $error;
 }
 
@@ -5704,6 +5860,65 @@ PlanApprovalModal .execute-button {
 PlanApprovalModal .plan-action-status {
     margin-top: 1;
     color: $warning;
+}
+
+/* === Shared Rework Controls (used by PlanApprovalModal and ReviewModal) === */
+.rework-controls {
+    height: auto;
+    width: 100%;
+    padding: 1 2;
+    background: $bg-surface;
+    border-top: solid $border-muted;
+}
+
+.rework-input-section {
+    height: auto;
+    width: 100%;
+    padding: 1 2;
+    background: $bg-surface;
+    border-top: solid $border-muted;
+}
+
+.rework-feedback-label {
+    height: auto;
+    color: $fg-secondary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.rework-feedback-input {
+    width: 100%;
+}
+
+/* Inline variant: input sits in the footer row, takes remaining space */
+.rework-feedback-input-inline {
+    width: 1fr;
+    min-width: 20;
+    height: 3;
+    margin: 0 1 0 0;
+}
+
+.rework-button-row {
+    width: 100%;
+    height: auto;
+    layout: horizontal;
+    margin-top: 1;
+}
+
+.rework-continue-btn {
+    margin-right: 1;
+    background: $accent-warning;
+    color: $fg-on-accent;
+    border: solid $accent-warning;
+}
+
+.rework-continue-btn:hover {
+    opacity: 0.85;
+}
+
+.rework-quick-edit-btn {
+    margin-right: 1;
+    color: $fg-secondary;
 }
 
 /* === Plan JSON Editor Modal === */
@@ -6143,11 +6358,13 @@ BackgroundTaskDetailModal .modal-close:hover {
 
 BackgroundTaskDetailModal .info-section {
     height: auto;
+    max-height: 16;
     width: 100%;
     padding: 1;
     margin-bottom: 1;
     background: $background;
     border-left: solid $warning;
+    overflow-y: auto;
 }
 
 BackgroundTaskDetailModal .output-header {
@@ -6448,54 +6665,9 @@ TimelineSection .hidden {
     display: none;
 }
 
-/* Answer lock mode: final card fills the space */
-TimelineSection.answer-locked {
-    overflow-y: hidden;
-    padding: 0;
-}
-
-/* Hidden class for non-locked items */
-TimelineSection .answer-lock-hidden {
-    display: none;
-}
-
 /* ARCH-001: Viewport culling - hide items outside visible area */
 TimelineSection .viewport-culled {
     display: none;
-}
-
-/* Locked final card fills available space */
-TimelineSection FinalPresentationCard.final-card-locked {
-    height: 1fr;
-    margin: 0;
-    min-height: 10;
-}
-
-TimelineSection FinalPresentationCard.final-card-locked #final_card_body {
-    height: 1fr;
-    max-height: 999;
-}
-
-TimelineSection FinalPresentationCard.final-card-locked #final_card_content {
-    height: 1fr;
-    max-height: 999;
-    overflow-y: auto;
-}
-
-/* Compact mode for small terminals */
-TimelineSection FinalPresentationCard.final-card-compact {
-    height: 3;
-    min-height: 3;
-    max-height: 3;
-    margin: 0;
-}
-
-TimelineSection FinalPresentationCard.final-card-compact #final_card_content {
-    display: none;
-}
-
-TimelineSection FinalPresentationCard.final-card-compact #final_card_header {
-    height: 1;
 }
 
 /* Winner hint - separator line style */
@@ -6686,23 +6858,35 @@ FinalPresentationCard.streaming {
 }
 
 FinalPresentationCard.completed {
-    border: solid $success;
+    border: none;
+    border-top: solid $success;
+    margin: 1 0 0 0;
     background: transparent;
 }
 
-/* Hide post_eval and context_paths in completed mode when they have hidden class */
-FinalPresentationCard.completed #final_card_post_eval.hidden,
-FinalPresentationCard.completed #final_card_context_paths.hidden {
+/* Compact completed card: hide detail sections, constrain content to preview */
+FinalPresentationCard.completed #final_card_body {
+    max-height: 14;
+}
+
+FinalPresentationCard.completed #final_card_content {
+    max-height: 14;
+    overflow-y: hidden;
+}
+
+FinalPresentationCard.completed #file_explorer_panel {
     display: none;
-    height: 0;
-    padding: 0;
-    margin: 0;
+}
+
+FinalPresentationCard.completed #final_card_post_eval,
+FinalPresentationCard.completed #final_card_context_paths {
+    display: none;
 }
 
 FinalPresentationCard #final_card_header {
     width: 100%;
     height: auto;
-    padding: 0 1;
+    padding: 1 1 0 1;
     background: transparent;
 }
 
@@ -6876,7 +7060,8 @@ FinalPresentationCard .context-path-modified {
 FinalPresentationCard #final_card_footer {
     width: 100%;
     height: auto;
-    padding: 1 2;
+    padding: 1 1 0 1;
+    border-top: dashed $surface-lighten-1;
     background: transparent;
 }
 
@@ -6903,6 +7088,21 @@ FinalPresentationCard .footer-link:hover {
     text-style: bold underline;
 }
 
+/* Review status indicator - shown after approve/reject decision */
+FinalPresentationCard .review-status-indicator {
+    width: auto;
+    height: 1;
+    padding: 0 1;
+}
+
+FinalPresentationCard .review-status-indicator.status-approved {
+    color: $primary;
+}
+
+FinalPresentationCard .review-status-indicator.status-rejected {
+    color: $error;
+}
+
 /* Verified indicator - faded, non-clickable, hidden by default */
 FinalPresentationCard .verified-indicator {
     display: none;
@@ -6914,6 +7114,30 @@ FinalPresentationCard .verified-indicator {
 
 FinalPresentationCard #continue_message {
     display: none;
+}
+
+/* View Full Answer button - prominent action to open modal */
+FinalPresentationCard #final_card_view_btn {
+    color: $accent;
+    text-style: bold;
+    padding: 0 0;
+    height: 1;
+    width: auto;
+}
+
+FinalPresentationCard #final_card_view_btn:hover {
+    color: $accent-lighten-1;
+    text-style: bold underline;
+}
+
+FinalPresentationCard.completed #final_card_votes {
+    padding-bottom: 0;
+    margin-bottom: 1;
+    border-bottom: dashed $surface-lighten-1;
+}
+
+FinalPresentationCard.completed #final_card_content {
+    padding: 0 2;
 }
 
 /* Full-width mode - fills available vertical space */
@@ -6978,98 +7202,6 @@ FinalPresentationCard.completion-only #final_card_footer {
     padding: 1 2;
 }
 
-/* Spacer to push unlock button to the right in footer */
-FinalPresentationCard #final_card_button_spacer {
-    width: 1fr;
-    height: 1;
-}
-
-/* Locked-mode professional presentation:
- * Keep final answer visually aligned with timeline styling and reduce dead space.
- */
-FinalPresentationCard.locked-mode {
-    height: 1fr;
-    margin: 0;
-    border: solid $surface-lighten-1;
-    background: $background;
-}
-
-FinalPresentationCard.locked-mode #final_card_header {
-    height: 2;
-    padding: 0 2;
-    background: $surface;
-    border-bottom: solid $surface-lighten-1;
-}
-
-FinalPresentationCard.locked-mode #final_card_title {
-    display: none;
-}
-
-FinalPresentationCard.locked-mode #final_card_winner {
-    display: none;
-}
-
-FinalPresentationCard.locked-mode #final_card_votes {
-    display: none;
-}
-
-FinalPresentationCard.locked-mode #final_card_header_compact {
-    display: block;
-    height: 1;
-    color: $text;
-    text-style: bold;
-}
-
-FinalPresentationCard.locked-mode #final_card_body {
-    height: 1fr;
-    max-height: 999;
-}
-
-FinalPresentationCard.locked-mode #final_card_content {
-    height: 1fr;
-    max-height: 999;
-    background: $background;
-    padding: 1 2;
-    overflow-y: auto;
-}
-
-FinalPresentationCard.locked-mode #file_explorer_panel {
-    width: 42;
-    min-width: 32;
-    background: $surface-darken-1;
-    border-left: solid $surface-lighten-1;
-    padding: 0 1;
-}
-
-FinalPresentationCard.locked-mode #file_explorer_panel #file_tree_header {
-    color: $primary;
-}
-
-FinalPresentationCard.locked-mode #file_explorer_panel #file_tree {
-    height: 1fr;
-    max-height: 999;
-}
-
-FinalPresentationCard.locked-mode #file_explorer_panel #file_preview_header,
-FinalPresentationCard.locked-mode #file_explorer_panel #file_preview {
-    display: none;
-}
-
-FinalPresentationCard.locked-mode #final_card_post_eval,
-FinalPresentationCard.locked-mode #final_card_context_paths {
-    display: none;
-}
-
-FinalPresentationCard.locked-mode #final_card_footer {
-    height: 2;
-    background: $surface-darken-1;
-    border-top: solid $surface-lighten-1;
-    padding: 0 2;
-}
-
-FinalPresentationCard.locked-mode #continue_message {
-    display: none;
-}
 
 /* =============================================================================
    Injection Toggle (from tool_card.py)
@@ -7179,9 +7311,9 @@ ExecutionStatusLine.hidden {
 
 SubagentColumn {
     width: 1fr;
-    min-width: 32;
+    min-width: 33;
     height: auto;
-    padding: 0 1 0 1;
+    padding: 0 1;
     border-right: solid $surface-darken-1;
 }
 
@@ -7191,13 +7323,13 @@ SubagentColumn:last-of-type {
 }
 
 SubagentColumn:hover {
-    background: $panel;
+    background: $surface-lighten-1;
 }
 
 SubagentColumn:focus {
     background: $panel;
-    border-left: thick $secondary;
-    padding-left: 0;
+    border-left: none;
+    padding-left: 1;
 }
 
 SubagentColumn .agent-header {
@@ -7218,7 +7350,7 @@ SubagentColumn .summary-line {
 }
 
 SubagentColumn .tool-current {
-    color: $secondary;
+    color: $primary;
     text-style: bold;
 }
 
@@ -7233,20 +7365,22 @@ SubagentColumn .tool-recent {
 SubagentCard {
     width: 100%;
     height: auto;
-    min-height: 5;
-    padding: 0 1 0 2;
+    min-height: 6;
+    padding: 1 1 1 2;
     margin: 0 0 1 1;
     background: $surface;
     border-left: tall $secondary;
     border-top: solid $surface-darken-1;
-    border-bottom: solid $background;
+    border-right: solid $surface-darken-2;
+    border-bottom: solid $surface-darken-2;
 }
 
 SubagentCard.all-completed {
     border-left: tall $success;
-    background: $success 30%;
-    border-top: solid $success 50%;
-    border-bottom: solid $background;
+    background: $success 20%;
+    border-top: solid $success 30%;
+    border-right: solid $success 20%;
+    border-bottom: solid $success 20%;
 }
 
 SubagentCard:hover {
@@ -7254,11 +7388,12 @@ SubagentCard:hover {
 }
 
 SubagentCard.all-completed:hover {
-    background: $success 50%;
+    background: $success 30%;
 }
 
 SubagentCard:focus-within {
     background: $panel;
+    border-left: tall $primary;
 }
 
 SubagentCard.appearing {
@@ -7271,7 +7406,7 @@ SubagentCard.appeared {
 
 SubagentCard #subagent-card-title {
     height: 1;
-    margin-bottom: 1;
+    margin-bottom: 0;
     padding: 0 1;
 }
 
@@ -7288,6 +7423,33 @@ SubagentCard #subagent-columns {
     layout: horizontal;
     height: auto;
     width: 100%;
+}
+
+/* Option A: Refined Compact */
+SubagentCard.variant-a {
+    border-left: solid $secondary;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+SubagentCard.variant-a:focus-within {
+    border-left: solid $primary;
+}
+
+SubagentCard.variant-a.all-completed {
+    border-left: solid $success;
+}
+
+SubagentCard.variant-a #subagent-card-title {
+    margin-bottom: 0;
+}
+
+SubagentCard.variant-a SubagentColumn {
+    min-width: 32;
+}
+
+SubagentCard.variant-a SubagentColumn .is-empty {
+    display: none;
 }
 
 /* =============================================================================
@@ -7796,7 +7958,8 @@ SubagentModal #nav-text {
 }
 
 /* --- Two-panel content area --- */
-.review-modal .review-content {
+.review-modal .review-content,
+.final-answer-modal .review-content {
     height: 1fr;
     width: 100%;
     margin-top: 0;
@@ -7804,17 +7967,19 @@ SubagentModal #nav-text {
 
 /* ===== Left panel: file list ===== */
 
-.review-modal .review-file-list {
-    width: 34;
-    min-width: 28;
-    max-width: 44;
-    border-right: solid $border-default;
+.review-modal .review-file-list,
+.final-answer-modal .review-file-list {
+    width: 20%;
+    min-width: 16;
+    max-width: 28;
+    border-right: solid $border-muted;
     height: 100%;
     background: $bg-surface;
 }
 
 /* File list header row with Select All / Deselect All buttons */
-.review-modal .review-file-list-header {
+.review-modal .review-file-list-header,
+.final-answer-modal .review-file-list-header {
     height: auto;
     align: left middle;
     padding: 0 0 0 1;
@@ -7822,13 +7987,15 @@ SubagentModal #nav-text {
     border-bottom: solid $border-muted;
 }
 
-.review-modal .review-file-list-title {
+.review-modal .review-file-list-title,
+.final-answer-modal .review-file-list-title {
     width: 1fr;
     color: $fg-secondary;
     text-style: bold;
 }
 
-.review-modal .review-toggle-btn {
+.review-modal .review-toggle-btn,
+.final-answer-modal .review-toggle-btn {
     width: auto;
     min-width: 5;
     height: 1;
@@ -7839,42 +8006,49 @@ SubagentModal #nav-text {
     text-style: underline;
 }
 
-.review-modal .review-toggle-btn:hover {
+.review-modal .review-toggle-btn:hover,
+.final-answer-modal .review-toggle-btn:hover {
     color: $accent-primary;
 }
 
-.review-modal .review-file-list #file_list_scroll {
+.review-modal .review-file-list #file_list_scroll,
+.final-answer-modal .review-file-list #file_list_scroll {
     height: 1fr;
     scrollbar-gutter: stable;
 }
 
 /* Context header: project name divider (multi-context only) */
-.review-modal .review-context-header {
+.review-modal .review-context-header,
+.final-answer-modal .review-context-header {
     padding: 0 0 0 1;
     margin-top: 1;
     color: $fg-muted;
 }
 
 /* File row: holds toggle indicator + filename */
-.review-modal .review-file-row {
+.review-modal .review-file-row,
+.final-answer-modal .review-file-row {
     height: auto;
     width: 100%;
     align: left middle;
     padding: 0 0 0 1;
 }
 
-.review-modal .review-file-row:hover {
+.review-modal .review-file-row:hover,
+.final-answer-modal .review-file-row:hover {
     background: $bg-surface-2;
 }
 
 /* Selected / active file row highlight */
-.review-modal .review-file-selected {
+.review-modal .review-file-selected,
+.final-answer-modal .review-file-selected {
     background: $bg-surface-2;
     border-left: tall $accent-primary;
 }
 
 /* Approval toggle indicator: ✓ or ○ */
-.review-modal .review-toggle-indicator {
+.review-modal .review-toggle-indicator,
+.final-answer-modal .review-toggle-indicator {
     width: 3;
     min-width: 3;
     height: auto;
@@ -7883,38 +8057,44 @@ SubagentModal #nav-text {
     text-align: center;
 }
 
-.review-modal .review-toggle-indicator:hover {
+.review-modal .review-toggle-indicator:hover,
+.final-answer-modal .review-toggle-indicator:hover {
     color: $accent-primary;
     text-style: bold;
 }
 
-.review-modal .review-approved {
+.review-modal .review-approved,
+.final-answer-modal .review-approved {
     color: $accent-success;
     text-style: bold;
 }
 
 /* Clickable file name */
-.review-modal .review-file-entry {
+.review-modal .review-file-entry,
+.final-answer-modal .review-file-entry {
     width: 1fr;
     height: auto;
     padding: 0;
     color: $fg-secondary;
 }
 
-.review-modal .review-file-entry:hover {
+.review-modal .review-file-entry:hover,
+.final-answer-modal .review-file-entry:hover {
     color: $accent-primary;
 }
 
 /* ===== Right panel: diff viewer ===== */
 
-.review-modal .review-diff-panel {
+.review-modal .review-diff-panel,
+.final-answer-modal .review-diff-panel {
     width: 1fr;
     padding-left: 0;
     height: 100%;
 }
 
 /* Diff panel header showing selected file path */
-.review-modal .review-diff-header {
+.review-modal .review-diff-header,
+.final-answer-modal .review-diff-header {
     height: auto;
     padding: 0 0 0 1;
     color: $fg-secondary;
@@ -7922,7 +8102,8 @@ SubagentModal #nav-text {
 }
 
 /* Scrollable diff content area */
-.review-modal #diff_scroll {
+.review-modal #diff_scroll,
+.final-answer-modal #diff_scroll {
     height: 1fr;
     background: $modal-content-bg;
     border: solid $border-muted;
@@ -7931,48 +8112,435 @@ SubagentModal #nav-text {
 }
 
 /* Diff text content: auto-height so it scrolls naturally */
-.review-modal .review-diff-content {
+.review-modal .review-diff-content,
+.final-answer-modal .review-diff-content {
     width: 100%;
     height: auto;
     color: $modal-content-text;
 }
 
-/* --- Footer button refinements --- */
-.review-modal .modal-footer {
-    padding-top: 0;
-    margin-top: 0;
-    border-top: solid $surface-lighten-1;
+/* --- Summary and instructions (dual scope) --- */
+.final-answer-modal .modal-summary {
+    padding: 0 1;
+    margin: 0;
+    height: auto;
+    min-height: 1;
     background: $bg-surface;
 }
 
-.review-modal .modal-footer Button {
-    margin-left: 1;
-    min-width: 14;
+.final-answer-modal .modal-instructions {
+    padding: 0 1;
+    margin: 0;
+    color: $fg-subtle;
+    height: auto;
+    min-height: 1;
+    max-height: 2;
+    overflow: hidden;
+    background: $bg-surface;
+    border-bottom: solid $border-muted;
 }
 
-.review-modal #approve_selected_btn {
+/* --- Footer button refinements --- */
+.review-modal .modal-footer,
+.final-answer-modal .modal-footer {
+    padding-top: 0;
+    margin-top: 0;
+    border-top: solid $border-muted;
+    background: $bg-surface;
+}
+
+.review-modal .modal-footer Button,
+.final-answer-modal .modal-footer Button {
+    margin-left: 1;
+    min-width: 12;
+    height: 3;
+}
+
+.review-modal #approve_selected_btn,
+.final-answer-modal #approve_selected_btn {
     background: $primary;
     border: solid $primary;
     color: $fg-on-accent;
     text-style: bold;
 }
 
-.review-modal #approve_selected_btn:hover {
+.review-modal #approve_selected_btn:hover,
+.final-answer-modal #approve_selected_btn:hover {
     background: $primary-lighten-1;
     border: solid $primary-lighten-1;
 }
 
-.review-modal #reject_all_btn {
+.review-modal #reject_all_btn,
+.final-answer-modal #reject_all_btn {
     background: $btn-danger-bg;
     border: solid $btn-danger-bg;
     color: $fg-on-accent;
 }
 
-.review-modal #reject_all_btn:hover {
+.review-modal #reject_all_btn:hover,
+.final-answer-modal #reject_all_btn:hover {
     background: $btn-danger-bg-hover;
     border: solid $btn-danger-bg-hover;
 }
 
-.review-modal #cancel_btn {
+.review-modal #cancel_btn,
+.final-answer-modal #cancel_btn {
     color: $fg-muted;
+}
+
+.review-modal #edit_file_btn,
+.final-answer-modal #edit_file_btn {
+    color: $fg-secondary;
+}
+
+/* === File Editor Modal (for editing files from review modal) === */
+FileEditorModal {
+    align: center middle;
+}
+
+FileEditorModal #file_editor_container {
+    width: 98%;
+    max-width: 180;
+    height: 96%;
+    background: $panel;
+    border: solid $secondary;
+    padding: 1 2;
+}
+
+FileEditorModal .modal-header {
+    height: auto;
+    width: 100%;
+    margin-bottom: 1;
+}
+
+FileEditorModal .header-row {
+    height: auto;
+    width: 100%;
+    layout: horizontal;
+}
+
+FileEditorModal .modal-title {
+    text-style: bold;
+    width: 1fr;
+    color: $secondary;
+}
+
+FileEditorModal .modal-close {
+    width: auto;
+    min-width: 3;
+    background: transparent;
+    border: none;
+    color: $text-muted;
+}
+
+FileEditorModal .modal-close:hover {
+    color: $text;
+}
+
+FileEditorModal .modal-body {
+    height: 1fr;
+    width: 100%;
+    overflow-y: auto;
+}
+
+FileEditorModal #file_editor_textarea {
+    width: 100%;
+    height: 1fr;
+    border: solid $surface-lighten-1;
+}
+
+FileEditorModal .modal-footer {
+    height: auto;
+    width: 100%;
+    margin-top: 1;
+    padding-top: 1;
+    border-top: solid $surface-lighten-1;
+}
+
+FileEditorModal .footer-buttons {
+    width: 100%;
+    height: auto;
+    layout: horizontal;
+}
+
+/* =============================================================================
+ * Final Answer Modal
+ * =============================================================================
+ * Tabbed modal showing the winning answer + optional Review Changes tab.
+ * Reuses .review-* CSS classes for the Review tab via ReviewChangesPanel.
+ * ============================================================================= */
+
+.final-answer-modal {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    padding: 0;
+    border: none;
+}
+
+.final-answer-modal .modal-header {
+    height: auto;
+    width: 100%;
+    padding: 0 1;
+    margin-bottom: 0;
+    background: $bg-surface;
+    border-bottom: solid $border-muted;
+}
+
+.final-answer-modal .modal-close-btn {
+    height: 1;
+    min-height: 1;
+    border: none;
+    background: transparent;
+    color: $fg-muted;
+}
+
+/* --- Tabbed content --- */
+.final-answer-modal TabbedContent {
+    height: 1fr;
+}
+
+.final-answer-modal Tabs {
+    background: $bg-surface;
+    dock: top;
+}
+
+.final-answer-modal Tab {
+    color: $fg-secondary;
+}
+
+.final-answer-modal Tab.-active {
+    color: $accent-success;
+    text-style: bold;
+}
+
+.final-answer-modal Underline {
+    color: $accent-success;
+}
+
+.final-answer-modal TabPane {
+    height: 1fr;
+    padding: 0;
+    layout: vertical;
+}
+
+/* Answer tab content fills space above footer */
+.final-answer-modal #answer_content {
+    height: 1fr;
+}
+
+/* --- Answer tab --- */
+#answer_content_scroll {
+    height: 1fr;
+    padding: 1 2;
+}
+
+#answer_markdown {
+    padding: 0 1;
+}
+
+/* Post-evaluation section */
+.answer-post-eval {
+    height: auto;
+    max-height: 20;
+    padding: 0 2;
+    border-top: solid $border-muted;
+}
+
+.answer-post-eval-label {
+    color: $accent-success;
+    text-style: bold;
+    padding: 1 0 0 0;
+}
+
+.answer-post-eval-scroll {
+    height: auto;
+    max-height: 15;
+    padding: 0 1;
+}
+
+/* --- Answer bottom bar: context paths (left) + buttons (right) --- */
+.answer-bottom-bar {
+    height: auto;
+    width: 100%;
+    layout: horizontal;
+    align: left middle;
+    padding: 0 2;
+    margin-bottom: 1;
+    border-top: solid $border-muted;
+    background: $bg-surface;
+}
+
+/* Context paths section (left side of bottom bar) */
+.answer-context-paths {
+    width: 1fr;
+    height: auto;
+    max-height: 10;
+    padding: 0;
+}
+
+#answer_paths_header {
+    color: $fg-secondary;
+    text-style: bold;
+    padding: 1 0 0 0;
+}
+
+.answer-paths-scroll {
+    height: auto;
+    max-height: 7;
+    scrollbar-gutter: stable;
+}
+
+.context-path-new {
+    color: $accent-success;
+}
+
+.context-path-modified {
+    color: $warning;
+}
+
+.context-path-overflow {
+    color: $fg-muted;
+}
+
+/* Action buttons (right side of bottom bar) */
+.answer-action-buttons {
+    width: auto;
+    height: auto;
+    align: right middle;
+    padding: 1 0;
+}
+
+.answer-action-btn {
+    margin-left: 1;
+    min-width: 16;
+    height: 3;
+}
+
+/* Approve All Changes button — green success */
+#approve_all_answer_btn {
+    background: $accent-success;
+    border: solid $accent-success;
+    color: $fg-on-accent;
+    text-style: bold;
+}
+
+#approve_all_answer_btn:hover {
+    opacity: 0.85;
+}
+
+/* Review Changes button — subtle accent border */
+#review_changes_btn {
+    border: solid $accent-primary;
+    color: $accent-primary;
+}
+
+#review_changes_btn:hover {
+    background: $accent-primary;
+    color: $fg-on-accent;
+}
+
+/* Also style Apply All in both modals with success green */
+.review-modal #approve_all_btn,
+.final-answer-modal #approve_all_btn {
+    background: $accent-success;
+    border: solid $accent-success;
+    color: $fg-on-accent;
+}
+
+.review-modal #approve_all_btn:hover,
+.final-answer-modal #approve_all_btn:hover {
+    opacity: 0.85;
+}
+
+/* Review panel inside final answer modal needs full height */
+.final-answer-modal #final_review_panel {
+    height: 1fr;
+}
+
+/* Banner shown at top of review tab when changes were already approved */
+.final-answer-modal #review_approved_banner {
+    width: 100%;
+    height: auto;
+    padding: 0 2;
+    color: $success;
+    text-style: bold;
+    background: $surface;
+}
+
+/* Dim the review panel when already approved */
+.final-answer-modal .review-approved-dim {
+    opacity: 50%;
+}
+
+/* The answer content area when there are no tabs (answer-only mode) */
+.final-answer-modal > #answer_content {
+    height: 1fr;
+    padding: 0;
+}
+
+/* === Workspace Tab in Final Answer Modal === */
+#workspace_tab_split {
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+#workspace_tab_file_list_container {
+    width: 35%;
+    height: 100%;
+    border: solid $primary;
+    padding: 1;
+}
+
+#workspace_tab_file_list_header {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#workspace_tab_file_list {
+    height: 1fr;
+    background: $surface;
+}
+
+/* Higher contrast for file tree items */
+#workspace_tab_file_list .workspace-file-item {
+    color: $text;
+    padding: 0 1;
+    margin: 0;
+}
+
+#workspace_tab_file_list .workspace-file-item:hover {
+    background: $surface-lighten-2;
+}
+
+#workspace_tab_preview_container {
+    width: 65%;
+    height: 100%;
+    border: solid $primary;
+    padding: 1;
+    margin-left: 1;
+}
+
+#workspace_tab_preview_header {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#workspace_tab_preview {
+    height: 1fr;
+    background: $surface;
+}
+
+#workspace_tab_footer {
+    height: auto;
+    min-height: 3;
+    align: center middle;
+}
+
+#open_workspace_filesystem_btn {
+    width: auto;
+    min-width: 24;
 }

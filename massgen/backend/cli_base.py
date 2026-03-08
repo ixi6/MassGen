@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 CLI Backend Base Class - Abstract interface for CLI-based LLM backends.
 
@@ -10,8 +9,9 @@ import asyncio
 import subprocess
 import tempfile
 from abc import abstractmethod
+from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any
 
 from .base import LLMBackend, StreamChunk, TokenUsage
 
@@ -19,14 +19,14 @@ from .base import LLMBackend, StreamChunk, TokenUsage
 class CLIBackend(LLMBackend):
     """Abstract base class for CLI-based LLM backends."""
 
-    def __init__(self, cli_command: str, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, cli_command: str, api_key: str | None = None, **kwargs):
         super().__init__(api_key, **kwargs)
         self.cli_command = cli_command
         self.working_dir = kwargs.get("working_dir", Path.cwd())
         self.timeout = kwargs.get("timeout", 300)  # 5 minutes default
 
     @abstractmethod
-    def _build_command(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], **kwargs) -> List[str]:
+    def _build_command(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs) -> list[str]:
         """Build the CLI command to execute.
 
         Args:
@@ -39,7 +39,7 @@ class CLIBackend(LLMBackend):
         """
 
     @abstractmethod
-    def _parse_output(self, output: str) -> Dict[str, Any]:
+    def _parse_output(self, output: str) -> dict[str, Any]:
         """Parse CLI output into structured format.
 
         Args:
@@ -49,7 +49,7 @@ class CLIBackend(LLMBackend):
             Parsed response data
         """
 
-    async def _execute_cli_command(self, command: List[str]) -> str:
+    async def _execute_cli_command(self, command: list[str]) -> str:
         """Execute CLI command asynchronously.
 
         Args:
@@ -78,10 +78,10 @@ class CLIBackend(LLMBackend):
 
             return stdout.decode("utf-8")
 
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             process.kill()
             await process.wait()
-            raise asyncio.TimeoutError(f"CLI command timed out after {self.timeout} seconds") from exc
+            raise TimeoutError(f"CLI command timed out after {self.timeout} seconds") from exc
 
     def _create_temp_file(self, content: str, suffix: str = ".txt") -> Path:
         """Create a temporary file with content.
@@ -97,7 +97,7 @@ class CLIBackend(LLMBackend):
             temp_file.write(content)
             return Path(temp_file.name)
 
-    def _format_messages_for_cli(self, messages: List[Dict[str, Any]]) -> str:
+    def _format_messages_for_cli(self, messages: list[dict[str, Any]]) -> str:
         """Format messages for CLI input.
 
         Args:
@@ -121,7 +121,7 @@ class CLIBackend(LLMBackend):
 
         return "\n\n".join(formatted_parts)
 
-    async def stream_with_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk, None]:
+    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk, None]:
         """Stream response with tools support."""
         try:
             # Build CLI command
@@ -144,7 +144,7 @@ class CLIBackend(LLMBackend):
                 source=self.__class__.__name__,
             )
 
-    async def _convert_to_stream_chunks(self, response: Dict[str, Any]) -> AsyncGenerator[StreamChunk, None]:
+    async def _convert_to_stream_chunks(self, response: dict[str, Any]) -> AsyncGenerator[StreamChunk, None]:
         """Convert parsed response to stream chunks.
 
         Args:
@@ -185,7 +185,7 @@ class CLIBackend(LLMBackend):
         # This could be estimated or left as zero
         return self.token_usage
 
-    def get_cost_per_token(self) -> Dict[str, float]:
+    def get_cost_per_token(self) -> dict[str, float]:
         """Get cost per token for this provider."""
         # Override in specific implementations
         return {"input": 0.0, "output": 0.0}
@@ -194,7 +194,7 @@ class CLIBackend(LLMBackend):
         """Get the model name being used."""
         return self.config.get("model", "unknown")
 
-    def get_provider_info(self) -> Dict[str, Any]:
+    def get_provider_info(self) -> dict[str, Any]:
         """Get provider information."""
         return {
             "provider": self.__class__.__name__,

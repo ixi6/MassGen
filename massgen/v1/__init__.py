@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MassGen - Multi-Agent Scaling System
 

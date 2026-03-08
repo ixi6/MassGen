@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Claude Code Stream Backend - Streaming interface using claude-code-sdk-python.
 
@@ -46,6 +45,7 @@ TODO:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import atexit
 import json
@@ -53,9 +53,12 @@ import os
 import shutil
 import sys
 import time
+import uuid
 import warnings
+from collections.abc import AsyncGenerator, Callable
+from datetime import datetime
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any
 
 from claude_agent_sdk import (  # type: ignore
     AssistantMessage,
@@ -77,16 +80,40 @@ from ..logger_config import (
     log_stream_chunk,
     logger,
 )
+from ..mcp_tools.backend_utils import MCPResourceManager
 from ..structured_logging import get_current_round, get_tracer, log_token_usage
 from ..tool import ToolManager
+from ..utils.tool_argument_normalization import normalize_json_object_argument
 from ._streaming_buffer_mixin import StreamingBufferMixin
 from .base import (
     build_workflow_instructions,  # Used in _build_system_prompt_with_workflow_tools
 )
-from .base import FilesystemSupport, LLMBackend, StreamChunk
+from .base import (
+    FilesystemSupport,
+    LLMBackend,
+    StreamChunk,
+)
 from .base import extract_structured_response as _extract_structured_response
-from .base import get_multimodal_tool_definitions
+from .base import (
+    get_multimodal_tool_definitions,
+)
 from .base import parse_workflow_tool_calls as _parse_workflow_tool_calls
+from .base_with_custom_tool_and_mcp import (
+    BACKGROUND_TOOL_CANCEL_NAME,
+    BACKGROUND_TOOL_LIST_NAME,
+    BACKGROUND_TOOL_MANAGEMENT_NAMES,
+    BACKGROUND_TOOL_RESULT_NAME,
+    BACKGROUND_TOOL_START_NAME,
+    BACKGROUND_TOOL_STATUS_NAME,
+    BACKGROUND_TOOL_TERMINAL_STATUSES,
+    BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS,
+    BACKGROUND_TOOL_WAIT_MAX_TIMEOUT_SECONDS,
+    BACKGROUND_TOOL_WAIT_NAME,
+    BACKGROUND_TOOL_WAIT_POLL_INTERVAL_SECONDS,
+    BackgroundToolJob,
+    ExecutionContext,
+)
+from .capabilities import normalize_backend_type
 from .native_tool_mixin import NativeToolBackendMixin
 
 
@@ -109,7 +136,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
 
     supports_sdk_mcp = True
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         """Initialize ClaudeCodeBackend.
 
         Args:
@@ -164,8 +191,8 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             self._setup_windows_subprocess_cleanup_suppression()
 
         # Single ClaudeSDKClient for this backend instance
-        self._client: Optional[Any] = None  # ClaudeSDKClient
-        self._current_session_id: Optional[str] = None
+        self._client: Any | None = None  # ClaudeSDKClient
+        self._current_session_id: str | None = None
 
         # Get workspace paths from filesystem manager (required for Claude Code)
         # The filesystem manager handles all workspace setup and management
@@ -174,16 +201,29 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
 
         self._cwd: str = str(Path(str(self.filesystem_manager.get_current_workspace())).resolve())
 
-        self._pending_system_prompt: Optional[str] = None  # Windows-only workaround
+        self._pending_system_prompt: str | None = None  # Windows-only workaround
 
         # Track tool_use_id -> tool_name for matching ToolResultBlock to its ToolUseBlock
         # (ToolResultBlock only has tool_use_id, not the tool name)
-        self._tool_id_to_name: Dict[str, str] = {}
+        self._tool_id_to_name: dict[str, str] = {}
         # Track tool_use_id -> start time for elapsed_seconds calculation
-        self._tool_start_times: Dict[str, float] = {}
+        self._tool_start_times: dict[str, float] = {}
+
+        # Background tool management state (parity with MCP-enabled backends)
+        self._background_tool_jobs: dict[str, BackgroundToolJob] = {}
+        self._background_tool_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._pending_background_tool_results: list[dict[str, Any]] = []
+        self._background_tool_wait_seen_ids: set[str] = set()
+        self._background_wait_interrupt_provider: Callable[[str], Any] | None = None
+        self._background_tool_management_names: set[str] = set(
+            BACKGROUND_TOOL_MANAGEMENT_NAMES,
+        )
+        self._background_mcp_client = None
+        self._background_mcp_initialized = False
+        self._background_tool_delegate: Any | None = None
 
         # Custom tools support - initialize ToolManager if custom_tools are provided
-        self._custom_tool_manager: Optional[ToolManager] = None
+        self._custom_tool_manager: ToolManager | None = None
         custom_tools = kwargs.get("custom_tools", [])
 
         # Register multimodal tools if enabled
@@ -212,30 +252,9 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             self._custom_tool_manager = ToolManager()
             self._register_custom_tools(custom_tools)
 
-            # Create SDK MCP Server from custom tools and inject into mcp_servers
-            sdk_mcp_server = self._create_sdk_mcp_server_from_custom_tools()
-            if sdk_mcp_server:
-                # Ensure mcp_servers exists in config
-                if "mcp_servers" not in self.config:
-                    self.config["mcp_servers"] = {}
-
-                # Add SDK MCP server (convert to list format if dict format is used)
-                if isinstance(self.config["mcp_servers"], dict):
-                    # Already in dict format
-                    self.config["mcp_servers"]["massgen_custom_tools"] = sdk_mcp_server
-                elif isinstance(self.config["mcp_servers"], list):
-                    # List format - add as special entry with SDK server marker
-                    self.config["mcp_servers"].append(
-                        {
-                            "name": "massgen_custom_tools",
-                            "__sdk_server__": sdk_mcp_server,
-                        },
-                    )
-                else:
-                    # Initialize as dict with SDK server
-                    self.config["mcp_servers"] = {"massgen_custom_tools": sdk_mcp_server}
-
-                logger.info(f"Registered SDK MCP server with {len(self._custom_tool_manager.registered_tools)} custom tools")
+        # Always register MassGen custom-tool MCP server so background-management
+        # helpers are available across all backends (even with zero user tools).
+        self._register_massgen_custom_tools_server()
 
         # Initialize native hook adapter for MassGen hooks integration
         self.__init_native_tool_mixin__()
@@ -344,7 +363,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
     # supports_native_hooks(), get_native_hook_adapter(), set_native_hooks_config()
     # are provided by NativeToolBackendMixin
 
-    def get_disallowed_tools(self, config: Dict[str, Any]) -> List[str]:
+    def get_disallowed_tools(self, config: dict[str, Any]) -> list[str]:
         """Return native Claude Code tools to disable.
 
         Most native tools (Read, Write, Edit, etc.) are kept enabled,
@@ -373,6 +392,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             "Task",  # we have our own version of subagents
             "TodoWrite",
             "ExitPlanMode",
+            "Skill",  # agents read skill files directly; Skill tool misused by weaker models
             "mcp__ide__getDiagnostics",
             "mcp__ide__executeCode",
         ]
@@ -395,7 +415,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
 
         return disallowed
 
-    def get_tool_category_overrides(self) -> Dict[str, str]:
+    def get_tool_category_overrides(self) -> dict[str, str]:
         """Return tool category overrides for Claude Code.
 
         Claude Code has native tools for filesystem, command execution, file search,
@@ -411,7 +431,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             "subagents": "override",  # Override native Task with MassGen spawn_subagents
         }
 
-    def _get_execution_trace_hooks(self) -> Dict[str, List[Any]]:
+    def _get_execution_trace_hooks(self) -> dict[str, list[Any]]:
         """Create SDK hooks that capture tool executions for the execution trace.
 
         Returns:
@@ -420,9 +440,9 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         from claude_agent_sdk import HookMatcher
 
         # Store pending tool calls to correlate with results
-        self._pending_tool_calls: Dict[str, Dict[str, Any]] = {}
+        self._pending_tool_calls: dict[str, dict[str, Any]] = {}
 
-        async def pre_tool_use_hook(input_data: Dict[str, Any], tool_use_id: Optional[str], context: Any) -> Dict[str, Any]:
+        async def pre_tool_use_hook(input_data: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
             """Capture tool call before execution."""
             if self._execution_trace and input_data.get("hook_event_name") == "PreToolUse":
                 tool_name = input_data.get("tool_name", "unknown")
@@ -443,7 +463,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             # Return empty to allow the operation
             return {}
 
-        async def post_tool_use_hook(input_data: Dict[str, Any], tool_use_id: Optional[str], context: Any) -> Dict[str, Any]:
+        async def post_tool_use_hook(input_data: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:
             """Capture tool result after execution."""
             if self._execution_trace and input_data.get("hook_event_name") == "PostToolUse":
                 tool_name = input_data.get("tool_name", "unknown")
@@ -554,6 +574,8 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         task), so disconnect() inadvertently cancels the entire coordination. We reverse
         this by uncancelling any affected tasks after disconnect.
         """
+        await self._cancel_all_background_tool_jobs()
+
         if self._client is not None:
             try:
                 await self._client.disconnect()
@@ -639,7 +661,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
                 )
                 self.token_usage.estimated_cost += cost
 
-    def update_token_usage(self, messages: List[Dict[str, Any]], response_content: str, model: str):
+    def update_token_usage(self, messages: list[dict[str, Any]], response_content: str, model: str):
         """Update token usage tracking (fallback method).
 
         Only used when no ResultMessage available. Provides estimated token
@@ -670,7 +692,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         cost = self.calculate_cost(input_tokens, output_tokens, model, result_message=None)
         self.token_usage.estimated_cost += cost
 
-    def _resolve_skill_source(self) -> Optional[Path]:
+    def _resolve_skill_source(self) -> Path | None:
         """Resolve the best available skills source directory, if any."""
         fm = self.filesystem_manager
         if fm is not None:
@@ -698,21 +720,25 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
 
         return None
 
-    def _sync_skills_into_claude_home(self, workspace_path: Path) -> None:
-        """Copy discovered skills into workspace/.claude/skills for SDK discovery."""
+    def _sync_skills_into_workspace(self, workspace_path: Path) -> None:
+        """Copy discovered skills into workspace/.agent/skills for direct reading.
+
+        Also creates a .claude/skills symlink pointing to .agent/skills so both
+        conventional paths resolve to the same location.
+        """
         source = self._resolve_skill_source()
         if source is None:
             return
 
-        claude_home = workspace_path / ".claude"
-        dest = claude_home / "skills"
+        # Primary location: .agent/skills/
+        agent_dir = workspace_path / ".agent"
+        dest = agent_dir / "skills"
         dest.mkdir(parents=True, exist_ok=True)
 
         try:
             if source.resolve() == dest.resolve():
                 return
         except OSError:
-            # Continue best-effort copy if either path cannot be resolved.
             pass
 
         copied_entries = 0
@@ -732,7 +758,20 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         if copied_entries:
             logger.info(f"[ClaudeCodeBackend] Skills sync copied {copied_entries} entries from {source} to {dest}")
 
-    def get_supported_builtin_tools(self, enable_web_search: bool = False) -> List[str]:
+        # Symlink .claude/skills -> .agent/skills
+        claude_skills = workspace_path / ".claude" / "skills"
+        try:
+            if claude_skills.is_symlink() or claude_skills.exists():
+                if claude_skills.is_symlink():
+                    claude_skills.unlink()
+                elif claude_skills.is_dir():
+                    shutil.rmtree(claude_skills)
+            claude_skills.parent.mkdir(parents=True, exist_ok=True)
+            claude_skills.symlink_to(dest)
+        except OSError as e:
+            logger.warning(f"Claude Code .claude/skills symlink failed: {e}")
+
+    def get_supported_builtin_tools(self, enable_web_search: bool = False) -> list[str]:
         """Get list of builtin tools supported by Claude Code.
 
         Returns only tools that MassGen doesn't have native equivalents for.
@@ -746,9 +785,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         Returns:
             List of tool names that should be enabled for Claude Code.
         """
-        tools = [
-            "Skill",
-        ]
+        tools: list[str] = []
 
         if enable_web_search:
             tools.extend(["WebSearch", "WebFetch"])
@@ -798,7 +835,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         ],
     }
 
-    def _get_all_tools_for_server(self, server_name: str) -> List[str]:
+    def _get_all_tools_for_server(self, server_name: str) -> list[str]:
         """Get all known tools for a server, prefixed with mcp__{server}__.
 
         Used when we need to explicitly list all tools (fallback when wildcards not supported).
@@ -841,7 +878,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
 
         return []
 
-    def get_current_session_id(self) -> Optional[str]:
+    def get_current_session_id(self) -> str | None:
         """Get current session ID from server-side session management.
 
         Returns:
@@ -869,7 +906,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
     #     # Will integrate with PermissionManager
     #     pass
 
-    def _register_custom_tools(self, custom_tools: List[Dict[str, Any]]) -> None:
+    def _register_custom_tools(self, custom_tools: list[dict[str, Any]]) -> None:
         """Register custom tools with the tool manager.
 
         Supports flexible configuration:
@@ -1028,7 +1065,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         field_value: Any,
         num_functions: int,
         field_name: str,
-    ) -> Optional[List[Any]]:
+    ) -> list[Any] | None:
         """Process a config field that can be a single value or list.
 
         Conversion rules:
@@ -1079,16 +1116,248 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             )
             return None
 
-    async def _execute_massgen_custom_tool(self, tool_name: str, args: dict) -> dict:
+    def _register_massgen_custom_tools_server(self) -> None:
+        """Register/update SDK MCP server exposing MassGen custom tools."""
+        sdk_mcp_server = self._create_sdk_mcp_server_from_custom_tools()
+        if not sdk_mcp_server:
+            return
+
+        if "mcp_servers" not in self.config:
+            self.config["mcp_servers"] = {}
+
+        if isinstance(self.config["mcp_servers"], dict):
+            self.config["mcp_servers"]["massgen_custom_tools"] = sdk_mcp_server
+        elif isinstance(self.config["mcp_servers"], list):
+            replaced = False
+            for server in self.config["mcp_servers"]:
+                if isinstance(server, dict) and server.get("name") == "massgen_custom_tools":
+                    server["__sdk_server__"] = sdk_mcp_server
+                    replaced = True
+                    break
+            if not replaced:
+                self.config["mcp_servers"].append(
+                    {
+                        "name": "massgen_custom_tools",
+                        "__sdk_server__": sdk_mcp_server,
+                    },
+                )
+        else:
+            self.config["mcp_servers"] = {"massgen_custom_tools": sdk_mcp_server}
+
+        logger.info(
+            "[ClaudeCodeBackend] Registered SDK MCP server with %s MassGen tool(s)",
+            len(self._get_massgen_custom_tool_schemas()),
+        )
+
+    def _get_massgen_custom_tool_schemas(self) -> list[dict[str, Any]]:
+        """Return user custom-tool schemas plus internal background management tools."""
+        schemas: list[dict[str, Any]] = []
+        if self._custom_tool_manager:
+            schemas.extend(self._custom_tool_manager.fetch_tool_schemas())
+        schemas.extend(self._get_background_tool_management_schemas())
+        return schemas
+
+    @staticmethod
+    def _build_background_management_schema(
+        name: str,
+        description: str,
+        properties: dict[str, Any],
+        required: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create OpenAI function schema for internal background management tools."""
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required or [],
+                },
+            },
+        }
+
+    def _get_background_tool_management_schemas(self) -> list[dict[str, Any]]:
+        """Schemas for lifecycle management of background tool jobs."""
+        return [
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_START_NAME,
+                description=(
+                    "Start any custom or MCP tool in the background and return a job_id "
+                    "for polling or cancellation. You can provide target arguments via "
+                    "`arguments` (or `args`), or pass them as top-level fields."
+                ),
+                properties={
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Exact tool name to run (custom_tool__* or mcp__*).",
+                    },
+                    "tool": {
+                        "type": "string",
+                        "description": "Alias for tool_name.",
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Arguments for the target tool.",
+                        "default": {},
+                    },
+                    "args": {
+                        "type": "object",
+                        "description": "Alias for arguments.",
+                        "default": {},
+                    },
+                },
+                required=[],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_STATUS_NAME,
+                description="Get lightweight status for a background tool job.",
+                properties={
+                    "job_id": {
+                        "type": "string",
+                        "description": "Background job identifier returned by start_background_tool.",
+                    },
+                },
+                required=["job_id"],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_RESULT_NAME,
+                description="Get the current or final result payload for a background tool job.",
+                properties={
+                    "job_id": {
+                        "type": "string",
+                        "description": "Background job identifier returned by start_background_tool.",
+                    },
+                },
+                required=["job_id"],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_WAIT_NAME,
+                description=("Block until the next unseen background tool job reaches a terminal " "state or the timeout elapses."),
+                properties={
+                    "timeout_seconds": {
+                        "type": "number",
+                        "description": ("Maximum seconds to wait for a completed background job. " "Default: 30."),
+                        "default": BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS,
+                    },
+                },
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_CANCEL_NAME,
+                description="Cancel a running background tool job.",
+                properties={
+                    "job_id": {
+                        "type": "string",
+                        "description": "Background job identifier returned by start_background_tool.",
+                    },
+                },
+                required=["job_id"],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_LIST_NAME,
+                description=("List background tool jobs. By default returns only currently running jobs; " "set include_all=true to include completed/error/cancelled history."),
+                properties={
+                    "include_all": {
+                        "type": "boolean",
+                        "description": "Include terminal jobs (completed/error/cancelled). Default false.",
+                        "default": False,
+                    },
+                },
+            ),
+        ]
+
+    async def _execute_massgen_custom_tool(
+        self,
+        tool_name: str,
+        args: dict,
+        *,
+        force_foreground: bool = False,
+    ) -> dict:
         """Execute a MassGen custom tool and convert result to MCP format.
 
         Args:
             tool_name: Name of the custom tool to execute
             args: Arguments for the tool
+            force_foreground: When True, bypass auto-background dispatch and
+                execute the tool directly in this call context.
 
         Returns:
             MCP-formatted response with content blocks
         """
+        if tool_name in self._background_tool_management_names:
+            management_result = await self._execute_background_management_tool(
+                tool_name=tool_name,
+                arguments=args or {},
+            )
+            return {
+                "content": [
+                    {"type": "text", "text": json.dumps(management_result)},
+                ],
+            }
+
+        try:
+            parsed_args, decode_passes = normalize_json_object_argument(
+                args,
+                field_name="arguments",
+            )
+        except ValueError as exc:
+            payload = {
+                "success": False,
+                "error": str(exc),
+            }
+            return {
+                "content": [
+                    {"type": "text", "text": json.dumps(payload)},
+                ],
+            }
+        if decode_passes > 1:
+            logger.info(
+                "[ClaudeCode] Normalized %s decode passes for %s arguments",
+                decode_passes,
+                tool_name,
+            )
+        auto_background = False
+        if not force_foreground:
+            auto_background = self._should_auto_background_execution(tool_name, parsed_args)
+        if auto_background:
+            background_args = self._strip_background_control_args(
+                parsed_args,
+                tool_name=tool_name,
+            )
+            try:
+                background_job = await self._start_background_tool_job(
+                    tool_name=tool_name,
+                    arguments=background_args,
+                )
+                payload = {
+                    "success": True,
+                    "status": "background",
+                    "job_id": background_job.job_id,
+                    "tool_name": background_job.tool_name,
+                    "message": f"{background_job.tool_name} is running in background",
+                }
+            except Exception as e:  # noqa: BLE001
+                payload = {
+                    "success": False,
+                    "error": f"Error starting background execution for {tool_name}: {e}",
+                }
+
+            return {
+                "content": [
+                    {"type": "text", "text": json.dumps(payload)},
+                ],
+            }
+
+        # Media tools default to background mode, so explicit foreground
+        # overrides may include control args (for example background=false).
+        # Strip these before direct execution.
+        if self._is_default_media_background_tool(tool_name):
+            parsed_args = self._strip_background_control_args(
+                parsed_args,
+                tool_name=tool_name,
+            )
+
         if not self._custom_tool_manager:
             return {
                 "content": [
@@ -1103,7 +1372,26 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             try:
                 execution_context = self._execution_context.model_dump()
             except Exception:
-                pass
+                execution_context = {}
+
+        task_context = None
+        if self.filesystem_manager and self.filesystem_manager.cwd:
+            from massgen.context.task_context import load_task_context
+
+            task_context = load_task_context(
+                str(self.filesystem_manager.cwd),
+                required=False,
+            )
+
+        execution_context.setdefault("backend_name", self.get_provider_name())
+        execution_context.setdefault(
+            "backend_type",
+            normalize_backend_type(self.get_provider_name()),
+        )
+        execution_context.setdefault("model", self.config.get("model", ""))
+        execution_context.setdefault("current_stage", self.coordination_stage)
+        if task_context is not None:
+            execution_context["task_context"] = task_context
 
         # Ensure agent_cwd is always available for custom tools
         # Use filesystem_manager's cwd which is set to the agent's workspace
@@ -1121,7 +1409,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
 
         tool_request = {
             "name": tool_name,
-            "input": args,
+            "input": parsed_args,
         }
 
         # Add observability context (agent_id, round tracking)
@@ -1161,23 +1449,967 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             ],
         }
 
+    def _is_background_management_tool(self, tool_name: str) -> bool:
+        """Return whether a tool name is one of the internal background helpers."""
+        return tool_name in self._background_tool_management_names
+
+    @staticmethod
+    def _normalize_background_target_tool_name(tool_name: str) -> str:
+        """Normalize target names passed to background start requests."""
+        normalized = (tool_name or "").strip()
+        massgen_prefix = "mcp__massgen_custom_tools__"
+        if normalized.startswith(massgen_prefix):
+            normalized = normalized[len(massgen_prefix) :]
+        return normalized
+
+    def _mcp_tool_declares_argument(self, tool_name: str, argument_name: str) -> bool:
+        """Return True when a known MCP tool schema declares an argument."""
+        clients = [
+            getattr(self, "_mcp_client", None),
+            getattr(self, "_background_mcp_client", None),
+        ]
+        for client in clients:
+            tools = getattr(client, "tools", None)
+            if not isinstance(tools, dict) or tool_name not in tools:
+                continue
+            tool = tools[tool_name]
+            schema = getattr(tool, "inputSchema", None)
+            if not isinstance(schema, dict):
+                schema = getattr(tool, "parameters", None)
+            if not isinstance(schema, dict):
+                continue
+            properties = schema.get("properties")
+            if isinstance(properties, dict) and argument_name in properties:
+                return True
+        return False
+
+    def _strip_background_control_args(
+        self,
+        arguments: dict[str, Any],
+        *,
+        tool_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Remove synthetic background control flags before dispatching target tools."""
+        cleaned = dict(arguments)
+        preserve_background = bool(tool_name) and self._mcp_tool_declares_argument(tool_name, "background")
+        preserve_run_in_background = bool(tool_name) and self._mcp_tool_declares_argument(tool_name, "run_in_background")
+        preserve_mode = bool(tool_name) and self._mcp_tool_declares_argument(tool_name, "mode")
+
+        if not preserve_background and isinstance(cleaned.get("background"), bool):
+            cleaned.pop("background", None)
+        if not preserve_run_in_background and isinstance(cleaned.get("run_in_background"), bool):
+            cleaned.pop("run_in_background", None)
+        mode = cleaned.get("mode")
+        if not preserve_mode and isinstance(mode, str) and mode.lower() in {"background"}:
+            cleaned.pop("mode", None)
+        return cleaned
+
+    @staticmethod
+    def _is_default_media_background_tool(tool_name: str) -> bool:
+        """Return True for media tools that should default to background execution."""
+        normalized = (tool_name or "").strip()
+        normalized = ClaudeCodeBackend._normalize_background_target_tool_name(normalized)
+        return normalized in {
+            "read_media",
+            "generate_media",
+            "custom_tool__read_media",
+            "custom_tool__generate_media",
+        }
+
+    @staticmethod
+    def _is_explicit_foreground_request(arguments: dict[str, Any]) -> bool:
+        """Return True when args explicitly request foreground/blocking behavior."""
+        if arguments.get("background") is False:
+            return True
+        if arguments.get("run_in_background") is False:
+            return True
+        return False
+
+    def _should_auto_background_execution(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> bool:
+        """Return True when this tool call should be started in background mode."""
+        if self._is_background_management_tool(tool_name):
+            return False
+        if tool_name in {"new_answer", "vote", "stop"}:
+            return False
+        if not isinstance(arguments, dict):
+            return False
+
+        if self._is_explicit_foreground_request(arguments):
+            return False
+        if self._is_default_media_background_tool(tool_name):
+            return True
+
+        # If the target MCP tool natively defines background controls, keep
+        # execution in foreground and let that tool own the behavior (for
+        # example spawn_subagents(background=True)).
+        if self._mcp_tool_declares_argument(tool_name, "background") or self._mcp_tool_declares_argument(tool_name, "run_in_background") or self._mcp_tool_declares_argument(tool_name, "mode"):
+            return False
+
+        mode = arguments.get("mode")
+        mode_is_background = isinstance(mode, str) and mode.lower() in {"background"}
+        return arguments.get("background") is True or mode_is_background
+
+    def _validate_background_tool_prerequisites(self, tool_name: str) -> None:
+        """Validate required prerequisites before starting a background tool."""
+        if not self._is_default_media_background_tool(tool_name):
+            return
+
+        workspace_path = getattr(self, "_cwd", None)
+        try:
+            from massgen.context.task_context import TaskContextError, load_task_context
+
+            load_task_context(workspace_path, required=True)
+        except TaskContextError as exc:
+            raise ValueError(
+                f"CONTEXT.md must be created before starting {tool_name} in background. {exc}",
+            ) from exc
+
+    def _resolve_background_tool_type(self, tool_name: str) -> tuple[str, str] | None:
+        """Resolve background target to (tool_type, effective_tool_name)."""
+        if not tool_name:
+            return None
+
+        raw_name = tool_name.strip()
+        if raw_name in {"new_answer", "vote", "stop"}:
+            return None
+        if self._is_background_management_tool(raw_name):
+            return None
+
+        normalized_name = self._normalize_background_target_tool_name(raw_name)
+        if self._is_background_management_tool(normalized_name):
+            return None
+
+        if self._custom_tool_manager and normalized_name in self._custom_tool_manager.registered_tools:
+            return ("custom", normalized_name)
+
+        if raw_name.startswith("mcp__"):
+            return ("mcp", raw_name)
+
+        return None
+
+    @staticmethod
+    def _is_subagent_spawn_target_tool(tool_name: str) -> bool:
+        """Return True when tool_name resolves to subagent spawn MCP tool."""
+        normalized = ClaudeCodeBackend._normalize_background_target_tool_name(
+            str(tool_name or "").strip(),
+        ).lower()
+        return "spawn_subagent" in normalized and "subagent" in normalized
+
+    @staticmethod
+    def _normalize_subagent_spawn_background_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        """Force wrapped subagent spawn requests into direct background mode."""
+        normalized = dict(arguments)
+        normalized["background"] = True
+        normalized.pop("run_in_background", None)
+        mode = normalized.get("mode")
+        if not (isinstance(mode, str) and mode.lower() == "background"):
+            normalized.pop("mode", None)
+        return normalized
+
+    @staticmethod
+    def _parse_json_or_python_dict(raw_text: str) -> dict[str, Any] | None:
+        """Parse dict payloads from JSON or Python repr text."""
+        if not isinstance(raw_text, str):
+            return None
+        text = raw_text.strip()
+        if not text:
+            return None
+
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(text)
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @staticmethod
+    def _looks_like_json_payload(raw_text: str) -> bool:
+        stripped = str(raw_text or "").lstrip()
+        return stripped.startswith("{") or stripped.startswith("[")
+
+    @classmethod
+    def _annotate_custom_tool_outcome_from_payload(
+        cls,
+        payload: dict[str, Any],
+        *,
+        ready: bool,
+    ) -> None:
+        """Attach tool-level outcome fields for terminal custom-tool jobs."""
+        if not ready or payload.get("tool_type") != "custom":
+            return
+
+        status = str(payload.get("status") or "")
+        if status in {"error", "cancelled"}:
+            payload["tool_success"] = False
+            payload["tool_error"] = str(payload.get("error") or "Custom tool execution failed")
+            return
+
+        if status != "completed":
+            payload["tool_success"] = None
+            return
+
+        raw_result = str(payload.get("result") or "").strip()
+        if not raw_result:
+            payload["tool_success"] = False
+            payload["tool_error"] = "No final result payload captured from custom tool execution"
+            return
+
+        parsed = cls._parse_json_or_python_dict(raw_result)
+        if parsed is not None:
+            parsed_success = parsed.get("success")
+            if isinstance(parsed_success, bool):
+                payload["tool_success"] = parsed_success
+                if not parsed_success:
+                    parsed_error = parsed.get("error")
+                    payload["tool_error"] = str(parsed_error) if parsed_error is not None else "Custom tool reported success=false"
+            else:
+                payload["tool_success"] = True
+            return
+
+        if raw_result.startswith("Error:"):
+            payload["tool_success"] = False
+            payload["tool_error"] = raw_result
+            return
+
+        if cls._looks_like_json_payload(raw_result):
+            payload["tool_success"] = None
+            payload["result_parse_error"] = "Could not parse custom tool JSON result payload"
+            return
+
+        payload["tool_success"] = True
+
+    @staticmethod
+    def _format_unix_timestamp(timestamp: float | None) -> str | None:
+        """Convert unix timestamp to ISO-8601 string."""
+        if timestamp is None:
+            return None
+        return datetime.fromtimestamp(timestamp).isoformat()
+
+    def _serialize_background_job(
+        self,
+        job: BackgroundToolJob,
+        include_result: bool = False,
+    ) -> dict[str, Any]:
+        """Serialize background job state for tool responses and hook injection."""
+        payload: dict[str, Any] = {
+            "job_id": job.job_id,
+            "tool_name": job.tool_name,
+            "tool_type": job.tool_type,
+            "status": job.status,
+            "created_at": self._format_unix_timestamp(job.created_at),
+            "started_at": self._format_unix_timestamp(job.started_at),
+            "completed_at": self._format_unix_timestamp(job.completed_at),
+            "source_call_id": job.source_call_id,
+        }
+        if include_result and job.result is not None:
+            payload["result"] = job.result
+        if job.error:
+            payload["error"] = job.error
+        return payload
+
+    def _enqueue_completed_background_job(self, job: BackgroundToolJob) -> None:
+        """Store completed job payload for post-tool hook injection."""
+        self._pending_background_tool_results.append(
+            self._serialize_background_job(job, include_result=True),
+        )
+
+    def get_pending_background_tool_results(self) -> list[dict[str, Any]]:
+        """Return and clear completed background jobs pending injection."""
+        pending = list(self._pending_background_tool_results)
+        self._pending_background_tool_results.clear()
+        return pending
+
+    def register_background_delegate(self, delegate: Any) -> None:
+        """Register a delegate that extends background lifecycle APIs (e.g., subagents)."""
+        self._background_tool_delegate = delegate
+
+    def _pop_next_pending_background_tool_result(self) -> dict[str, Any] | None:
+        """Pop one completed background job payload from the shared delivery queue."""
+        if not self._pending_background_tool_results:
+            return None
+        return self._pending_background_tool_results.pop(0)
+
+    def set_background_wait_interrupt_provider(
+        self,
+        provider: Callable[[str], Any] | None,
+    ) -> None:
+        """Set an optional provider used to interrupt wait_for_background_tool."""
+        self._background_wait_interrupt_provider = provider
+
+    async def _get_background_wait_interrupt_payload(self) -> dict[str, Any] | None:
+        """Return normalized wait interrupt payload, if any."""
+        if not self._background_wait_interrupt_provider:
+            return None
+
+        agent_id = str(
+            getattr(self, "agent_id", None) or self._current_agent_id or "unknown",
+        )
+        try:
+            payload = self._background_wait_interrupt_provider(agent_id)
+            if asyncio.iscoroutine(payload):
+                payload = await payload
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[ClaudeCodeBackend] Wait interrupt provider failed for %s: %s",
+                agent_id,
+                e,
+                exc_info=True,
+            )
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        raw_reason = payload.get("interrupt_reason", "runtime_injection_available")
+        interrupt_reason = str(raw_reason).strip() or "runtime_injection_available"
+        injected_content = payload.get("injected_content")
+        if injected_content is not None:
+            injected_content = str(injected_content)
+
+        return {
+            "interrupt_reason": interrupt_reason,
+            "injected_content": injected_content,
+        }
+
+    @staticmethod
+    def _extract_text_from_mcp_content(content: Any) -> str:
+        """Extract text payload from MCP result content blocks."""
+        if content is None:
+            return ""
+
+        blocks = content if isinstance(content, list) else [content]
+        text_parts: list[str] = []
+
+        for block in blocks:
+            if isinstance(block, dict):
+                text = block.get("text")
+                if text is not None:
+                    text_parts.append(str(text))
+                    continue
+                raw = block.get("content")
+                if raw is not None:
+                    text_parts.append(str(raw))
+                    continue
+
+            text_attr = getattr(block, "text", None)
+            if text_attr is not None:
+                text_parts.append(str(text_attr))
+                continue
+
+            content_attr = getattr(block, "content", None)
+            if content_attr is not None:
+                text_parts.append(str(content_attr))
+
+        return "\n".join(part for part in text_parts if part).strip()
+
+    @classmethod
+    def _extract_text_from_mcp_response(cls, response: dict[str, Any]) -> str:
+        """Extract text payload from MCP-style dict response."""
+        content = response.get("content") if isinstance(response, dict) else None
+        text = cls._extract_text_from_mcp_content(content)
+        if text:
+            return text
+        return str(response)
+
+    def _get_background_mcp_servers(self) -> list[dict[str, Any]]:
+        """Return MCP server configs usable by background MCP execution."""
+        servers = self.config.get("mcp_servers", [])
+        result: list[dict[str, Any]] = []
+
+        if isinstance(servers, dict):
+            for name, cfg in servers.items():
+                if name == "massgen_custom_tools":
+                    continue
+                if not isinstance(cfg, dict):
+                    continue
+                if "__sdk_server__" in cfg:
+                    continue
+                server_cfg = cfg.copy()
+                server_cfg["name"] = name
+                result.append(server_cfg)
+            return result
+
+        if isinstance(servers, list):
+            for cfg in servers:
+                if not isinstance(cfg, dict):
+                    continue
+                if cfg.get("name") == "massgen_custom_tools":
+                    continue
+                if "__sdk_server__" in cfg:
+                    continue
+                result.append(cfg)
+
+        return result
+
+    async def _get_background_mcp_client(self):
+        """Create or return lazily-initialized MCP client for background jobs."""
+        if self._background_mcp_client:
+            return self._background_mcp_client
+        if self._background_mcp_initialized:
+            return None
+
+        servers_to_use = self._get_background_mcp_servers()
+        if not servers_to_use:
+            self._background_mcp_initialized = True
+            return None
+
+        try:
+            self._background_mcp_client = await MCPResourceManager.setup_mcp_client(
+                servers=servers_to_use,
+                allowed_tools=getattr(self, "allowed_tools", None),
+                exclude_tools=getattr(self, "exclude_tools", None),
+                circuit_breaker=getattr(self, "_mcp_tools_circuit_breaker", None),
+                timeout_seconds=400,
+                backend_name=self.get_provider_name(),
+                agent_id=getattr(self, "agent_id", None),
+            )
+            self._background_mcp_initialized = True
+            return self._background_mcp_client
+        except Exception as e:  # noqa: BLE001
+            self._background_mcp_initialized = True
+            logger.warning(
+                "[ClaudeCodeBackend] Failed to initialize background MCP client: %s",
+                e,
+                exc_info=True,
+            )
+            return None
+
+    async def _execute_background_tool_target(
+        self,
+        tool_name: str,
+        tool_type: str,
+        arguments: dict[str, Any],
+    ) -> tuple[str, bool]:
+        """Execute target tool for a background job."""
+        if tool_type == "custom":
+            response = await self._execute_massgen_custom_tool(
+                tool_name,
+                arguments,
+                force_foreground=True,
+            )
+            result_text = self._extract_text_from_mcp_response(response)
+            normalized_result = str(result_text or "").strip()
+            if not normalized_result or normalized_result == "Tool executed successfully":
+                return ("No final result payload captured from custom tool execution", True)
+            return (normalized_result, normalized_result.startswith("Error:"))
+
+        if tool_type == "mcp":
+            mcp_client = await self._get_background_mcp_client()
+            if not mcp_client:
+                return (
+                    "Error: MCP client not available for background execution",
+                    True,
+                )
+
+            try:
+                result = await mcp_client.call_tool(
+                    name=tool_name,
+                    arguments=arguments,
+                )
+                extracted = self._extract_text_from_mcp_content(
+                    getattr(result, "content", None),
+                )
+                return (extracted or str(result), False)
+            except Exception as e:  # noqa: BLE001
+                return (f"Error: {e}", True)
+
+        raise ValueError(f"Unsupported background tool type: {tool_type}")
+
+    async def _run_background_tool_job(self, job_id: str) -> None:
+        """Execute a background job and persist its terminal state."""
+        job = self._background_tool_jobs.get(job_id)
+        if not job:
+            return
+
+        job.started_at = time.time()
+        try:
+            result, is_error = await self._execute_background_tool_target(
+                job.tool_name,
+                job.tool_type,
+                job.arguments,
+            )
+            if is_error:
+                job.status = "error"
+                job.error = result
+            else:
+                job.status = "completed"
+                job.result = result
+        except asyncio.CancelledError:
+            job.status = "cancelled"
+            job.error = job.error or "Background tool execution cancelled"
+            raise
+        except Exception as e:  # noqa: BLE001
+            job.status = "error"
+            job.error = f"Background tool failed: {e}"
+            logger.warning(
+                "[ClaudeCodeBackend] Background tool %s failed: %s",
+                job.tool_name,
+                e,
+                exc_info=True,
+            )
+        finally:
+            job.completed_at = time.time()
+            self._background_tool_tasks.pop(job_id, None)
+            if job.status in BACKGROUND_TOOL_TERMINAL_STATUSES:
+                self._enqueue_completed_background_job(job)
+
+    async def _start_background_tool_job(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        source_call_id: str | None = None,
+    ) -> BackgroundToolJob:
+        """Start a background job for a custom or MCP tool."""
+        resolution = self._resolve_background_tool_type(tool_name)
+        if resolution is None:
+            raise ValueError(
+                f"Tool '{tool_name}' is not available for background execution",
+            )
+
+        tool_type, effective_name = resolution
+        self._validate_background_tool_prerequisites(effective_name)
+        job_id = f"bgtool_{uuid.uuid4().hex[:12]}"
+        job = BackgroundToolJob(
+            job_id=job_id,
+            tool_name=effective_name,
+            tool_type=tool_type,
+            arguments=dict(arguments),
+            status="running",
+            created_at=time.time(),
+            source_call_id=source_call_id,
+        )
+        self._background_tool_jobs[job_id] = job
+        self._background_tool_tasks[job_id] = asyncio.create_task(
+            self._run_background_tool_job(job_id),
+            name=f"background_tool:{effective_name}:{job_id}",
+        )
+        return job
+
+    async def _start_background_subagent_spawn(
+        self,
+        tool_name: str,
+        target_arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Treat wrapped subagent spawn starts like direct spawn_subagents(background=true)."""
+        normalized_arguments = self._normalize_subagent_spawn_background_arguments(
+            target_arguments,
+        )
+        mcp_client = await self._get_background_mcp_client()
+        if not mcp_client:
+            return {
+                "success": False,
+                "error": "MCP client not available for subagent background spawn",
+            }
+
+        try:
+            result = await mcp_client.call_tool(
+                name=tool_name,
+                arguments=normalized_arguments,
+            )
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": str(e)}
+
+        extracted = self._extract_text_from_mcp_content(
+            getattr(result, "content", None),
+        )
+        payload = self._parse_json_or_python_dict(extracted)
+        if isinstance(payload, dict):
+            if payload.get("success") is True and "mode" not in payload:
+                payload["mode"] = "background"
+            return self._attach_subagent_background_ids(payload)
+
+        if extracted.startswith("Error:"):
+            return {
+                "success": False,
+                "error": extracted.removeprefix("Error:").strip() or extracted,
+            }
+
+        return {
+            "success": True,
+            "operation": "spawn_subagents",
+            "mode": "background",
+            "result": extracted or str(result),
+        }
+
+    @staticmethod
+    def _attach_subagent_background_ids(payload: dict[str, Any]) -> dict[str, Any]:
+        """Ensure subagent background payloads expose both job and subagent IDs."""
+        subagents_raw = payload.get("subagents")
+        if not isinstance(subagents_raw, list):
+            return payload
+
+        subagents: list[dict[str, Any]] = []
+        job_ids: list[str] = []
+        for item in subagents_raw:
+            if not isinstance(item, dict):
+                continue
+            entry = dict(item)
+            subagent_id = str(entry.get("subagent_id") or entry.get("id") or "").strip()
+            job_id = str(entry.get("job_id") or subagent_id).strip()
+            if subagent_id:
+                entry["subagent_id"] = subagent_id
+            if job_id:
+                entry["job_id"] = job_id
+                job_ids.append(job_id)
+            subagents.append(entry)
+
+        if subagents:
+            payload["subagents"] = subagents
+
+        if not job_ids:
+            return payload
+
+        unique_job_ids = list(dict.fromkeys(job_ids))
+        payload.setdefault("job_ids", unique_job_ids)
+
+        if len(unique_job_ids) == 1:
+            payload.setdefault("job_id", unique_job_ids[0])
+            first_subagent_id = str(subagents[0].get("subagent_id") or "").strip() if subagents else ""
+            if first_subagent_id:
+                payload.setdefault("subagent_id", first_subagent_id)
+
+        return payload
+
+    async def _start_background_tool_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__start_background_tool."""
+        tool_name, target_arguments, parse_error = self._extract_background_start_request(arguments)
+        if parse_error:
+            return {"success": False, "error": parse_error}
+
+        if self._is_subagent_spawn_target_tool(tool_name):
+            return await self._start_background_subagent_spawn(
+                tool_name,
+                target_arguments,
+            )
+
+        try:
+            job = await self._start_background_tool_job(tool_name, target_arguments)
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": str(e)}
+
+        payload = self._serialize_background_job(job)
+        payload.update(
+            {
+                "success": True,
+                "message": f"Started {job.tool_name} in background",
+            },
+        )
+        return payload
+
+    def _extract_background_start_request(
+        self,
+        arguments: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        """Extract target tool name/args from flexible start_background_tool payload."""
+        tool_name = str(
+            arguments.get("tool_name") or arguments.get("tool") or "",
+        ).strip()
+        if not tool_name:
+            return ("", {}, "tool_name is required")
+
+        if "arguments" in arguments and arguments.get("arguments") is not None:
+            target_arguments: Any = arguments.get("arguments")
+        elif "args" in arguments and arguments.get("args") is not None:
+            target_arguments = arguments.get("args")
+        else:
+            target_arguments = {key: value for key, value in arguments.items() if key not in {"tool_name", "tool", "arguments", "args"}}
+
+        if target_arguments is None:
+            target_arguments = {}
+
+        try:
+            target_arguments, decode_passes = normalize_json_object_argument(
+                target_arguments,
+                field_name="arguments",
+            )
+        except ValueError:
+            return ("", {}, "arguments must be a JSON object")
+        if decode_passes > 1:
+            logger.info(
+                "[ClaudeCode] Normalized %s decode passes for start arguments (%s)",
+                decode_passes,
+                tool_name,
+            )
+
+        # Merge top-level extras (if any) without overriding explicit nested args.
+        top_level_extras = {key: value for key, value in arguments.items() if key not in {"tool_name", "tool", "arguments", "args"}}
+        for key, value in top_level_extras.items():
+            target_arguments.setdefault(key, value)
+
+        return (tool_name, target_arguments, None)
+
+    async def _get_background_tool_status_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__get_background_tool_status."""
+        job_id = str(arguments.get("job_id", "")).strip()
+        if not job_id:
+            return {"success": False, "error": "job_id is required"}
+
+        job = self._background_tool_jobs.get(job_id)
+        if job:
+            payload = self._serialize_background_job(job)
+            payload["success"] = True
+            return payload
+
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                if await delegate.owns(job_id):
+                    return await delegate.get_status(job_id)
+            except Exception:
+                logger.debug(
+                    "[ClaudeCodeBackend] Delegate get_status failed for %s",
+                    job_id,
+                    exc_info=True,
+                )
+
+        return {"success": False, "error": f"Background job not found: {job_id}"}
+
+    async def _get_background_tool_result_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__get_background_tool_result."""
+        job_id = str(arguments.get("job_id", "")).strip()
+        if not job_id:
+            return {"success": False, "error": "job_id is required"}
+
+        job = self._background_tool_jobs.get(job_id)
+        if job:
+            ready = job.status in BACKGROUND_TOOL_TERMINAL_STATUSES
+            payload = self._serialize_background_job(job, include_result=True)
+            payload.update({"success": True, "ready": ready})
+            self._annotate_custom_tool_outcome_from_payload(payload, ready=ready)
+            if not ready:
+                payload["message"] = "Background tool still running"
+            return payload
+
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                if await delegate.owns(job_id):
+                    return await delegate.get_result(job_id)
+            except Exception:
+                logger.debug(
+                    "[ClaudeCodeBackend] Delegate get_result failed for %s",
+                    job_id,
+                    exc_info=True,
+                )
+
+        return {"success": False, "error": f"Background job not found: {job_id}"}
+
+    @staticmethod
+    def _coerce_background_wait_timeout(arguments: dict[str, Any]) -> float:
+        """Normalize wait timeout to a safe bounded value."""
+        raw_timeout = arguments.get(
+            "timeout_seconds",
+            BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS,
+        )
+        try:
+            timeout_seconds = float(raw_timeout)
+        except (TypeError, ValueError):
+            timeout_seconds = BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS
+        if timeout_seconds < 0:
+            return 0.0
+        return min(timeout_seconds, BACKGROUND_TOOL_WAIT_MAX_TIMEOUT_SECONDS)
+
+    def _next_waitable_background_job(self) -> BackgroundToolJob | None:
+        """Get the next unseen terminal background job for wait calls."""
+        candidates = [job for job in self._background_tool_jobs.values() if job.status in BACKGROUND_TOOL_TERMINAL_STATUSES and job.job_id not in self._background_tool_wait_seen_ids]
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda job: (
+                job.completed_at if job.completed_at is not None else job.created_at,
+                job.created_at,
+            ),
+        )
+        return candidates[0]
+
+    async def _wait_for_background_tool_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__wait_for_background_tool."""
+        timeout_seconds = self._coerce_background_wait_timeout(arguments)
+        wait_started_at = time.time()
+
+        while True:
+            payload = self._pop_next_pending_background_tool_result()
+            if payload is not None:
+                job_id = str(payload.get("job_id", "")).strip()
+                if job_id:
+                    self._background_tool_wait_seen_ids.add(job_id)
+                payload.update(
+                    {
+                        "success": True,
+                        "ready": True,
+                        "waited_seconds": round(time.time() - wait_started_at, 3),
+                    },
+                )
+                self._annotate_custom_tool_outcome_from_payload(payload, ready=True)
+                return payload
+
+            interrupt_payload = await self._get_background_wait_interrupt_payload()
+            if interrupt_payload is not None:
+                return {
+                    "success": True,
+                    "ready": False,
+                    "interrupted": True,
+                    "interrupt_reason": interrupt_payload.get("interrupt_reason"),
+                    "injected_content": interrupt_payload.get("injected_content"),
+                    "waited_seconds": round(time.time() - wait_started_at, 3),
+                    "message": "Background wait interrupted by runtime input",
+                }
+
+            elapsed = time.time() - wait_started_at
+            if elapsed >= timeout_seconds:
+                return {
+                    "success": True,
+                    "ready": False,
+                    "timed_out": True,
+                    "waited_seconds": round(elapsed, 3),
+                    "message": "No background tool completed before timeout",
+                }
+
+            sleep_seconds = min(
+                BACKGROUND_TOOL_WAIT_POLL_INTERVAL_SECONDS,
+                max(timeout_seconds - elapsed, 0.0),
+            )
+            if sleep_seconds <= 0:
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(sleep_seconds)
+
+    async def _cancel_background_tool_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__cancel_background_tool."""
+        job_id = str(arguments.get("job_id", "")).strip()
+        if not job_id:
+            return {"success": False, "error": "job_id is required"}
+
+        job = self._background_tool_jobs.get(job_id)
+        if job:
+            task = self._background_tool_tasks.get(job_id)
+            if task and not task.done():
+                job.status = "cancelled"
+                job.error = "Cancelled by user request"
+                task.cancel()
+
+            payload = self._serialize_background_job(job)
+            payload["success"] = True
+            return payload
+
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                if await delegate.owns(job_id):
+                    return await delegate.cancel(job_id)
+            except Exception:
+                logger.debug(
+                    "[ClaudeCodeBackend] Delegate cancel failed for %s",
+                    job_id,
+                    exc_info=True,
+                )
+
+        return {"success": False, "error": f"Background job not found: {job_id}"}
+
+    @staticmethod
+    def _coerce_include_all_background_jobs(arguments: dict[str, Any] | None) -> bool:
+        """Normalize include_all flag for background list requests."""
+        if not isinstance(arguments, dict):
+            return False
+
+        raw_include_all = arguments.get("include_all", arguments.get("all"))
+        if isinstance(raw_include_all, bool):
+            return raw_include_all
+        if isinstance(raw_include_all, str):
+            return raw_include_all.strip().lower() in {"1", "true", "yes", "on", "all"}
+        return False
+
+    async def _list_background_tools_from_request(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Handle custom_tool__list_background_tools."""
+        include_all = self._coerce_include_all_background_jobs(arguments)
+        jobs = [self._serialize_background_job(job) for job in self._background_tool_jobs.values() if include_all or job.status not in BACKGROUND_TOOL_TERMINAL_STATUSES]
+
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                delegate_jobs = await delegate.list_jobs(include_all=include_all)
+                jobs.extend(delegate_jobs)
+            except Exception:
+                logger.debug(
+                    "[ClaudeCodeBackend] Delegate list_jobs failed",
+                    exc_info=True,
+                )
+
+        jobs.sort(key=lambda job: job.get("created_at") or "", reverse=True)
+        return {
+            "success": True,
+            "count": len(jobs),
+            "include_all": include_all,
+            "jobs": jobs,
+        }
+
+    async def _execute_background_management_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Dispatch internal background-management tools."""
+        if tool_name == BACKGROUND_TOOL_START_NAME:
+            return await self._start_background_tool_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_STATUS_NAME:
+            return await self._get_background_tool_status_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_RESULT_NAME:
+            return await self._get_background_tool_result_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_WAIT_NAME:
+            return await self._wait_for_background_tool_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_CANCEL_NAME:
+            return await self._cancel_background_tool_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_LIST_NAME:
+            return await self._list_background_tools_from_request(arguments)
+
+        return {"success": False, "error": f"Unknown background management tool: {tool_name}"}
+
+    async def _cancel_all_background_tool_jobs(self) -> None:
+        """Cancel all running background jobs."""
+        running_tasks: list[asyncio.Task[Any]] = []
+        for job_id, task in list(self._background_tool_tasks.items()):
+            if task.done():
+                continue
+            job = self._background_tool_jobs.get(job_id)
+            if job:
+                job.status = "cancelled"
+                job.error = "Cancelled during backend cleanup"
+            task.cancel()
+            running_tasks.append(task)
+
+        if running_tasks:
+            await asyncio.gather(*running_tasks, return_exceptions=True)
+
+        self._background_tool_tasks.clear()
+
+        if self._background_mcp_client is not None:
+            try:
+                await self._background_mcp_client.disconnect()
+            except Exception:  # noqa: BLE001
+                pass
+            self._background_mcp_client = None
+            self._background_mcp_initialized = False
+
     def _create_sdk_mcp_server_from_custom_tools(self):
         """Convert MassGen custom tools to SDK MCP Server.
 
         Returns:
             SDK MCP Server instance or None if no tools or SDK unavailable
         """
-        if not self._custom_tool_manager:
-            return None
-
         try:
             from claude_agent_sdk import create_sdk_mcp_server, tool
         except ImportError:
             logger.warning("claude-agent-sdk not available, custom tools will not be registered")
             return None
 
-        # Get all registered custom tools
-        tool_schemas = self._custom_tool_manager.fetch_tool_schemas()
+        # Get all MassGen-managed tool schemas (user custom + internal background helpers)
+        tool_schemas = self._get_massgen_custom_tool_schemas()
         if not tool_schemas:
             logger.info("No custom tools to register")
             return None
@@ -1225,7 +2457,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             logger.error(f"Failed to create SDK MCP server: {e}")
             return None
 
-    def _build_system_prompt_with_workflow_tools(self, tools: List[Dict[str, Any]], base_system: Optional[str] = None) -> str:
+    def _build_system_prompt_with_workflow_tools(self, tools: list[dict[str, Any]], base_system: str | None = None) -> str:
         """Build system prompt that includes workflow tools information.
 
         Creates comprehensive system prompt that instructs Claude on tool
@@ -1297,16 +2529,16 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
                 source="claude_code_backend",
             )
 
-    def extract_structured_response(self, response_text: str) -> Optional[Dict[str, Any]]:
+    def extract_structured_response(self, response_text: str) -> dict[str, Any] | None:
         """Extract structured JSON response — delegates to shared helper."""
         return _extract_structured_response(response_text)
 
-    def _parse_workflow_tool_calls(self, text_content: str) -> List[Dict[str, Any]]:
+    def _parse_workflow_tool_calls(self, text_content: str) -> list[dict[str, Any]]:
         """Parse workflow tool calls from text — delegates to shared helper."""
         return _parse_workflow_tool_calls(text_content)
 
     @staticmethod
-    def _try_extract_workflow_mcp_result(result_str: str) -> Optional[Dict[str, Any]]:
+    def _try_extract_workflow_mcp_result(result_str: str) -> dict[str, Any] | None:
         """Try to extract a workflow tool call from an MCP tool result string.
 
         Returns:
@@ -1342,12 +2574,13 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         permission_mode = options_kwargs.get("permission_mode", "acceptEdits")
         enable_web_search = options_kwargs.get("enable_web_search", False)
         allowed_tools = options_kwargs.get("allowed_tools", self.get_supported_builtin_tools(enable_web_search))
-        disallowed_tools = options_kwargs.get("disallowed_tools", [])
+        options_kwargs.get("disallowed_tools", [])
 
-        # Skill tool requires filesystem-backed settings discovery in the SDK.
-        skill_enabled = isinstance(allowed_tools, list) and "Skill" in allowed_tools
-        if isinstance(disallowed_tools, list) and "Skill" in disallowed_tools:
-            skill_enabled = False
+        # Skill tool is disabled (weaker models misuse it); agents read skill files directly.
+        # skill_enabled = isinstance(allowed_tools, list) and "Skill" in allowed_tools
+        # if isinstance(disallowed_tools, list) and "Skill" in disallowed_tools:
+        #     skill_enabled = False
+        skill_enabled = False
 
         # Filter out parameters handled separately or not for ClaudeAgentOptions
         excluded_params = self.get_base_excluded_config_params() | {
@@ -1361,34 +2594,23 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             # MassGen-specific config options (not ClaudeAgentOptions parameters)
             "enable_web_search",  # Handled above - controls WebSearch/WebFetch tool availability
             "use_default_prompt",  # Handled in stream_with_tools - controls system prompt mode
-            "max_thinking_tokens",  # Handled below - converted to env.MAX_THINKING_TOKENS
+            "max_thinking_tokens",  # Deprecated: handled below via reasoning config
+            "reasoning",  # Unified reasoning config → SDK thinking + effort fields
             # Note: use_mcpwrapped_for_tool_filtering and use_no_roots_wrapper are in base excluded params
             # Note: system_prompt is NOT excluded - it's needed for internal workflow prompt injection
             # Validation prevents it from being set in YAML backend config
         }
 
-        # Handle max_thinking_tokens -> env.MAX_THINKING_TOKENS conversion
-        # This enables extended thinking in Claude Agent SDK, providing ThinkingBlock
-        # outputs with the model's internal reasoning process.
-        # See: https://platform.claude.com/docs/en/build-with-claude/extended-thinking
-        max_thinking_tokens = options_kwargs.get("max_thinking_tokens")
-        if max_thinking_tokens is not None:
-            # Merge with existing env dict if present
-            env_dict = options_kwargs.get("env", {})
-            if env_dict is None:
-                env_dict = {}
-            env_dict["MAX_THINKING_TOKENS"] = str(max_thinking_tokens)
-            options_kwargs["env"] = env_dict
-            logger.info(f"[ClaudeCodeBackend] Extended thinking enabled with budget: {max_thinking_tokens} tokens")
-
         # Get cwd from filesystem manager (always available since we require it in __init__)
         cwd_option = Path(str(self.filesystem_manager.get_current_workspace())).resolve()
         self._cwd = str(cwd_option)
 
+        # Always sync skills so agents can read them via filesystem tools.
+        self._sync_skills_into_workspace(cwd_option)
+
         # Keep settings isolated by default; load filesystem settings only when Skill is enabled.
         setting_sources = options_kwargs.get("setting_sources")
         if skill_enabled:
-            self._sync_skills_into_claude_home(cwd_option)
             if setting_sources is None:
                 setting_sources = ["user", "project"]
         elif setting_sources is None:
@@ -1502,6 +2724,42 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         # Without this, stderr is inherited and dumps directly to the terminal.
         options["stderr"] = lambda line: logger.debug(f"[ClaudeCode stderr] {line.rstrip()}")
 
+        # Parse unified reasoning config → SDK thinking + effort fields
+        # Supports: reasoning: {type: adaptive, effort: high}
+        # Backward compat: max_thinking_tokens: N → thinking: {type: enabled, budget_tokens: N}
+        # Default: adaptive thinking + high effort (matches Claude Code CLI behavior)
+        reasoning = options_kwargs.get("reasoning", {})
+        max_thinking = options_kwargs.get("max_thinking_tokens")
+
+        if reasoning:
+            thinking_type = reasoning.get("type", "adaptive")
+            if thinking_type == "adaptive":
+                options["thinking"] = {"type": "adaptive"}
+            elif thinking_type == "enabled":
+                options["thinking"] = {
+                    "type": "enabled",
+                    "budget_tokens": reasoning.get("budget_tokens", 32_000),
+                }
+            elif thinking_type == "disabled":
+                options["thinking"] = {"type": "disabled"}
+            if "effort" in reasoning:
+                options["effort"] = reasoning["effort"]
+        elif max_thinking:
+            # Backward compat: max_thinking_tokens → thinking enabled
+            options["thinking"] = {"type": "enabled", "budget_tokens": max_thinking}
+        else:
+            # Default: match CLI behavior (adaptive thinking)
+            options["thinking"] = {"type": "adaptive"}
+
+        # Default effort if not set by reasoning config
+        # Anthropic recommends: opus → high, sonnet/haiku → medium
+        if "effort" not in options:
+            model = (options.get("model") or "").lower()
+            if "opus" in model:
+                options["effort"] = "high"
+            else:
+                options["effort"] = "medium"
+
         # Debug: Log the full mcp_servers config being passed to SDK
         if "mcp_servers" in options and "filesystem" in options["mcp_servers"]:
             logger.info(f"[ClaudeCodeBackend] FINAL filesystem config to SDK: {options['mcp_servers']['filesystem']}")
@@ -1529,7 +2787,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         self._client = ClaudeSDKClient(options)
         return self._client
 
-    async def stream_with_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk, None]:
+    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk]:
         """
         Stream a response with tool calling support using claude-code-sdk.
 
@@ -1565,6 +2823,16 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         # Merge constructor config with stream kwargs (stream kwargs take priority)
         all_params = {**self.config, **kwargs}
 
+        # Load task context from CONTEXT.md if it exists (for multimodal tools and subagents)
+        task_context = None
+        if self.filesystem_manager and self.filesystem_manager.cwd:
+            from massgen.context.task_context import load_task_context
+
+            task_context = load_task_context(
+                str(self.filesystem_manager.cwd),
+                required=False,
+            )
+
         # Extract system message from messages for append mode (always do this)
         # This must be done BEFORE checking if we have a client to ensure workflow_system_prompt is always defined
         system_msg = next((msg for msg in messages if msg.get("role") == "system"), None)
@@ -1572,6 +2840,25 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             system_content = system_msg.get("content", "")  # noqa: E128
         else:
             system_content = ""
+
+        # Build execution context for custom tool injection parity with shared backends.
+        self._execution_context = ExecutionContext(
+            messages=messages,
+            agent_system_message=kwargs.get("system_message", None),
+            agent_id=agent_id or self.agent_id,
+            backend_name=self.get_provider_name(),
+            backend_type=normalize_backend_type(self.get_provider_name()),
+            model=kwargs.get("model", self.config.get("model", "")),
+            current_stage=self.coordination_stage,
+            agent_cwd=str(self.filesystem_manager.cwd) if self.filesystem_manager else None,
+            allowed_paths=(
+                self.filesystem_manager.path_permission_manager.get_mcp_filesystem_paths()
+                if self.filesystem_manager and hasattr(self.filesystem_manager, "path_permission_manager") and self.filesystem_manager.path_permission_manager
+                else None
+            ),
+            multimodal_config=self._multimodal_config if hasattr(self, "_multimodal_config") else None,
+            task_context=task_context,
+        )
 
         # Use text-based workflow tools (JSON parsing) for Claude Code
         # TODO: MCP-based workflow tools not yet working with Claude Code SDK
@@ -1837,7 +3124,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
 
         # Stream response and convert to MassGen StreamChunks
         accumulated_content = ""
-        workflow_tool_calls_from_mcp: List[Dict[str, Any]] = []
+        workflow_tool_calls_from_mcp: list[dict[str, Any]] = []
         try:
             async for message in client.receive_response():
                 if isinstance(message, (AssistantMessage, UserMessage)):
@@ -2213,6 +3500,8 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         Properly closes the connection and resets internal state.
         Should be called when the backend is no longer needed.
         """
+        await self._cancel_all_background_tool_jobs()
+
         if self._client is not None:
             try:
                 await self._client.disconnect()

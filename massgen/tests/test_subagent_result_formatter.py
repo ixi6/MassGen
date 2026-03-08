@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for subagent result formatter.
 
@@ -8,7 +7,6 @@ Tests for the async subagent execution feature (MAS-214):
 - Batch formatting for multiple results
 - Metadata inclusion
 """
-
 
 from massgen.subagent.models import SubagentResult
 

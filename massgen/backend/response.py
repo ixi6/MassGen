@@ -1,18 +1,19 @@
-# -*- coding: utf-8 -*-
 """
 Response API backend implementation with multimodal support.
 Standalone implementation optimized for the standard Response API format (originated by OpenAI).
 Supports image input (URL and base64) and image generation via tools.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import os
+from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -39,7 +40,7 @@ from .base_with_custom_tool_and_mcp import (
 class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     """Backend using the standard Response API format with multimodal support."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         super().__init__(api_key, **kwargs)
         self.api_key = api_key or os.getenv("OPENAI_API_KEY")
         self.formatter = ResponseFormatter()
@@ -56,8 +57,8 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         self._pending_image_saves = []
 
         # File Search tracking for cleanup
-        self._vector_store_ids: List[str] = []
-        self._uploaded_file_ids: List[str] = []
+        self._vector_store_ids: list[str] = []
+        self._uploaded_file_ids: list[str] = []
 
         # Note: _streaming_buffer is provided by StreamingBufferMixin
 
@@ -66,10 +67,10 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def stream_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Stream response using OpenAI Response API with unified MCP/non-MCP processing.
 
         Wraps parent implementation to ensure File Search cleanup happens after streaming completes.
@@ -115,11 +116,11 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _stream_without_custom_and_mcp_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         agent_id = kwargs.get("agent_id")
         # Filter out internal flags that shouldn't be passed to API
         filtered_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_compression")}
@@ -238,8 +239,8 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _append_tool_result_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         result: Any,
         tool_type: str,
     ) -> None:
@@ -280,8 +281,8 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _append_tool_error_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         error_msg: str,
         tool_type: str,
     ) -> None:
@@ -312,7 +313,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         tool_name = call.get("name", "unknown")
         self._append_tool_to_buffer(tool_name, error_msg, is_error=True)
 
-    async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
+    async def _execute_custom_tool(self, call: dict[str, Any]) -> AsyncGenerator[CustomToolChunk]:
         """Execute custom tool with streaming support - async generator for base class.
 
         This method is called by _execute_tool_with_logging and yields CustomToolChunk
@@ -335,11 +336,11 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _stream_with_custom_and_mcp_tools(
         self,
-        current_messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        current_messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Recursively stream MCP responses, executing function calls as needed."""
 
         agent_id = kwargs.get("agent_id")
@@ -651,7 +652,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
             nlip_available = self._nlip_enabled and self._nlip_router
 
-            pending_custom_calls: List[Dict[str, Any]] = []
+            pending_custom_calls: list[dict[str, Any]] = []
             for call in custom_calls:
                 if nlip_available:
                     logger.info(f"[NLIP] Using NLIP routing for custom tool {call['name']}")
@@ -717,7 +718,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     logger.info(f"[Response] Planning mode enabled - selective blocking of {len(blocked_tools)} tools")
 
             # Combine all local tool calls for parallel/sequential execution
-            pending_mcp_calls: List[Dict[str, Any]] = []
+            pending_mcp_calls: list[dict[str, Any]] = []
             for call in mcp_calls:
                 if nlip_available:
                     logger.info(f"[NLIP] Using NLIP routing for MCP tool {call['name']}")
@@ -753,7 +754,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
             all_calls = pending_custom_calls + pending_mcp_calls
 
-            def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+            def tool_config_for_call(call: dict[str, Any]) -> ToolExecutionConfig:
                 return CUSTOM_TOOL_CONFIG if call["name"] in self._custom_tool_names else MCP_TOOL_CONFIG
 
             if all_calls:
@@ -817,15 +818,15 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _upload_files_and_create_vector_store(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         client: AsyncOpenAI,
-        agent_id: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+        agent_id: str | None = None,
+    ) -> tuple[list[dict[str, Any]], str | None]:
         """Upload file_pending_upload items and create a vector store."""
 
         try:
-            pending_files: List[Dict[str, Any]] = []
-            file_locations: List[Tuple[int, int]] = []
+            pending_files: list[dict[str, Any]] = []
+            file_locations: list[tuple[int, int]] = []
 
             for message_index, message in enumerate(messages):
                 content = message.get("content")
@@ -840,9 +841,9 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if not pending_files:
                 return messages, None
 
-            uploaded_file_ids: List[str] = []
+            uploaded_file_ids: list[str] = []
 
-            http_client: Optional[httpx.AsyncClient] = None
+            http_client: httpx.AsyncClient | None = None
 
             try:
                 for pending in pending_files:
@@ -989,7 +990,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     async def _cleanup_file_search_resources(
         self,
         client: AsyncOpenAI,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Clean up File Search vector stores and uploaded files."""
 
@@ -1028,7 +1029,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         self._vector_store_ids.clear()
         self._uploaded_file_ids.clear()
 
-    def _convert_mcp_tools_to_openai_format(self) -> List[Dict[str, Any]]:
+    def _convert_mcp_tools_to_openai_format(self) -> list[dict[str, Any]]:
         """Convert MCP tools (stdio + streamable-http) to OpenAI function declarations."""
         if not self._mcp_functions:
             return []
@@ -1060,7 +1061,7 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             else:
                 yield processed
 
-    def _process_stream_chunk(self, chunk, agent_id) -> Union[TextStreamChunk, StreamChunk]:
+    def _process_stream_chunk(self, chunk, agent_id) -> TextStreamChunk | StreamChunk:
         """
         Process individual stream chunks and convert to appropriate chunk format.
 
@@ -1491,9 +1492,9 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _compress_messages_for_context_recovery(
         self,
-        messages: List[Dict[str, Any]],
-        buffer_content: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        buffer_content: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Compress messages for context error recovery using LLM-based summarization.
 
         Args:
@@ -1525,9 +1526,9 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def create_tool_result_message(
         self,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         result_content: str,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Create tool result message for OpenAI Responses API format.
 
         Response API requires BOTH the function_call AND function_call_output
@@ -1555,14 +1556,14 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             },
         ]
 
-    def extract_tool_result_content(self, tool_result_message: Dict[str, Any]) -> str:
+    def extract_tool_result_content(self, tool_result_message: dict[str, Any]) -> str:
         """Extract content from OpenAI Responses API tool result message."""
         return tool_result_message.get("output", "")
 
     def _create_client(self, **kwargs) -> AsyncOpenAI:
         return openai.AsyncOpenAI(api_key=self.api_key)
 
-    def _convert_to_dict(self, obj) -> Dict[str, Any]:
+    def _convert_to_dict(self, obj) -> dict[str, Any]:
         """Convert any object to dictionary with multiple fallback methods."""
         try:
             if hasattr(obj, "model_dump"):
@@ -1595,6 +1596,6 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """OpenAI supports filesystem through MCP servers."""
         return FilesystemSupport.MCP
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Get list of builtin tools supported by OpenAI."""
         return ["web_search", "code_interpreter"]

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tool Code Writer
 
@@ -21,7 +20,7 @@ Directory Structure Created:
 import json
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..logger_config import logger
 from ..mcp_tools.code_generator import MCPToolCodeGenerator
@@ -44,9 +43,9 @@ class ToolCodeWriter:
     def setup_code_based_tools(
         self,
         workspace_path: Path,
-        mcp_servers: List[Dict[str, Any]],
-        custom_tools_path: Optional[Path] = None,
-        exclude_custom_tools: Optional[List[str]] = None,
+        mcp_servers: list[dict[str, Any]],
+        custom_tools_path: Path | None = None,
+        exclude_custom_tools: list[str] | None = None,
     ) -> None:
         """Set up complete code-based tools directory structure.
 
@@ -89,7 +88,7 @@ class ToolCodeWriter:
     def write_mcp_tools(
         self,
         workspace_path: Path,
-        mcp_servers: List[Dict[str, Any]],
+        mcp_servers: list[dict[str, Any]],
     ) -> None:
         """Write MCP tool wrappers to servers/ directory.
 
@@ -160,7 +159,7 @@ class ToolCodeWriter:
         self,
         workspace_path: Path,
         custom_tools_path: Path,
-        exclude_custom_tools: Optional[List[str]] = None,
+        exclude_custom_tools: list[str] | None = None,
     ) -> None:
         """Copy custom tools directory to workspace.
 
@@ -419,7 +418,7 @@ python utils/weather_report.py "San Francisco"
     def create_mcp_client(
         self,
         workspace_path: Path,
-        mcp_servers: List[Dict[str, Any]],
+        mcp_servers: list[dict[str, Any]],
     ) -> None:
         """Create hidden .mcp/ directory with client code and server configs.
 

@@ -19,6 +19,7 @@ This approach provides significant benefits:
    2. Add ``enable_mcp_command_line: true`` for execution
    3. Optionally add ``exclude_file_operation_mcps: true`` to reduce redundancy
    4. Your MCP servers become Python code in ``workspace/servers/``
+   5. For long-running tool calls, use the background lifecycle from :doc:`background_tools`
 
 Quick Start: Try It Now
 ------------------------
@@ -773,6 +774,7 @@ See Also
 --------
 
 * :doc:`custom_tools` - Creating custom Python tools
+* :doc:`background_tools` - Background lifecycle for long-running tool calls
 * :doc:`mcp_integration` - MCP server setup and configuration
 * :doc:`code_execution` - Command-line execution modes
 * :doc:`../files/file_operations` - File operation configuration

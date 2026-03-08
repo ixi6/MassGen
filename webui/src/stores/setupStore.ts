@@ -290,9 +290,9 @@ export const useSetupStore = create<SetupState>()((set, get) => ({
         throw new Error('Failed to fetch providers');
       }
       const data = await response.json();
-      // Filter to only providers with env_var (need API keys) or claude_code (special case - works with CLI login)
+      // Filter to only providers with env_var (need API keys) or special CLI-auth backends
       const providersWithKeys = data.providers.filter(
-        (p: ProviderInfo) => p.env_var || p.id === 'claude_code'
+        (p: ProviderInfo) => p.env_var || p.id === 'claude_code' || p.id === 'copilot'
       );
       set({ providers: providersWithKeys });
     } catch (err) {

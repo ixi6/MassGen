@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Gemini Computer Use tool for automating browser interactions using Google's Gemini 2.5 Computer Use model.
 
@@ -12,7 +11,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -123,7 +122,7 @@ def take_screenshot_docker(container, display: str = ":99") -> bytes:
     return screenshot_bytes
 
 
-def execute_docker_action(container, action_name: str, args: Dict[str, Any], screen_width: int, screen_height: int, display: str = ":99") -> Dict[str, Any]:
+def execute_docker_action(container, action_name: str, args: dict[str, Any], screen_width: int, screen_height: int, display: str = ":99") -> dict[str, Any]:
     """Execute a Gemini action in Docker using xdotool.
 
     Args:
@@ -613,10 +612,10 @@ async def gemini_computer_use(
     display_height: int = 900,
     max_iterations: int = 25,
     include_thoughts: bool = True,
-    initial_url: Optional[str] = None,
-    environment_config: Optional[Dict[str, Any]] = None,
-    agent_cwd: Optional[str] = None,
-    excluded_functions: Optional[List[str]] = None,
+    initial_url: str | None = None,
+    environment_config: dict[str, Any] | None = None,
+    agent_cwd: str | None = None,
+    excluded_functions: list[str] | None = None,
 ) -> ExecutionResult:
     """
     Execute a browser or Docker automation task using Google's Gemini 2.5 Computer Use model.

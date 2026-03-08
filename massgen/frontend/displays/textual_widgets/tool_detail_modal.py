@@ -1,12 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Tool Detail Modal Widget for MassGen TUI.
 
 Full-screen modal overlay for viewing complete tool call details
 including arguments, results, and timing information.
 """
-
-from typing import Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -55,10 +52,10 @@ class ToolDetailModal(ModalScreen[None]):
         tool_name: str,
         icon: str = "🔧",
         status: str = "running",
-        elapsed: Optional[str] = None,
-        args: Optional[str] = None,
-        result: Optional[str] = None,
-        error: Optional[str] = None,
+        elapsed: str | None = None,
+        args: str | None = None,
+        result: str | None = None,
+        error: str | None = None,
     ) -> None:
         """Initialize the modal.
 

@@ -28,7 +28,7 @@ assignees: ''
 
 ## Environment
  - OS: [e.g., macOS, Linux, Windows]
- - Python Version: [e.g., 3.9, 3.10, 3.11]
+ - Python Version: [e.g., 3.12, 3.13]
  - MassGen Version: [e.g., 0.0.23]
  - LLM Backend Used: [e.g., OpenAI, Claude, Gemini, Grok]
 

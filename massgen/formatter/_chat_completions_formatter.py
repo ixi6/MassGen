@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Chat Completions formatter implementation.
 Handles formatting for OpenAI Chat Completions API format.
@@ -7,7 +6,7 @@ Handles formatting for OpenAI Chat Completions API format.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 from ._formatter_base import FormatterBase
 
@@ -15,7 +14,7 @@ from ._formatter_base import FormatterBase
 class ChatCompletionsFormatter(FormatterBase):
     """Formatter for Chat Completions API format."""
 
-    def format_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Convert messages for Chat Completions API compatibility.
 
@@ -58,7 +57,7 @@ class ChatCompletionsFormatter(FormatterBase):
 
         return converted_messages
 
-    def _convert_multimodal_content(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_multimodal_content(self, message: dict[str, Any]) -> dict[str, Any]:
         """
         Convert multimodal content to Chat Completions API format.
         """
@@ -118,7 +117,7 @@ class ChatCompletionsFormatter(FormatterBase):
         message["content"] = converted_content
         return message
 
-    def _convert_image_content(self, image_item: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_image_content(self, image_item: dict[str, Any]) -> dict[str, Any]:
         """
         Convert image content item to Chat Completions API format.
 
@@ -150,7 +149,7 @@ class ChatCompletionsFormatter(FormatterBase):
         # No valid image data found
         return None
 
-    def _convert_audio_content(self, audio_item: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_audio_content(self, audio_item: dict[str, Any]) -> dict[str, Any]:
         """
         Convert audio content item to Chat Completions API format.
 
@@ -183,7 +182,7 @@ class ChatCompletionsFormatter(FormatterBase):
             },
         }
 
-    def _convert_video_content(self, video_item: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_video_content(self, video_item: dict[str, Any]) -> dict[str, Any]:
         """
         Convert video content item to Chat Completions API format.
 
@@ -205,7 +204,7 @@ class ChatCompletionsFormatter(FormatterBase):
             "video_url": {"url": data_url},
         }
 
-    def _convert_video_url_content(self, video_item: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_video_url_content(self, video_item: dict[str, Any]) -> dict[str, Any]:
         """
         Convert video URL content item to Chat Completions API format.
 
@@ -221,7 +220,7 @@ class ChatCompletionsFormatter(FormatterBase):
             "video_url": {"url": video_item["url"]},
         }
 
-    def format_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Convert tools to Chat Completions format if needed.
 
@@ -258,7 +257,7 @@ class ChatCompletionsFormatter(FormatterBase):
 
         return converted_tools
 
-    def format_custom_tools(self, custom_tools: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def format_custom_tools(self, custom_tools: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Convert custom tools from RegisteredToolEntry format to Chat Completions API format.
 
@@ -362,7 +361,7 @@ class ChatCompletionsFormatter(FormatterBase):
 
         return converted_tools
 
-    def format_mcp_tools(self, mcp_functions: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def format_mcp_tools(self, mcp_functions: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert MCP tools to Chat Completions format."""
         if not mcp_functions:
             return []

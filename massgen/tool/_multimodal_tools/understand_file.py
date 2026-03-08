@@ -1,13 +1,11 @@
-# -*- coding: utf-8 -*-
 """
-Understand and analyze file contents using OpenAI's gpt-4.1 API.
+Understand and analyze file contents using OpenAI's gpt-5.4 API.
 Supports text files, PDF, DOCX, XLSX, and more.
 """
 
 import json
 import os
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -15,7 +13,7 @@ from openai import AsyncOpenAI
 from massgen.tool._result import ExecutionResult, TextContent
 
 
-def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None) -> None:
+def _validate_path_access(path: Path, allowed_paths: list[Path] | None = None) -> None:
     """
     Validate that a path is within allowed directories.
 
@@ -39,7 +37,7 @@ def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None
     raise ValueError(f"Path not in allowed directories: {path}")
 
 
-def _extract_text_from_pdf(file_path: Path) -> Tuple[str, str]:
+def _extract_text_from_pdf(file_path: Path) -> tuple[str, str]:
     """
     Extract text from a PDF file.
 
@@ -76,7 +74,7 @@ def _extract_text_from_pdf(file_path: Path) -> Tuple[str, str]:
         return "", f"Failed to extract text from PDF: {str(e)}"
 
 
-def _extract_text_from_docx(file_path: Path) -> Tuple[str, str]:
+def _extract_text_from_docx(file_path: Path) -> tuple[str, str]:
     """
     Extract text from a DOCX file.
 
@@ -117,7 +115,7 @@ def _extract_text_from_docx(file_path: Path) -> Tuple[str, str]:
         return "", f"Failed to extract text from DOCX: {str(e)}"
 
 
-def _extract_text_from_excel(file_path: Path) -> Tuple[str, str]:
+def _extract_text_from_excel(file_path: Path) -> tuple[str, str]:
     """
     Extract text from an Excel file (XLSX/XLS).
 
@@ -157,7 +155,7 @@ def _extract_text_from_excel(file_path: Path) -> Tuple[str, str]:
         return "", f"Failed to extract text from Excel: {str(e)}"
 
 
-def _extract_text_from_pptx(file_path: Path) -> Tuple[str, str]:
+def _extract_text_from_pptx(file_path: Path) -> tuple[str, str]:
     """
     Extract text from a PowerPoint file (PPTX).
 
@@ -196,24 +194,24 @@ def _extract_text_from_pptx(file_path: Path) -> Tuple[str, str]:
 async def understand_file(
     file_path: str,
     prompt: str = "Please analyze this file and provide a comprehensive understanding of its content, purpose, and structure.",
-    model: str = "gpt-4.1",
+    model: str = "gpt-5.4",
     max_chars: int = 50000,
-    allowed_paths: Optional[List[str]] = None,
-    agent_cwd: Optional[str] = None,
-    task_context: Optional[str] = None,
+    allowed_paths: list[str] | None = None,
+    agent_cwd: str | None = None,
+    task_context: str | None = None,
 ) -> ExecutionResult:
     """
-    Understand and analyze file contents using OpenAI's gpt-4.1 API.
+    Understand and analyze file contents using OpenAI's gpt-5.4 API.
 
     This tool reads a file (text or document format) and processes its content through
-    OpenAI's gpt-4.1 API to provide insights, summaries, explanations, or answer questions.
+    OpenAI's gpt-5.4 API to provide insights, summaries, explanations, or answer questions.
 
     Args:
         file_path: Path to the file to analyze
                   - Relative path: Resolved relative to workspace
                   - Absolute path: Must be within allowed directories
         prompt: Question or instruction about the file (default: asks for comprehensive analysis)
-        model: Model to use (default: "gpt-4.1")
+        model: Model to use (default: "gpt-5.4")
         max_chars: Maximum number of characters to read/extract (default: 50000)
                   - Prevents processing extremely large files
                   - Applies to both text files and extracted content from documents
@@ -459,7 +457,7 @@ async def understand_file(
         # Text-based files
         else:
             try:
-                with open(f_path, "r", encoding="utf-8") as file:
+                with open(f_path, encoding="utf-8") as file:
                     file_content = file.read(max_chars)
 
             except UnicodeDecodeError:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shared TUI components and utilities.
 
 This module provides single-source-of-truth implementations for TUI display

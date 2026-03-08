@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Structured logging and observability for MassGen using Logfire.
 
@@ -29,11 +28,12 @@ Environment Variables:
 """
 
 import os
+from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, TypeVar
 
 from loguru import logger
 
@@ -43,12 +43,12 @@ F = TypeVar("F", bound=Callable[..., Any])
 # Global state for observability configuration
 _logfire_enabled: bool = False
 _logfire_configured: bool = False
-_instrumented_clients: Dict[str, bool] = {}
+_instrumented_clients: dict[str, bool] = {}
 
 # Context variable for tracking current agent round (for tool call attribution)
 # This allows nested tool calls to know which round they belong to
-_current_round: ContextVar[Optional[int]] = ContextVar("current_round", default=None)
-_current_round_type: ContextVar[Optional[str]] = ContextVar(
+_current_round: ContextVar[int | None] = ContextVar("current_round", default=None)
+_current_round_type: ContextVar[str | None] = ContextVar(
     "current_round_type",
     default=None,
 )
@@ -60,23 +60,23 @@ class ObservabilityConfig:
 
     enabled: bool = False
     service_name: str = "massgen"
-    service_version: Optional[str] = None
+    service_version: str | None = None
     environment: str = "development"
     send_to_logfire: bool = True
     console_enabled: bool = True
     console_min_level: str = "info"
     scrub_sensitive_data: bool = True
-    additional_processors: List[Any] = field(default_factory=list)
+    additional_processors: list[Any] = field(default_factory=list)
 
 
 # Global config instance
-_config: Optional[ObservabilityConfig] = None
+_config: ObservabilityConfig | None = None
 
 
 def configure_observability(
-    enabled: Optional[bool] = None,
+    enabled: bool | None = None,
     service_name: str = "massgen",
-    service_version: Optional[str] = None,
+    service_version: str | None = None,
     environment: str = "development",
     send_to_logfire: bool = True,
     console_enabled: bool = False,
@@ -216,7 +216,7 @@ def is_observability_enabled() -> bool:
     return _logfire_enabled
 
 
-def get_config() -> Optional[ObservabilityConfig]:
+def get_config() -> ObservabilityConfig | None:
     """Get the current observability configuration."""
     return _config
 
@@ -247,7 +247,7 @@ class TracerProxy:
     def span(
         self,
         name: str,
-        attributes: Optional[Dict[str, Any]] = None,
+        attributes: dict[str, Any] | None = None,
         record_exception: bool = True,
     ):
         """
@@ -424,12 +424,12 @@ class _NoOpSpan:
     def record_exception(self, exception: Exception):
         pass
 
-    def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None):
+    def add_event(self, name: str, attributes: dict[str, Any] | None = None):
         pass
 
 
 # Global tracer instance
-_tracer: Optional[TracerProxy] = None
+_tracer: TracerProxy | None = None
 
 
 def get_tracer() -> TracerProxy:
@@ -460,7 +460,7 @@ def set_current_round(round_number: int, round_type: str) -> None:
     _current_round_type.set(round_type)
 
 
-def get_current_round() -> tuple[Optional[int], Optional[str]]:
+def get_current_round() -> tuple[int | None, str | None]:
     """
     Get the current round context for tool call attribution.
 
@@ -479,8 +479,8 @@ def clear_current_round() -> None:
 def trace_llm_call(
     backend_name: str,
     model: str,
-    agent_id: Optional[str] = None,
-    round_number: Optional[int] = None,
+    agent_id: str | None = None,
+    round_number: int | None = None,
 ):
     """
     Decorator for tracing LLM API calls.
@@ -539,7 +539,7 @@ def trace_llm_call(
 def trace_tool_call(
     tool_name: str,
     tool_type: str = "custom",
-    agent_id: Optional[str] = None,
+    agent_id: str | None = None,
 ):
     """
     Decorator for tracing tool calls.
@@ -606,8 +606,8 @@ def trace_tool_call(
 @contextmanager
 def trace_orchestrator_operation(
     operation: str,
-    task: Optional[str] = None,
-    num_agents: Optional[int] = None,
+    task: str | None = None,
+    num_agents: int | None = None,
     **extra_attributes,
 ):
     """
@@ -684,7 +684,7 @@ def log_token_usage(
     reasoning_tokens: int = 0,
     cached_tokens: int = 0,
     estimated_cost: float = 0.0,
-    model: Optional[str] = None,
+    model: str | None = None,
 ):
     """
     Log token usage as a structured event.
@@ -719,15 +719,15 @@ def log_tool_execution(
     success: bool,
     input_chars: int = 0,
     output_chars: int = 0,
-    error_message: Optional[str] = None,
+    error_message: str | None = None,
     # New fields for richer context
-    server_name: Optional[str] = None,
-    arguments_preview: Optional[str] = None,
-    output_preview: Optional[str] = None,
-    round_number: Optional[int] = None,
-    round_type: Optional[str] = None,
+    server_name: str | None = None,
+    arguments_preview: str | None = None,
+    output_preview: str | None = None,
+    round_number: int | None = None,
+    round_type: str | None = None,
     # New workflow analysis fields (MAS-199)
-    error_context: Optional[str] = None,
+    error_context: str | None = None,
 ):
     """
     Log tool execution as a structured event.
@@ -795,7 +795,7 @@ def log_context_compression(
     compressed_char_count: int = 0,
     compression_ratio: float = 0.0,
     success: bool = True,
-    error_message: Optional[str] = None,
+    error_message: str | None = None,
 ):
     """
     Log context compression event as a structured event.
@@ -828,8 +828,8 @@ def log_context_compression(
 
 def log_coordination_event(
     event_type: str,
-    agent_id: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None,
+    agent_id: str | None = None,
+    details: dict[str, Any] | None = None,
 ):
     """
     Log a coordination event.
@@ -851,11 +851,11 @@ def log_coordination_event(
 def log_agent_restart(
     agent_id: str,
     reason: str,
-    triggering_agent: Optional[str] = None,
+    triggering_agent: str | None = None,
     restart_count: int = 1,
-    affected_agents: Optional[List[str]] = None,
+    affected_agents: list[str] | None = None,
     # New workflow analysis fields (MAS-199)
-    restart_trigger: Optional[str] = None,
+    restart_trigger: str | None = None,
 ):
     """
     Log when an agent restart is triggered or completed.
@@ -896,17 +896,17 @@ def log_agent_restart(
 
 
 # Coordination iteration tracking for hierarchical spans
-_current_iteration_span: Optional[Any] = None
-_current_coordination_span: Optional[Any] = None
+_current_iteration_span: Any | None = None
+_current_coordination_span: Any | None = None
 
 
 @contextmanager
 def trace_coordination_session(
     task: str,
     num_agents: int,
-    agent_ids: Optional[list] = None,
+    agent_ids: list | None = None,
     # New workflow analysis fields (MAS-199)
-    log_path: Optional[str] = None,
+    log_path: str | None = None,
     **extra_attributes,
 ):
     """
@@ -957,7 +957,7 @@ def trace_coordination_session(
 @contextmanager
 def trace_coordination_iteration(
     iteration: int,
-    available_answers: Optional[list] = None,
+    available_answers: list | None = None,
     **extra_attributes,
 ):
     """
@@ -1007,7 +1007,7 @@ def trace_agent_round(
     agent_id: str,
     iteration: int,
     round_type: str = "coordination",
-    context_labels: Optional[list] = None,
+    context_labels: list | None = None,
     **extra_attributes,
 ):
     """
@@ -1046,11 +1046,11 @@ def log_agent_round_context(
     agent_id: str,
     round_number: int,
     round_type: str,
-    answers_in_context: Optional[Dict[str, str]] = None,
-    answer_labels: Optional[list] = None,
+    answers_in_context: dict[str, str] | None = None,
+    answer_labels: list | None = None,
     # New workflow analysis fields (MAS-199)
-    round_intent: Optional[str] = None,
-    agent_log_path: Optional[str] = None,
+    round_intent: str | None = None,
+    agent_log_path: str | None = None,
 ):
     """
     Log the context an agent has when starting a round.
@@ -1116,9 +1116,9 @@ def log_agent_answer(
     answer_label: str,
     iteration: int,
     round_number: int,
-    answer_preview: Optional[str] = None,
+    answer_preview: str | None = None,
     # New workflow analysis fields (MAS-199)
-    answer_path: Optional[str] = None,
+    answer_path: str | None = None,
 ):
     """
     Log when an agent submits an answer.
@@ -1154,9 +1154,9 @@ def log_agent_answer(
 
 def log_agent_workspace_files(
     agent_id: str,
-    files_created: Optional[List[str]] = None,
+    files_created: list[str] | None = None,
     file_count: int = 0,
-    workspace_path: Optional[str] = None,
+    workspace_path: str | None = None,
 ):
     """
     Log files created by an agent in their workspace (MAS-199).
@@ -1198,11 +1198,11 @@ def log_agent_vote(
     voted_for_label: str,
     iteration: int,
     round_number: int,
-    reason: Optional[str] = None,
-    available_answers: Optional[list] = None,
+    reason: str | None = None,
+    available_answers: list | None = None,
     # New workflow analysis fields (MAS-199)
-    agents_with_answers: Optional[int] = None,
-    answer_label_mapping: Optional[Dict[str, str]] = None,
+    agents_with_answers: int | None = None,
+    answer_label_mapping: dict[str, str] | None = None,
 ):
     """
     Log when an agent casts a vote.
@@ -1254,7 +1254,7 @@ def log_agent_vote(
 def log_winner_selected(
     winner_agent_id: str,
     winner_label: str,
-    vote_counts: Optional[Dict[str, int]] = None,
+    vote_counts: dict[str, int] | None = None,
     total_iterations: int = 0,
 ):
     """
@@ -1280,7 +1280,7 @@ def log_winner_selected(
 def log_final_answer(
     agent_id: str,
     iteration: int,
-    answer_preview: Optional[str] = None,
+    answer_preview: str | None = None,
 ):
     """
     Log when the winning agent provides the final answer.
@@ -1381,10 +1381,10 @@ def trace_subagent_execution(
     subagent_id: str,
     parent_agent_id: str,
     task: str,
-    model: Optional[str] = None,
-    timeout_seconds: Optional[int] = None,
+    model: str | None = None,
+    timeout_seconds: int | None = None,
     # New workflow analysis fields (MAS-199)
-    subagent_log_path: Optional[str] = None,
+    subagent_log_path: str | None = None,
     **extra_attributes,
 ):
     """
@@ -1440,12 +1440,12 @@ def log_subagent_spawn(
     subagent_id: str,
     parent_agent_id: str,
     task: str,
-    model: Optional[str] = None,
-    timeout_seconds: Optional[int] = None,
-    context_files: Optional[List[str]] = None,
+    model: str | None = None,
+    timeout_seconds: int | None = None,
+    context_files: list[str] | None = None,
     execution_mode: str = "foreground",
     # New workflow analysis fields (MAS-199)
-    subagent_log_path: Optional[str] = None,
+    subagent_log_path: str | None = None,
 ):
     """
     Log a subagent spawn event.
@@ -1498,13 +1498,13 @@ def log_subagent_complete(
     status: str,
     execution_time_seconds: float,
     success: bool,
-    token_usage: Optional[Dict[str, int]] = None,
-    error_message: Optional[str] = None,
-    answer_preview: Optional[str] = None,
+    token_usage: dict[str, int] | None = None,
+    error_message: str | None = None,
+    answer_preview: str | None = None,
     # New workflow analysis fields (MAS-199)
-    files_created: Optional[List[str]] = None,
+    files_created: list[str] | None = None,
     file_count: int = 0,
-    workspace_path: Optional[str] = None,
+    workspace_path: str | None = None,
 ):
     """
     Log a subagent completion event.
@@ -1571,7 +1571,7 @@ def log_subagent_complete(
 def trace_persona_generation(
     num_agents: int,
     strategy: str,
-    diversity_mode: Optional[str] = None,
+    diversity_mode: str | None = None,
     **extra_attributes,
 ):
     """
@@ -1607,13 +1607,13 @@ def trace_persona_generation(
 
 
 def log_persona_generation(
-    agent_ids: List[str],
+    agent_ids: list[str],
     strategy: str,
     success: bool,
     generation_time_ms: float,
     used_fallback: bool = False,
-    diversity_mode: Optional[str] = None,
-    error_message: Optional[str] = None,
+    diversity_mode: str | None = None,
+    error_message: str | None = None,
 ):
     """
     Log a persona generation event.

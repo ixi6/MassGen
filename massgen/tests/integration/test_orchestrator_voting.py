@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Deterministic non-API integration tests for orchestrator voting flow."""
 
 from __future__ import annotations

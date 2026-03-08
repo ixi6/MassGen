@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Plan Options Popover Widget for MassGen TUI.
 
@@ -13,7 +12,7 @@ Provides a dropdown popover for plan mode configuration:
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Optional
 
 from textual.app import ComposeResult
 from textual.containers import Container, VerticalScroll
@@ -29,7 +28,7 @@ if TYPE_CHECKING:
 class PlanSelected(Message):
     """Message emitted when a plan is selected."""
 
-    def __init__(self, plan_id: Optional[str], is_new: bool = False) -> None:
+    def __init__(self, plan_id: str | None, is_new: bool = False) -> None:
         """Initialize the message.
 
         Args:
@@ -57,7 +56,7 @@ class PlanDepthChanged(Message):
 class PlanStepTargetChanged(Message):
     """Message emitted when explicit task-count target is changed."""
 
-    def __init__(self, target_steps: Optional[int]) -> None:
+    def __init__(self, target_steps: int | None) -> None:
         self.target_steps = target_steps
         super().__init__()
 
@@ -65,7 +64,7 @@ class PlanStepTargetChanged(Message):
 class PlanChunkTargetChanged(Message):
     """Message emitted when explicit chunk-count target is changed."""
 
-    def __init__(self, target_chunks: Optional[int]) -> None:
+    def __init__(self, target_chunks: int | None) -> None:
         self.target_chunks = target_chunks
         super().__init__()
 
@@ -86,7 +85,7 @@ class BroadcastModeChanged(Message):
 class ViewPlanRequested(Message):
     """Message emitted when user wants to view the full plan."""
 
-    def __init__(self, plan_id: str, tasks: List[Any]) -> None:
+    def __init__(self, plan_id: str, tasks: list[Any]) -> None:
         """Initialize the message.
 
         Args:
@@ -141,7 +140,7 @@ class AnalysisProfileChanged(Message):
 class AnalysisTargetChanged(Message):
     """Message emitted when analysis log/turn target is changed."""
 
-    def __init__(self, log_dir: Optional[str], turn: Optional[int]) -> None:
+    def __init__(self, log_dir: str | None, turn: int | None) -> None:
         self.log_dir = log_dir
         self.turn = turn
         super().__init__()
@@ -166,19 +165,9 @@ class ViewAnalysisRequested(Message):
 
 def _popover_log(msg: str) -> None:
     """Log to TUI debug file."""
-    try:
-        import logging
+    from massgen.frontend.displays.shared.tui_debug import tui_log
 
-        log = logging.getLogger("massgen.tui.popover")
-        if not log.handlers:
-            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-            handler.setFormatter(logging.Formatter("%(asctime)s [POPOVER] %(message)s", datefmt="%H:%M:%S"))
-            log.addHandler(handler)
-            log.setLevel(logging.DEBUG)
-            log.propagate = False
-        log.debug(msg)
-    except Exception:
-        pass
+    tui_log(f"[POPOVER] {msg}")
 
 
 class PlanOptionsPopover(Widget):
@@ -323,24 +312,24 @@ class PlanOptionsPopover(Widget):
         self,
         *,
         plan_mode: str = "normal",
-        available_plans: Optional[List["PlanSession"]] = None,
-        current_plan_id: Optional[str] = None,
+        available_plans: list["PlanSession"] | None = None,
+        current_plan_id: str | None = None,
         current_depth: "PlanDepth" = "dynamic",
-        current_step_target: Optional[int] = None,
-        current_chunk_target: Optional[int] = None,
+        current_step_target: int | None = None,
+        current_chunk_target: int | None = None,
         current_execute_auto_continue: bool = True,
         current_execute_refinement_mode: str = "inherit",
-        current_broadcast: Any = "human",
+        current_broadcast: Any = False,
         analysis_target_type: str = "log",
         analysis_profile: str = "dev",
-        analysis_log_options: Optional[List[tuple[str, str]]] = None,
-        analysis_selected_log_dir: Optional[str] = None,
-        analysis_turn_options: Optional[List[tuple[str, str]]] = None,
-        analysis_selected_turn: Optional[int] = None,
+        analysis_log_options: list[tuple[str, str]] | None = None,
+        analysis_selected_log_dir: str | None = None,
+        analysis_turn_options: list[tuple[str, str]] | None = None,
+        analysis_selected_turn: int | None = None,
         analysis_preview_text: str = "",
         analysis_skill_lifecycle_mode: str = "create_or_update",
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the plan options popover.
 
@@ -375,14 +364,14 @@ class PlanOptionsPopover(Widget):
         self._analysis_selected_turn = analysis_selected_turn
         self._analysis_preview_text = analysis_preview_text
         self._analysis_skill_lifecycle_mode = analysis_skill_lifecycle_mode
-        self._plan_details_widget: Optional[Static] = None
-        self._chunk_button_values: Dict[str, str] = {}
-        self._chunk_range_options: List[Tuple[str, str]] = []
-        self._selected_chunk_range: Optional[str] = None
+        self._plan_details_widget: Static | None = None
+        self._chunk_button_values: dict[str, str] = {}
+        self._chunk_range_options: list[tuple[str, str]] = []
+        self._selected_chunk_range: str | None = None
         self._initialized = False  # Track if popover has been shown (to ignore events during recompose)
 
     @staticmethod
-    def _safe_select_value(options: List[tuple[str, str]], preferred: Optional[str]) -> Optional[str]:
+    def _safe_select_value(options: list[tuple[str, str]], preferred: str | None) -> str | None:
         """Return a safe select value from options, preferring the given value."""
         if not options:
             return None
@@ -402,6 +391,8 @@ class PlanOptionsPopover(Widget):
         # Title changes based on mode
         if self._plan_mode == "plan":
             yield Label("Planning Options", id="popover_title")
+        elif self._plan_mode == "spec":
+            yield Label("Spec Options", id="popover_title")
         elif self._plan_mode == "analysis":
             title = "Skill Organization" if self._analysis_target_type == "skills" else "Log Analysis Options"
             yield Label(title, id="popover_title")
@@ -411,7 +402,7 @@ class PlanOptionsPopover(Widget):
         with VerticalScroll(id="popover_content"):
             # Execute mode: Show plan selector and details
             if self._plan_mode == "execute" and self._available_plans:
-                yield Label("Select Plan:", classes="section-label")
+                yield Label("Select Plan/Spec:", classes="section-label")
 
                 # Build plan options
                 has_resumable = False
@@ -428,8 +419,10 @@ class PlanOptionsPopover(Widget):
                 for plan in self._available_plans[:5]:  # Limit to 5 most recent
                     try:
                         metadata = plan.load_metadata()
-                        # Format: plan_id (status)
-                        label = f"{plan.plan_id[:15]}... ({metadata.status})"
+                        # Show artifact type icon to distinguish plans from specs
+                        artifact_type = getattr(metadata, "artifact_type", "plan")
+                        type_marker = "[spec]" if artifact_type == "spec" else "[plan]"
+                        label = f"{type_marker} {plan.plan_id[:13]}... ({metadata.status})"
                         plan_options.append((label, plan.plan_id))
                     except Exception:
                         plan_options.append((plan.plan_id[:20], plan.plan_id))
@@ -447,8 +440,17 @@ class PlanOptionsPopover(Widget):
                 # Load initial plan details
                 self._update_plan_details(self._current_plan_id or "latest")
 
-                # View Plan button - opens full task list modal
-                yield Button("View Full Plan", id="view_plan_btn", variant="primary")
+                # View Plan/Spec button - opens full task/requirement list modal
+                selected = self._get_selected_plan_session()
+                _view_label = "View Full Plan"
+                if selected:
+                    try:
+                        _sel_meta = selected.load_metadata()
+                        if getattr(_sel_meta, "artifact_type", "plan") == "spec":
+                            _view_label = "View Full Spec"
+                    except Exception:
+                        pass
+                yield Button(_view_label, id="view_plan_btn", variant="primary")
 
                 yield Label("Execution Flow:", classes="section-label")
                 execute_auto_options = [
@@ -580,6 +582,40 @@ class PlanOptionsPopover(Widget):
                     id="broadcast_selector",
                 )
 
+            # Spec mode: chunk target + human feedback (no depth/task count)
+            if self._plan_mode == "spec":
+                yield Label("Chunk Count Target:", classes="section-label")
+                chunk_target_options = [
+                    ("Dynamic", "dynamic"),
+                    ("1 chunk (single run)", "1"),
+                    ("3 chunks", "3"),
+                    ("5 chunks", "5"),
+                    ("7 chunks", "7"),
+                    ("10 chunks", "10"),
+                    ("12 chunks", "12"),
+                ]
+                current_chunks_value = str(self._current_chunk_target) if self._current_chunk_target and self._current_chunk_target > 0 else "dynamic"
+                yield Select(
+                    chunk_target_options,
+                    value=self._safe_select_value(chunk_target_options, current_chunks_value),
+                    id="chunk_target_selector",
+                )
+
+                yield Label("Human Feedback:", classes="section-label")
+                broadcast_options = [
+                    ("Enabled (agents ask human)", "human"),
+                    ("Agents only (no human)", "agents"),
+                    ("Disabled (autonomous)", "off"),
+                ]
+                broadcast_value = self._current_broadcast if self._current_broadcast else "off"
+                if broadcast_value is True:
+                    broadcast_value = "human"
+                yield Select(
+                    broadcast_options,
+                    value=broadcast_value,
+                    id="broadcast_selector",
+                )
+
             # Analysis mode: target type + profile + target controls
             if self._plan_mode == "analysis":
                 yield Label("Analysis Target:", classes="section-label")
@@ -698,7 +734,7 @@ class PlanOptionsPopover(Widget):
         return self._get_plan_by_id(plan_id)
 
     @staticmethod
-    def _load_plan_payload(plan: "PlanSession") -> Dict[str, Any]:
+    def _load_plan_payload(plan: "PlanSession") -> dict[str, Any]:
         """Load plan.json payload from a plan session workspace."""
         plan_file = plan.workspace_dir / "plan.json"
         if not plan_file.exists():
@@ -709,7 +745,7 @@ class PlanOptionsPopover(Widget):
         except Exception:
             return {}
 
-    def _build_chunk_browser_entries(self, plan: Optional["PlanSession"]) -> List[Dict[str, Any]]:
+    def _build_chunk_browser_entries(self, plan: Optional["PlanSession"]) -> list[dict[str, Any]]:
         """Build chunk status entries for execute popover chunk browser."""
         if not plan:
             return []
@@ -736,7 +772,7 @@ class PlanOptionsPopover(Widget):
         if not chunk_order:
             return []
 
-        chunk_counts: Dict[str, Dict[str, int]] = {}
+        chunk_counts: dict[str, dict[str, int]] = {}
         for chunk in chunk_order:
             chunk_counts[chunk] = {"total": 0, "completed": 0}
 
@@ -759,7 +795,7 @@ class PlanOptionsPopover(Widget):
                 next_chunk = chunk
                 break
 
-        entries: List[Dict[str, Any]] = []
+        entries: list[dict[str, Any]] = []
         for chunk in chunk_order:
             counts = chunk_counts.get(chunk, {"total": 0, "completed": 0})
             status = "pending"
@@ -787,9 +823,9 @@ class PlanOptionsPopover(Widget):
         return entries
 
     @staticmethod
-    def _build_chunk_range_options(chunk_names: List[str]) -> List[Tuple[str, str]]:
+    def _build_chunk_range_options(chunk_names: list[str]) -> list[tuple[str, str]]:
         """Build bounded range options for chunk prefill controls."""
-        options: List[Tuple[str, str]] = []
+        options: list[tuple[str, str]] = []
         max_options = 12
         for start_idx in range(len(chunk_names)):
             for end_idx in range(start_idx + 1, len(chunk_names)):
@@ -830,25 +866,38 @@ class PlanOptionsPopover(Widget):
             except Exception:
                 created_str = metadata.created_at[:16]
 
-            # Get task count and preview
-            task_count = 0
-            task_preview = ""
-            plan_file = plan.workspace_dir / "plan.json"
-            if plan_file.exists():
-                try:
-                    data = json.loads(plan_file.read_text())
-                    tasks = data.get("tasks", [])
-                    task_count = len(tasks)
+            # Get item count and preview (supports both plan.json and spec.json)
+            item_count = 0
+            item_preview = ""
+            artifact_type = getattr(metadata, "artifact_type", "plan")
+            is_spec = artifact_type == "spec"
+            items_label = "Requirements" if is_spec else "Tasks"
 
-                    # Get first 2-3 task descriptions as preview
-                    if tasks:
+            plan_file = plan.workspace_dir / "plan.json"
+            spec_file = plan.workspace_dir / "spec.json"
+            artifact_file = spec_file if is_spec and spec_file.exists() else plan_file
+
+            if artifact_file.exists():
+                try:
+                    data = json.loads(artifact_file.read_text())
+                    items_key = "requirements" if is_spec else "tasks"
+                    items = data.get(items_key, [])
+                    item_count = len(items)
+
+                    # Get first 2-3 item descriptions as preview
+                    if items:
                         previews = []
-                        for t in tasks[:3]:
-                            desc = t.get("description", "")[:40]
-                            if len(t.get("description", "")) > 40:
-                                desc += "..."
+                        for t in items[:3]:
+                            if is_spec:
+                                desc = t.get("title", "")[:40]
+                                if len(t.get("title", "")) > 40:
+                                    desc += "..."
+                            else:
+                                desc = t.get("description", "")[:40]
+                                if len(t.get("description", "")) > 40:
+                                    desc += "..."
                             previews.append(f"  • {desc}")
-                        task_preview = "\n".join(previews)
+                        item_preview = "\n".join(previews)
                 except Exception:
                     pass
 
@@ -865,7 +914,7 @@ class PlanOptionsPopover(Widget):
 
             details = f"[bold]Status:[/] [{status_color}]{status}[/]\n"
             details += f"[bold]Created:[/] {created_str}\n"
-            details += f"[bold]Tasks:[/] {task_count}"
+            details += f"[bold]{items_label}:[/] {item_count}"
 
             chunk_entries = self._build_chunk_browser_entries(plan)
             if chunk_entries:
@@ -895,9 +944,9 @@ class PlanOptionsPopover(Widget):
                 # Show turn info if available
                 turn_info = f" [dim](turn {planning_turn})[/]" if planning_turn else ""
                 details += f"\n[dim]Query{turn_info}:[/]\n[italic]{prompt_preview}[/]"
-            elif task_preview:
-                # Fall back to task preview if no prompt stored
-                details += f"\n[dim]Preview:[/]\n{task_preview}"
+            elif item_preview:
+                # Fall back to item preview if no prompt stored
+                details += f"\n[dim]Preview:[/]\n{item_preview}"
 
             self._plan_details_widget.update(details)
 

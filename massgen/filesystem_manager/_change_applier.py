@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Change Applier for MassGen - Applies changes from isolated context to original paths.
 
@@ -11,7 +10,7 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -25,12 +24,16 @@ class ReviewResult:
         approved_files: List of specific files to apply (None = all files)
         comments: Optional user comments about the review
         metadata: Optional additional metadata from the review
+        action: The user's chosen action (approve, reject, cancel, rework, quick_fix)
+        feedback: Optional feedback text for rework/quick_fix actions
     """
 
     approved: bool
-    approved_files: Optional[List[str]] = None
-    comments: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = field(default_factory=dict)
+    approved_files: list[str] | None = None
+    comments: str | None = None
+    metadata: dict[str, Any] | None = field(default_factory=dict)
+    action: str = "approve"
+    feedback: str | None = None
 
 
 class ChangeApplier:
@@ -45,13 +48,13 @@ class ChangeApplier:
         self,
         source_path: str,
         target_path: str,
-        approved_files: Optional[List[str]] = None,
-        approved_hunks: Optional[Dict[str, List[int]]] = None,
-        context_prefix: Optional[str] = None,
-        base_ref: Optional[str] = None,
-        blocked_files: Optional[List[str]] = None,
-        combined_diff: Optional[str] = None,
-    ) -> List[str]:
+        approved_files: list[str] | None = None,
+        approved_hunks: dict[str, list[int]] | None = None,
+        context_prefix: str | None = None,
+        base_ref: str | None = None,
+        blocked_files: list[str] | None = None,
+        combined_diff: str | None = None,
+    ) -> list[str]:
         """
         Apply changes from source (isolated) to target (original).
 
@@ -77,7 +80,7 @@ class ChangeApplier:
         """
         source = Path(source_path)
         target = Path(target_path)
-        applied: List[str] = []
+        applied: list[str] = []
 
         if not source.exists():
             log.warning(f"Source path does not exist: {source_path}")
@@ -117,17 +120,17 @@ class ChangeApplier:
         self,
         source: Path,
         target: Path,
-        approved_files: Optional[List[str]],
-        approved_hunks: Optional[Dict[str, List[int]]] = None,
-        context_prefix: Optional[str] = None,
-        base_ref: Optional[str] = None,
-        blocked_files: Optional[List[str]] = None,
-        combined_diff: Optional[str] = None,
-    ) -> List[str]:
+        approved_files: list[str] | None,
+        approved_hunks: dict[str, list[int]] | None = None,
+        context_prefix: str | None = None,
+        base_ref: str | None = None,
+        blocked_files: list[str] | None = None,
+        combined_diff: str | None = None,
+    ) -> list[str]:
         """Apply changes using git diff detection."""
         from git import InvalidGitRepositoryError, Repo
 
-        applied: List[str] = []
+        applied: list[str] = []
 
         try:
             repo = Repo(str(source))
@@ -224,13 +227,13 @@ class ChangeApplier:
         self,
         source: Path,
         target: Path,
-        approved_files: Optional[List[str]],
-        approved_hunks: Optional[Dict[str, List[int]]] = None,
-        context_prefix: Optional[str] = None,
-        blocked_files: Optional[List[str]] = None,
-    ) -> List[str]:
+        approved_files: list[str] | None,
+        approved_hunks: dict[str, list[int]] | None = None,
+        context_prefix: str | None = None,
+        blocked_files: list[str] | None = None,
+    ) -> list[str]:
         """Fallback: Apply changes by comparing file contents."""
-        applied: List[str] = []
+        applied: list[str] = []
         normalized_prefix = self._normalize_context_prefix(context_prefix)
 
         # Walk source directory and compare with target
@@ -299,7 +302,7 @@ class ChangeApplier:
         return applied
 
     @staticmethod
-    def _normalize_context_prefix(context_prefix: Optional[str]) -> Optional[str]:
+    def _normalize_context_prefix(context_prefix: str | None) -> str | None:
         """Normalize repo-relative context prefix for path filtering."""
         if context_prefix is None:
             return None
@@ -309,7 +312,7 @@ class ChangeApplier:
         return normalized
 
     @staticmethod
-    def _map_context_path(rel_path: str, context_prefix: Optional[str]) -> Optional[str]:
+    def _map_context_path(rel_path: str, context_prefix: str | None) -> str | None:
         """Map repo-relative path to context-relative path, or None if out of scope."""
         normalized_rel = rel_path.replace("\\", "/").strip("/")
         if not context_prefix:
@@ -328,7 +331,7 @@ class ChangeApplier:
     def _is_approved_path(
         repo_relative_path: str,
         context_relative_path: str,
-        approved_files: Optional[List[str]],
+        approved_files: list[str] | None,
     ) -> bool:
         """Check whether a changed file is included in the approved set."""
         if approved_files is None:
@@ -339,7 +342,7 @@ class ChangeApplier:
     def _is_blocked_path(
         repo_relative_path: str,
         context_relative_path: str,
-        blocked_files: Optional[List[str]],
+        blocked_files: list[str] | None,
     ) -> bool:
         """Check whether a changed file is explicitly blocked from apply."""
         if not blocked_files:
@@ -350,8 +353,8 @@ class ChangeApplier:
     def _resolve_approved_hunks(
         repo_relative_path: str,
         context_relative_path: str,
-        approved_hunks: Optional[Dict[str, List[int]]],
-    ) -> Optional[List[int]]:
+        approved_hunks: dict[str, list[int]] | None,
+    ) -> list[int] | None:
         """Resolve approved hunks for a file path.
 
         Returns:
@@ -368,7 +371,7 @@ class ChangeApplier:
         if selected is None:
             return None
 
-        normalized: List[int] = []
+        normalized: list[int] = []
         for idx in selected:
             try:
                 idx_int = int(idx)
@@ -379,12 +382,12 @@ class ChangeApplier:
         return sorted(set(normalized))
 
     @staticmethod
-    def _parse_per_file_diffs(combined_diff: str) -> Dict[str, str]:
+    def _parse_per_file_diffs(combined_diff: str) -> dict[str, str]:
         """Parse a combined unified diff into file-scoped diff chunks."""
         if not combined_diff or not combined_diff.strip():
             return {}
 
-        parsed: Dict[str, str] = {}
+        parsed: dict[str, str] = {}
         sections = re.split(r"(?=^diff --git )", combined_diff, flags=re.MULTILINE)
         for section in sections:
             section = section.strip()
@@ -403,8 +406,8 @@ class ChangeApplier:
     @staticmethod
     def _find_file_diff(
         file_path: str,
-        parsed_diffs: Dict[str, str],
-    ) -> Optional[str]:
+        parsed_diffs: dict[str, str],
+    ) -> str | None:
         """Find a file's diff text from parsed diff sections."""
         if file_path in parsed_diffs:
             return parsed_diffs[file_path]
@@ -421,13 +424,13 @@ class ChangeApplier:
         return None
 
     @staticmethod
-    def _parse_hunks(file_diff: str) -> List[Dict[str, Any]]:
+    def _parse_hunks(file_diff: str) -> list[dict[str, Any]]:
         """Parse unified diff hunks for a single file diff."""
         if not file_diff:
             return []
 
-        hunks: List[Dict[str, Any]] = []
-        current: Optional[Dict[str, Any]] = None
+        hunks: list[dict[str, Any]] = []
+        current: dict[str, Any] | None = None
 
         for line in file_diff.splitlines(keepends=True):
             if line.startswith("@@"):
@@ -454,7 +457,7 @@ class ChangeApplier:
         return hunks
 
     @staticmethod
-    def _find_subsequence(lines: List[str], needle: List[str], start: int = 0) -> Optional[int]:
+    def _find_subsequence(lines: list[str], needle: list[str], start: int = 0) -> int | None:
         """Find the starting index of needle in lines from start."""
         if not needle:
             return start if start <= len(lines) else None
@@ -470,8 +473,8 @@ class ChangeApplier:
         target: Path,
         target_relative_path: str,
         change_type: str,
-        selected_hunks: List[int],
-        file_diff: Optional[str],
+        selected_hunks: list[int],
+        file_diff: str | None,
     ) -> str:
         """Apply selected hunks for a single modified file.
 
@@ -507,7 +510,7 @@ class ChangeApplier:
         search_start = 0
         for hunk_idx in selected:
             hunk = hunks[hunk_idx]
-            hunk_lines: List[str] = hunk.get("lines", [])
+            hunk_lines: list[str] = hunk.get("lines", [])
             old_block = [line[1:] for line in hunk_lines if line[:1] in {" ", "-"}]
             new_block = [line[1:] for line in hunk_lines if line[:1] in {" ", "+"}]
 
@@ -524,9 +527,9 @@ class ChangeApplier:
         return "applied"
 
     @staticmethod
-    def _collect_git_changed_files(repo, base_ref: Optional[str] = None) -> Dict[str, str]:
+    def _collect_git_changed_files(repo, base_ref: str | None = None) -> dict[str, str]:
         """Collect committed, staged, unstaged, and untracked changes."""
-        changed_files: Dict[str, str] = {}  # path -> change_type (M, A, D, R, C)
+        changed_files: dict[str, str] = {}  # path -> change_type (M, A, D, R, C)
 
         def _record_name_status(diff_output: str) -> None:
             for line in diff_output.splitlines():
@@ -566,10 +569,10 @@ class ChangeApplier:
         self,
         source_path: str,
         target_path: str,
-        base_ref: Optional[str],
-        approved_files: Optional[List[str]] = None,
-        context_prefix: Optional[str] = None,
-    ) -> List[str]:
+        base_ref: str | None,
+        approved_files: list[str] | None = None,
+        context_prefix: str | None = None,
+    ) -> list[str]:
         """Return changed files whose current target content drifted from baseline."""
         if not base_ref:
             return []
@@ -607,7 +610,7 @@ class ChangeApplier:
             ):
                 continue
 
-            baseline_bytes: Optional[bytes]
+            baseline_bytes: bytes | None
             try:
                 baseline_blob = baseline_tree / rel_path
                 baseline_bytes = baseline_blob.data_stream.read()
@@ -615,7 +618,7 @@ class ChangeApplier:
                 baseline_bytes = None
 
             target_file = target / mapped_path if mapped_path else target
-            target_bytes: Optional[bytes]
+            target_bytes: bytes | None
             if target_file.exists() and target_file.is_file():
                 target_bytes = target_file.read_bytes()
             elif target_file.exists():
@@ -631,7 +634,7 @@ class ChangeApplier:
     def get_changes_summary(
         self,
         source_path: str,
-    ) -> Dict[str, List[str]]:
+    ) -> dict[str, list[str]]:
         """
         Get a summary of changes in the isolated context.
 
@@ -642,7 +645,7 @@ class ChangeApplier:
             Dict with keys 'modified', 'added', 'deleted' containing file lists
         """
         source = Path(source_path)
-        summary: Dict[str, List[str]] = {
+        summary: dict[str, list[str]] = {
             "modified": [],
             "added": [],
             "deleted": [],

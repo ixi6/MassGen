@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
-
 """
 Message templates for MassGen framework following input_cases_reference.md
 Implements proven binary decision framework that eliminates perfectionism loops.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class MessageTemplates:
@@ -47,6 +45,9 @@ class MessageTemplates:
 
         return f"""You are evaluating answers from multiple agents for final response to a message. Does the best CURRENT ANSWER address the ORIGINAL MESSAGE?
 
+Evaluate existing answers as a critic, not as a collaborator. Your job is to \
+determine whether the work is genuinely good — not to find ways to build on it.
+
 If YES, use the `vote` tool to record your vote and skip the `new_answer` tool.
 Otherwise, do additional work first, then use the `new_answer` tool to record a better answer to the ORIGINAL MESSAGE. Make sure you actually call `vote` or `new_answer` (in tool call format).
 
@@ -57,7 +58,7 @@ Otherwise, do additional work first, then use the `new_answer` tool to record a 
     # USER MESSAGE TEMPLATES
     # =============================================================================
 
-    def format_original_message(self, task: str, paraphrase: Optional[str] = None) -> str:
+    def format_original_message(self, task: str, paraphrase: str | None = None) -> str:
         """Format the original message section."""
         if "format_original_message" in self._template_overrides:
             override = self._template_overrides["format_original_message"]
@@ -74,7 +75,7 @@ Otherwise, do additional work first, then use the `new_answer` tool to record a 
             return f"{original_block}\n{paraphrase_block}"
         return original_block
 
-    def format_conversation_history(self, conversation_history: List[Dict[str, str]]) -> str:
+    def format_conversation_history(self, conversation_history: list[dict[str, str]]) -> str:
         """Format conversation history for agent context."""
         if "format_conversation_history" in self._template_overrides:
             override = self._template_overrides["format_conversation_history"]
@@ -99,7 +100,7 @@ Otherwise, do additional work first, then use the `new_answer` tool to record a 
         lines.append("<END OF CONVERSATION_HISTORY>")
         return "\n".join(lines)
 
-    def system_message_with_context(self, conversation_history: Optional[List[Dict[str, str]]] = None) -> str:
+    def system_message_with_context(self, conversation_history: list[dict[str, str]] | None = None) -> str:
         """Evaluation system message with conversation context awareness."""
         if "system_message_with_context" in self._template_overrides:
             override = self._template_overrides["system_message_with_context"]
@@ -128,9 +129,10 @@ IMPORTANT: You are responding to the latest message in an ongoing conversation. 
 
     def format_current_answers_with_summaries(
         self,
-        agent_summaries: Dict[str, str],
-        agent_mapping: Optional[Dict[str, str]] = None,
-        agent_changedocs: Optional[Dict[str, str]] = None,
+        agent_summaries: dict[str, str],
+        agent_mapping: dict[str, str] | None = None,
+        agent_changedocs: dict[str, str] | None = None,
+        answer_label_mapping: dict[str, str] | None = None,
     ) -> str:
         """Format current answers section with agent summaries (Case 2) using anonymous agent IDs.
 
@@ -142,6 +144,9 @@ IMPORTANT: You are responding to the latest message in an ongoing conversation. 
                           global consistency with vote tool and injections.
             agent_changedocs: Optional dict of agent_id -> changedoc content. When provided,
                              changedoc content is included within each agent's answer block.
+            answer_label_mapping: Optional mapping from real agent ID to versioned label
+                                 (e.g., agent_a -> agent1.2). When provided, uses versioned
+                                 labels in XML headers for provenance tracking.
         """
         if "format_current_answers_with_summaries" in self._template_overrides:
             override = self._template_overrides["format_current_answers_with_summaries"]
@@ -157,7 +162,8 @@ IMPORTANT: You are responding to the latest message in an ongoing conversation. 
                 agent_mapping[agent_id] = f"agent{i}"
 
         for agent_id, summary in agent_summaries.items():
-            anon_id = agent_mapping.get(agent_id, f"agent_{agent_id}")
+            # Use versioned label (agent1.2) if available, otherwise base anonymous ID (agent1)
+            anon_id = (answer_label_mapping or {}).get(agent_id) or agent_mapping.get(agent_id, f"agent_{agent_id}")
             changedoc = (agent_changedocs or {}).get(agent_id)
             if changedoc:
                 lines.append(f"<{anon_id}> {summary}\n<changedoc>\n{changedoc}\n</changedoc> <end of {anon_id}>")
@@ -167,7 +173,7 @@ IMPORTANT: You are responding to the latest message in an ongoing conversation. 
         lines.append("<END OF CURRENT ANSWERS>")
         return "\n".join(lines)
 
-    def enforcement_message(self, buffer_content: Optional[str] = None) -> str:
+    def enforcement_message(self, buffer_content: str | None = None) -> str:
         """Enforcement message for Case 3 (non-workflow responses).
 
         Args:
@@ -208,11 +214,11 @@ Use your available tools to analyze the existing answers, then call the `vote` t
 
 IMPORTANT: The only workflow action available to you is `vote`. You cannot submit new answers."""
 
-    def tool_error_message(self, error_msg: str) -> Dict[str, str]:
+    def tool_error_message(self, error_msg: str) -> dict[str, str]:
         """Create a tool role message for tool usage errors."""
         return {"role": "tool", "content": error_msg}
 
-    def enforcement_user_message(self, buffer_content: Optional[str] = None) -> Dict[str, str]:
+    def enforcement_user_message(self, buffer_content: str | None = None) -> dict[str, str]:
         """Create a user role message for enforcement.
 
         Args:
@@ -224,7 +230,7 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
     # TOOL DEFINITIONS
     # =============================================================================
 
-    def get_new_answer_tool(self) -> Dict[str, Any]:
+    def get_new_answer_tool(self) -> dict[str, Any]:
         """Get new_answer tool definition.
 
         TODO: Consider extending with optional context parameters for stateful backends:
@@ -247,7 +253,12 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
                     "properties": {
                         "content": {
                             "type": "string",
-                            "description": "Your improved answer. If any builtin tools like search or code execution were used, mention how they are used here.",
+                            "description": (
+                                "Your improved answer (HIGH-LEVEL summary): what you created, where to find it, "
+                                "how to use it, key features. Do NOT include full code listings - code belongs in "
+                                "workspace files. If any builtin tools like search or code execution were used, "
+                                "mention how they are used here."
+                            ),
                         },
                     },
                     "required": ["content"],
@@ -255,7 +266,7 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
             },
         }
 
-    def get_vote_tool(self, valid_agent_ids: Optional[List[str]] = None) -> Dict[str, Any]:
+    def get_vote_tool(self, valid_agent_ids: list[str] | None = None) -> dict[str, Any]:
         """Get vote tool definition with anonymous agent IDs."""
         if "vote_tool" in self._template_overrides:
             override = self._template_overrides["vote_tool"]
@@ -292,7 +303,7 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
 
         return tool_def
 
-    def get_stop_tool(self) -> Dict[str, Any]:
+    def get_stop_tool(self) -> dict[str, Any]:
         """Get stop tool definition for decomposition mode."""
         return {
             "type": "function",
@@ -317,7 +328,7 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
             },
         }
 
-    def get_standard_tools(self, valid_agent_ids: Optional[List[str]] = None, decomposition_mode: bool = False) -> List[Dict[str, Any]]:
+    def get_standard_tools(self, valid_agent_ids: list[str] | None = None, decomposition_mode: bool = False) -> list[dict[str, Any]]:
         """Get standard tools for MassGen framework."""
         if decomposition_mode:
             return [self.get_new_answer_tool(), self.get_stop_tool()]
@@ -325,11 +336,8 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
 
     def final_presentation_system_message(
         self,
-        original_system_message: Optional[str] = None,
-        enable_image_generation: bool = False,
-        enable_audio_generation: bool = False,
+        original_system_message: str | None = None,
         enable_file_generation: bool = False,
-        enable_video_generation: bool = False,
         has_irreversible_actions: bool = False,
         enable_command_execution: bool = False,
     ) -> str:
@@ -337,10 +345,7 @@ IMPORTANT: The only workflow action available to you is `vote`. You cannot submi
 
         Args:
             original_system_message: The agent's original system message to preserve
-            enable_image_generation: Whether image generation is enabled
-            enable_audio_generation: Whether audio generation is enabled
             enable_file_generation: Whether file generation is enabled
-            enable_video_generation: Whether video generation is enabled
             has_irreversible_actions: Whether agent has write access to context paths (requires actual file delivery)
             enable_command_execution: Whether command execution is enabled for this agent
         """
@@ -366,87 +371,8 @@ Present your answer using markdown formatting where it aids readability.
 
 When you have composed your final answer, submit it using the `new_answer` tool. Only include the markdown-formatted answer in the tool call. This will be the official final deliverable.\n\n"""
 
-        # Add image generation instructions only if enabled
-        if enable_image_generation:
-            presentation_instructions += """For image generation tasks:
-
-  **MANDATORY WORKFLOW - You MUST follow these steps in order:**
-
-  Step 1: **Check for existing images (REQUIRED)**
-  - First, list all files in the Shared Reference directory (temp_workspaces) to find ALL images from EVERY agent
-  - Look for image files (.png, .jpg, .jpeg, .gif, .webp, etc.) in each agent's workspace subdirectory
-
-  Step 2: **Understand ALL existing images (REQUIRED if images exist)**
-  - For EACH image file you found, you MUST call the **understand_image** tool to extract its key visual elements, composition, style, and quality
-  - Do this for images from yourself AND from other agents - analyze ALL images found
-  - DO NOT skip this step even if you think you know the content
-
-  Step 3: **Synthesize and generate final image (REQUIRED)**
-  - If existing images were found and analyzed:
-    * Synthesize ALL image analyses into a single, detailed, combined prompt
-    * The combined prompt should capture the best visual elements, composition, style, and quality from all analyzed images
-    * Call **image_to_image_generation** with this synthesized prompt and ALL images to create the final unified image
-  - If NO existing images were found:
-    * Generate a new image based directly on the original task requirements
-    * Call **text_to_image_generation** with a prompt derived from the original task
-
-  Step 4: **Save and report (REQUIRED)**
-  - Save the final generated image in your workspace
-  - Report the saved path in your final answer
-
-  **CRITICAL**: You MUST complete Steps 1-4 in order. Do not skip checking for existing images. Do not skip calling
-  understand_image on found images. This is a mandatory synthesis workflow.
-  """
-        #             presentation_instructions += """For image generation tasks:
-        # - Extract image paths from the existing answer and resolve them in the shared reference.
-        # - Gather all agent-produced images (ignore non-existent files).
-        # - IMPORTANT: If you find ANY existing images (from yourself or other agents), you MUST call the understand_image tool
-        #   to analyze EACH image and extract their key visual elements, composition, style, and quality.
-        # - IMPORTANT: Synthesize insights from all analyzed images into a detailed, combined prompt that captures the best elements.
-        # - IMPORTANT: Call text_to_image_generation with this synthesized prompt to generate the final image.
-        # - IMPORTANT: Save the final output in your workspace and output the saved path.
-        # - If no existing images are found, generate based on the original task requirements.
-        # """
-        # Add audio generation instructions only if enabled
-        if enable_audio_generation:
-            presentation_instructions += """For audio generation tasks:
-
-  **MANDATORY WORKFLOW - You MUST follow these steps in order:**
-
-  Step 1: **Check for existing audios (REQUIRED)**
-  - First, list all files in the Shared Reference directory (temp_workspaces) to find ALL audio files from EVERY agent
-  - Look for audio files (.mp3, .wav, .flac, etc.) in each agent's workspace subdirectory
-
-  Step 2: **Understand ALL existing audios (REQUIRED if audios exist)**
-  - For EACH audio file you found, you MUST call the **understand_audio** tool to extract its transcription
-  - Do this for audios from yourself AND from other agents - analyze ALL audios found
-  - DO NOT skip this step even if you think you know the content
-
-  Step 3: **Synthesize and generate final audio (REQUIRED)**
-  - If existing audios were found and analyzed:
-    * Synthesize ALL audio transcriptions into a single, detailed, combined transcription
-    * The combined transcription should capture the best content from all analyzed audios
-    * Call **text_to_speech_transcription_generation** with this synthesized transcription to create the final unified audio
-  - If NO existing audios were found:
-    * Generate a new audio based directly on the original task requirements
-    * Call **text_to_speech_transcription_generation** with a transcription derived from the original task
-
-  Step 4: **Save and report (REQUIRED)**
-  - Save the final generated audio in your workspace
-  - Report the saved path in your final answer
-
-  **CRITICAL**: You MUST complete Steps 1-4 in order. Do not skip checking for existing audios. Do not skip calling
-  understand_audio on found audios. This is a mandatory synthesis workflow.
-  """
-        #                         presentation_instructions += """For audio generation tasks:
-        # - Extract audio paths from the existing answer and resolve them in the shared reference.
-        # - Gather ALL audio files produced by EVERY agent (ignore non-existent files).
-        # - IMPORTANT: If you find ANY existing audios (from yourself or other agents), you MUST call the **understand_audio** tool to extract each audio's transcription.
-        # - IMPORTANT: Synthesize transcriptions from all audios into a detailed, combined transcription.
-        # - IMPORTANT: You MUST call the **text_to_speech_transcription_generation** tool with this synthesized transcription to generate the final audio.
-        # - IMPORTANT: Save the final output in your workspace and output the saved path.
-        # - If no existing audios are found, generate based on the original task requirements.
-        # """
+        # Intentionally keep presentation guidance concise.
+        # Detailed modality-specific media workflows were removed to reduce prompt bloat.
         # Add file generation instructions only if enabled
         if enable_file_generation:
             presentation_instructions += """For file generation tasks:
@@ -487,48 +413,6 @@ When you have composed your final answer, submit it using the `new_answer` tool.
         # - IMPORTANT: Save the final output in your workspace and output the saved path.
         # - If no existing files are found, generate based on the original task requirements.
         # """
-        # Add video generation instructions only if enabled
-        if enable_video_generation:
-            presentation_instructions += """For video generation tasks:
-
-  **MANDATORY WORKFLOW - You MUST follow these steps in order:**
-
-  Step 1: **Check for existing videos (REQUIRED)**
-  - First, list all files in the Shared Reference directory (temp_workspaces) to find ALL videos from EVERY agent
-  - Look for video files (.mp4, .avi, .mov, etc.) in each agent's workspace subdirectory
-
-  Step 2: **Understand ALL existing videos (REQUIRED if videos exist)**
-  - For EACH video file you found, you MUST call the **understand_video** tool to extract its description, visual features, and
-  key elements
-  - Do this for videos from yourself AND from other agents - analyze ALL videos found
-  - DO NOT skip this step even if you think you know the content
-
-  Step 3: **Synthesize and generate final video (REQUIRED)**
-  - If existing videos were found and analyzed:
-    * Synthesize ALL video descriptions into a single, detailed, combined prompt
-    * The combined prompt should capture the best visual elements, composition, motion, and style from all analyzed videos
-    * Call **text_to_video_generation** with this synthesized prompt to create the final unified video
-  - If NO existing videos were found:
-    * Generate a new video based directly on the original task requirements
-    * Call **text_to_video_generation** with a prompt derived from the original task
-
-  Step 4: **Save and report (REQUIRED)**
-  - Save the final generated video in your workspace
-  - Report the saved path in your final answer
-
-  **CRITICAL**: You MUST complete Steps 1-4 in order. Do not skip checking for existing videos. Do not skip calling
-  understand_video on found videos. This is a mandatory synthesis workflow.
-  """
-        #             presentation_instructions += """For video generation tasks:
-        # - Extract video paths from the existing answer and resolve them in the shared reference.
-        # - Gather ALL videos produced by EVERY agent (ignore non-existent files).
-        # - IMPORTANT: If you find ANY existing videos (from yourself or other agents), you MUST call the **understand_video** tool to extract each video's description and key features.
-        # - IMPORTANT: Synthesize descriptions from all videos into a detailed, combined prompt capturing the best elements.
-        # - IMPORTANT: You MUST call the **text_to_video_generation** tool with this synthesized prompt to generate the final video.
-        # - IMPORTANT: Save the final output in your workspace and output the saved path.
-        # - If no existing videos are found, generate based on the original task requirements.
-        # """
-
         # Add irreversible actions reminder if needed
         # TODO: Integrate more general irreversible actions handling in future (i.e., not just for context file delivery)
         if has_irreversible_actions:
@@ -556,7 +440,7 @@ When you have composed your final answer, submit it using the `new_answer` tool.
         else:
             return presentation_instructions
 
-    def format_restart_context(self, reason: str, instructions: str, previous_answer: Optional[str] = None, workspace_populated: bool = False, branch_info: Optional[Dict[str, Any]] = None) -> str:
+    def format_restart_context(self, reason: str, instructions: str, previous_answer: str | None = None, workspace_populated: bool = False, branch_info: dict[str, Any] | None = None) -> str:
         """Format restart context for subsequent orchestration attempts.
 
         This context is added to agent messages (like multi-turn context) on restart attempts.
@@ -620,7 +504,7 @@ Please address these specific issues in your coordination and final answer.
     # COMPLETE MESSAGE BUILDERS
     # =============================================================================
 
-    def build_case1_user_message(self, task: str, paraphrase: Optional[str] = None) -> str:
+    def build_case1_user_message(self, task: str, paraphrase: str | None = None) -> str:
         """Build Case 1 user message (no summaries exist)."""
         return f"""{self.format_original_message(task, paraphrase)}
 
@@ -629,10 +513,11 @@ Please address these specific issues in your coordination and final answer.
     def build_case2_user_message(
         self,
         task: str,
-        agent_summaries: Dict[str, str],
-        paraphrase: Optional[str] = None,
-        agent_mapping: Optional[Dict[str, str]] = None,
-        agent_changedocs: Optional[Dict[str, str]] = None,
+        agent_summaries: dict[str, str],
+        paraphrase: str | None = None,
+        agent_mapping: dict[str, str] | None = None,
+        agent_changedocs: dict[str, str] | None = None,
+        answer_label_mapping: dict[str, str] | None = None,
     ) -> str:
         """Build Case 2 user message (summaries exist).
 
@@ -644,18 +529,21 @@ Please address these specific issues in your coordination and final answer.
                           Pass from coordination_tracker.get_reverse_agent_mapping() for
                           global consistency with vote tool and injections.
             agent_changedocs: Optional dict of agent_id -> changedoc content.
+            answer_label_mapping: Optional mapping from real agent ID to versioned label
+                                 (e.g., agent_a -> agent1.2).
         """
         return f"""{self.format_original_message(task, paraphrase)}
 
-{self.format_current_answers_with_summaries(agent_summaries, agent_mapping, agent_changedocs=agent_changedocs)}"""
+{self.format_current_answers_with_summaries(agent_summaries, agent_mapping, agent_changedocs=agent_changedocs, answer_label_mapping=answer_label_mapping)}"""
 
     def build_evaluation_message(
         self,
         task: str,
-        agent_answers: Optional[Dict[str, str]] = None,
-        paraphrase: Optional[str] = None,
-        agent_mapping: Optional[Dict[str, str]] = None,
-        agent_changedocs: Optional[Dict[str, str]] = None,
+        agent_answers: dict[str, str] | None = None,
+        paraphrase: str | None = None,
+        agent_mapping: dict[str, str] | None = None,
+        agent_changedocs: dict[str, str] | None = None,
+        answer_label_mapping: dict[str, str] | None = None,
     ) -> str:
         """Build evaluation user message for any case.
 
@@ -667,20 +555,22 @@ Please address these specific issues in your coordination and final answer.
                           Pass from coordination_tracker.get_reverse_agent_mapping() for
                           global consistency with vote tool and injections.
             agent_changedocs: Optional dict of agent_id -> changedoc content.
+            answer_label_mapping: Optional mapping from real agent ID to versioned label.
         """
         if agent_answers:
-            return self.build_case2_user_message(task, agent_answers, paraphrase, agent_mapping, agent_changedocs=agent_changedocs)
+            return self.build_case2_user_message(task, agent_answers, paraphrase, agent_mapping, agent_changedocs=agent_changedocs, answer_label_mapping=answer_label_mapping)
         else:
             return self.build_case1_user_message(task, paraphrase)
 
     def build_coordination_context(
         self,
         current_task: str,
-        conversation_history: Optional[List[Dict[str, str]]] = None,
-        agent_answers: Optional[Dict[str, str]] = None,
-        paraphrase: Optional[str] = None,
-        agent_mapping: Optional[Dict[str, str]] = None,
-        agent_changedocs: Optional[Dict[str, str]] = None,
+        conversation_history: list[dict[str, str]] | None = None,
+        agent_answers: dict[str, str] | None = None,
+        paraphrase: str | None = None,
+        agent_mapping: dict[str, str] | None = None,
+        agent_changedocs: dict[str, str] | None = None,
+        answer_label_mapping: dict[str, str] | None = None,
     ) -> str:
         """Build coordination context including conversation history and current state.
 
@@ -718,7 +608,7 @@ Please address these specific issues in your coordination and final answer.
 
         # Add agent answers
         if agent_answers:
-            context_parts.append(self.format_current_answers_with_summaries(agent_answers, agent_mapping, agent_changedocs=agent_changedocs))
+            context_parts.append(self.format_current_answers_with_summaries(agent_answers, agent_mapping, agent_changedocs=agent_changedocs, answer_label_mapping=answer_label_mapping))
         else:
             context_parts.append(self.format_current_answers_empty())
 
@@ -731,14 +621,15 @@ Please address these specific issues in your coordination and final answer.
     def build_initial_conversation(
         self,
         task: str,
-        agent_summaries: Optional[Dict[str, str]] = None,
-        valid_agent_ids: Optional[List[str]] = None,
-        base_system_message: Optional[str] = None,
-        paraphrase: Optional[str] = None,
-        agent_mapping: Optional[Dict[str, str]] = None,
+        agent_summaries: dict[str, str] | None = None,
+        valid_agent_ids: list[str] | None = None,
+        base_system_message: str | None = None,
+        paraphrase: str | None = None,
+        agent_mapping: dict[str, str] | None = None,
         decomposition_mode: bool = False,
-        agent_changedocs: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+        agent_changedocs: dict[str, str] | None = None,
+        answer_label_mapping: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Build complete initial conversation for MassGen evaluation.
 
         Args:
@@ -751,6 +642,7 @@ Please address these specific issues in your coordination and final answer.
                           Pass from coordination_tracker.get_reverse_agent_mapping() for
                           global consistency with vote tool and injections.
             agent_changedocs: Optional dict of agent_id -> changedoc content.
+            answer_label_mapping: Optional mapping from real agent ID to versioned label.
         """
         # Use agent's custom system message if provided, otherwise use default evaluation message
         if base_system_message:
@@ -766,22 +658,23 @@ Please address these specific issues in your coordination and final answer.
 
         return {
             "system_message": system_message,
-            "user_message": self.build_evaluation_message(task, agent_summaries, paraphrase, agent_mapping, agent_changedocs=agent_changedocs),
+            "user_message": self.build_evaluation_message(task, agent_summaries, paraphrase, agent_mapping, agent_changedocs=agent_changedocs, answer_label_mapping=answer_label_mapping),
             "tools": self.get_standard_tools(valid_agent_ids, decomposition_mode=decomposition_mode),
         }
 
     def build_conversation_with_context(
         self,
         current_task: str,
-        conversation_history: Optional[List[Dict[str, str]]] = None,
-        agent_summaries: Optional[Dict[str, str]] = None,
-        valid_agent_ids: Optional[List[str]] = None,
-        base_system_message: Optional[str] = None,
-        paraphrase: Optional[str] = None,
-        agent_mapping: Optional[Dict[str, str]] = None,
+        conversation_history: list[dict[str, str]] | None = None,
+        agent_summaries: dict[str, str] | None = None,
+        valid_agent_ids: list[str] | None = None,
+        base_system_message: str | None = None,
+        paraphrase: str | None = None,
+        agent_mapping: dict[str, str] | None = None,
         decomposition_mode: bool = False,
-        agent_changedocs: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Any]:
+        agent_changedocs: dict[str, str] | None = None,
+        answer_label_mapping: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         """Build complete conversation with conversation history context for MassGen evaluation.
 
         Args:
@@ -796,6 +689,7 @@ Please address these specific issues in your coordination and final answer.
                           global consistency with vote tool and injections.
             decomposition_mode: If True, use stop tool instead of vote in logged tools
             agent_changedocs: Optional dict of agent_id -> changedoc content.
+            answer_label_mapping: Optional mapping from real agent ID to versioned label.
         """
         # Use agent's custom system message if provided, otherwise use default context-aware message
         if base_system_message:
@@ -811,7 +705,15 @@ Please address these specific issues in your coordination and final answer.
 
         return {
             "system_message": system_message,
-            "user_message": self.build_coordination_context(current_task, conversation_history, agent_summaries, paraphrase, agent_mapping, agent_changedocs=agent_changedocs),
+            "user_message": self.build_coordination_context(
+                current_task,
+                conversation_history,
+                agent_summaries,
+                paraphrase,
+                agent_mapping,
+                agent_changedocs=agent_changedocs,
+                answer_label_mapping=answer_label_mapping,
+            ),
             "tools": self.get_standard_tools(valid_agent_ids, decomposition_mode=decomposition_mode),
         }
 
@@ -819,9 +721,10 @@ Please address these specific issues in your coordination and final answer.
         self,
         original_task: str,
         vote_summary: str,
-        all_answers: Dict[str, str],
+        all_answers: dict[str, str],
         selected_agent_id: str,
-        agent_changedocs: Optional[Dict[str, str]] = None,
+        agent_changedocs: dict[str, str] | None = None,
+        final_answer_strategy: str = "winner_present",
     ) -> str:
         """Build final presentation message for winning agent."""
         # Format all answers with clear marking
@@ -834,6 +737,16 @@ Please address these specific issues in your coordination and final answer.
             else:
                 answers_section += f'\n{agent_id}{marker}: "{answer}"\n'
 
+        if final_answer_strategy == "synthesize":
+            strategy_instruction = (
+                "Synthesize the strongest relevant parts across the completed answers into a single final answer. "
+                "Do not just repeat your own answer if another agent handled part of the task better."
+            )
+        elif final_answer_strategy == "winner_present":
+            strategy_instruction = "Use your answer as the primary basis for the final response. " "You may incorporate useful details from other answers when they improve completeness or accuracy."
+        else:
+            strategy_instruction = "Present the selected answer clearly as the final response."
+
         return f"""{self.format_original_message(original_task)}
 
 VOTING RESULTS:
@@ -841,13 +754,13 @@ VOTING RESULTS:
 
 {answers_section}
 
-Based on the coordination process above, present your final answer:"""
+{strategy_instruction}"""
 
     def add_enforcement_message(
         self,
-        conversation_messages: List[Dict[str, str]],
-        buffer_content: Optional[str] = None,
-    ) -> List[Dict[str, str]]:
+        conversation_messages: list[dict[str, str]],
+        buffer_content: str | None = None,
+    ) -> list[dict[str, str]]:
         """Add enforcement message to existing conversation (Case 3).
 
         Args:
@@ -894,17 +807,17 @@ Based on the coordination process above, present your final answer:"""
 
     def filesystem_system_message(
         self,
-        main_workspace: Optional[str] = None,
-        temp_workspace: Optional[str] = None,
-        context_paths: Optional[List[Dict[str, str]]] = None,
-        previous_turns: Optional[List[Dict[str, Any]]] = None,
+        main_workspace: str | None = None,
+        temp_workspace: str | None = None,
+        context_paths: list[dict[str, str]] | None = None,
+        previous_turns: list[dict[str, Any]] | None = None,
         workspace_prepopulated: bool = False,
         enable_image_generation: bool = False,
-        agent_answers: Optional[Dict[str, str]] = None,
+        agent_answers: dict[str, str] | None = None,
         enable_command_execution: bool = False,
         docker_mode: bool = False,
         enable_sudo: bool = False,
-        agent_mapping: Optional[Dict[str, str]] = None,
+        agent_mapping: dict[str, str] | None = None,
     ) -> str:
         """Generate filesystem access instructions for agents with filesystem support.
 
@@ -1234,28 +1147,28 @@ def set_templates(templates: MessageTemplates) -> None:
 
 
 # Convenience functions for common operations
-def build_case1_conversation(task: str) -> Dict[str, Any]:
+def build_case1_conversation(task: str) -> dict[str, Any]:
     """Build Case 1 conversation (no summaries exist)."""
     return get_templates().build_initial_conversation(task)
 
 
 def build_case2_conversation(
     task: str,
-    agent_summaries: Dict[str, str],
-    valid_agent_ids: Optional[List[str]] = None,
-) -> Dict[str, Any]:
+    agent_summaries: dict[str, str],
+    valid_agent_ids: list[str] | None = None,
+) -> dict[str, Any]:
     """Build Case 2 conversation (summaries exist)."""
     return get_templates().build_initial_conversation(task, agent_summaries, valid_agent_ids)
 
 
 def get_standard_tools(
-    valid_agent_ids: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
+    valid_agent_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """Get standard MassGen tools."""
     return get_templates().get_standard_tools(valid_agent_ids)
 
 
-def get_enforcement_message(buffer_content: Optional[str] = None) -> str:
+def get_enforcement_message(buffer_content: str | None = None) -> str:
     """Get enforcement message for Case 3.
 
     Args:

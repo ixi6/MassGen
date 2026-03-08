@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Graceful cancellation handling for MassGen sessions.
 
 This module provides the CancellationManager class that enables graceful
@@ -7,7 +6,8 @@ is cancelled mid-coordination.
 """
 
 import signal
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Optional
 
 from .logger_config import logger
 
@@ -64,14 +64,14 @@ class CancellationManager:
         self._cancelled = False
         self._orchestrator: Optional["Orchestrator"] = None
         self._original_handler = None
-        self._save_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._save_callback: Callable[[dict[str, Any]], None] | None = None
         self._multi_turn = False
         self._partial_saved = False
 
     def register(
         self,
         orchestrator: "Orchestrator",
-        save_callback: Callable[[Dict[str, Any]], None],
+        save_callback: Callable[[dict[str, Any]], None],
         multi_turn: bool = False,
     ) -> None:
         """Register orchestrator for graceful cancellation.

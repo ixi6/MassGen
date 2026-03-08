@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Plan Review Modal Widget for MassGen TUI.
 
@@ -8,13 +7,17 @@ Shown after planning completes to support iterative planning review before execu
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, ScrollableContainer
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static, TextArea
+
+from massgen.frontend.displays.textual.widgets.rework_controls import (
+    ReworkControlsMixin,
+)
 
 
 @dataclass
@@ -23,9 +26,9 @@ class PlanApprovalResult:
 
     approved: bool
     action: str  # "continue", "quick_edit", "finalize", "finalize_manual", "cancel"
-    feedback: Optional[str] = None
-    plan_data: Optional[Dict[str, Any]] = None
-    plan_path: Optional[Path] = None
+    feedback: str | None = None
+    plan_data: dict[str, Any] | None = None
+    plan_path: Path | None = None
 
 
 class PlanJsonEditorModal(ModalScreen[Optional[str]]):
@@ -40,9 +43,9 @@ class PlanJsonEditorModal(ModalScreen[Optional[str]]):
     def __init__(
         self,
         initial_json: str,
-        name: Optional[str] = None,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(name=name, id=id, classes=classes)
         self._json_value = initial_json
@@ -95,7 +98,7 @@ class PlanJsonEditorModal(ModalScreen[Optional[str]]):
         self.dismiss(None)
 
 
-class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
+class PlanApprovalModal(ReworkControlsMixin, ModalScreen[PlanApprovalResult]):
     """Modal screen for planning review and action routing."""
 
     BINDINGS = [
@@ -106,6 +109,11 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
 
     # CSS moved to theme files for consistency.
     DEFAULT_CSS = ""
+
+    # Widget IDs for backward compat with existing CSS selectors
+    REWORK_FEEDBACK_INPUT_ID = "planning_feedback_input"
+    REWORK_CONTINUE_BTN_ID = "continue_btn"
+    REWORK_QUICK_EDIT_BTN_ID = "quick_edit_btn"
 
     STATUS_ICONS = {
         "pending": "○",
@@ -119,44 +127,51 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
         "high": "#f85149",
         "medium": "#d29922",
         "low": "#8b949e",
+        # Spec priority levels (P0=urgent, P1=high, P2=normal)
+        "p0": "#f85149",
+        "p1": "#d29922",
+        "p2": "#8b949e",
     }
 
     def __init__(
         self,
-        tasks: List[Dict[str, Any]],
+        tasks: list[dict[str, Any]],
         plan_path: Path,
-        plan_data: Dict[str, Any],
-        revision: Optional[int] = None,
-        name: Optional[str] = None,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        plan_data: dict[str, Any],
+        revision: int | None = None,
+        name: str | None = None,
+        id: str | None = None,
+        classes: str | None = None,
     ):
         super().__init__(name=name, id=id, classes=classes)
-        plan_tasks = plan_data.get("tasks", [])
-        if isinstance(plan_tasks, list):
-            self.tasks = [task for task in plan_tasks if isinstance(task, dict)]
+        # Detect spec artifacts (requirements key, no tasks key)
+        self._is_spec = "requirements" in plan_data and "tasks" not in plan_data
+        items_key = "requirements" if self._is_spec else "tasks"
+        plan_items = plan_data.get(items_key, [])
+        if isinstance(plan_items, list):
+            self.tasks = [task for task in plan_items if isinstance(task, dict)]
             self.plan_data = dict(plan_data)
-            self.plan_data["tasks"] = self.tasks
+            self.plan_data[items_key] = self.tasks
         else:
             self.tasks = [task for task in tasks if isinstance(task, dict)]
             self.plan_data = dict(plan_data)
-            self.plan_data["tasks"] = self.tasks
+            self.plan_data[items_key] = self.tasks
         self.plan_path = plan_path
         self.revision = revision
         self._expanded = True
-        self._feedback_value = ""
+        self._rework_feedback_value = ""
         self._json_edit_status = ""
-        self._action_status = ""
+        self._rework_action_status = ""
         self._plan_json_value = json.dumps(self.plan_data, indent=2)
         self._chunk_order, self._tasks_by_chunk = self._group_tasks_by_chunk(self.tasks)
         self._rebuild_chunk_groups()
 
     @staticmethod
     def _group_tasks_by_chunk(
-        tasks: List[Dict[str, Any]],
-    ) -> tuple[List[str], Dict[str, List[Dict[str, Any]]]]:
-        chunk_order: List[str] = []
-        tasks_by_chunk: Dict[str, List[Dict[str, Any]]] = {}
+        tasks: list[dict[str, Any]],
+    ) -> tuple[list[str], dict[str, list[dict[str, Any]]]]:
+        chunk_order: list[str] = []
+        tasks_by_chunk: dict[str, list[dict[str, Any]]] = {}
         for task in tasks:
             chunk = str(task.get("chunk", "")).strip() or "unassigned"
             if chunk not in tasks_by_chunk:
@@ -179,23 +194,27 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
             pass
 
     def compose(self) -> ComposeResult:
+        # Adapt labels for spec vs plan artifacts
+        artifact_label = "Spec" if self._is_spec else "Plan"
+        items_label = "Requirements" if self._is_spec else "Tasks"
+
         container_classes = "expanded" if self._expanded else None
         with Container(classes=container_classes):
             with Container(classes="modal-header"):
                 with Container(classes="header-row"):
-                    title = "Planning Review"
+                    title = f"{artifact_label} Review"
                     if self.revision:
-                        title = f"Planning Review (rev {self.revision})"
+                        title = f"{artifact_label} Review (rev {self.revision})"
                     yield Static(title, classes="modal-title")
                     expand_label = "Collapse View" if self._expanded else "Expand View"
                     yield Button(expand_label, variant="default", classes="modal-expand", id="expand_btn")
                     yield Button("✕", variant="default", classes="modal-close", id="close_btn")
 
             with Horizontal(classes="modal-stats"):
-                yield Static(f"Tasks: {len(self.tasks)}", classes="stat-item")
+                yield Static(f"{items_label}: {len(self.tasks)}", classes="stat-item")
                 yield Static(f"Chunks: {len(self._chunk_order)}", classes="stat-item")
                 yield Static(f"View: {'Expanded' if self._expanded else 'Compact'}", classes="stat-item")
-                high_priority = sum(1 for t in self.tasks if t.get("priority") == "high")
+                high_priority = sum(1 for t in self.tasks if str(t.get("priority", "")).lower() in {"high", "p0"})
                 if high_priority > 0:
                     yield Static(f"High Priority: {high_priority}", classes="stat-item")
 
@@ -213,7 +232,7 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
 
             with Container(classes="plan-json-actions"):
                 yield Button(
-                    "Edit Plan JSON",
+                    f"Edit {artifact_label} JSON",
                     variant="default",
                     id="edit_plan_json_btn",
                     classes="edit-plan-json-button",
@@ -221,49 +240,32 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
                 if self._json_edit_status:
                     yield Static(self._json_edit_status, classes="plan-json-edit-status")
 
-            with Container(classes="plan-feedback"):
-                yield Static(
-                    "Prompt for next planning turn (required for Continue/Quick Edit):",
-                    classes="plan-feedback-label",
-                )
-                feedback_input = Input(
-                    placeholder="Example: tighten scope, reorder chunks, add migration tasks",
-                    id="planning_feedback_input",
-                )
-                feedback_input.value = self._feedback_value
-                yield feedback_input
+            rework_label = "spec refinement" if self._is_spec else "planning"
+            yield from self.compose_rework_controls(
+                feedback_label=f"Prompt for next {rework_label} turn (required for Continue/Quick Edit):",
+                feedback_placeholder="Example: tighten scope, reorder chunks, add requirements" if self._is_spec else "Example: tighten scope, reorder chunks, add migration tasks",
+                continue_label=f"Continue {artifact_label}",
+                quick_edit_label="Quick Edit (Single Agent)",
+            )
 
             with Container(classes="modal-footer"):
                 with Horizontal(classes="footer-buttons"):
                     yield Button(
-                        "Continue Planning",
-                        variant="default",
-                        id="continue_btn",
-                        classes="continue-button",
-                        disabled=not self._has_feedback(),
-                    )
-                    yield Button(
-                        "Quick Edit (Single Agent)",
-                        variant="default",
-                        id="quick_edit_btn",
-                        disabled=not self._has_feedback(),
-                    )
-                    yield Button(
-                        "Finalize Plan and Execute (Enter)",
+                        f"Finalize {artifact_label} and Execute (Enter)",
                         variant="primary",
                         id="finalize_btn",
                         classes="execute-button",
                     )
                     yield Button(
-                        "Finalize Plan (Manual Execute)",
+                        f"Finalize {artifact_label} (Manual Execute)",
                         variant="default",
                         id="finalize_manual_btn",
                     )
                     yield Button("Cancel (Esc)", variant="error", id="cancel_btn")
-                if self._action_status:
-                    yield Static(self._action_status, classes="plan-action-status")
+                if self._rework_action_status:
+                    yield Static(self._rework_action_status, classes="plan-action-status")
 
-    def _format_task_row(self, task: Dict[str, Any]) -> Text:
+    def _format_task_row(self, task: dict[str, Any]) -> Text:
         text = Text()
 
         status = str(task.get("status", "pending")).lower()
@@ -277,10 +279,16 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
         if priority in self.PRIORITY_COLORS:
             text.append("● ", style=self.PRIORITY_COLORS[priority])
 
-        name = task.get("name") or task.get("description", "Untitled task")
+        name = task.get("name") or task.get("title") or task.get("description", "Untitled")
         if not self._expanded and len(name) > 72:
             name = name[:69] + "..."
         text.append(name)
+
+        # For spec requirements, show EARS statement as dimmed suffix
+        ears = task.get("ears", "")
+        if ears and self._is_spec:
+            ears_display = ears if len(ears) <= 60 else ears[:57] + "..."
+            text.append(f" — {ears_display}", style="dim")
 
         deps = task.get("depends_on") or task.get("dependencies") or []
         if isinstance(deps, list) and deps:
@@ -288,39 +296,25 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
 
         return text
 
-    def _feedback_text(self) -> Optional[str]:
-        try:
-            feedback_input = self.query_one("#planning_feedback_input", Input)
-            text = (feedback_input.value or "").strip()
-            return text or None
-        except Exception:
-            text = (self._feedback_value or "").strip()
-            return text or None
+    def _feedback_text(self) -> str | None:
+        return self._rework_feedback_text()
 
     def _has_feedback(self) -> bool:
-        return self._feedback_text() is not None
+        return self._has_rework_feedback()
 
     def _sync_feedback_action_controls(self) -> None:
-        has_feedback = self._has_feedback()
-        for button_id in ("continue_btn", "quick_edit_btn"):
-            try:
-                self.query_one(f"#{button_id}", Button).disabled = not has_feedback
-            except Exception:
-                pass
+        self._sync_rework_button_states()
 
     def _snapshot_input_values(self) -> None:
         """Capture current input values before recompose/dismiss."""
-        try:
-            self._feedback_value = self.query_one("#planning_feedback_input", Input).value
-        except Exception:
-            pass
+        self._snapshot_rework_input()
 
     def _open_plan_json_editor(self) -> None:
         """Open full-screen JSON editor and apply edits if confirmed."""
         self._snapshot_input_values()
         editor = PlanJsonEditorModal(self._plan_json_value)
 
-        def _on_dismiss(updated_json: Optional[str]) -> None:
+        def _on_dismiss(updated_json: str | None) -> None:
             if updated_json is None:
                 return
             self._plan_json_value = updated_json
@@ -344,38 +338,41 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
             self.refresh(recompose=True)
             return False
 
+        items_key = "requirements" if self._is_spec else "tasks"
+        items_label = "requirements" if self._is_spec else "tasks"
+
         if not isinstance(parsed, dict):
-            self._json_edit_status = "Plan JSON must be an object with a tasks array."
+            self._json_edit_status = f"JSON must be an object with a '{items_key}' array."
             self.refresh(recompose=True)
             return False
 
-        raw_tasks = parsed.get("tasks")
-        if not isinstance(raw_tasks, list) or not raw_tasks:
-            self._json_edit_status = "Plan JSON must include a non-empty 'tasks' array."
+        raw_items = parsed.get(items_key)
+        if not isinstance(raw_items, list) or not raw_items:
+            self._json_edit_status = f"JSON must include a non-empty '{items_key}' array."
             self.refresh(recompose=True)
             return False
 
-        parsed_tasks = [task for task in raw_tasks if isinstance(task, dict)]
-        if not parsed_tasks:
-            self._json_edit_status = "Plan JSON contains no valid task objects."
+        parsed_items = [item for item in raw_items if isinstance(item, dict)]
+        if not parsed_items:
+            self._json_edit_status = f"JSON contains no valid {items_label} objects."
             self.refresh(recompose=True)
             return False
 
-        parsed["tasks"] = parsed_tasks
+        parsed[items_key] = parsed_items
         self.plan_data = parsed
-        self.tasks = parsed_tasks
+        self.tasks = parsed_items
         self._plan_json_value = json.dumps(self.plan_data, indent=2)
         self._rebuild_chunk_groups()
-        self._json_edit_status = f"Applied JSON edits ({len(self.tasks)} task(s) loaded)."
+        self._json_edit_status = f"Applied JSON edits ({len(self.tasks)} {items_label} loaded)."
         self._persist_plan_data()
         self.refresh(recompose=True)
         return True
 
     def _validate_action(self, action: str) -> bool:
         """Validate modal action requirements before dismissing."""
-        self._action_status = ""
+        self._rework_action_status = ""
         if action in {"continue", "quick_edit"} and not self._feedback_text():
-            self._action_status = "Enter a planning prompt before Continue or Quick Edit."
+            self._rework_action_status = "Enter a planning prompt before Continue or Quick Edit."
             self.refresh(recompose=True)
             return False
         return True
@@ -420,8 +417,8 @@ class PlanApprovalModal(ModalScreen[PlanApprovalResult]):
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Keep local state in sync so recompose preserves edits."""
-        if event.input.id == "planning_feedback_input":
-            self._feedback_value = event.value
+        if event.input.id == self.REWORK_FEEDBACK_INPUT_ID:
+            self._rework_feedback_value = event.value
             self._sync_feedback_action_controls()
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:

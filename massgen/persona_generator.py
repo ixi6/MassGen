@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Automatic persona generation for MassGen agents.
 
 This module provides functionality to automatically generate diverse system
@@ -9,9 +8,10 @@ diversity without requiring users to manually craft different system messages.
 import json
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -38,7 +38,7 @@ class GeneratedPersona:
 
     agent_id: str
     persona_text: str
-    attributes: Dict[str, str]
+    attributes: dict[str, str]
 
     def get_softened_text(self) -> str:
         """Get the eased persona text after peer answers are visible."""
@@ -66,18 +66,27 @@ class PersonaGeneratorConfig:
         persona_guidelines: Optional custom guidelines for persona generation
         persist_across_turns: If True, reuse personas across turns in multi-turn sessions.
             If False (default), generate fresh personas each turn.
+        after_first_answer: What happens to the persona after the agent submits its first answer:
+            - "drop": Persona is completely removed (default). Agents synthesize freely.
+            - "soften": Persona is softened to a preference, not a position to defend.
+            - "keep": Persona stays at full strength for all answers.
     """
 
     enabled: bool = False
     diversity_mode: str = "perspective"  # "perspective" or "implementation"
-    persona_guidelines: Optional[str] = None
+    persona_guidelines: str | None = None
     persist_across_turns: bool = False  # Default: generate new personas each turn
+    after_first_answer: str = "drop"  # "drop" | "soften" | "keep"
 
     def __post_init__(self):
         # Validate diversity_mode
         valid_modes = (DiversityMode.PERSPECTIVE, DiversityMode.IMPLEMENTATION, DiversityMode.METHODOLOGY)
         if self.diversity_mode not in valid_modes:
             self.diversity_mode = DiversityMode.PERSPECTIVE
+        # Validate after_first_answer
+        valid_lifecycle = ("drop", "soften", "keep")
+        if self.after_first_answer not in valid_lifecycle:
+            self.after_first_answer = "drop"
 
 
 class PersonaGenerator:
@@ -110,7 +119,7 @@ class PersonaGenerator:
 
     def __init__(
         self,
-        guidelines: Optional[str] = None,
+        guidelines: str | None = None,
         diversity_mode: str = "perspective",
     ):
         """Initialize the persona generator.
@@ -125,10 +134,10 @@ class PersonaGenerator:
 
     async def generate_personas(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         task: str,
-        existing_system_messages: Dict[str, Optional[str]],
-    ) -> Dict[str, GeneratedPersona]:
+        existing_system_messages: dict[str, str | None],
+    ) -> dict[str, GeneratedPersona]:
         """Generate diverse personas for all agents.
 
         Args:
@@ -227,9 +236,9 @@ class PersonaGenerator:
 
     def _build_generation_prompt(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         task: str,
-        existing_system_messages: Dict[str, Optional[str]],
+        existing_system_messages: dict[str, str | None],
     ) -> str:
         """Build the prompt for persona generation.
 
@@ -331,7 +340,7 @@ Generate personas now:"""
         }
         return strategies.get(self.strategy, strategies["complementary"])
 
-    def _parse_response(self, response: str, agent_ids: List[str]) -> Dict[str, GeneratedPersona]:
+    def _parse_response(self, response: str, agent_ids: list[str]) -> dict[str, GeneratedPersona]:
         """Parse LLM response into GeneratedPersona objects.
 
         Tries multiple strategies to extract JSON from potentially messy output:
@@ -413,7 +422,7 @@ Generate personas now:"""
         logger.debug(f"Response was: {response[:500]}...")
         return self._generate_fallback_personas(agent_ids)
 
-    def _try_parse_json(self, text: str) -> Optional[Dict[str, Any]]:
+    def _try_parse_json(self, text: str) -> dict[str, Any] | None:
         """Attempt to parse JSON, returning None on failure.
 
         Args:
@@ -430,8 +439,8 @@ Generate personas now:"""
     def _find_personas_json(
         self,
         log_directory: str,
-        agent_ids: List[str],
-    ) -> Optional[Dict[str, GeneratedPersona]]:
+        agent_ids: list[str],
+    ) -> dict[str, GeneratedPersona] | None:
         """Search for personas.json in the subagent logs.
 
         Searches multiple locations where personas.json might exist:
@@ -470,7 +479,7 @@ Generate personas now:"""
         ]
 
         # Collect all personas.json files found, sorted by modification time (most recent first)
-        found_files: List[Path] = []
+        found_files: list[Path] = []
         for pattern in search_patterns:
             found_files.extend(persona_generation_dir.glob(pattern))
 
@@ -528,7 +537,7 @@ Generate personas now:"""
 
         return None
 
-    def _generate_fallback_personas(self, agent_ids: List[str]) -> Dict[str, GeneratedPersona]:
+    def _generate_fallback_personas(self, agent_ids: list[str]) -> dict[str, GeneratedPersona]:
         """Generate simple fallback personas if LLM generation fails.
 
         Args:
@@ -579,7 +588,7 @@ Generate personas now:"""
 
         return personas
 
-    def _generate_methodology_fallback_personas(self, agent_ids: List[str]) -> Dict[str, GeneratedPersona]:
+    def _generate_methodology_fallback_personas(self, agent_ids: list[str]) -> dict[str, GeneratedPersona]:
         """Generate fallback personas for methodology mode (different working approaches)."""
         fallback_templates = [
             (
@@ -632,15 +641,18 @@ Generate personas now:"""
 
     async def generate_personas_via_subagent(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         task: str,
-        existing_system_messages: Dict[str, Optional[str]],
-        parent_agent_configs: List[Dict[str, Any]],
+        existing_system_messages: dict[str, str | None],
+        parent_agent_configs: list[dict[str, Any]],
         parent_workspace: str,
         orchestrator_id: str,
-        log_directory: Optional[str] = None,
-        on_subagent_started: Optional[Callable[[str, str, int, Callable[[str], Optional[Any]], Optional[str]], None]] = None,
-    ) -> Dict[str, GeneratedPersona]:
+        log_directory: str | None = None,
+        on_subagent_started: Callable[[str, str, int, Callable[[str], Any | None], str | None], None] | None = None,
+        voting_sensitivity: str | None = None,
+        voting_threshold: int | None = None,
+        has_planning_spec_context: bool = False,
+    ) -> dict[str, GeneratedPersona]:
         """Generate all personas via a single subagent call.
 
         This method uses MassGen's subagent infrastructure to generate personas.
@@ -658,6 +670,12 @@ Generate personas now:"""
             parent_workspace: Path to parent workspace for subagent workspace creation
             orchestrator_id: ID of the parent orchestrator
             log_directory: Optional path to log directory for subagent logs
+            voting_sensitivity: Optional voting sensitivity to pass through to
+                the pre-collaboration subagent coordination config.
+            voting_threshold: Optional voting threshold to pass through to
+                the pre-collaboration subagent coordination config.
+            has_planning_spec_context: Whether planning/spec context is mounted
+                and should be explicitly referenced by prompt guidance.
 
         Returns:
             Dictionary mapping agent_id to GeneratedPersona
@@ -689,14 +707,25 @@ Generate personas now:"""
             # Create simplified agent configs (same models, no tools)
             simplified_configs = self._create_simplified_agent_configs(parent_agent_configs)
 
-            # Configure subagent orchestrator with simplified agents
+            # Configure subagent orchestrator with simplified agents.
+            coordination = {
+                "enable_subagents": False,  # No nested subagents
+                "broadcast": False,  # Keep it simple
+                "checklist_criteria_preset": "persona",
+            }
+            if voting_sensitivity:
+                coordination["voting_sensitivity"] = voting_sensitivity
+            if voting_threshold is not None:
+                coordination["voting_threshold"] = voting_threshold
+
             subagent_orch_config = SubagentOrchestratorConfig(
                 enabled=True,
                 agents=simplified_configs,
-                coordination={
-                    "enable_subagents": False,  # No nested subagents
-                    "broadcast": False,  # Keep it simple
-                },
+                coordination=coordination,
+            )
+            parent_context_paths = self._build_subagent_parent_context_paths(
+                parent_workspace=base_workspace,
+                parent_agent_configs=parent_agent_configs,
             )
 
             manager = SubagentManager(
@@ -708,16 +737,22 @@ Generate personas now:"""
                 default_timeout=300,  # 5 min for all personas
                 subagent_orchestrator_config=subagent_orch_config,
                 log_directory=log_directory,
+                parent_context_paths=parent_context_paths,
             )
 
-            def _status_callback(subagent_id: str) -> Optional[Any]:
+            def _status_callback(subagent_id: str) -> Any | None:
                 try:
                     return manager.get_subagent_display_data(subagent_id)
                 except Exception:
                     return None
 
             # Build the prompt asking for ALL personas at once
-            prompt = self._build_subagent_personas_prompt(agent_ids, task, existing_system_messages)
+            prompt = self._build_subagent_personas_prompt(
+                agent_ids,
+                task,
+                existing_system_messages,
+                has_planning_spec_context=has_planning_spec_context,
+            )
 
             if on_subagent_started:
                 try:
@@ -776,10 +811,55 @@ Generate personas now:"""
             self.last_generation_source = "fallback"
             return self._generate_fallback_personas(agent_ids)
 
+    @staticmethod
+    def _build_subagent_parent_context_paths(
+        parent_workspace: str,
+        parent_agent_configs: list[dict[str, Any]],
+    ) -> list[dict[str, str]]:
+        """Build read-only context paths for pre-collab persona subagents."""
+        base_workspace = Path(parent_workspace).resolve()
+        context_paths: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        def _add_path(raw_path: str | None) -> None:
+            if not raw_path:
+                return
+            try:
+                path_obj = Path(raw_path)
+                resolved = path_obj.resolve() if path_obj.is_absolute() else (base_workspace / path_obj).resolve()
+            except Exception:
+                return
+
+            path_str = str(resolved)
+            if path_str in seen:
+                return
+            seen.add(path_str)
+            context_paths.append({"path": path_str, "permission": "read"})
+
+        _add_path(str(base_workspace))
+
+        for config in parent_agent_configs:
+            if not isinstance(config, dict):
+                continue
+            backend = config.get("backend", {})
+            if not isinstance(backend, dict):
+                continue
+            inherited_paths = backend.get("context_paths", [])
+            if not isinstance(inherited_paths, list):
+                continue
+            for entry in inherited_paths:
+                if isinstance(entry, str):
+                    _add_path(entry)
+                elif isinstance(entry, dict):
+                    raw_path = entry.get("path")
+                    _add_path(str(raw_path).strip() if raw_path else None)
+
+        return context_paths
+
     def _create_simplified_agent_configs(
         self,
-        parent_configs: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        parent_configs: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Create simplified agent configs - same models, no tools.
 
         Args:
@@ -809,9 +889,10 @@ Generate personas now:"""
 
     def _build_subagent_personas_prompt(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         task: str,
-        existing_system_messages: Dict[str, Optional[str]],
+        existing_system_messages: dict[str, str | None],
+        has_planning_spec_context: bool = False,
     ) -> str:
         """Build prompt to generate ALL personas with task-appropriate diversity.
 
@@ -847,7 +928,7 @@ Generate personas now:"""
 
         # Build mode-specific content
         if self.diversity_mode == DiversityMode.IMPLEMENTATION:
-            return self._build_implementation_diversity_prompt(
+            prompt = self._build_implementation_diversity_prompt(
                 agent_ids,
                 task,
                 agents_list,
@@ -855,7 +936,7 @@ Generate personas now:"""
                 guidelines_section,
             )
         elif self.diversity_mode == DiversityMode.METHODOLOGY:
-            return self._build_methodology_diversity_prompt(
+            prompt = self._build_methodology_diversity_prompt(
                 agent_ids,
                 task,
                 agents_list,
@@ -863,7 +944,7 @@ Generate personas now:"""
                 guidelines_section,
             )
         else:
-            return self._build_perspective_diversity_prompt(
+            prompt = self._build_perspective_diversity_prompt(
                 agent_ids,
                 task,
                 agents_list,
@@ -871,9 +952,21 @@ Generate personas now:"""
                 guidelines_section,
             )
 
+        if has_planning_spec_context:
+            context_alignment_section = """
+
+## Planning/Spec Context Alignment
+Read the mounted planning/spec context before writing personas and align with \
+it so goals, personas, and evaluation criteria stay coherent. Treat planning/spec \
+files as read-only references — do not modify them.
+"""
+            prompt += context_alignment_section
+
+        return prompt
+
     def _build_perspective_diversity_prompt(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         task: str,
         agents_list: str,
         agent_ids_json: str,
@@ -938,7 +1031,7 @@ Write personas.json now."""
 
     def _build_implementation_diversity_prompt(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         task: str,
         agents_list: str,
         agent_ids_json: str,
@@ -1003,7 +1096,7 @@ Write personas.json now."""
 
     def _build_methodology_diversity_prompt(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         task: str,
         agents_list: str,
         agent_ids_json: str,

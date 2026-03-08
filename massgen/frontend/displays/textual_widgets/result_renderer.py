@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Result Renderer for MassGen TUI.
 
@@ -8,7 +7,6 @@ syntax highlighting, and truncation.
 
 import json
 import re
-from typing import Optional, Tuple
 
 from rich.console import Group, RenderableType
 from rich.syntax import Syntax
@@ -34,11 +32,11 @@ class ResultRenderer:
     @classmethod
     def render(
         cls,
-        content: Optional[str],
-        force_type: Optional[str] = None,
-        max_lines: Optional[int] = None,
-        max_chars: Optional[int] = None,
-    ) -> Tuple[RenderableType, bool]:
+        content: str | None,
+        force_type: str | None = None,
+        max_lines: int | None = None,
+        max_chars: int | None = None,
+    ) -> tuple[RenderableType, bool]:
         """Render content with appropriate formatting.
 
         Args:
@@ -136,7 +134,7 @@ class ResultRenderer:
         content: str,
         max_lines: int,
         max_chars: int,
-    ) -> Tuple[str, bool]:
+    ) -> tuple[str, bool]:
         """Truncate content if needed.
 
         Args:
@@ -221,7 +219,7 @@ class ResultRenderer:
     @classmethod
     def format_preview(
         cls,
-        content: Optional[str],
+        content: str | None,
         max_length: int = 100,
     ) -> str:
         """Format a short preview of content for inline display.
@@ -245,7 +243,7 @@ class ResultRenderer:
         return preview
 
     @classmethod
-    def get_content_summary(cls, content: Optional[str]) -> str:
+    def get_content_summary(cls, content: str | None) -> str:
         """Get a summary of content (type, lines, chars).
 
         Args:

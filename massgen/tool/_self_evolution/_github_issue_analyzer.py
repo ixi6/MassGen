@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 GitHub Issue Analyzer - Self-Evolution Tool for Market Analysis
 
@@ -9,7 +8,7 @@ This demonstrates Self-Evolution: Market Analysis capabilities where
 agents can autonomously understand what users need and identify next features.
 """
 
-from typing import AsyncGenerator, List, Optional
+from collections.abc import AsyncGenerator
 
 import aiohttp
 
@@ -19,7 +18,7 @@ from massgen.tool._result import ExecutionResult, TextContent
 async def fetch_github_issues(
     repo: str,
     state: str = "open",
-    labels: Optional[List[str]] = None,
+    labels: list[str] | None = None,
     limit: int = 50,
 ) -> AsyncGenerator[ExecutionResult, None]:
     """Fetch and analyze GitHub issues for a repository.
@@ -171,7 +170,7 @@ async def fetch_github_issues(
         )
 
 
-def _analyze_issues(issues: List[dict], repo: str) -> dict:
+def _analyze_issues(issues: list[dict], repo: str) -> dict:
     """Analyze issues and extract insights."""
     analysis = {
         "total": len(issues),
@@ -244,7 +243,7 @@ def _analyze_issues(issues: List[dict], repo: str) -> dict:
     return analysis
 
 
-def _categorize_issue(title: str, labels: List[str], body: str) -> str:
+def _categorize_issue(title: str, labels: list[str], body: str) -> str:
     """Categorize an issue based on title, labels, and body."""
     title_lower = title.lower()
     body_lower = body.lower()
@@ -279,7 +278,7 @@ def _format_analysis(
     analysis: dict,
     repo: str,
     state: str,
-    labels: Optional[List[str]],
+    labels: list[str] | None,
 ) -> str:
     """Format the analysis into a readable report."""
     lines = []

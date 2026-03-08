@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Basic integration checks for key MassGen imports and config creation."""
 
 from importlib import import_module

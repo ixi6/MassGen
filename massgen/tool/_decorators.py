@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
 """Decorators for custom tool functions."""
 
-from typing import Callable
+from collections.abc import Callable
 
 
 def context_params(*param_names: str) -> Callable[[Callable], Callable]:

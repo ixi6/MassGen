@@ -1,9 +1,9 @@
-# -*- coding: utf-8 -*-
 """Registered tool entry data model."""
 
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional, Type
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -35,13 +35,13 @@ class RegisteredToolEntry:
     context_param_names: set[str] = field(default_factory=set)
     """Parameter names to inject from execution context at runtime."""
 
-    extension_model: Optional[Type[BaseModel]] = None
+    extension_model: type[BaseModel] | None = None
     """Optional model for extending the base schema."""
 
-    mcp_server_id: Optional[str] = None
+    mcp_server_id: str | None = None
     """MCP server identifier if applicable."""
 
-    post_processor: Optional[Callable[[dict, ExecutionResult], Optional[ExecutionResult]]] = None
+    post_processor: Callable[[dict, ExecutionResult], ExecutionResult | None] | None = None
     """Optional post-processing function for results."""
 
     @property

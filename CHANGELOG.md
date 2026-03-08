@@ -9,16 +9,366 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
-**v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
-Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
+**v0.1.60 (March 6, 2026)** - Multimodal Tools, Subagent Enhancements & GPT-5.4
+Rewritten read_media with clearer schema and MediaCallLedgerHook for media call tracking. Subagent enhancements: inherit_spawning_agent_backend, final_answer_strategy, per-agent subagent_agents. GPT-5.4 as default OpenAI flagship. Decomp mode cooperates with checklist workflow. Codex prompt caching calculation fix for pricing accuracy.
 
-**v0.1.50 (February 11, 2026)** - Chunked Plan Execution & Skill Lifecycle Management
-Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
+**v0.1.59 (March 4, 2026)** - Quality Round Improvements
+Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and media generation fixes.
 
-**v0.1.49 (February 9, 2026)** - Coordination Quality: Log Analysis TUI, Fairness Gate & Checklist Voting
-Log analysis mode built into TUI mode bar for in-app run analysis. Fairness gate prevents fast agents from dominating coordination. Checklist voting tool for structured quality evaluation. Automated testing infrastructure with CI/CD and SVG snapshot baselines.
+**v0.1.58 (March 2, 2026)** - Multimodal Revamp, Nvidia NIM Backend & Quality Rethinking
+Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image generation, and Grok multimedia. Nvidia NIM backend for NVIDIA Inference Microservices. Quality rethinking subagent for per-element craft improvements. Smarter checklists with improve/preserve listings. Logging architecture refactor and CLI mode flags.
+
+**v0.1.57 (February 27, 2026)** - Delegated Subagent Protocol & Builder Subagent
+File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Claude Code reasoning parameters for updated SDK. Smarter convergence with substantiveness tracking and diagnostic report gating.
 
 ---
+
+## [0.1.60] - 2026-03-06
+
+### Added
+- **read_media Rewrite** ([#978](https://github.com/massgen/MassGen/pull/978)): Rewritten with clearer schema, better error handling, and improved naming
+- **MediaCallLedgerHook** ([#978](https://github.com/massgen/MassGen/pull/978)): New `MediaCallLedgerHook` for tracking read/generate media tool calls via the hook framework
+- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New default OpenAI flagship model added to the model registry
+- **Subagent Backend Inheritance** ([#978](https://github.com/massgen/MassGen/pull/978)): New `inherit_spawning_agent_backend` option — subagents automatically inherit the spawning agent's backend
+- **Subagent Final Answer Strategy** ([#978](https://github.com/massgen/MassGen/pull/978)): New `final_answer_strategy` option for child orchestrator final-answer policy (winner_reuse, winner_present, synthesize)
+- **Per-Agent Subagent Agents** ([#978](https://github.com/massgen/MassGen/pull/978)): Per-agent `subagent_agents` override and orchestrator config file support with robust JSON parsing
+
+### Changed
+- **Decomp Mode Cooperates with Checklist** ([#978](https://github.com/massgen/MassGen/pull/978)): Decomposition mode now cooperates with the checklist workflow for unified quality-gated subtask iteration
+- **System Prompt Focus** ([#978](https://github.com/massgen/MassGen/pull/978)): Refocused system prompt on evaluating entire output quality
+- **Verification Prompts** ([#978](https://github.com/massgen/MassGen/pull/978)): Improved verification_latest prompts for faster verification rounds
+
+### Fixed
+- **Checklist & Proposal Injections** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed proposal injection improvements for more reliable checklist behavior
+- **Task Plan Refresh** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed task plan refresh during quality rounds
+- **Codex Prompt Caching** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed prompt caching calculation for pricing accuracy
+- **Skill Prefix Handling** ([#978](https://github.com/massgen/MassGen/pull/978)): Fixed skill prefix handling edge cases
+
+### Technical Details
+- **Major Focus**: Multimodal tools, subagent enhancements, GPT-5.4, decomp+checklist cooperation
+- **PRs Merged**: [#978](https://github.com/massgen/MassGen/pull/978) (improve_verification_time)
+- **Contributors**: @ncrispino (6 commits), @HenryQi (1 commit)
+
+## [0.1.59] - 2026-03-04
+
+### Added
+- **Planning Improvements** ([#969](https://github.com/massgen/MassGen/pull/969)): Smarter quality rounds with improved planning
+  - Auto-add improvements to task plan for better iteration tracking
+  - Plan review enhancements for more thorough quality evaluation
+
+- **Checklist & Evaluation Enhancements** ([#969](https://github.com/massgen/MassGen/pull/969)): More reliable evaluation pipeline
+  - Better eval gen config for more accurate quality assessments
+  - Checklist fixes for consistent behavior across rounds
+  - Gemini tool name normalization for MCP compatibility (ease for MCP)
+
+### Changed
+- **Subagent Behavior** ([#969](https://github.com/massgen/MassGen/pull/969)): Adjusted subagent behavior and manager enhancements
+  - Improved subagent coordination and task delegation
+  - Docker skill write access fixes for containerized execution
+- **Video Generation Skills** ([#969](https://github.com/massgen/MassGen/pull/969)): Adjusted video gen skill behavior
+  - No fallback to animated on errors — fail cleanly instead
+  - Video understanding criticality improvements
+  - Impact metric restoration for quality assessment
+
+### Fixed
+- **Answer Anonymization** ([#969](https://github.com/massgen/MassGen/pull/969)): Fixed answer anonymization during evaluation
+- **Quickstart & Tests** ([#969](https://github.com/massgen/MassGen/pull/969)): Updated quickstart flow and test suite
+- **Plan & Docker Fixes** ([#969](https://github.com/massgen/MassGen/pull/969)): Small fixes for plan mode and Docker execution
+
+### Technical Details
+- **Major Focus**: Quality round improvements — planning, evaluation, subagents, media fixes
+- **PRs Merged**: [#969](https://github.com/massgen/MassGen/pull/969) (improve_quality_rounds)
+- **Contributors**: @ncrispino (7 commits), @HenryQi (1 commit)
+
+## [0.1.58] - 2026-03-02
+
+### Added
+- **Comprehensive Multimodal Revamp**: Major expansion of multimodal generation and understanding capabilities
+  - ElevenLabs TTS & STT ([#942](https://github.com/massgen/MassGen/issues/942)): High-quality voice synthesis and transcription via `generate_media` and `read_media` tools
+  - Nano Banana 2 Image Generation ([#951](https://github.com/massgen/MassGen/issues/951)): New default image generation model with higher quality output
+  - Grok Image/Video Generation: Grok multimedia generation support via xAI API
+  - Media Generation Skills: New reusable skills for image, video, and audio generation workflows
+  - Multi-Turn Image Editing: Continuation IDs for iterative image editing sessions
+
+- **Nvidia NIM Backend** ([#962](https://github.com/massgen/MassGen/pull/962)): First-class provider integration for NVIDIA Inference Microservices
+  - Support for NVIDIA-hosted models via NIM API
+  - Full integration with MassGen's multi-agent coordination
+
+- **Quality Rethinking Subagent** ([#964](https://github.com/massgen/MassGen/pull/964)): New `quality_rethinking` subagent type for targeted per-element craft improvements
+  - Explicit improve/preserve listings in checklists
+  - Better label refresh ordering for more coherent checklist updates
+
+- **CLI Mode Flags**: New command-line flags mirroring TUI toggles
+  - `--quick`, `--single-agent`, `--coordination-mode`, `--personas` flags
+  - Plan mode accessible from command line
+
+### Changed
+- **Logging Architecture Refactor**: Fixed concurrent logging for parallel multi-agent execution with `LoggingSession` isolation
+  - Each agent gets isolated logging context preventing log interleaving
+- **Evaluation Criteria Defaults**: Sensible defaults for evaluation criteria when not explicitly specified
+- **Checklist Label Refresh Ordering**: Improved ordering of checklist label refreshes for better coherence
+
+### Fixed
+- **Subagent Hardening** ([#964](https://github.com/massgen/MassGen/pull/964)): Better '@' parsing and error handling for multiple `submit_checklist` calls
+  - Clearer subagent context and improved error messages
+- **Pre-Collaboration Checklist**: Fixed checklist behavior before collaboration phase
+- **Evaluation Criteria Defaults**: Fixed default handling for evaluation criteria
+
+### Technical Details
+- **Major Focus**: Multimodal revamp, Nvidia NIM backend, quality rethinking subagent, checklist improvements
+- **PRs Merged**: [#962](https://github.com/massgen/MassGen/pull/962) (Nvidia NIM), [#964](https://github.com/massgen/MassGen/pull/964) (Subagent hardening)
+- **Contributors**: @ncrispino (11 commits), @AbhimanyuAryan (1 commit)
+
+## [0.1.57] - 2026-02-27
+
+### Added
+- **Subagent Delegation Protocol** ([#955](https://github.com/massgen/MassGen/pull/955), MAS-325): File-based delegation for container-to-host subagent spawning
+  - `SubagentLaunchWatcher` polls shared delegation directory for request files
+  - Atomic JSON-based `DelegationRequest`/`DelegationResponse` exchange protocol
+  - Workspace path validation against allowlist for security
+  - Cancel sentinel support for graceful subagent termination
+
+- **Builder Subagent Type** ([#955](https://github.com/massgen/MassGen/pull/955)): New subagent for executing substantial pre-specified work with fresh context
+  - Transformative redesigns, large artifact generation, complex multi-file rewrites
+  - Prescriptive spec input with positive goals AND forbidden patterns (negative constraints)
+  - Auto-triggered by checklist when transformative changes identified
+
+- **Claude Code Reasoning Parameters** ([#955](https://github.com/massgen/MassGen/pull/955)): Updated SDK integration with new unified reasoning config
+  - Migrated from deprecated `max_thinking_tokens` to `reasoning` config dict
+  - Supports `type` (adaptive/enabled/disabled), `effort` (low/medium/high/max), `budget_tokens`
+  - Backward compatible with legacy configurations
+
+- **Substantiveness Tracking** ([#955](https://github.com/massgen/MassGen/pull/955)): Checklist captures specific planned changes to prevent satisficing
+  - List format: `transformative`, `structural`, `incremental` items with descriptions
+  - `decision_space_exhausted` flag for convergence signaling
+  - Builder subagent suggestion when transformative changes identified
+  - Novelty subagent injection when transformation count = 0 (plateau detection)
+
+- **Diagnostic Report Gating** ([#955](https://github.com/massgen/MassGen/pull/955)): Optional quality gate requiring structured diagnostic reports
+  - Validates report file existence, minimum length, and markdown format
+  - Required sections: Failure Patterns, Root Causes, Goal Alignment
+
+- **Verification Subdirectory for Scratch** ([#955](https://github.com/massgen/MassGen/pull/955)): Organized scratch work with verification subdirectory support
+
+### Changed
+- **Subagent Workspace Management** ([#955](https://github.com/massgen/MassGen/pull/955)): Auto-mounted parent workspace (read-only) by default via `include_parent_workspace`
+  - Eliminates need for `context_paths: ["./"]` — subagents get parent workspace automatically
+  - `context_paths` now for additional paths only (peer workspaces, external resources)
+- **Evaluation Criteria** ([#955](https://github.com/massgen/MassGen/pull/955)): Cleaned up subagent paths and eval criteria organization
+- **Memory Config Simplified** ([#955](https://github.com/massgen/MassGen/pull/955)): Simplified memory config option to only final presentation
+- **Per-Agent Checklist Scoring** ([#955](https://github.com/massgen/MassGen/pull/955)): Support for evaluating multiple agents separately with format detection
+
+### Fixed
+- **Subagent Launch for Codex** ([#955](https://github.com/massgen/MassGen/pull/955)): Fixed codex backend subagent spawning
+- **Subagent Timing** ([#955](https://github.com/massgen/MassGen/pull/955)): Improved synchronization and timeout handling
+- **Subagent Temp Dir** ([#955](https://github.com/massgen/MassGen/pull/955)): Fixed temporary workspace directory support
+- **Subagent Type Initialization** ([#955](https://github.com/massgen/MassGen/pull/955)): Fixed type definitions and initialization
+- **Test Fixes** ([#955](https://github.com/massgen/MassGen/pull/955)): Various test updates for new features
+
+### Documentation, Configurations and Resources
+- New `massgen/subagent_types/builder/SUBAGENT.md` - Builder subagent type definition
+- Updated `massgen/subagent_types/evaluator/SUBAGENT.md` - Enhanced evaluator guidance
+- New `docs/modules/coordination_workflow.md` - End-to-end coordination lifecycle documentation
+- Updated `docs/modules/subagents.md` - Delegation protocol and workspace management
+- Updated `massgen/configs/BACKEND_CONFIGURATION.md` - Reasoning parameter documentation
+- New `ROADMAP_v0.1.58.md` - Next release roadmap
+
+### Technical Details
+- **Major Focus**: Subagent delegation protocol, builder subagent, convergence improvements
+- **PRs Merged**: [#955](https://github.com/massgen/MassGen/pull/955) (Delegation protocol, builder subagent, reasoning params, eval improvements)
+- **Files Changed**: 68 files, +7348/-503 lines
+- **New Tests**: `test_launch_watcher.py`, `test_launch_watcher_e2e.py`, `test_subagent_delegated_mode.py`, `test_round_resume.py`, `test_checklist_tools_server.py` (substantiveness), `test_write_mode_scratch.py`, `test_claude_code_skills_config.py`, `test_gepa_evaluation_flow.py`, `test_novelty_injection.py`
+- **Contributors**: @ncrispino (8 commits), @HenryQi (2 commits)
+
+## [0.1.56] - 2026-02-25
+
+### Added
+- **Critic Subagent** ([#945](https://github.com/massgen/MassGen/pull/945)): New subagent type for honest, unbiased quality assessment
+  - Detects genuine vs incremental improvement across refinement rounds
+  - First impression, quality ceiling assessment, incrementalism verdict, independent E-criterion scoring
+  - Describes the 10/10 vision and distance to excellence
+  - Complements existing subagent types (evaluator, explorer, researcher, novelty)
+
+- **Spec Plan Mode** ([#945](https://github.com/massgen/MassGen/pull/945)): Formal requirements specification before execution
+  - `plan_mode="spec"` for structured requirements gathering
+  - Spec creation, approval modal, and execution pipeline
+  - TUI spec mode state with dedicated mode bar support
+  - Spec storage and changedoc integration
+
+- **read_media Conversation Continuity** ([#945](https://github.com/massgen/MassGen/pull/945)): Follow-up conversations on supported media (image) via `continue_from` conversation_id
+  - Multi-turn image analysis with severity parsing
+
+- **ask_others Targeted Messaging** ([#937](https://github.com/massgen/MassGen/pull/937)): `target_agents` parameter for focused agent-to-agent communication
+  - Validation and per-target response counting
+  - Shadow-agent prompt improvements for prior work separation
+
+- **Codex OAuth Login Fix** ([#937](https://github.com/massgen/MassGen/pull/937), MAS-322): Codex backend always available in WebUI regardless of OPENAI_API_KEY
+  - OAuth authentication fix via `codex login`
+
+- **Background Subagent Continuation** ([#945](https://github.com/massgen/MassGen/pull/945)): Non-blocking subagent task execution
+  - Enhanced subagent state tracking and graceful cancellation
+
+- **Docker Configuration Mounting** ([#945](https://github.com/massgen/MassGen/pull/945)): Claude and Codex configuration mounting options for Docker containers
+
+### Changed
+- **Evaluation Criteria Taxonomy** ([#945](https://github.com/massgen/MassGen/pull/945)): Updated from core/stretch to must/should/could tiers
+- **Novelty Subagent Enhancement** ([#945](https://github.com/massgen/MassGen/pull/945)): Updated guidance for growth-oriented refinement
+- **Multimodal Tool Configs** ([#945](https://github.com/massgen/MassGen/pull/945)): Updated text-to-image, text-to-speech, and text-to-video generation configs
+
+### Fixed
+- Test and spec reading fixes ([#945](https://github.com/massgen/MassGen/pull/945))
+- Audio cleanup for future release stability ([#945](https://github.com/massgen/MassGen/pull/945))
+
+### Documentation, Configurations and Resources
+- New `massgen/subagent_types/critic/SUBAGENT.md` - Critic subagent type definition
+- Updated `massgen/subagent_types/novelty/SUBAGENT.md` - Enhanced novelty guidance
+- Updated `massgen/tool/_multimodal_tools/TOOL.md` - Audio multimodal documentation
+- Updated `massgen/configs/features/background_subagent_example.yaml`
+- Updated multimodal tool configs (text-to-image, text-to-speech, text-to-video)
+- New `ROADMAP_v0.1.57.md` - Next release roadmap
+
+### Technical Details
+- **Major Focus**: Spec plan mode, targeted messaging, critic subagent
+- **PRs Merged**: [#945](https://github.com/massgen/MassGen/pull/945) (Spec mode, critic subagent, audio multimodal), [#937](https://github.com/massgen/MassGen/pull/937) (Codex OAuth, ask_others targeting)
+- **Files Changed**: 89 files, +8684/-1089 lines
+- **New Tests**: 16 new test files covering spec execution, spec storage, spec approval modal, audio multimodal, read_media analysis/followup, refinement quality, and more
+- **Contributors**: @HenryQi (3 commits), @MuL1ian (3 commits), and the MassGen team (4 commits)
+
+## [0.1.55] - 2026-02-23
+
+### Added
+- **Specialized Subagent Types** ([#938](https://github.com/massgen/MassGen/pull/938)): Discovery-based system for specialized subagent roles via `SUBAGENT.md` frontmatter
+  - Built-in types: evaluator (programmatic verification), explorer (investigation), researcher (deep analysis), novelty (breaks refinement plateaus)
+  - TUI visualization for subagent roles
+
+- **Dynamic Evaluation Criteria** ([#938](https://github.com/massgen/MassGen/pull/938)): GEPA-inspired task-specific evaluation criteria generation replacing static E1-E4 items
+  - Domain-specific presets (persona, decomposition, evaluation, prompt, analysis)
+  - Core/stretch categorization for smarter convergence off-ramps
+  - Score scale 0-10
+  - Config: `evaluation_criteria_generator`
+
+- **Native Backend Image Routing** ([#938](https://github.com/massgen/MassGen/pull/938), MAS-300): `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) instead of always using OpenAI
+  - Fallback to OpenAI for backends without `image_understanding` capability
+
+- **Configurable Video Frame Extraction** ([#938](https://github.com/massgen/MassGen/pull/938)): Scene-based (PySceneDetect) or uniform extraction modes
+  - `max_frames` cost guardrail (default 30, max 60)
+  - Config: `multimodal_config.video`
+
+- **Remotion Skill in Quickstart** ([#938](https://github.com/massgen/MassGen/pull/938)): Video generation/editing skill installed when selected during quickstart
+
+### Changed
+- **Checklist System Update** ([#938](https://github.com/massgen/MassGen/pull/938)): T-prefix to E-prefix naming, 0-100 to 0-10 score scale, `item_categories` for core/stretch, convergence off-ramp when all core items pass
+- **Unified Pre-Collaboration** ([#938](https://github.com/massgen/MassGen/pull/938)): Persona generation, decomposition, and eval criteria generation unified as composable primitives
+
+### Fixed
+- Background subagent cancel name fix ([#938](https://github.com/massgen/MassGen/pull/938))
+- Initial TUI sizing fix ([#938](https://github.com/massgen/MassGen/pull/938))
+
+### Documentation
+- New `docs/modules/composition.md` - Composable primitives, phase architecture, domain-specific checklist gates
+
+### Technical Details
+- **Major Focus**: Specialized subagent types, dynamic evaluation criteria, native image routing, video frame extraction
+- **PRs Merged**: [#938](https://github.com/massgen/MassGen/pull/938) (Subagent roles / specialized types)
+- **Contributors**: @ncrispino and the MassGen team
+
+## [0.1.54] - 2026-02-20
+
+### Added
+- **Copilot SDK Backend** ([#862](https://github.com/massgen/MassGen/pull/862)): New `copilot` backend using `github-copilot-sdk`
+  - Native MCP server integration and custom tool handling
+  - Session management with cache invalidation
+  - Auth via GitHub subscription
+
+- **Subagent Runtime Messaging** ([#926](https://github.com/massgen/MassGen/pull/926)): New `send_message_to_subagent` tool to steer running background subagents mid-execution
+  - Supports per-agent targeting within subagent orchestrators
+
+- **Gemini 3.1 Pro Support** ([#926](https://github.com/massgen/MassGen/pull/926), MAS-312): `gemini-3.1-pro-preview` model added to capabilities registry
+
+- **Per-Agent Injection Targeting** ([#926](https://github.com/massgen/MassGen/pull/926)): Injections can target specific agents or broadcast to all
+
+### Changed
+- **MCP Hooks Improvements** ([#926](https://github.com/massgen/MassGen/pull/926)): Hook middleware for subagent MCP servers, `InjectionDeliveryStatus` enum, hook-dir argument for PostToolUse injection
+- **Type Annotation Modernization** ([#926](https://github.com/massgen/MassGen/pull/926)): Codebase-wide migration from `typing.Dict/List/Optional/Union` to modern `dict/list/X | None` syntax
+
+### Fixed
+- MCP hooks issue fix ([#926](https://github.com/massgen/MassGen/pull/926))
+- Subagent message sending fix ([#926](https://github.com/massgen/MassGen/pull/926))
+- fstmcp version fix ([#920](https://github.com/massgen/MassGen/pull/920))
+
+### Technical Details
+- **Major Focus**: Subagent runtime messaging, Copilot SDK backend, Gemini 3.1 Pro support
+- **PRs Merged**: [#862](https://github.com/massgen/MassGen/pull/862) (Copilot SDK backend), [#926](https://github.com/massgen/MassGen/pull/926) (Subagent messaging), [#921](https://github.com/massgen/MassGen/pull/921) (Cloud infra research), [#920](https://github.com/massgen/MassGen/pull/920) (Minor fixes)
+- **Contributors**: @ncrispino and the MassGen team
+
+## [0.1.53] - 2026-02-18
+
+### Added
+- **Background Tool Execution** ([#917](https://github.com/massgen/MassGen/pull/917)): Non-blocking lifecycle tools for long-running work
+  - `start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`
+  - Compatible with custom tools and MCP server tools
+
+- **Planning Task Verification** ([#917](https://github.com/massgen/MassGen/pull/917)): Tasks now require `verification` and `verification_method` fields by default
+  - `--no-require-verification` flag to opt out
+  - Framework-injected tasks exempt from verification requirements
+
+- **TUI Background Job Indicators** ([#917](https://github.com/massgen/MassGen/pull/917)): Agent status ribbon with background job indicators
+  - Background tasks modal with lifecycle controls
+
+- **Subagent Infrastructure** ([#917](https://github.com/massgen/MassGen/pull/917)): Groundwork for specialized subagent types
+  - Evaluator and Explorer type definitions via `SUBAGENT.md` frontmatter
+
+### Changed
+- **Tool Argument Normalization** ([#917](https://github.com/massgen/MassGen/pull/917)): Consistent argument handling across backends
+
+### Fixed
+- Task plan verification improvements
+- Codex reasoning config alignment
+
+### Technical Details
+- **Major Focus**: Background tool execution, planning verification, TUI background indicators
+- **PRs Merged**: [#917](https://github.com/massgen/MassGen/pull/917) (Background tools & subagent infrastructure)
+- **Contributors**: @ncrispino and the MassGen team
+
+## [0.1.52] - 2026-02-16
+
+### Added
+- **Dedicated Final Answer Modal** ([#901](https://github.com/massgen/MassGen/pull/901)): Tabbed modal with Answer tab (markdown content, post-evaluation, and file list) and Workspace/Review Changes tab (diff review)
+  - Trophy header with agent identity and model name
+  - Approve/Reject/Cancel action bar with rework controls for iteration
+
+- **Substantive Gate** ([#901](https://github.com/massgen/MassGen/pull/901)): Quality gate preventing coordination from continuing with only incremental changes
+  - Tracks `transformative`/`structural`/`incremental` classification
+  - Detects `decision_space_exhausted` for convergence
+  - Config: `require_substantiveness: true` (mandatory in checklist)
+
+- **Novelty Injection** ([#901](https://github.com/massgen/MassGen/pull/901)): Creative pressure injection when agents converge or stall
+  - Levels: `none` (default), `gentle`, `moderate`, `aggressive`
+  - Intensifies after restarts
+  - Config: `novelty_injection` in coordination section
+
+- **Agent Identity & Versioning** ([#901](https://github.com/massgen/MassGen/pull/901)): Unique agent identity with versioned answer labels (e.g., `agent1.2`)
+  - `answer_label_mapping` for provenance tracking
+
+- **Subagent Evaluation Infrastructure** ([#901](https://github.com/massgen/MassGen/pull/901)): Foundation for delegating evaluation to spawned subagent instances
+
+### Changed
+- **First Answer Non-Restart** ([#901](https://github.com/massgen/MassGen/pull/901)): First answer from each agent no longer triggers automatic restarts even if quality checks fail, enabling more natural coordination flow
+
+### Fixed
+- Approved/rejected state display in final answer card
+- Auto-open workspace behavior
+- Final answer view in main timeline
+- Tool spacing in final card
+
+### Documentation, Configurations and Resources
+- **Substantive Gate Config**: New `require_substantiveness` YAML parameter (mandatory in checklist)
+- **Novelty Injection Config**: New `novelty_injection` parameter in coordination section (`none`/`gentle`/`moderate`/`aggressive`)
+
+### Technical Details
+- **Major Focus**: Final answer modal redesign, substantive gate, novelty injection, agent identity versioning
+- **PRs Merged**: [#901](https://github.com/massgen/MassGen/pull/901) (Final answer improvements)
+- **Contributors**: @ncrispino and the MassGen team
 
 ## [0.1.51] - 2026-02-13
 

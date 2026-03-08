@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Multi-line input widget for the MassGen TUI.
 
@@ -7,8 +6,6 @@ Enter submits, Shift+Enter or Ctrl+J inserts a new line.
 Optional vim mode for vim-style editing.
 Supports @ path autocomplete integration.
 """
-
-from typing import List, Optional, Tuple
 
 from textual import events
 from textual.binding import Binding
@@ -134,16 +131,16 @@ class MultiLineInput(TextArea):
         self._vim_normal = False  # Start in insert mode even if vim_mode is True
 
         # Vim pending command state (for two-key commands like dd, cc, dw, cw)
-        self._vim_pending_cmd: Optional[str] = None
+        self._vim_pending_cmd: str | None = None
         # Vim pending motion (for three-key commands like dt<char>, cf<char>)
-        self._vim_pending_motion: Optional[str] = None
+        self._vim_pending_motion: str | None = None
 
         # @ autocomplete state
-        self._at_position: Optional[int] = None  # Character position of @ in text
+        self._at_position: int | None = None  # Character position of @ in text
         self._autocomplete_active = False  # Whether autocomplete dropdown is showing
 
         # Paste summarization state
-        self._pasted_blocks: List[Tuple[int, str, int]] = []  # (paste_id, full_text, line_count)
+        self._pasted_blocks: list[tuple[int, str, int]] = []  # (paste_id, full_text, line_count)
         self._paste_counter: int = 0
 
         # Ctrl+C double-press tracking for quit
@@ -551,7 +548,7 @@ class MultiLineInput(TextArea):
             row, _ = self.cursor_location
             self.move_cursor((row, target_col))
 
-    def _find_char_position(self, motion: str, char: str) -> Optional[int]:
+    def _find_char_position(self, motion: str, char: str) -> int | None:
         """Find the column position for a character motion.
 
         Args:
@@ -738,7 +735,7 @@ class MultiLineInput(TextArea):
         if not value:
             self._at_position = None
 
-    def _find_at_position(self) -> Optional[Tuple[int, str]]:
+    def _find_at_position(self) -> tuple[int, str] | None:
         """Find the @ position and prefix for autocomplete.
 
         Returns:

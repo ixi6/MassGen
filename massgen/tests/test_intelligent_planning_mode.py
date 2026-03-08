@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Test intelligent planning mode that analyzes questions for irreversibility.
 

@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for AG2 utility functions.
 """
+
 from unittest.mock import MagicMock
 
 from massgen.adapters.utils.ag2_utils import (

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 NLIP Token Tracker.
 
@@ -7,7 +6,7 @@ session IDs, context tokens, and conversation turns.
 """
 
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .schema import NLIPTokenField
 
@@ -19,13 +18,13 @@ class NLIPTokenTracker:
     """
 
     def __init__(self):
-        self._session_tokens: Dict[str, Dict[str, Any]] = {}
-        self._context_tokens: Dict[str, str] = {}
+        self._session_tokens: dict[str, dict[str, Any]] = {}
+        self._context_tokens: dict[str, str] = {}
 
     def create_session_token(
         self,
-        agent_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        agent_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> NLIPTokenField:
         """
         Create new session token for conversation.
@@ -75,18 +74,18 @@ class NLIPTokenTracker:
     def get_session_info(
         self,
         session_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get session information."""
         return self._session_tokens.get(session_id)
 
     def get_session_from_context_token(
         self,
         context_token: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Get session ID from context token."""
         return self._context_tokens.get(context_token)
 
-    def _generate_session_id(self, agent_id: Optional[str] = None) -> str:
+    def _generate_session_id(self, agent_id: str | None = None) -> str:
         """Generate unique session ID."""
         prefix = f"{agent_id}_" if agent_id else "nlip_"
         return f"{prefix}{uuid.uuid4()}"

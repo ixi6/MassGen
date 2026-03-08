@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 import fnmatch
 import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Optional
 
 from ..logger_config import logger
 from ..mcp_tools.hooks import HookResult
@@ -23,7 +22,7 @@ class ManagedPath:
     path_type: str  # "workspace", "temp_workspace", "context", etc.
     will_be_writable: bool = False  # True if this path will become writable for final agent
     is_file: bool = False  # True if this is a file-specific context path (not directory)
-    protected_paths: List[Path] = None  # Paths within this context that are immune from modification/deletion
+    protected_paths: list[Path] = None  # Paths within this context that are immune from modification/deletion
 
     def __post_init__(self):
         """Initialize protected_paths as empty list if None."""
@@ -98,11 +97,11 @@ class PathPermissionManager:
                 accordingly so that those that were "write" in YAML become writable again.
             enforce_read_before_delete: Whether to enforce read-before-delete policy for workspace files
         """
-        self.managed_paths: List[ManagedPath] = []
+        self.managed_paths: list[ManagedPath] = []
         self.context_write_access_enabled = context_write_access_enabled
 
         # Cache for quick permission lookups
-        self._permission_cache: Dict[Path, Permission] = {}
+        self._permission_cache: dict[Path, Permission] = {}
 
         # File operation tracker for read-before-delete enforcement
         self.file_operation_tracker = FileOperationTracker(enforce_read_before_delete=enforce_read_before_delete)
@@ -110,8 +109,8 @@ class PathPermissionManager:
         # Snapshot-based context path write tracking
         # We snapshot files (path -> mtime) before final presentation and compare after
         # to detect new/modified files. This catches ALL writes (tools, bash, etc.)
-        self._context_path_snapshot: Dict[str, float] = {}  # path -> mtime at snapshot time
-        self._context_path_writes: List[str] = []  # computed list of written files
+        self._context_path_snapshot: dict[str, float] = {}  # path -> mtime at snapshot time
+        self._context_path_writes: list[str] = []  # computed list of written files
 
         logger.info(
             f"[PathPermissionManager] Initialized with context_write_access_enabled={context_write_access_enabled}, " f"enforce_read_before_delete={enforce_read_before_delete}",
@@ -143,7 +142,7 @@ class PathPermissionManager:
 
         logger.info(f"[PathPermissionManager] Added {path_type} path: {path} ({permission.value})")
 
-    def get_context_paths(self) -> List[Dict[str, str]]:
+    def get_context_paths(self) -> list[dict[str, str]]:
         """
         Get context paths in configuration format for system prompts.
 
@@ -290,7 +289,7 @@ class PathPermissionManager:
 
         logger.info(f"[PathPermissionManager] Snapshot taken: {file_count} files in {len(writable_context_paths)} writable context paths")
 
-    def compute_context_path_writes(self) -> List[str]:
+    def compute_context_path_writes(self) -> list[str]:
         """
         Compare current state against snapshot to detect written files.
 
@@ -303,8 +302,8 @@ class PathPermissionManager:
             List of file paths that were written (new or modified)
         """
         self._context_path_writes.clear()
-        self._context_path_new_files: List[str] = []
-        self._context_path_modified_files: List[str] = []
+        self._context_path_new_files: list[str] = []
+        self._context_path_modified_files: list[str] = []
 
         # Find all writable context paths
         writable_context_paths = [mp for mp in self.managed_paths if mp.path_type == "context" and mp.will_be_writable]
@@ -312,7 +311,7 @@ class PathPermissionManager:
         if not writable_context_paths:
             return []
 
-        current_files: Dict[str, float] = {}
+        current_files: dict[str, float] = {}
 
         # Collect current state
         for mp in writable_context_paths:
@@ -347,7 +346,7 @@ class PathPermissionManager:
         )
         return self._context_path_writes
 
-    def get_context_path_writes(self) -> List[str]:
+    def get_context_path_writes(self) -> list[str]:
         """
         Get list of files written to context paths.
 
@@ -356,7 +355,7 @@ class PathPermissionManager:
         """
         return list(self._context_path_writes)
 
-    def get_context_path_writes_categorized(self) -> Dict[str, List[str]]:
+    def get_context_path_writes_categorized(self) -> dict[str, list[str]]:
         """
         Get categorized lists of new and modified files in context paths.
 
@@ -379,7 +378,7 @@ class PathPermissionManager:
         self._context_path_new_files = []
         self._context_path_modified_files = []
 
-    def add_context_paths(self, context_paths: List[Dict[str, Any]]) -> None:
+    def add_context_paths(self, context_paths: list[dict[str, Any]]) -> None:
         """
         Add context paths from configuration.
 
@@ -492,7 +491,7 @@ class PathPermissionManager:
             protected_count = len(protected_paths)
             logger.info(f"[PathPermissionManager] Added context {path_type_str}: {path} ({actual_permission.value}, will_be_writable: {will_be_writable}, protected_paths: {protected_count})")
 
-    def add_previous_turn_paths(self, turn_paths: List[Dict[str, Any]]) -> None:
+    def add_previous_turn_paths(self, turn_paths: list[dict[str, Any]]) -> None:
         """
         Add previous turn workspace paths for read access.
         These are tracked separately from regular context paths.
@@ -538,7 +537,7 @@ class PathPermissionManager:
                 return True
         return False
 
-    def get_permission(self, path: Path) -> Optional[Permission]:
+    def get_permission(self, path: Path) -> Permission | None:
         """
         Get permission level for a path.
 
@@ -609,7 +608,7 @@ class PathPermissionManager:
         logger.debug(f"[PathPermissionManager] No permission found for {resolved_path} in managed paths: {[(str(mp.path), mp.permission.value, mp.path_type) for mp in self.managed_paths]}")
         return None
 
-    async def pre_tool_use_hook(self, tool_name: str, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    async def pre_tool_use_hook(self, tool_name: str, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """
         PreToolUse hook to validate tool calls based on permissions.
 
@@ -761,7 +760,7 @@ class PathPermissionManager:
         # Track comparison tools that read file content.
         return "compare_files" in tool_lower or "compare_directories" in tool_lower
 
-    def _validate_binary_file_access(self, tool_name: str, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _validate_binary_file_access(self, tool_name: str, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """
         Validate that text-based read tools are not trying to read binary files.
 
@@ -854,7 +853,7 @@ class PathPermissionManager:
 
         return False
 
-    def _track_read_operation(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
+    def _track_read_operation(self, tool_name: str, tool_args: dict[str, Any]) -> None:
         """
         Track files that are read by the agent.
 
@@ -896,7 +895,7 @@ class PathPermissionManager:
                 resolved_path = self._resolve_path_against_workspace(file_path)
                 self.file_operation_tracker.mark_as_read(Path(resolved_path))
 
-    def _track_create_operation(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
+    def _track_create_operation(self, tool_name: str, tool_args: dict[str, Any]) -> None:
         """
         Track files that are created by the agent.
 
@@ -909,7 +908,7 @@ class PathPermissionManager:
             resolved_path = self._resolve_path_against_workspace(file_path)
             self.file_operation_tracker.mark_as_created(Path(resolved_path))
 
-    def _ensure_parent_directories_exist(self, tool_name: str, tool_args: Dict[str, Any]) -> None:
+    def _ensure_parent_directories_exist(self, tool_name: str, tool_args: dict[str, Any]) -> None:
         """
         Ensure parent directories exist for write_file operations.
 
@@ -966,7 +965,7 @@ class PathPermissionManager:
             except OSError as e:
                 logger.warning(f"[PathPermissionManager] Failed to create parent directories for '{file_path}': {e}")
 
-    def _validate_delete_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _validate_delete_tool(self, tool_name: str, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """
         Validate delete tool operations using read-before-delete policy.
 
@@ -1010,7 +1009,7 @@ class PathPermissionManager:
 
         return (True, None)
 
-    def _validate_delete_files_batch(self, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _validate_delete_files_batch(self, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """
         Validate batch delete operations by checking all files that would be deleted.
 
@@ -1104,7 +1103,7 @@ class PathPermissionManager:
 
         return False
 
-    def _validate_file_context_access(self, tool_name: str, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _validate_file_context_access(self, tool_name: str, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """
         Validate access for all file operations - enforces directory boundaries and permissions.
 
@@ -1151,7 +1150,7 @@ class PathPermissionManager:
         # Has explicit permission - allow
         return (True, None)
 
-    def _validate_write_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _validate_write_tool(self, tool_name: str, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """Validate write tool access."""
         # Special handling for copy_files_batch - validate all destination paths after globbing
         if tool_name == "copy_files_batch":
@@ -1173,6 +1172,11 @@ class PathPermissionManager:
         if self._is_pure_write_tool(tool_name) and path.exists() and path.is_file():
             # Allow writing to empty files (size == 0)
             if path.stat().st_size > 0:
+                # Allow rewriting files created earlier in this run.
+                # This preserves protection for pre-existing files while avoiding
+                # unnecessary Read/Delete/Write churn for iterative generation.
+                if self.file_operation_tracker.was_created(path):
+                    return (True, None)
                 return (
                     False,
                     f"Cannot overwrite existing file '{path.name}' with write_file. " f"Use edit_file to modify existing files, or delete the file first then recreate it.",
@@ -1237,7 +1241,7 @@ class PathPermissionManager:
 
         return path_str
 
-    def _validate_copy_files_batch(self, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _validate_copy_files_batch(self, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """Validate copy_files_batch by checking all destination paths after globbing."""
         try:
             logger.debug(f"[PathPermissionManager] copy_files_batch validation - context_write_access_enabled: {self.context_write_access_enabled}")
@@ -1275,7 +1279,7 @@ class PathPermissionManager:
         except Exception as e:
             return (False, f"copy_files_batch validation failed: {e}")
 
-    def _validate_command_tool(self, tool_name: str, tool_args: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    def _validate_command_tool(self, tool_name: str, tool_args: dict[str, Any]) -> tuple[bool, str | None]:
         """Validate command tool access.
 
         As of v0.0.20, only Claude Code supports execution.
@@ -1385,7 +1389,7 @@ class PathPermissionManager:
 
         return (True, None)
 
-    def _extract_file_path(self, tool_args: Dict[str, Any]) -> Optional[str]:
+    def _extract_file_path(self, tool_args: dict[str, Any]) -> str | None:
         """Extract file path from tool arguments."""
         # Common argument names for file paths:
         # - Claude Code: file_path, notebook_path
@@ -1409,7 +1413,7 @@ class PathPermissionManager:
 
         return None
 
-    def _extract_file_from_command(self, command: str, pattern: str) -> Optional[str]:
+    def _extract_file_from_command(self, command: str, pattern: str) -> str | None:
         """Try to extract target file from a command string."""
         # This is a simplified extraction - could be enhanced
         # For redirects like > or >>
@@ -1445,7 +1449,7 @@ class PathPermissionManager:
 
         return None
 
-    def _extract_paths_from_command(self, command: str) -> List[str]:
+    def _extract_paths_from_command(self, command: str) -> list[str]:
         """
         Extract all potential file/directory paths from a Bash command for validation.
 
@@ -1502,11 +1506,11 @@ class PathPermissionManager:
 
         return paths
 
-    def get_accessible_paths(self) -> List[Path]:
+    def get_accessible_paths(self) -> list[Path]:
         """Get list of all accessible paths."""
         return [path.path for path in self.managed_paths]
 
-    def get_mcp_filesystem_paths(self) -> List[str]:
+    def get_mcp_filesystem_paths(self) -> list[str]:
         """
         Get all managed paths for MCP filesystem server configuration. Workspace path will be first.
 
@@ -1532,7 +1536,7 @@ class PathPermissionManager:
 
         return out
 
-    def get_writable_paths(self) -> List[str]:
+    def get_writable_paths(self) -> list[str]:
         """
         Get paths with write permission for SDK add_dirs configuration.
 
@@ -1565,7 +1569,7 @@ class PathPermissionManager:
 
         return "\n".join(lines)
 
-    async def validate_context_access(self, input_data: Dict[str, Any], tool_use_id: Optional[str], context: Any) -> Dict[str, Any]:  # HookContext from claude_code_sdk
+    async def validate_context_access(self, input_data: dict[str, Any], tool_use_id: str | None, context: Any) -> dict[str, Any]:  # HookContext from claude_code_sdk
         """
         Claude Code SDK compatible hook function for PreToolUse.
 
@@ -1591,7 +1595,7 @@ class PathPermissionManager:
 
         return {}  # Empty response means allow
 
-    def get_claude_code_hooks_config(self) -> Dict[str, Any]:
+    def get_claude_code_hooks_config(self) -> dict[str, Any]:
         """
         Get Claude Agent SDK hooks configuration.
 

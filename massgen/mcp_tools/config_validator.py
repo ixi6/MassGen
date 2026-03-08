@@ -1,18 +1,16 @@
-# -*- coding: utf-8 -*-
 """
 Configuration validation for MCP tools integration.Provides comprehensive validation for MCP server configurations,
 backend integration settings, and orchestrator coordination parameters.
 """
 
-
-from typing import Any, Dict
+from typing import Any
 
 from .exceptions import MCPConfigurationError
 
 
 class MCPConfigValidator:
     @classmethod
-    def validate_server_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_server_config(cls, config: dict[str, Any]) -> dict[str, Any]:
         """
         Validate a single MCP server configuration using security validator.
 
@@ -37,7 +35,7 @@ class MCPConfigValidator:
             ) from e
 
     @classmethod
-    def validate_backend_mcp_config(cls, backend_config: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_backend_mcp_config(cls, backend_config: dict[str, Any]) -> dict[str, Any]:
         """
         Validate MCP configuration for a backend.
 

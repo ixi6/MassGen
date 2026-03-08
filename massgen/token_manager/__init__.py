@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from .token_manager import (
     APICallMetric,
     RoundTokenUsage,

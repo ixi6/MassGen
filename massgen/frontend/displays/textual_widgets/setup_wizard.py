@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Setup Wizard for MassGen TUI.
 
@@ -7,7 +6,7 @@ This replaces the questionary-based CLI setup with a Textual TUI experience.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from textual.app import ComposeResult
@@ -39,19 +38,9 @@ class StatusIndicator(Static):
 
 def _setup_log(msg: str) -> None:
     """Log to TUI debug file."""
-    try:
-        import logging
+    from massgen.frontend.displays.shared.tui_debug import tui_log
 
-        log = logging.getLogger("massgen.tui.debug")
-        if not log.handlers:
-            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-            handler.setFormatter(logging.Formatter("%(asctime)s [SETUP] %(message)s", datefmt="%H:%M:%S"))
-            log.addHandler(handler)
-            log.setLevel(logging.DEBUG)
-            log.propagate = False
-        log.debug(msg)
-    except Exception:
-        pass
+    tui_log(f"[SETUP] {msg}")
 
 
 class SetupWelcomeStep(WelcomeStep):
@@ -82,12 +71,12 @@ class ProviderSelectionStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
-        self._checkboxes: Dict[str, Checkbox] = {}
-        self._providers: List[tuple] = []  # (provider_id, name, is_configured, env_var)
+        self._checkboxes: dict[str, Checkbox] = {}
+        self._providers: list[tuple] = []  # (provider_id, name, is_configured, env_var)
 
     def _load_providers(self) -> None:
         """Load provider information from ConfigBuilder."""
@@ -132,7 +121,7 @@ class ProviderSelectionStep(StepComponent):
                     # Show status label for configured providers
                     yield Label(f"✓ {name} (configured)", classes="configured-label")
 
-    def get_value(self) -> List[str]:
+    def get_value(self) -> list[str]:
         """Return list of selected provider IDs."""
         return [pid for pid, cb in self._checkboxes.items() if cb.value]
 
@@ -141,7 +130,7 @@ class ProviderSelectionStep(StepComponent):
             for pid, cb in self._checkboxes.items():
                 cb.value = pid in value
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         # Allow proceeding with no selection (user may already have all keys configured)
         return None
 
@@ -159,14 +148,14 @@ class DynamicApiKeyStep(StepComponent):
         provider_name: str,
         env_var: str,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self.provider_id = provider_id
         self.provider_name = provider_name
         self.env_var = env_var
-        self._input: Optional[Input] = None
+        self._input: Input | None = None
 
     def compose(self) -> ComposeResult:
         with Container(classes="password-container"):
@@ -186,7 +175,7 @@ class DynamicApiKeyStep(StepComponent):
                 classes="password-hint",
             )
 
-    def get_value(self) -> Dict[str, str]:
+    def get_value(self) -> dict[str, str]:
         """Return dict with env_var: api_key."""
         if self._input and self._input.value:
             return {self.env_var: self._input.value}
@@ -197,7 +186,7 @@ class DynamicApiKeyStep(StepComponent):
             if self._input:
                 self._input.value = value[self.env_var]
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if not self._input or not self._input.value.strip():
             return f"Please enter your {self.provider_name} API key"
         return None
@@ -294,15 +283,15 @@ class DockerSetupStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._diagnostics = None
-        self._checkboxes: Dict[str, Checkbox] = {}
-        self._selected_images: List[str] = []
-        self._pull_button: Optional[Button] = None
-        self._pull_status: Optional[Label] = None
+        self._checkboxes: dict[str, Checkbox] = {}
+        self._selected_images: list[str] = []
+        self._pull_button: Button | None = None
+        self._pull_status: Label | None = None
         self._pulling = False
         self._spinner_timer = None
         self._spinner_frame = 0
@@ -520,12 +509,12 @@ class DockerSetupStep(StepComponent):
         for cb in self._checkboxes.values():
             cb.disabled = False
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if self._pulling:
             return "Please wait for Docker image pull to finish"
         return None
 
-    def get_value(self) -> Dict[str, Any]:
+    def get_value(self) -> dict[str, Any]:
         return {
             "available": self._diagnostics.is_available if self._diagnostics else False,
             "images_to_pull": self._selected_images,
@@ -613,14 +602,14 @@ class SkillsSetupStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._packages_status = None
         self._skills_info = None
-        self._checkboxes: Dict[str, Checkbox] = {}
-        self._selected_packages: List[str] = []
+        self._checkboxes: dict[str, Checkbox] = {}
+        self._selected_packages: list[str] = []
 
     def _load_skills_status(self) -> None:
         """Load skills status."""
@@ -709,7 +698,7 @@ class SkillsSetupStep(StepComponent):
                     self._selected_packages.remove(pkg_id)
                 break
 
-    def get_value(self) -> Dict[str, Any]:
+    def get_value(self) -> dict[str, Any]:
         return {
             "packages_to_install": self._selected_packages,
         }
@@ -786,8 +775,8 @@ class SetupCompleteStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
 
@@ -847,14 +836,14 @@ class SetupWizard(WizardModal):
     def __init__(
         self,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(id=id, classes=classes)
         self._dynamic_steps_added = False
-        self._providers_info: Dict[str, tuple] = {}  # provider_id -> (name, env_var)
+        self._providers_info: dict[str, tuple] = {}  # provider_id -> (name, env_var)
 
-    def get_step_labels(self) -> List[str]:
+    def get_step_labels(self) -> list[str]:
         """Return short labels for the breadcrumb stepper."""
         return self.STEP_LABELS
 
@@ -877,7 +866,7 @@ class SetupWizard(WizardModal):
         except Exception as e:
             _setup_log(f"SetupWizard._load_providers_info error: {e}")
 
-    def get_steps(self) -> List[WizardStep]:
+    def get_steps(self) -> list[WizardStep]:
         """Return the initial steps. Dynamic steps are added after provider selection."""
         self._load_providers_info()
 
@@ -984,8 +973,8 @@ class SetupWizard(WizardModal):
         _setup_log("SetupWizard.on_wizard_complete: Saving API keys")
 
         # Collect all API keys from dynamic steps
-        collected_keys: Dict[str, str] = {}
-        configured_providers: List[str] = []
+        collected_keys: dict[str, str] = {}
+        configured_providers: list[str] = []
 
         for step_id, step_data in self.state.step_data.items():
             if step_id.startswith("api_key_") and isinstance(step_data, dict):
@@ -1017,7 +1006,7 @@ class SetupWizard(WizardModal):
         existing_content = {}
         if env_path.exists():
             try:
-                with open(env_path, "r") as f:
+                with open(env_path) as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#") and "=" in line:
@@ -1094,6 +1083,7 @@ class SetupWizard(WizardModal):
                     install_crawl4ai_skill,
                     install_openai_skills,
                     install_openskills_cli,
+                    install_remotion_skill,
                     install_vercel_skills,
                 )
 
@@ -1102,6 +1092,7 @@ class SetupWizard(WizardModal):
                     "openai": install_openai_skills,
                     "vercel": install_vercel_skills,
                     "agent_browser": install_agent_browser_skill,
+                    "remotion": install_remotion_skill,
                 }
 
                 requested_openskills_packages = [pkg for pkg in packages_to_install if pkg in openskills_installers]

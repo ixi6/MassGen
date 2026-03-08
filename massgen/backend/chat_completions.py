@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base class for backends using OpenAI Chat Completions API format.
 Handles common message processing, tool conversion, and streaming patterns.
@@ -10,6 +9,7 @@ Supported Providers and Environment Variables:
 - Fireworks AI: FIREWORKS_API_KEY
 - Groq: GROQ_API_KEY
 - Kimi/Moonshot: MOONSHOT_API_KEY or KIMI_API_KEY
+- Nvidia NIM: NGC_API_KEY
 - Nebius AI Studio: NEBIUS_API_KEY
 - OpenRouter: OPENROUTER_API_KEY
 - ZAI: ZAI_API_KEY
@@ -19,8 +19,10 @@ Supported Providers and Environment Variables:
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+
 # Standard library imports
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any
 
 # Third-party imports
 from openai import AsyncOpenAI
@@ -55,7 +57,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     """
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         super().__init__(api_key, **kwargs)
         # Backend name is already set in MCPBackend, but we may need to override it
         self.backend_name = self.get_provider_name()
@@ -66,7 +68,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         # When a stream is cancelled (e.g., in multi-agent restart), we need to estimate tokens
         self._interrupted_stream_content: str = ""
         self._interrupted_stream_model: str = ""
-        self._interrupted_stream_messages: List[Dict[str, Any]] = []  # Track input for estimation
+        self._interrupted_stream_messages: list[dict[str, Any]] = []  # Track input for estimation
         self._stream_usage_received: bool = True  # True = no pending estimation needed
         # Track reasoning state for streaming (needed for reasoning_done transition)
         self._reasoning_active: bool = False
@@ -103,10 +105,10 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def stream_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Stream response using OpenAI Response API with unified MCP/non-MCP processing."""
         # Clear streaming buffer at start (mixin respects _compression_retry)
         self._clear_streaming_buffer(**kwargs)
@@ -121,8 +123,8 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _append_tool_result_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         result: Any,
         tool_type: str,
     ) -> None:
@@ -155,8 +157,8 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _append_tool_error_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         error_msg: str,
         tool_type: str,
     ) -> None:
@@ -179,7 +181,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         tool_name = call.get("name", "unknown")
         self._append_tool_to_buffer(tool_name, error_msg, is_error=True)
 
-    async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
+    async def _execute_custom_tool(self, call: dict[str, Any]) -> AsyncGenerator[CustomToolChunk]:
         """Execute custom tool with streaming support - async generator for base class.
 
         This method is called by _execute_tool_with_logging and yields CustomToolChunk
@@ -202,9 +204,9 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _customize_api_params(
         self,
-        api_params: Dict[str, Any],
-        all_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        api_params: dict[str, Any],
+        all_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Hook for subclasses to modify API params before making the API call.
 
         Override this method to add provider-specific parameters to the API request.
@@ -221,12 +223,12 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _stream_with_custom_and_mcp_tools(
         self,
-        current_messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        current_messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         _compression_retry: bool = False,  # Prevents infinite loops on context errors
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Recursively stream responses, executing custom and MCP tool calls as needed.
 
         Args:
@@ -627,7 +629,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             # Get provider name for logging
             provider_name = self.get_provider_name()
 
-            def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+            def tool_config_for_call(call: dict[str, Any]) -> ToolExecutionConfig:
                 return custom_tool_config if call["name"] in self._custom_tool_names else mcp_tool_config
 
             def chunk_adapter(chunk: StreamChunk) -> StreamChunk:
@@ -643,7 +645,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
             nlip_available = self._nlip_enabled and self._nlip_router
 
-            pending_custom_calls: List[Dict[str, Any]] = []
+            pending_custom_calls: list[dict[str, Any]] = []
             for call in custom_calls:
                 if nlip_available:
                     logger.info(f"[NLIP] Using NLIP routing for custom tool {call['name']}")
@@ -677,7 +679,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 )
                 pending_custom_calls.append(call)
 
-            pending_mcp_calls: List[Dict[str, Any]] = []
+            pending_mcp_calls: list[dict[str, Any]] = []
             for call in mcp_calls:
                 if nlip_available:
                     logger.info(f"[NLIP] Using NLIP routing for MCP tool {call['name']}")
@@ -762,7 +764,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             yield StreamChunk(type="done")
             return
 
-    async def _process_stream(self, stream, all_params, agent_id) -> AsyncGenerator[StreamChunk, None]:
+    async def _process_stream(self, stream, all_params, agent_id) -> AsyncGenerator[StreamChunk]:
         """Handle standard Chat Completions API streaming format with logging."""
 
         # Note: Message tracking (_interrupted_stream_messages) is set by the caller
@@ -1040,7 +1042,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         log_stream_chunk(log_prefix, "done", None, agent_id)
         yield StreamChunk(type="done")
 
-    def create_tool_result_message(self, tool_call: Dict[str, Any], result_content: str) -> Dict[str, Any]:
+    def create_tool_result_message(self, tool_call: dict[str, Any], result_content: str) -> dict[str, Any]:
         """Create tool result message for Chat Completions format."""
         tool_call_id = self.extract_tool_call_id(tool_call)
         return {
@@ -1049,11 +1051,11 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             "content": result_content,
         }
 
-    def extract_tool_result_content(self, tool_result_message: Dict[str, Any]) -> str:
+    def extract_tool_result_content(self, tool_result_message: dict[str, Any]) -> str:
         """Extract content from Chat Completions tool result message."""
         return tool_result_message.get("content", "")
 
-    def _convert_messages_for_mcp_chat_completions(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_messages_for_mcp_chat_completions(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert messages for MCP Chat Completions format if needed."""
         # For Chat Completions, messages are already in the correct format
         # Just ensure tool result messages use the correct format
@@ -1102,6 +1104,8 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             return "Nebius AI Studio"
         elif "moonshot.ai" in base_url or "moonshot.cn" in base_url:
             return "Kimi"
+        elif "nvidia.com" in base_url:
+            return "Nvidia NIM"
         elif "poe.com" in base_url:
             return "POE"
         elif "aliyuncs.com" in base_url:
@@ -1113,7 +1117,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """Chat Completions supports filesystem through MCP servers."""
         return FilesystemSupport.MCP
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Get list of builtin tools supported by this provider."""
         # Chat Completions API doesn't typically support builtin tools like web_search
         # But some providers might - this can be overridden in subclasses
@@ -1138,7 +1142,7 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             logger.warning(f"Failed to instrument OpenAI client for observability: {e}")
         return client
 
-    def _handle_reasoning_transition(self, log_prefix: str = "", agent_id: Optional[str] = None) -> Optional[StreamChunk]:
+    def _handle_reasoning_transition(self, log_prefix: str = "", agent_id: str | None = None) -> StreamChunk | None:
         """Handle reasoning state transition and return StreamChunk if transition occurred."""
         if self._reasoning_active:
             self._reasoning_active = False

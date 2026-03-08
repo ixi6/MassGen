@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Shadow Agent Implementation for Broadcast Responses.
 
@@ -24,7 +23,7 @@ import logging
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .broadcast.broadcast_dataclasses import BroadcastRequest
@@ -129,10 +128,11 @@ class ShadowAgentSpawner:
             )
 
         # 6. Save debug context if --debug flag is enabled
-        from .logger_config import _DEBUG_MODE, _LOG_SESSION_DIR
+        from .logger_config import get_log_session_dir, is_debug_mode
 
+        _log_session_dir = get_log_session_dir() if is_debug_mode() else None
         debug_file_path = None
-        if _DEBUG_MODE and _LOG_SESSION_DIR:
+        if _log_session_dir:
             debug_file_path = self._save_debug_context(
                 shadow_id=shadow_id,
                 parent_agent_id=parent_agent.agent_id,
@@ -141,7 +141,7 @@ class ShadowAgentSpawner:
                 shadow_history=shadow_history,
                 current_turn_context=current_turn_context,
                 parent_agent=parent_agent,
-                log_session_dir=Path(_LOG_SESSION_DIR),
+                log_session_dir=Path(_log_session_dir),
             )
 
         # 7. Generate single-turn response (no tools)
@@ -151,7 +151,7 @@ class ShadowAgentSpawner:
             shadow_id,
         )
         # 8. Save response to debug file if --debug flag is enabled
-        if _DEBUG_MODE and debug_file_path:
+        if is_debug_mode() and debug_file_path:
             self._append_response_to_debug(debug_file_path, response)
 
         logger.info(
@@ -208,6 +208,12 @@ You are responding to a question from another agent in your team.
 - Your general knowledge and expertise
 - The question text from the asking agent
 
+**Context Layers (IMPORTANT):**
+- **Completed Previous Work**: Your conversation history contains solutions and work you have already **finalized and submitted** in past turns. When asked about previous solution, refer to this.
+- **Current In-Progress Work**: Any section labeled `[Current work in progress - not yet complete]` is a **PARTIAL DRAFT** from your current active turn — you haven't finished or submitted it yet.
+Do NOT treat this as your "previous solution."
+- Rule: "previous/last solution" → look in conversation history. "what are you currently working on?" → you may reference the in-progress section.
+
 **What You Do NOT Know:**
 - The asking agent's workspace, files, or current work
 - What the asking agent has discovered or built
@@ -262,7 +268,7 @@ You are responding to a question from another agent in your team.
         self,
         parent_agent: "SingleAgent",
         shadow_id: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Build a formatted string of the parent's current turn context.
 
         Combines text content, tool calls, reasoning, and MCP tool calls
@@ -343,7 +349,7 @@ You are responding to a question from another agent in your team.
         shadow_system_prompt: str,
         parent_agent: "SingleAgent",
         broadcast_request: "BroadcastRequest",
-        current_turn_context: Optional[str],
+        current_turn_context: str | None,
         shadow_id: str,
     ) -> list:
         """Build a conversation history compatible with Claude Code backend.
@@ -485,10 +491,10 @@ Please provide your response:"""
         broadcast_request: "BroadcastRequest",
         shadow_system_prompt: str,
         shadow_history: list,
-        current_turn_context: Optional[str],
+        current_turn_context: str | None,
         parent_agent: "SingleAgent",
         log_session_dir: Path,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """Save shadow agent context to a debug file.
 
         Creates a JSON file with the full context sent to the shadow agent,
@@ -568,7 +574,7 @@ Please provide your response:"""
             response: The generated response
         """
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 debug_data = json.load(f)
 
             debug_data["response"] = response

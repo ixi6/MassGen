@@ -1,8 +1,7 @@
-# -*- coding: utf-8 -*-
 """Workspace-related modals: File inspection."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 try:
     from textual.app import ComposeResult
@@ -26,7 +25,7 @@ class FileInspectionModal(BaseModal):
         super().__init__()
         self.workspace_path = workspace_path
         self.app_ref = app
-        self.selected_file: Optional[Path] = None
+        self.selected_file: Path | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="file_inspection_container"):

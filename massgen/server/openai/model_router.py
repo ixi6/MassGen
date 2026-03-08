@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Model routing for the MassGen HTTP server.
 
@@ -7,10 +6,10 @@ Supports:
 - massgen/<example> - Use a built-in example config (e.g., massgen/basic_multi)
 - massgen - Use the default config
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -18,10 +17,10 @@ class ResolvedModel:
     """Resolved model routing result."""
 
     raw_model: str
-    config_path: Optional[str] = None
+    config_path: str | None = None
 
 
-def resolve_model(raw_model: str, *, default_config: Optional[str]) -> ResolvedModel:
+def resolve_model(raw_model: str, *, default_config: str | None) -> ResolvedModel:
     """
     Route model string to config path.
 

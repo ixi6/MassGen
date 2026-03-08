@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Generate audio from text using OpenAI's gpt-4o-audio-preview model and store it in the workspace.
 """
@@ -8,7 +7,6 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -16,7 +14,7 @@ from openai import AsyncOpenAI
 from massgen.tool._result import ExecutionResult, TextContent
 
 
-def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None) -> None:
+def _validate_path_access(path: Path, allowed_paths: list[Path] | None = None) -> None:
     """
     Validate that a path is within allowed directories.
 
@@ -46,9 +44,9 @@ async def text_to_speech_continue_generation(
     model: str = "gpt-4o-audio-preview",
     voice: str = "alloy",
     audio_format: str = "wav",
-    storage_path: Optional[str] = None,
-    allowed_paths: Optional[List[str]] = None,
-    agent_cwd: Optional[str] = None,
+    storage_path: str | None = None,
+    allowed_paths: list[str] | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """
     Generate audio from text using OpenAI's gpt-4o-audio-preview model and store it in the workspace.

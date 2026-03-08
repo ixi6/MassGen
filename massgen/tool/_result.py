@@ -1,9 +1,7 @@
-# -*- coding: utf-8 -*-
 """Execution result class for tool outputs."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Union
 
 
 def _generate_id() -> str:
@@ -47,10 +45,10 @@ class AudioContent(ContentBlock):
 class ExecutionResult:
     """Result container for tool execution outputs."""
 
-    output_blocks: List[Union[TextContent, ImageContent, AudioContent]]
+    output_blocks: list[TextContent | ImageContent | AudioContent]
     """The execution output blocks from the tool."""
 
-    meta_info: Optional[dict] = None
+    meta_info: dict | None = None
     """Additional metadata accessible within the system."""
 
     is_streaming: bool = False

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Subagent MCP Tools for MassGen
 

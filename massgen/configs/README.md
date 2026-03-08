@@ -227,7 +227,119 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.51 - Latest
+### v0.1.60 - Latest
+**New Features:** Multimodal Tools, Subagent Enhancements & GPT-5.4
+
+**Key Features:**
+- **Multimodal Tool Improvements**: Rewritten `read_media` with clearer schema; new `MediaCallLedgerHook` for media call tracking
+- **Subagent Enhancements**: `inherit_spawning_agent_backend` for automatic backend inheritance, `final_answer_strategy` for child orchestrator policy, per-agent `subagent_agents` override
+- **GPT-5.4 Support**: New default OpenAI flagship model
+- **Decomp + Checklist Cooperation**: Decomposition mode works with checklist workflow for quality-gated subtask iteration
+- **Fixes**: Codex prompt caching calculation fix, checklist/proposal injection improvements, task plan refresh
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.60
+pip install --upgrade massgen
+
+# Choose backend 'openai' with model 'gpt-5.4' in the setup wizard to start using GPT-5.4
+uv run massgen --quickstart
+```
+
+### v0.1.59
+**New Features:** Quality Round Improvements — Planning, Evaluation, Subagents, Media Fixes
+
+**Key Features:**
+- **Planning Improvements**: Auto-add improvements to task plan, plan review enhancements
+- **Checklist & Evaluation**: Better eval gen config, checklist fixes, Gemini tool name normalization for MCP
+- **Subagent Improvements**: Adjusted subagent behavior, subagent manager enhancements, Docker skill write access fixes
+- **Media Generation Fixes**: Video gen skill adjustments, video understanding criticality, impact metric restoration
+
+### v0.1.58
+**New Features:** Multimodal Revamp, Nvidia NIM Backend, Quality Rethinking Subagent, Checklist Improvements
+
+**Key Features:**
+- **Multimodal Revamp**: ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok image/video generation, media generation skills, multi-turn image editing with continuation IDs
+- **Nvidia NIM Backend**: First-class provider integration for NVIDIA Inference Microservices
+- **Quality Rethinking Subagent**: New `quality_rethinking` subagent type for targeted per-element craft improvements
+- **Checklist Improvements**: Explicit improve/preserve listings, better label refresh ordering, evaluation criteria defaults
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.58
+pip install --upgrade massgen
+
+# Try checklist-driven refinement with quality rethinking
+uv run massgen --config @examples/features/subagent_checklist.yaml \
+  "Create a website for an AI company selling a creative sci-fi style product. Ensure polished visuals and cool interactive elements"
+```
+
+### v0.1.57
+**New Features:** Subagent Delegation Protocol, Builder Subagent, Substantiveness Tracking, Claude Code Reasoning
+
+**Key Features:**
+- **Subagent Delegation Protocol**: Spawn subagents from within Docker containers via secure file-based delegation with atomic JSON exchange and workspace validation
+- **Builder Subagent**: New subagent type for large-scale work (complex rewrites, big documents) with fresh context, auto-triggered when transformative changes are needed
+- **Substantiveness Tracking**: Checklist classifies planned changes as transformative, structural, or incremental for smarter convergence decisions
+- **Claude Code Reasoning**: Updated SDK with unified `reasoning` config supporting adaptive/enabled/disabled modes and effort levels
+
+### v0.1.56
+**New Features:** Spec Plan Mode, ask_others Targeting, Critic Subagent, Codex OAuth Login Fix
+
+**Key Features:**
+- **Spec Plan Mode**: `plan_mode="spec"` for formal requirements specification before execution with TUI spec mode support
+- **ask_others Targeted Messaging**: `target_agents` parameter for focused agent-to-agent communication
+- **Critic Subagent**: New subagent type for honest, unbiased quality assessment detecting genuine vs incremental improvement
+- **read_media Conversation Continuity**: Follow-up conversations on supported media (image) via `continue_from` conversation_id
+- **Codex OAuth Login Fix**: Codex backend always available in WebUI regardless of OPENAI_API_KEY
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.56
+pip install --upgrade massgen
+
+# Launch MassGen, then press Shift+Tab twice to enter 'spec' mode
+uv run massgen
+```
+
+### v0.1.55
+**New Features:** Specialized Subagent Types, Dynamic Evaluation Criteria, Native Backend Image Routing, Configurable Video Frame Extraction
+
+**Key Features:**
+- **Specialized Subagent Types**: Discovery-based system for specialized subagent roles (evaluator, explorer, researcher, novelty) via `SUBAGENT.md` frontmatter with TUI visualization
+- **Dynamic Evaluation Criteria**: GEPA-inspired task-specific evaluation criteria with domain presets and core/stretch categorization
+- **Native Backend Image Routing**: `understand_image` routes to agent's own backend (Claude, Gemini, Grok, Claude Code, Codex) with OpenAI fallback
+- **Configurable Video Frame Extraction**: Scene-based (PySceneDetect) or uniform extraction with `max_frames` cost guardrail
+
+### v0.1.54
+**New Features:** Copilot SDK Backend, Subagent Runtime Messaging, Gemini 3.1 Pro Support, Per-Agent Injection Targeting
+
+**Key Features:**
+- **Copilot SDK Backend**: New `copilot` backend using `github-copilot-sdk` with native MCP server integration
+- **Subagent Runtime Messaging**: New `send_message_to_subagent` tool to steer running background subagents mid-execution
+- **Gemini 3.1 Pro Support**: `gemini-3.1-pro-preview` model added to capabilities registry
+- **Per-Agent Injection Targeting**: Injections can target specific agents or broadcast to all
+
+### v0.1.53
+**New Features:** Background Tool Execution, Planning Task Verification, TUI Background Job Indicators
+
+**Key Features:**
+- **Background Tool Execution**: Non-blocking lifecycle tools (`start_background_tool`, `get_background_tool_status`, `get_background_tool_result`, `wait_for_background_tool`, `cancel_background_tool`, `list_background_tools`)
+- **Planning Task Verification**: Tasks require `verification` and `verification_method` by default; `--no-require-verification` to opt out
+- **TUI Background Job Indicators**: Agent status ribbon and background tasks modal with lifecycle controls
+- **Subagent Infrastructure**: Groundwork for Evaluator and Explorer subagent types via `SUBAGENT.md` frontmatter
+
+### v0.1.52
+**New Features:** Dedicated Final Answer Modal, Substantive Gate, Novelty Injection, Agent Identity & Versioning
+
+**Key Features:**
+- **Dedicated Final Answer Modal**: Tabbed modal with Answer tab (markdown, post-eval, file list) and Workspace/Review Changes tab (diff review)
+- **Substantive Gate**: Quality gate preventing coordination from continuing with only incremental changes
+- **Novelty Injection**: Creative pressure injection when agents converge — levels: `none`, `gentle`, `moderate`, `aggressive`
+- **Agent Identity & Versioning**: Versioned answer labels (e.g., `agent1.2`) with `answer_label_mapping` for provenance tracking
+- **First Answer Non-Restart**: First answers no longer trigger automatic restarts on quality check failure
+
+### v0.1.51
 **New Features:** Change Documents (Changedoc), Changedoc-Anchored Evaluation, Checklist Gap Report, Drift Conflict Policy
 
 **Key Features:**
@@ -236,18 +348,6 @@ Most configurations use environment variables for API keys:so
 - **Drift Conflict Policy**: `drift_conflict_policy: skip|prefer_presenter|fail` for safer change application
 - **Review Modal Improvements**: Multi-context, multi-file diff visualization with critique
 - **`--cwd-context` CLI Flag**: Inject CWD as context path (`ro`/`rw`)
-
-**Try It:**
-```bash
-# Install or upgrade to v0.1.51
-pip install --upgrade massgen
-
-# Launch — changedoc is enabled by default
-uv run massgen
-
-# Or add your project context quickly
-uv run massgen --cwd-context ro
-```
 
 ### v0.1.50
 **New Features:** Chunked Plan Execution, Skill Lifecycle Management, Iterative Planning Review
@@ -405,10 +505,10 @@ uv run massgen --display textual \
 ```
 
 ### v0.1.41
-**New Features:** Async Subagent Execution, Subagent Round Timeouts, Extended Subagent Configuration
+**New Features:** Background Subagent Execution, Subagent Round Timeouts, Extended Subagent Configuration
 
 **Key Features:**
-- **Async Subagent Execution**: Spawn subagents with `async_=True` for non-blocking parallel work while parent continues
+- **Background Subagent Execution**: Spawn subagents with `background=True` for non-blocking parallel work while parent continues
 - **Poll for Completion**: Check subagent status and retrieve results when ready
 - **Subagent Round Timeouts**: Per-round timeout control with `subagent_round_timeouts` config section
 - **Extended Subagent Config**: `subagent_default_timeout`, `subagent_min_timeout`, `subagent_max_timeout`, `subagent_max_concurrent`
@@ -418,8 +518,8 @@ uv run massgen --display textual \
 # Install or upgrade
 pip install --upgrade massgen
 
-# Async subagent execution - parent continues while subagent works in background
-uv run massgen --display textual --config massgen/configs/features/async_subagent_example.yaml \
+# Background subagent execution - parent continues while subagent works in background
+uv run massgen --display textual --config massgen/configs/features/background_subagent_example.yaml \
   "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
 ```
 

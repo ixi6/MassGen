@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base Display Interface for MassGen Coordination
 
@@ -6,13 +5,13 @@ Defines the interface that all display implementations must follow.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class BaseDisplay(ABC):
     """Abstract base class for MassGen coordination displays."""
 
-    def __init__(self, agent_ids: List[str], **kwargs):
+    def __init__(self, agent_ids: list[str], **kwargs):
         """Initialize display with agent IDs and configuration."""
         self.agent_ids = agent_ids
         self.agent_outputs = {agent_id: [] for agent_id in agent_ids}
@@ -21,7 +20,7 @@ class BaseDisplay(ABC):
         self.config = kwargs
 
     @abstractmethod
-    def initialize(self, question: str, log_filename: Optional[str] = None):
+    def initialize(self, question: str, log_filename: str | None = None):
         """Initialize the display with question and optional log file."""
 
     @abstractmethod
@@ -30,7 +29,7 @@ class BaseDisplay(ABC):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ):
         """Update content for a specific agent.
 
@@ -50,7 +49,7 @@ class BaseDisplay(ABC):
             status: New status ("waiting", "working", "completed")
         """
 
-    def update_timeout_status(self, agent_id: str, timeout_state: Dict[str, Any]) -> None:
+    def update_timeout_status(self, agent_id: str, timeout_state: dict[str, Any]) -> None:
         """Update timeout display for an agent.
 
         Called periodically during coordination to update timeout countdown.
@@ -73,8 +72,8 @@ class BaseDisplay(ABC):
     def update_hook_execution(
         self,
         agent_id: str,
-        tool_call_id: Optional[str],
-        hook_info: Dict[str, Any],
+        tool_call_id: str | None,
+        hook_info: dict[str, Any],
     ) -> None:
         """Update display with hook execution information.
 
@@ -152,7 +151,7 @@ class BaseDisplay(ABC):
         """
         pass  # Default implementation does nothing
 
-    def show_final_presentation_start(self, agent_id: str, vote_counts: Optional[Dict[str, int]] = None, answer_labels: Optional[Dict[str, str]] = None):
+    def show_final_presentation_start(self, agent_id: str, vote_counts: dict[str, int] | None = None, answer_labels: dict[str, str] | None = None):
         """Notify that the final presentation phase is starting.
 
         This is called when the winning agent begins their final presentation.
@@ -169,7 +168,7 @@ class BaseDisplay(ABC):
     def cleanup(self):
         """Clean up display resources."""
 
-    def get_agent_content(self, agent_id: str) -> List[str]:
+    def get_agent_content(self, agent_id: str) -> list[str]:
         """Get all content for a specific agent."""
         return self.agent_outputs.get(agent_id, [])
 
@@ -177,7 +176,7 @@ class BaseDisplay(ABC):
         """Get current status for a specific agent."""
         return self.agent_status.get(agent_id, "unknown")
 
-    def get_orchestrator_events(self) -> List[str]:
+    def get_orchestrator_events(self) -> list[str]:
         """Get all orchestrator events."""
         return self.orchestrator_events.copy()
 

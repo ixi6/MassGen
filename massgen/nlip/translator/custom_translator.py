@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 Custom Tool Translator.
 
 Converts between NLIP messages and MassGen custom tool format.
 """
 
-from typing import Any, Dict
+from typing import Any
 
 from ..schema import NLIPToolCall, NLIPToolResult
 from .base import ProtocolTranslator
@@ -19,7 +18,7 @@ class CustomToolTranslator(ProtocolTranslator):
     async def nlip_to_native_call(
         self,
         nlip_call: NLIPToolCall,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Convert NLIP tool call to custom tool format.
 
@@ -60,7 +59,7 @@ class CustomToolTranslator(ProtocolTranslator):
 
     async def nlip_to_native_params(
         self,
-        nlip_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        nlip_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Custom tools use same parameter structure."""
         return nlip_params

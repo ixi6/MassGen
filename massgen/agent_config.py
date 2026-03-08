@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Agent configuration for MassGen framework following input_cases_reference.md
 Simplified configuration focused on the proven binary decision approach.
@@ -7,11 +6,13 @@ TODO: This file is outdated - check claude_code config and
 deprecated patterns. Update to reflect current backend architecture.
 """
 
+import copy
 import logging
 import warnings
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
+from .evaluation_criteria_generator import EvaluationCriteriaGeneratorConfig
 from .persona_generator import PersonaGeneratorConfig
 from .task_decomposer import TaskDecomposerConfig
 
@@ -36,8 +37,8 @@ class TimeoutConfig:
     """
 
     orchestrator_timeout_seconds: int = 1800  # 30 minutes
-    initial_round_timeout_seconds: Optional[int] = None  # None = disabled
-    subsequent_round_timeout_seconds: Optional[int] = None  # None = disabled
+    initial_round_timeout_seconds: int | None = None  # None = disabled
+    subsequent_round_timeout_seconds: int | None = None  # None = disabled
     round_timeout_grace_seconds: int = 120  # Grace period before hard block
 
 
@@ -83,6 +84,17 @@ class CoordinationConfig:
                                        by writing Markdown files to memory/ directories. Short-term
                                        memories auto-inject into all agents' system prompts. Long-term
                                        memories are read on-demand. Inspired by Letta's context hierarchy.
+        learning_capture_mode: Controls when evolving-skill + memory capture is produced.
+            - "round": Existing behavior. Capture can be produced in coordination rounds.
+            - "final_only": Keep changedoc behavior, but defer evolving-skill + memory
+                            production to the final presenter stage. Coordination rounds
+                            remain read-focused.
+            - "verification_and_final_only" (default): Round-time verification replay memo
+                            only; full consolidation remains presenter/final-time.
+        disable_final_only_round_capture_fallback: If True, final_only mode remains read-focused
+                                                  even when skip_final_presentation is enabled.
+                                                  This disables the default fallback that re-enables
+                                                  round-time learning capture when there is no presenter stage.
         compression_target_ratio: Target ratio for reactive compression when context limit is exceeded.
                                  Value between 0 and 1, where 0.2 means preserve 20% of messages and
                                  summarize the remaining 80%. Lower values = more aggressive compression.
@@ -98,6 +110,12 @@ class CoordinationConfig:
                                      previous sessions and include them as available skills.
         persona_generator: Configuration for automatic persona generation to increase agent diversity.
                           When enabled, an LLM generates diverse system message personas for each agent.
+        evaluation_criteria_generator: Configuration for task-specific evaluation criteria generation.
+                                      When enabled, generates GEPA-style criteria tailored to the task.
+        pre_collab_voting_threshold: Optional voting threshold override for pre-collaboration
+                                    subagent runs (persona generation, evaluation criteria generation,
+                                    and decomposition). When unset, pre-collab runs use the main
+                                    orchestrator voting_threshold.
         enable_subagents: If True, agents receive subagent MCP tools for spawning independent
                          agent instances with fresh context and isolated workspaces. Useful for
                          parallel task execution and avoiding context pollution.
@@ -106,13 +124,22 @@ class CoordinationConfig:
         subagent_max_timeout: Maximum allowed timeout in seconds (default 600). Prevents runaway subagents.
         subagent_max_concurrent: Maximum number of concurrent subagents an agent can spawn (default 3).
         subagent_round_timeouts: Optional per-round timeout settings for subagents.
+        subagent_runtime_mode: Runtime boundary mode for subagent execution.
+                              - "isolated" (default): require isolated runtime semantics
+                              - "inherited": run in parent runtime boundary
+        subagent_runtime_fallback_mode: Optional fallback when isolated runtime prerequisites are unavailable.
+                                       - None (default): strict isolation (fail if unavailable)
+                                       - "inherited": explicit opt-in fallback to shared runtime
+        subagent_host_launch_prefix: Optional command prefix used to launch isolated subagents
+                                    when running inside a containerized parent runtime.
+                                    Example: ["host-launch", "--exec"]
         subagent_orchestrator: Configuration for subagent orchestrator mode. When enabled, subagents
                               use a full Orchestrator with multiple agents. This enables multi-agent coordination within
                               subagent execution.
-        async_subagents: Configuration for async subagent execution. When enabled, agents can spawn
-                        subagents with async_=True to run in the background while continuing work.
+        background_subagents: Configuration for background subagent execution. When enabled, agents can spawn
+                        subagents with background=True to run in the background while continuing work.
                         Results are automatically injected when subagents complete.
-                        - enabled: bool (default True) - Whether to allow async subagent execution
+                        - enabled: bool (default True) - Whether to allow background subagent execution
                         - injection_strategy: str (default "tool_result") - How to inject results:
                           - "tool_result": Append result to next tool call output
                           - "user_message": Inject as separate user message
@@ -137,9 +164,9 @@ class CoordinationConfig:
     planning_mode_instruction: str = (
         "During coordination, describe what you would do without actually executing actions. Only provide concrete implementation details without calling external APIs or tools."
     )
-    plan_depth: Optional[str] = None  # "dynamic" | "shallow" | "medium" | "deep" - Task planning mode depth
-    plan_target_steps: Optional[int] = None  # Optional explicit task-count target (None = dynamic)
-    plan_target_chunks: Optional[int] = None  # Optional explicit chunk-count target (None = dynamic)
+    plan_depth: str | None = None  # "dynamic" | "shallow" | "medium" | "deep" - Task planning mode depth
+    plan_target_steps: int | None = None  # Optional explicit task-count target (None = dynamic)
+    plan_target_chunks: int | None = None  # Optional explicit chunk-count target (None = dynamic)
     max_orchestration_restarts: int = 0
     enable_agent_task_planning: bool = False
     max_tasks_per_plan: int = 10
@@ -151,32 +178,56 @@ class CoordinationConfig:
     max_broadcasts_per_agent: int = 10
     task_planning_filesystem_mode: bool = False
     enable_memory_filesystem_mode: bool = False
+    learning_capture_mode: str = "verification_and_final_only"  # "round" | "verification_and_final_only" | "final_only"
+    disable_final_only_round_capture_fallback: bool = False
     compression_target_ratio: float = 0.20  # Preserve 20% of messages on context overflow
     use_skills: bool = False
-    massgen_skills: List[str] = field(default_factory=list)
+    massgen_skills: list[str] = field(default_factory=list)
     skills_directory: str = ".agent/skills"
     load_previous_session_skills: bool = False
     persona_generator: PersonaGeneratorConfig = field(default_factory=PersonaGeneratorConfig)
+    evaluation_criteria_generator: EvaluationCriteriaGeneratorConfig = field(
+        default_factory=EvaluationCriteriaGeneratorConfig,
+    )
+    pre_collab_voting_threshold: int | None = None
     enable_subagents: bool = False
     subagent_default_timeout: int = 300
     subagent_min_timeout: int = 60  # Minimum 1 minute
     subagent_max_timeout: int = 600  # Maximum 10 minutes
     subagent_max_concurrent: int = 3
-    subagent_round_timeouts: Optional[Dict[str, Any]] = None
+    subagent_round_timeouts: dict[str, Any] | None = None
+    subagent_runtime_mode: str = "isolated"  # "isolated" | "inherited"
+    subagent_runtime_fallback_mode: str | None = None  # None | "inherited"
+    subagent_host_launch_prefix: list[str] | None = None  # Optional command prefix for containerized isolated launch
     subagent_orchestrator: Optional["SubagentOrchestratorConfig"] = None
-    # Async subagent execution configuration
-    async_subagents: Optional[Dict[str, Any]] = None  # {enabled: bool, injection_strategy: str}
+    # Background subagent execution configuration
+    background_subagents: dict[str, Any] | None = None  # {enabled: bool, injection_strategy: str}
     use_two_tier_workspace: bool = False  # Enable scratch/deliverable structure + git versioning
     task_decomposer: TaskDecomposerConfig = field(default_factory=TaskDecomposerConfig)
-    write_mode: Optional[str] = None  # "auto" | "worktree" | "isolated" | "legacy"
+    write_mode: str = "auto"  # "auto" | "worktree" | "isolated" | "legacy"
     enable_changedoc: bool = True  # Write changedoc.md decision journal during coordination
     drift_conflict_policy: str = "skip"  # "skip" | "prefer_presenter" | "fail"
+    subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
+    round_evaluator_before_checklist: bool = False  # Round 2+ must run round_evaluator before checklist submit
+    orchestrator_managed_round_evaluator: bool = False  # Gate orchestrator-owned round_evaluator launch; default prompt-guidance only
+    enable_quality_rethink_on_iteration: bool = False  # Auto-inject quality_rethinking spawn task on iteration 2+
+    enable_novelty_on_iteration: bool = False  # Auto-inject novelty/quality spawn task on iteration 2+
+    novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
+    improvements: dict[str, Any] = field(default_factory=dict)  # Quality gate config for propose_improvements
+    checklist_criteria_preset: str | None = None  # "persona" | "decomposition" | "evaluation" | "prompt" | "analysis"
+    checklist_criteria_inline: list[dict[str, str]] | None = None  # [{text: str, category: must|should|could}]
+    resume_from_log: dict[str, Any] | None = None  # {log_path: str, round: int}
 
     def __post_init__(self):
         """Validate configuration after initialization."""
         self._validate_broadcast_config()
         self._validate_timeout_config()
+        self._validate_subagent_runtime_config()
         self._validate_drift_conflict_policy()
+        self._validate_novelty_injection()
+        self._validate_learning_capture_mode()
+        self._validate_pre_collab_voting_threshold()
+        self._validate_improvements()
 
     def _validate_timeout_config(self):
         """Validate subagent timeout configuration."""
@@ -233,6 +284,77 @@ class CoordinationConfig:
                 "Invalid drift_conflict_policy: " f"{self.drift_conflict_policy}. " f"Must be one of: {sorted(valid_policies)}",
             )
 
+    def _validate_novelty_injection(self):
+        """Validate novelty_injection setting."""
+        valid_values = {"none", "gentle", "moderate", "aggressive"}
+        if self.novelty_injection not in valid_values:
+            raise ValueError(
+                f"Invalid novelty_injection: '{self.novelty_injection}'. " f"Must be one of: {sorted(valid_values)}",
+            )
+
+    def _validate_learning_capture_mode(self):
+        """Validate learning_capture_mode setting."""
+        valid_values = {"round", "verification_and_final_only", "final_only"}
+        if self.learning_capture_mode not in valid_values:
+            raise ValueError(
+                f"Invalid learning_capture_mode: '{self.learning_capture_mode}'. " f"Must be one of: {sorted(valid_values)}",
+            )
+
+    def _validate_pre_collab_voting_threshold(self):
+        """Validate optional pre-collab checklist threshold override."""
+        threshold = self.pre_collab_voting_threshold
+        if threshold is None:
+            return
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or threshold < 1:
+            raise ValueError(
+                "pre_collab_voting_threshold must be a positive integer or None",
+            )
+
+    def _validate_improvements(self):
+        """Validate improvements quality-gate configuration."""
+        if self.improvements is None:
+            self.improvements = {}
+            return
+
+        if not isinstance(self.improvements, dict):
+            raise ValueError(
+                "improvements must be a dictionary",
+            )
+
+        for key in ("min_transformative", "min_structural", "min_non_incremental"):
+            if key not in self.improvements:
+                continue
+            value = self.improvements[key]
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"improvements.{key} must be a non-negative integer",
+                )
+
+    def _validate_subagent_runtime_config(self):
+        """Validate subagent runtime mode/fallback configuration."""
+        valid_modes = {"isolated", "inherited", "delegated"}
+        if self.subagent_runtime_mode not in valid_modes:
+            raise ValueError(
+                f"Invalid subagent_runtime_mode: '{self.subagent_runtime_mode}'. " f"Must be one of: {sorted(valid_modes)}",
+            )
+
+        valid_fallback_modes = {None, "inherited"}
+        if self.subagent_runtime_fallback_mode not in valid_fallback_modes:
+            raise ValueError(
+                "Invalid subagent_runtime_fallback_mode: " f"'{self.subagent_runtime_fallback_mode}'. Must be one of: [None, 'inherited']",
+            )
+
+        if self.subagent_runtime_mode != "isolated" and self.subagent_runtime_fallback_mode is not None:
+            raise ValueError(
+                "subagent_runtime_fallback_mode is only valid when subagent_runtime_mode is 'isolated'",
+            )
+
+        if self.subagent_host_launch_prefix is not None:
+            if not isinstance(self.subagent_host_launch_prefix, list) or any(not isinstance(item, str) or not item.strip() for item in self.subagent_host_launch_prefix):
+                raise ValueError(
+                    "subagent_host_launch_prefix must be a list of non-empty strings when set",
+                )
+
 
 @dataclass
 class AgentConfig:
@@ -257,28 +379,45 @@ class AgentConfig:
         fairness_enabled: Enable fairness controls across all coordination modes (default: True)
         fairness_lead_cap_answers: Maximum allowed lead in answer revisions over slowest active peer
         max_midstream_injections_per_round: Maximum unseen source updates injected per agent per round
+        defer_peer_updates_until_restart: Queue unseen peer answer updates until the agent
+            restarts instead of injecting them mid-stream (default: False)
+        allow_midstream_peer_updates_before_checklist_submit: In checklist_gated mode, allow
+            peer updates mid-stream before the first accepted submit_checklist for the current
+            answer. ``None`` uses the orchestrator default policy.
+        max_checklist_calls_per_round: Maximum submit_checklist calls per answer before blocking
+            (default 1). After a new_answer verdict, the agent must implement and submit
+            new_answer rather than calling submit_checklist again.
+        checklist_first_answer: Allow submit_checklist before the first answer is submitted
+            (default False). When False, checklist evaluation begins from round 2 — agents
+            build and submit their first answer directly without checklist gating.
     """
 
     # Core backend configuration (includes tool enablement)
-    backend_params: Dict[str, Any] = field(default_factory=dict)
+    backend_params: dict[str, Any] = field(default_factory=dict)
 
     # Framework configuration
     message_templates: Optional["MessageTemplates"] = None
 
     # Voting behavior configuration
     voting_sensitivity: str = "lenient"
-    voting_threshold: Optional[int] = None  # Numeric threshold for ROI-style voting (e.g., 15 = 15% improvement required)
-    max_new_answers_per_agent: Optional[int] = None
-    max_new_answers_global: Optional[int] = None
+    voting_threshold: int | None = None  # Numeric threshold for ROI-style voting (e.g., 15 = 15% improvement required)
+    max_new_answers_per_agent: int | None = None
+    max_new_answers_global: int | None = None
     checklist_require_gap_report: bool = True
+    gap_report_mode: str = "changedoc"  # "changedoc" | "separate" | "none"
     answer_novelty_requirement: str = "lenient"
     fairness_enabled: bool = True
     fairness_lead_cap_answers: int = 2
     max_midstream_injections_per_round: int = 2
+    defer_peer_updates_until_restart: bool = False
+    allow_midstream_peer_updates_before_checklist_submit: bool | None = None
+    max_checklist_calls_per_round: int = 1
+    checklist_first_answer: bool = False
 
     # Agent customization
-    agent_id: Optional[str] = None
-    _custom_system_instruction: Optional[str] = field(default=None, init=False)
+    agent_id: str | None = None
+    subagent_agents: list[dict[str, Any]] = field(default_factory=list)
+    _custom_system_instruction: str | None = field(default=None, init=False)
 
     # Timeout and resource limits
     timeout_config: TimeoutConfig = field(default_factory=TimeoutConfig)
@@ -297,6 +436,16 @@ class AgentConfig:
     # When True, uses the existing answer directly without an additional LLM call
     skip_final_presentation: bool = False
 
+    # Final answer strategy after coordination completes.
+    # None preserves legacy behavior:
+    # - winner_reuse when skip_final_presentation=True
+    # - winner_present otherwise
+    # Explicit values:
+    # - winner_reuse: use the selected answer directly when presentation can be skipped
+    # - winner_present: selected winner performs a final presentation pass
+    # - synthesize: selected presenter combines the strongest parts of all answers
+    final_answer_strategy: str | None = None
+
     # Disable injection of other agents' answers (used by TUI multi-agent refinement OFF)
     # When True, agents work independently without seeing each other's work mid-stream
     disable_injection: bool = False
@@ -311,18 +460,18 @@ class AgentConfig:
     # A presenter agent synthesizes the final output.
     coordination_mode: str = "voting"
     # Agent ID that presents the final synthesized output (decomposition mode)
-    presenter_agent: Optional[str] = None
+    presenter_agent: str | None = None
 
     # Debug mode for restart feature - override final answer on attempt 1 only
-    debug_final_answer: Optional[str] = None
+    debug_final_answer: str | None = None
 
     # NLIP (Natural Language Interaction Protocol) Configuration
     enable_nlip: bool = False
-    nlip_config: Optional[Dict[str, Any]] = None
+    nlip_config: dict[str, Any] | None = None
     _nlip_router: Any = field(default=None, init=False, repr=False)
 
     @property
-    def custom_system_instruction(self) -> Optional[str]:
+    def custom_system_instruction(self) -> str | None:
         """
         DEPRECATED: Use backend-specific system prompt parameters instead.
 
@@ -338,7 +487,7 @@ class AgentConfig:
         return self._custom_system_instruction
 
     @custom_system_instruction.setter
-    def custom_system_instruction(self, value: Optional[str]) -> None:
+    def custom_system_instruction(self, value: str | None) -> None:
         if value is not None:
             warnings.warn(
                 "custom_system_instruction is deprecated. Use backend-specific " "system prompt parameters instead (e.g., append_system_prompt for Claude Code)",
@@ -349,8 +498,8 @@ class AgentConfig:
 
     def init_nlip_router(
         self,
-        tool_manager: Optional[Any] = None,
-        mcp_executor: Optional[Any] = None,
+        tool_manager: Any | None = None,
+        mcp_executor: Any | None = None,
     ) -> None:
         """Initialize NLIP router if NLIP is enabled.
 
@@ -369,7 +518,7 @@ class AgentConfig:
             )
 
     @property
-    def nlip_router(self) -> Optional[Any]:
+    def nlip_router(self) -> Any | None:
         """Get NLIP router instance."""
         return self._nlip_router
 
@@ -573,8 +722,8 @@ class AgentConfig:
     def create_azure_openai_config(
         cls,
         deployment_name: str = "gpt-4",
-        endpoint: Optional[str] = None,
-        api_key: Optional[str] = None,
+        endpoint: str | None = None,
+        api_key: str | None = None,
         api_version: str = "2024-02-15-preview",
         **kwargs,
     ) -> "AgentConfig":
@@ -619,11 +768,11 @@ class AgentConfig:
     def create_claude_code_config(
         cls,
         model: str = "claude-sonnet-4-20250514",
-        system_prompt: Optional[str] = None,
-        allowed_tools: Optional[list] = None,  # Legacy support
-        disallowed_tools: Optional[list] = None,  # Preferred approach
-        max_thinking_tokens: int = 8000,
-        cwd: Optional[str] = None,
+        system_prompt: str | None = None,
+        allowed_tools: list | None = None,  # Legacy support
+        disallowed_tools: list | None = None,  # Preferred approach
+        reasoning: dict | None = None,
+        cwd: str | None = None,
         **kwargs,
     ) -> "AgentConfig":
         """Create Claude Code Stream configuration using claude-code-sdk.
@@ -638,7 +787,10 @@ class AgentConfig:
             allowed_tools: [LEGACY] List of allowed tools (use disallowed_tools instead)
             disallowed_tools: List of dangerous operations to block
                             (default: ["Bash(rm*)", "Bash(sudo*)", "Bash(su*)", "Bash(chmod*)", "Bash(chown*)"])
-            max_thinking_tokens: Maximum tokens for internal thinking (default: 8000)
+            reasoning: Reasoning configuration dict. Preferred keys:
+                - type: "adaptive" (default), "enabled", or "disabled"
+                - effort: "low", "medium", "high" (default), or "max"
+                - budget_tokens: int (only for type="enabled")
             cwd: Current working directory for file operations
             **kwargs: Additional backend parameters
 
@@ -646,6 +798,12 @@ class AgentConfig:
             Maximum power configuration (recommended)::
 
                 config = AgentConfig.create_claude_code_config()
+
+            Custom reasoning config::
+
+                config = AgentConfig.create_claude_code_config(
+                    reasoning={"type": "adaptive", "effort": "max"}
+                )
 
             Custom security restrictions::
 
@@ -659,12 +817,6 @@ class AgentConfig:
                     cwd="/path/to/project",
                     system_prompt="You are an expert developer assistant."
                 )
-
-            Legacy allowed_tools approach (not recommended)::
-
-                config = AgentConfig.create_claude_code_config(
-                    allowed_tools=["Read", "Write", "Edit", "Bash"]
-                )
         """
         backend_params = {"model": model, **kwargs}
 
@@ -676,8 +828,8 @@ class AgentConfig:
             backend_params["allowed_tools"] = allowed_tools
         if disallowed_tools:
             backend_params["disallowed_tools"] = disallowed_tools
-        if max_thinking_tokens != 8000:  # Only set if different from default
-            backend_params["max_thinking_tokens"] = max_thinking_tokens
+        if reasoning:
+            backend_params["reasoning"] = reasoning
         if cwd:
             backend_params["cwd"] = cwd
 
@@ -810,9 +962,9 @@ class AgentConfig:
     def build_conversation(
         self,
         task: str,
-        agent_summaries: Optional[Dict[str, str]] = None,
-        session_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        agent_summaries: dict[str, str] | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Build conversation using the proven MassGen approach.
 
         Returns complete conversation configuration ready for backend.
@@ -866,7 +1018,7 @@ class AgentConfig:
         additional_message: Any = None,
         additional_message_role: str = "user",
         enforce_tools: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Continue an existing conversation (Cases 3 & 4).
 
         Args:
@@ -911,7 +1063,7 @@ class AgentConfig:
             "agent_id": self.agent_id,
         }
 
-    def handle_case3_enforcement(self, existing_messages: list) -> Dict[str, Any]:
+    def handle_case3_enforcement(self, existing_messages: list) -> dict[str, Any]:
         """Handle Case 3: Non-workflow response requiring enforcement.
 
         Args:
@@ -922,7 +1074,7 @@ class AgentConfig:
         """
         return self.continue_conversation(existing_messages=existing_messages, enforce_tools=True)
 
-    def add_tool_result(self, existing_messages: list, tool_call_id: str, result: str) -> Dict[str, Any]:
+    def add_tool_result(self, existing_messages: list, tool_call_id: str, result: str) -> dict[str, Any]:
         """Add tool result to conversation.
 
         Args:
@@ -937,7 +1089,7 @@ class AgentConfig:
 
         return self.continue_conversation(existing_messages=existing_messages, additional_message=tool_message)
 
-    def handle_case4_error_recovery(self, existing_messages: list, clarification: Optional[str] = None) -> Dict[str, Any]:
+    def handle_case4_error_recovery(self, existing_messages: list, clarification: str | None = None) -> dict[str, Any]:
         """Handle Case 4: Error recovery after tool failure.
 
         Args:
@@ -954,7 +1106,7 @@ class AgentConfig:
             enforce_tools=False,  # Agent should retry naturally
         )
 
-    def get_backend_params(self) -> Dict[str, Any]:
+    def get_backend_params(self) -> dict[str, Any]:
         """Get backend parameters (already includes tool enablement)."""
         return self.backend_params.copy()
 
@@ -962,11 +1114,12 @@ class AgentConfig:
     # SERIALIZATION
     # =============================================================================
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         result = {
             "backend_params": self.backend_params,
             "agent_id": self.agent_id,
+            "subagent_agents": copy.deepcopy(self.subagent_agents),
             # Access private attribute to avoid deprecation warning
             "custom_system_instruction": self._custom_system_instruction,
             "voting_sensitivity": self.voting_sensitivity,
@@ -978,6 +1131,10 @@ class AgentConfig:
             "fairness_enabled": self.fairness_enabled,
             "fairness_lead_cap_answers": self.fairness_lead_cap_answers,
             "max_midstream_injections_per_round": self.max_midstream_injections_per_round,
+            "defer_peer_updates_until_restart": self.defer_peer_updates_until_restart,
+            "allow_midstream_peer_updates_before_checklist_submit": self.allow_midstream_peer_updates_before_checklist_submit,
+            "max_checklist_calls_per_round": self.max_checklist_calls_per_round,
+            "checklist_first_answer": self.checklist_first_answer,
             "timeout_config": {
                 "orchestrator_timeout_seconds": self.timeout_config.orchestrator_timeout_seconds,
                 "initial_round_timeout_seconds": self.timeout_config.initial_round_timeout_seconds,
@@ -1014,11 +1171,12 @@ class AgentConfig:
         return result
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "AgentConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "AgentConfig":
         """Create from dictionary (for deserialization)."""
         # Extract basic fields
         backend_params = data.get("backend_params", {})
         agent_id = data.get("agent_id")
+        subagent_agents = data.get("subagent_agents", [])
         custom_system_instruction = data.get("custom_system_instruction")
         voting_sensitivity = data.get("voting_sensitivity", "lenient")
         voting_threshold = data.get("voting_threshold")
@@ -1029,6 +1187,12 @@ class AgentConfig:
         fairness_enabled = data.get("fairness_enabled", True)
         fairness_lead_cap_answers = data.get("fairness_lead_cap_answers", 2)
         max_midstream_injections_per_round = data.get("max_midstream_injections_per_round", 2)
+        defer_peer_updates_until_restart = data.get("defer_peer_updates_until_restart", False)
+        allow_midstream_peer_updates_before_checklist_submit = data.get(
+            "allow_midstream_peer_updates_before_checklist_submit",
+        )
+        max_checklist_calls_per_round = data.get("max_checklist_calls_per_round", 1)
+        checklist_first_answer = data.get("checklist_first_answer", False)
 
         # Handle timeout_config
         timeout_config = TimeoutConfig()
@@ -1057,6 +1221,7 @@ class AgentConfig:
             backend_params=backend_params,
             message_templates=message_templates,
             agent_id=agent_id,
+            subagent_agents=copy.deepcopy(subagent_agents),
             voting_sensitivity=voting_sensitivity,
             voting_threshold=voting_threshold,
             max_new_answers_per_agent=max_new_answers_per_agent,
@@ -1066,6 +1231,10 @@ class AgentConfig:
             fairness_enabled=fairness_enabled,
             fairness_lead_cap_answers=fairness_lead_cap_answers,
             max_midstream_injections_per_round=max_midstream_injections_per_round,
+            defer_peer_updates_until_restart=defer_peer_updates_until_restart,
+            allow_midstream_peer_updates_before_checklist_submit=allow_midstream_peer_updates_before_checklist_submit,
+            max_checklist_calls_per_round=max_checklist_calls_per_round,
+            checklist_first_answer=checklist_first_answer,
             timeout_config=timeout_config,
             coordination_config=coordination_config,
         )

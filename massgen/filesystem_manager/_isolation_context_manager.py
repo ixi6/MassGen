@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Isolation Context Manager for MassGen - Manages isolated write contexts for agents.
 
@@ -17,7 +16,7 @@ import os
 import secrets
 import shutil
 import tempfile
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..infrastructure import ShadowRepo, WorktreeManager, is_git_repo
 
@@ -26,6 +25,9 @@ log = logging.getLogger(__name__)
 
 # Name of the scratch directory inside worktrees (git-excluded)
 SCRATCH_DIR_NAME = ".massgen_scratch"
+
+# Name of the verification subdirectory inside scratch (for test results, screenshots, etc.)
+VERIFICATION_DIR_NAME = "verification"
 
 
 class IsolationContextManager:
@@ -50,10 +52,10 @@ class IsolationContextManager:
         self,
         session_id: str,
         write_mode: str = "auto",
-        temp_base: Optional[str] = None,
-        workspace_path: Optional[str] = None,
-        base_commit: Optional[str] = None,
-        branch_label: Optional[str] = None,
+        temp_base: str | None = None,
+        workspace_path: str | None = None,
+        base_commit: str | None = None,
+        branch_label: str | None = None,
     ):
         """
         Initialize the IsolationContextManager.
@@ -79,20 +81,20 @@ class IsolationContextManager:
         self.branch_label = branch_label
 
         # Track active contexts: original_path -> context info
-        self._contexts: Dict[str, Dict[str, Any]] = {}
+        self._contexts: dict[str, dict[str, Any]] = {}
 
         # Track WorktreeManager instances by repo root
-        self._worktree_managers: Dict[str, WorktreeManager] = {}
+        self._worktree_managers: dict[str, WorktreeManager] = {}
 
         # Track all branch names created in this session (for cleanup_session)
-        self._session_branches: List[str] = []
+        self._session_branches: list[str] = []
 
         # Counter for unique branch names
         self._branch_counter = 0
 
         log.info(f"IsolationContextManager initialized: session={session_id}, mode={write_mode}, branch_label={branch_label}")
 
-    def initialize_context(self, context_path: str, agent_id: Optional[str] = None) -> str:
+    def initialize_context(self, context_path: str, agent_id: str | None = None) -> str:
         """
         Initialize an isolated context for the given path.
 
@@ -166,7 +168,7 @@ class IsolationContextManager:
         log.warning(f"Unknown write_mode: {self.write_mode}, falling back to legacy")
         return "legacy"
 
-    def _create_worktree_context(self, context_path: str, agent_id: Optional[str]) -> str:
+    def _create_worktree_context(self, context_path: str, agent_id: str | None) -> str:
         """Create a git worktree for the context path."""
         from git import Repo
 
@@ -326,7 +328,7 @@ class IsolationContextManager:
         except Exception as e:
             log.warning("Failed to mirror source working tree into worktree: %s", e)
 
-    def _create_shadow_context(self, context_path: str, agent_id: Optional[str]) -> str:
+    def _create_shadow_context(self, context_path: str, agent_id: str | None) -> str:
         """Create a shadow repository for the context path."""
         try:
             shadow = ShadowRepo(context_path, temp_base=self.temp_base)
@@ -358,6 +360,10 @@ class IsolationContextManager:
         """
         scratch_path = os.path.join(isolated_path, SCRATCH_DIR_NAME)
         os.makedirs(scratch_path, exist_ok=True)
+
+        # Create verification subdirectory for test results, screenshots, etc.
+        verification_path = os.path.join(scratch_path, VERIFICATION_DIR_NAME)
+        os.makedirs(verification_path, exist_ok=True)
 
         # Git-exclude the scratch directory
         try:
@@ -398,7 +404,7 @@ class IsolationContextManager:
         if context_path in self._contexts:
             self._contexts[context_path]["scratch_path"] = scratch_path
 
-    def get_scratch_path(self, context_path: str) -> Optional[str]:
+    def get_scratch_path(self, context_path: str) -> str | None:
         """Get the scratch directory path for a context.
 
         Args:
@@ -412,7 +418,7 @@ class IsolationContextManager:
             return self._contexts[context_path].get("scratch_path")
         return None
 
-    def get_branch_name(self, context_path: str) -> Optional[str]:
+    def get_branch_name(self, context_path: str) -> str | None:
         """Get the branch name for a context.
 
         Args:
@@ -426,7 +432,7 @@ class IsolationContextManager:
             return self._contexts[context_path].get("branch_name")
         return None
 
-    def get_all_branch_names(self) -> List[str]:
+    def get_all_branch_names(self) -> list[str]:
         """Get all branch names created in this session.
 
         Returns:
@@ -436,9 +442,9 @@ class IsolationContextManager:
 
     def generate_branch_summaries(
         self,
-        branches: Dict[str, str],
+        branches: dict[str, str],
         base_ref: str = "HEAD",
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Generate diff summaries for a set of branches.
 
         Args:
@@ -451,7 +457,7 @@ class IsolationContextManager:
         """
         from ..utils.git_utils import get_branch_diff_summary
 
-        summaries: Dict[str, str] = {}
+        summaries: dict[str, str] = {}
 
         # Find a repo path — prefer repo_root from contexts (worktree branches
         # live in the original repo), fall back to workspace_path
@@ -537,7 +543,7 @@ class IsolationContextManager:
         """
         return os.path.exists(os.path.join(path, ".git"))
 
-    def setup_workspace_scratch(self, workspace_path: str, agent_id: Optional[str] = None) -> str:
+    def setup_workspace_scratch(self, workspace_path: str, agent_id: str | None = None) -> str:
         """Set up scratch + git branch in the workspace itself (no external context_paths).
 
         When there are no context_paths, the workspace IS the agent's project.
@@ -612,20 +618,19 @@ class IsolationContextManager:
         scratch_path = os.path.join(workspace_path, SCRATCH_DIR_NAME)
         return scratch_path
 
-    def move_scratch_to_workspace(self, context_path: str, archive_label: Optional[str] = None) -> Optional[str]:
-        """Move .massgen_scratch/ to {workspace}/.scratch_archive/{label}/.
+    def move_scratch_to_workspace(self, context_path: str, archive_label: str | None = None) -> str | None:
+        """Move .massgen_scratch/ from the worktree into the workspace as .massgen_scratch/.
 
-        This preserves scratch files after worktree teardown. The archive
-        lives in the workspace (sibling of .worktree/), so it gets included
-        in workspace snapshots shared with other agents.
+        This preserves scratch files after worktree teardown. The result lives
+        in the workspace as `.massgen_scratch/`, so it gets included in workspace
+        snapshots shared with other agents under the same consistent path.
 
         Args:
             context_path: Original context path
-            archive_label: Human-readable label for the archive dir (e.g. "agent1").
-                When set, used instead of extracting suffix from branch name.
+            archive_label: Unused; kept for backwards-compatibility.
 
         Returns:
-            Path to the archive directory, or None if no scratch to move
+            Path to the .massgen_scratch/ directory in the workspace, or None if no scratch
         """
         context_path = os.path.abspath(context_path)
         if context_path not in self._contexts:
@@ -641,29 +646,27 @@ class IsolationContextManager:
             log.debug(f"Scratch directory empty, skipping archive: {scratch_path}")
             return None
 
-        # Use archive_label for directory name if provided, otherwise
-        # extract the suffix from the branch name
-        if archive_label:
-            archive_name = archive_label
-        else:
-            branch_name = ctx.get("branch_name", "")
-            archive_name = branch_name.rsplit("/", 1)[-1] if "/" in branch_name else secrets.token_hex(4)
-
-        # Determine archive location
+        # Determine archive location — always .massgen_scratch/ in the workspace
         workspace = self.workspace_path
         if not workspace:
             log.warning("No workspace_path set, cannot archive scratch")
             return None
 
-        archive_dir = os.path.join(workspace, ".scratch_archive", archive_name)
+        archive_dir = os.path.join(workspace, SCRATCH_DIR_NAME)
+
+        # If scratch is already at the destination (workspace mode), nothing to do
+        if os.path.abspath(scratch_path) == os.path.abspath(archive_dir):
+            log.debug(f"Scratch already at workspace destination: {archive_dir}")
+            return archive_dir
+
         os.makedirs(os.path.dirname(archive_dir), exist_ok=True)
 
         try:
             shutil.move(scratch_path, archive_dir)
-            log.info(f"Moved scratch to archive: {scratch_path} -> {archive_dir}")
+            log.info(f"Moved scratch to workspace: {scratch_path} -> {archive_dir}")
             return archive_dir
         except Exception as e:
-            log.warning(f"Failed to move scratch to archive: {e}")
+            log.warning(f"Failed to move scratch to workspace: {e}")
             return None
 
     def _auto_commit_worktree(self, isolated_path: str, message: str = "[ROUND] Auto-commit") -> bool:
@@ -818,7 +821,7 @@ class IsolationContextManager:
         self._worktree_managers.clear()
         log.info("Cleaned up all isolated contexts and session branches")
 
-    def get_isolated_path(self, original_path: str) -> Optional[str]:
+    def get_isolated_path(self, original_path: str) -> str | None:
         """
         Get the isolated path for a given original path.
 
@@ -833,7 +836,7 @@ class IsolationContextManager:
             return self._contexts[original_path]["isolated_path"]
         return None
 
-    def get_changes(self, context_path: str, include_committed_since_base: bool = False) -> List[Dict[str, Any]]:
+    def get_changes(self, context_path: str, include_committed_since_base: bool = False) -> list[dict[str, Any]]:
         """
         Get list of changes in the isolated context.
 
@@ -944,7 +947,7 @@ class IsolationContextManager:
 
         return ""
 
-    def cleanup(self, context_path: Optional[str] = None) -> None:
+    def cleanup(self, context_path: str | None = None) -> None:
         """
         Cleanup isolated context(s).
 
@@ -1004,7 +1007,7 @@ class IsolationContextManager:
         self._worktree_managers.clear()
         log.info("Cleaned up all isolated contexts")
 
-    def get_context_info(self, context_path: str) -> Optional[Dict[str, Any]]:
+    def get_context_info(self, context_path: str) -> dict[str, Any] | None:
         """
         Get information about an isolated context.
 
@@ -1029,7 +1032,7 @@ class IsolationContextManager:
             }
         return None
 
-    def list_contexts(self) -> List[Dict[str, Any]]:
+    def list_contexts(self) -> list[dict[str, Any]]:
         """
         List all active isolated contexts.
 

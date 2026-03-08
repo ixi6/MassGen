@@ -1,12 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Subagent Result Formatter for MassGen
 
 Formats subagent results for injection into parent agent context.
-Used by SubagentCompleteHook to format async subagent completion results.
+Used by SubagentCompleteHook to format background subagent completion results.
 """
-
-from typing import List, Tuple
 
 from massgen.subagent.models import SubagentResult
 
@@ -54,7 +51,7 @@ def format_single_result(subagent_id: str, result: SubagentResult) -> str:
 </subagent_result>"""
 
 
-def format_batch_results(results: List[Tuple[str, SubagentResult]]) -> str:
+def format_batch_results(results: list[tuple[str, SubagentResult]]) -> str:
     """
     Format multiple subagent results for batch injection.
 
@@ -81,7 +78,7 @@ def format_batch_results(results: List[Tuple[str, SubagentResult]]) -> str:
     # Build the batch output with header
     header = f"""
 {separator}
-ASYNC SUBAGENT RESULTS ({count} completed)
+BACKGROUND SUBAGENT RESULTS ({count} completed)
 {separator}
 """
 

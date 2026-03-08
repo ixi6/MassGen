@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tool module for MassGen framework."""
 
 from ._browser_automation import browser_automation, simple_browser_automation

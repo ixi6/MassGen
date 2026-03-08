@@ -900,7 +900,7 @@ The code execution Docker container needs additional tools:
 **Dockerfile additions**:
 ```dockerfile
 # Base image with Python
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 # Install search tools (REQUIRED for filesystem-first mode)
 RUN apt-get update && apt-get install -y \
@@ -1134,7 +1134,7 @@ result = await call_mcp_tool("admin-panel", "delete_all_users", {})
 - **MassGen codebase**: Primarily Python
 - **Agent code execution**: Python (Jupyter kernels)
 - **Community**: Python dominates AI/ML ecosystem
-- **Type safety**: Python 3.10+ has excellent typing support
+- **Type safety**: Python 3.12+ has excellent typing support
 - **Familiarity**: Our users expect Python
 
 **Proposed Decision**: Use Python for MVP

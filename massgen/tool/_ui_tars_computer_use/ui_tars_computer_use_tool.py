@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 UI-TARS Computer Use tool for automating GUI interactions using UI-TARS-1.5 model.
 
@@ -15,7 +14,7 @@ import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -127,7 +126,7 @@ def add_box_token(input_string: str) -> str:
     return final_string
 
 
-def parse_ui_tars_response(response: str, screen_width: int, screen_height: int) -> Dict[str, Any]:
+def parse_ui_tars_response(response: str, screen_width: int, screen_height: int) -> dict[str, Any]:
     """Parse UI-TARS model response into structured action.
 
     Args:
@@ -267,7 +266,7 @@ def take_screenshot_docker(container, display: str = ":99") -> bytes:
     return screenshot_bytes
 
 
-async def execute_browser_action(page, action: Dict[str, Any], screen_width: int, screen_height: int) -> Dict[str, Any]:
+async def execute_browser_action(page, action: dict[str, Any], screen_width: int, screen_height: int) -> dict[str, Any]:
     """Execute a browser action using Playwright.
 
     Args:
@@ -363,7 +362,7 @@ async def execute_browser_action(page, action: Dict[str, Any], screen_width: int
         return {"error": str(e)}
 
 
-def execute_docker_action(container, action: Dict[str, Any], screen_width: int, screen_height: int, display: str = ":99") -> Dict[str, Any]:
+def execute_docker_action(container, action: dict[str, Any], screen_width: int, screen_height: int, display: str = ":99") -> dict[str, Any]:
     """Execute an action in Docker using xdotool.
 
     Args:
@@ -484,11 +483,11 @@ async def ui_tars_computer_use(
     display_width: int = 1440,
     display_height: int = 900,
     max_iterations: int = 25,
-    initial_url: Optional[str] = None,
-    environment_config: Optional[Dict[str, Any]] = None,
-    agent_cwd: Optional[str] = None,
+    initial_url: str | None = None,
+    environment_config: dict[str, Any] | None = None,
+    agent_cwd: str | None = None,
     model: str = "ui-tars-1.5",
-    huggingface_endpoint: Optional[str] = None,
+    huggingface_endpoint: str | None = None,
 ) -> ExecutionResult:
     """
     Execute a computer automation task using ByteDance's UI-TARS-1.5 model.

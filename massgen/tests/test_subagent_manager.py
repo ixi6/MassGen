@@ -1,20 +1,33 @@
-# -*- coding: utf-8 -*-
 """
-Unit tests for SubagentManager callback mechanism.
+Unit tests for SubagentManager callback mechanism and runtime messaging.
 
 Tests for the async subagent execution feature (MAS-214):
 - Callback registration
 - Callback invocation on completion
 - Callback invocation on timeout
 - Multiple callback support
+
+Tests for runtime message routing (MAS-310):
+- send_message_to_subagent file creation
+- Atomic write pattern
+- Unknown/non-running subagent handling
+- get_running_subagent_ids
 """
 
-from typing import List, Tuple
-from unittest.mock import MagicMock
+import asyncio
+import json
+from datetime import datetime
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from massgen.subagent.models import SubagentResult
+from massgen.subagent.models import (
+    SubagentConfig,
+    SubagentOrchestratorConfig,
+    SubagentResult,
+    SubagentState,
+)
 
 # =============================================================================
 # Callback Registration Tests
@@ -103,7 +116,7 @@ class TestSubagentManagerCallbackInvocation:
         )
 
         # Track callback invocations
-        invocations: List[Tuple[str, SubagentResult]] = []
+        invocations: list[tuple[str, SubagentResult]] = []
 
         def track_callback(subagent_id: str, result: SubagentResult):
             invocations.append((subagent_id, result))
@@ -139,7 +152,7 @@ class TestSubagentManagerCallbackInvocation:
             parent_agent_configs=[],
         )
 
-        invocations: List[Tuple[str, SubagentResult]] = []
+        invocations: list[tuple[str, SubagentResult]] = []
 
         def track_callback(subagent_id: str, result: SubagentResult):
             invocations.append((subagent_id, result))
@@ -174,7 +187,7 @@ class TestSubagentManagerCallbackInvocation:
             parent_agent_configs=[],
         )
 
-        invocations: List[Tuple[str, SubagentResult]] = []
+        invocations: list[tuple[str, SubagentResult]] = []
 
         def track_callback(subagent_id: str, result: SubagentResult):
             invocations.append((subagent_id, result))
@@ -499,3 +512,2335 @@ class TestSubagentResultFactories:
         assert result.success is False
         assert result.answer == "Partial work"
         assert result.completion_percentage == 60
+
+
+# =============================================================================
+# Context Paths Tests
+# =============================================================================
+
+
+class TestSubagentContextPaths:
+    """Tests for context_paths parameter on SubagentConfig and resolution in SubagentManager."""
+
+    def _make_manager(self, parent_workspace, parent_context_paths=None, agent_temporary_workspace=None):
+        """Helper to create a SubagentManager with minimal config."""
+        from massgen.subagent.manager import SubagentManager
+
+        return SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            parent_context_paths=parent_context_paths,
+            agent_temporary_workspace=str(agent_temporary_workspace) if agent_temporary_workspace else None,
+        )
+
+    def _resolve_context_paths(self, config, parent_workspace):
+        """Simulate the context_paths resolution logic from _execute_with_orchestrator.
+
+        This mirrors the resolution code that will be added to manager.py.
+        """
+        context_paths = []
+        if config.context_paths:
+            parent_ws = Path(parent_workspace)
+            for rel_path in config.context_paths:
+                if rel_path in ("./", "."):
+                    resolved = parent_ws.resolve()
+                else:
+                    resolved = (parent_ws / rel_path).resolve()
+                path_str = str(resolved)
+                if path_str not in {p["path"] for p in context_paths}:
+                    context_paths.append({"path": path_str, "permission": "read"})
+        return context_paths
+
+    def test_context_paths_dot_slash_mounts_parent_workspace(self, tmp_path):
+        """'./' resolves to parent workspace in generated YAML config as read-only."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Evaluate the website",
+            parent_agent_id="test-agent",
+            subagent_id="evaluator",
+            context_paths=["./"],
+        )
+
+        # Resolve context_paths the same way manager will
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(parent_ws.resolve())
+        assert resolved[0]["permission"] == "read"
+
+        # Verify it shows up in generated YAML config
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+        orch_ctx = yaml_config["orchestrator"].get("context_paths", [])
+        paths = [p["path"] for p in orch_ctx]
+        assert str(parent_ws.resolve()) in paths
+        # All permissions must be read
+        for p in orch_ctx:
+            assert p["permission"] == "read"
+
+    def test_context_paths_directory_resolves_to_absolute(self, tmp_path):
+        """'styles/' resolves to parent_workspace/styles/ as absolute path."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        styles_dir = parent_ws / "styles"
+        styles_dir.mkdir()
+
+        config = SubagentConfig.create(
+            task="Check the CSS",
+            parent_agent_id="test-agent",
+            subagent_id="css-checker",
+            context_paths=["styles/"],
+        )
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(styles_dir.resolve())
+        assert resolved[0]["permission"] == "read"
+
+    def test_context_paths_file_resolves_to_absolute(self, tmp_path):
+        """'index.html' resolves to parent_workspace/index.html as absolute path."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        index_file = parent_ws / "index.html"
+        index_file.write_text("<html></html>")
+
+        config = SubagentConfig.create(
+            task="Check the HTML",
+            parent_agent_id="test-agent",
+            subagent_id="html-checker",
+            context_paths=["index.html"],
+        )
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(index_file.resolve())
+        assert resolved[0]["permission"] == "read"
+
+    def test_context_paths_empty_by_default(self, tmp_path):
+        """Default context includes parent workspace as read-only mount."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        config = SubagentConfig.create(
+            task="Do something",
+            parent_agent_id="test-agent",
+            subagent_id="default-test",
+        )
+
+        assert config.context_paths == []
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert resolved == []
+
+        # Parent workspace is inherited as a safe default read-only context.
+        manager = self._make_manager(parent_ws)
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+        assert "context_paths" in yaml_config["orchestrator"]
+        orch_paths = yaml_config["orchestrator"]["context_paths"]
+        assert len(orch_paths) == 1
+        assert orch_paths[0]["path"] == str(parent_ws.resolve())
+        assert orch_paths[0]["permission"] == "read"
+
+    def test_context_paths_deduplicates(self, tmp_path):
+        """Same path listed twice appears only once."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        config = SubagentConfig.create(
+            task="Evaluate",
+            parent_agent_id="test-agent",
+            subagent_id="dedup-test",
+            context_paths=["./", "./"],
+        )
+
+        resolved = self._resolve_context_paths(config, parent_ws)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(parent_ws.resolve())
+
+    def test_context_paths_coexists_with_parent_context_paths(self, tmp_path):
+        """Both inherited orchestrator paths and task-specific context_paths present."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        styles_dir = parent_ws / "styles"
+        styles_dir.mkdir()
+
+        # Parent has a context path (e.g., a codebase root)
+        codebase_path = str((tmp_path / "codebase").resolve())
+        (tmp_path / "codebase").mkdir()
+
+        parent_context_paths = [{"path": codebase_path, "permission": "read"}]
+        manager = self._make_manager(parent_ws, parent_context_paths=parent_context_paths)
+
+        config = SubagentConfig.create(
+            task="Check CSS",
+            parent_agent_id="test-agent",
+            subagent_id="coexist-test",
+            context_paths=["styles/"],
+        )
+
+        # Resolve task-specific context_paths
+        resolved = self._resolve_context_paths(config, parent_ws)
+
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+        orch_ctx = yaml_config["orchestrator"]["context_paths"]
+
+        paths = [p["path"] for p in orch_ctx]
+        # Parent path should be present
+        assert codebase_path in paths
+        # Task-specific path should also be present
+        assert str(styles_dir.resolve()) in paths
+        # All read-only
+        for p in orch_ctx:
+            assert p["permission"] == "read"
+
+    def test_context_paths_rejects_traversal_outside_allowed_roots(self, tmp_path):
+        """Paths that escape parent workspace AND parent context paths are rejected."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Try to escape",
+            parent_agent_id="test-agent",
+            subagent_id="escape-test",
+            context_paths=["../../etc/passwd"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        # The traversal path should be rejected (not in allowed roots)
+        assert len(resolved) == 0
+
+    def test_context_paths_allows_within_parent_workspace(self, tmp_path):
+        """Paths within parent workspace are accepted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        subdir = parent_ws / "src"
+        subdir.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Read source",
+            parent_agent_id="test-agent",
+            subagent_id="src-test",
+            context_paths=["src/"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(subdir.resolve())
+
+    def test_context_paths_allows_within_parent_context_path_roots(self, tmp_path):
+        """Paths within inherited parent context path roots are accepted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        external_repo = tmp_path / "external_repo"
+        external_repo.mkdir()
+        external_src = external_repo / "src"
+        external_src.mkdir()
+
+        parent_context_paths = [{"path": str(external_repo.resolve()), "permission": "read"}]
+        manager = self._make_manager(parent_ws, parent_context_paths=parent_context_paths)
+        config = SubagentConfig.create(
+            task="Read external source",
+            parent_agent_id="test-agent",
+            subagent_id="ext-test",
+            # Absolute path within a parent context root
+            context_paths=[str(external_src)],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(external_src.resolve())
+
+    def test_context_paths_allows_within_agent_temporary_workspace(self, tmp_path):
+        """Paths within agent_temporary_workspace are always accepted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        target_file = temp_root / "agent1" / "deliverable" / "index.html"
+        target_file.parent.mkdir(parents=True)
+        target_file.write_text("<html></html>")
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Read shared reference output",
+            parent_agent_id="test-agent",
+            subagent_id="shared-ref-test",
+            context_paths=[str(target_file.resolve())],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(target_file.resolve())
+
+    def test_context_paths_rejects_outside_temp_workspace_and_parent_roots(self, tmp_path):
+        """Even with temp workspace configured, unrelated paths are rejected."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        temp_root.mkdir(parents=True)
+        disallowed = tmp_path / "elsewhere" / "secret.txt"
+        disallowed.parent.mkdir(parents=True)
+        disallowed.write_text("nope")
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Try unrelated path",
+            parent_agent_id="test-agent",
+            subagent_id="outside-test",
+            context_paths=[str(disallowed.resolve())],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert resolved == []
+
+    def test_context_paths_rejects_traversal_even_with_parent_context_paths(self, tmp_path):
+        """Paths outside BOTH parent workspace and parent context roots are rejected."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        allowed_dir = tmp_path / "allowed"
+        allowed_dir.mkdir()
+
+        parent_context_paths = [{"path": str(allowed_dir.resolve()), "permission": "read"}]
+        manager = self._make_manager(parent_ws, parent_context_paths=parent_context_paths)
+        config = SubagentConfig.create(
+            task="Try to escape",
+            parent_agent_id="test-agent",
+            subagent_id="escape-test-2",
+            context_paths=["../../../etc/shadow"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 0
+
+    def test_context_paths_dot_slash_always_allowed(self, tmp_path):
+        """'./' (parent workspace) is always allowed."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Mount workspace",
+            parent_agent_id="test-agent",
+            subagent_id="dot-test",
+            context_paths=["./"],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(parent_ws.resolve())
+
+    # ------------------------------------------------------------------
+    # include_parent_workspace / temp workspace tests
+    # ------------------------------------------------------------------
+
+    def test_include_parent_workspace_true_is_default(self, tmp_path):
+        """Default include_parent_workspace=True means parent workspace is in YAML."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Do research with workspace access",
+            parent_agent_id="test-agent",
+            subagent_id="default-ws-test",
+            # include_parent_workspace defaults to True
+        )
+
+        workspace = manager._create_workspace(config.id)
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+
+        orch_paths = yaml_config["orchestrator"].get("context_paths", [])
+        parent_ws_str = str(parent_ws.resolve())
+        assert parent_ws_str in [p["path"] for p in orch_paths], "parent workspace should be in YAML by default (include_parent_workspace=True)"
+
+    def test_include_parent_workspace_false_excludes_parent_workspace(self, tmp_path):
+        """When include_parent_workspace=False, parent workspace is NOT auto-mounted."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+
+        manager = self._make_manager(parent_ws)
+        config = SubagentConfig.create(
+            task="Do clean isolated research",
+            parent_agent_id="test-agent",
+            subagent_id="isolated-test",
+            include_parent_workspace=False,
+        )
+
+        workspace = manager._create_workspace(config.id)
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+
+        orch_paths = yaml_config["orchestrator"].get("context_paths", [])
+        parent_ws_str = str(parent_ws.resolve())
+        assert parent_ws_str not in [p["path"] for p in orch_paths], "parent workspace should NOT be in YAML when include_parent_workspace=False"
+
+    def test_temp_workspace_paths_always_allowed_in_context_paths(self, tmp_path):
+        """Paths under agent_temporary_workspace are always allowed — no flag needed."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        peer_ws = temp_root / "agent1" / "deliverable"
+        peer_ws.mkdir(parents=True)
+        (peer_ws / "index.html").write_text("<html></html>")
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Evaluate peer deliverable",
+            parent_agent_id="test-agent",
+            subagent_id="peer-eval-test",
+            # No include_shared_workspace flag — just context_paths
+            context_paths=[str(peer_ws.resolve())],
+        )
+
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        assert len(resolved) == 1
+        assert resolved[0]["path"] == str(peer_ws.resolve())
+        assert resolved[0]["permission"] == "read"
+
+    def test_temp_workspace_root_not_auto_mounted(self, tmp_path):
+        """The temp workspace root is never auto-mounted in YAML — only explicit paths."""
+        parent_ws = tmp_path / "workspace"
+        parent_ws.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "agent_a"
+        temp_root.mkdir(parents=True)
+
+        manager = self._make_manager(parent_ws, agent_temporary_workspace=temp_root)
+        config = SubagentConfig.create(
+            task="Default spawn — no peer paths",
+            parent_agent_id="test-agent",
+            subagent_id="no-auto-mount-test",
+        )
+
+        workspace = manager._create_workspace(config.id)
+        resolved = manager._resolve_context_paths_for_subagent(config)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, resolved)
+
+        orch_paths = yaml_config["orchestrator"].get("context_paths", [])
+        temp_str = str(temp_root.resolve())
+        assert temp_str not in [p["path"] for p in orch_paths], "temp workspace root should NOT be auto-mounted in YAML"
+
+
+class TestSubagentConfigInheritance:
+    def test_inherit_spawning_parent_backend_uses_single_matching_parent(self, tmp_path):
+        """inherit_spawning_agent_backend should select only the spawning parent's backend."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_agent_configs = [
+            {
+                "id": "agent_a",
+                "backend": {
+                    "type": "gemini",
+                    "model": "gemini-3-flash-preview",
+                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                    "reasoning": {"effort": "low"},
+                },
+            },
+            {
+                "id": "agent_b",
+                "backend": {
+                    "type": "openai",
+                    "model": "gpt-5-mini",
+                    "reasoning": {"effort": "high"},
+                },
+            },
+        ]
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=parent_agent_configs,
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                inherit_spawning_agent_backend=True,
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="inherit-spawner-backend",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert len(yaml_config["agents"]) == 1
+        only_agent = yaml_config["agents"][0]
+        assert only_agent["id"] == "agent_a"
+        assert only_agent["backend"]["type"] == "gemini"
+        assert only_agent["backend"]["model"] == "gemini-3-flash-preview"
+        assert only_agent["backend"]["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
+        assert only_agent["backend"]["reasoning"] == {"effort": "low"}
+
+    def test_inherit_spawning_parent_backend_raises_when_parent_not_found(self, tmp_path):
+        """If the spawning parent ID is missing, inherit mode should fail fast."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_missing",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_a", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                inherit_spawning_agent_backend=True,
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate app behavior",
+            parent_agent_id="agent_missing",
+            subagent_id="missing-parent-backend",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        with pytest.raises(ValueError, match="Unable to inherit backend for spawning parent agent"):
+            manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+    def test_inherit_spawning_parent_backend_falls_back_from_parent_coordination_config(self, tmp_path):
+        """Manager should recover inherit mode from parent_coordination_config when direct config is missing."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_agent_configs = [
+            {
+                "id": "agent_a",
+                "backend": {
+                    "type": "gemini",
+                    "model": "gemini-3-flash-preview",
+                },
+            },
+            {
+                "id": "agent_b",
+                "backend": {
+                    "type": "openrouter",
+                    "model": "minimax/minimax-m2.5",
+                },
+            },
+        ]
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=parent_agent_configs,
+            subagent_orchestrator_config=None,
+            parent_coordination_config={
+                "subagent_orchestrator": {
+                    "enabled": True,
+                    "inherit_spawning_agent_backend": True,
+                },
+            },
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate candidate output",
+            parent_agent_id="agent_a",
+            subagent_id="inherit-from-parent-coordination",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert len(yaml_config["agents"]) == 1
+        assert yaml_config["agents"][0]["id"] == "agent_a"
+        assert yaml_config["agents"][0]["backend"]["type"] == "gemini"
+        assert yaml_config["agents"][0]["backend"]["model"] == "gemini-3-flash-preview"
+
+    def test_shared_common_agents_are_used_when_parent_has_no_local_subagent_agents(self, tmp_path):
+        """Shared common subagent_orchestrator agents should be used alone when local config is absent."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_a", "backend": {"type": "gemini", "model": "gemini-3-flash-preview"}},
+                {"id": "agent_b", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "shared_eval", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="shared-only",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert [agent["id"] for agent in yaml_config["agents"]] == ["shared_eval"]
+        assert yaml_config["agents"][0]["backend"]["model"] == "gpt-5-mini"
+
+    def test_shared_common_agents_and_parent_local_subagent_agents_are_combined(self, tmp_path):
+        """Effective child team should combine shared common agents with the spawning parent's local list."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_agent_configs = [
+            {
+                "id": "agent_a",
+                "backend": {"type": "gemini", "model": "gemini-3-flash-preview"},
+                "subagent_agents": [
+                    {"id": "a_local", "backend": {"type": "openrouter", "model": "minimax/minimax-m2.5"}},
+                ],
+            },
+            {
+                "id": "agent_b",
+                "backend": {"type": "openai", "model": "gpt-5-mini"},
+                "subagent_agents": [
+                    {"id": "b_local", "backend": {"type": "claude", "model": "claude-sonnet-4-20250514"}},
+                ],
+            },
+        ]
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=parent_agent_configs,
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "shared_eval", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="common-plus-local",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert [agent["id"] for agent in yaml_config["agents"]] == ["shared_eval", "a_local"]
+        assert yaml_config["agents"][1]["backend"]["type"] == "openrouter"
+        assert yaml_config["agents"][1]["backend"]["model"] == "minimax/minimax-m2.5"
+
+    def test_inherit_synthesizes_parent_local_subagent_agent_after_shared_common_agents(self, tmp_path):
+        """inherit mode should synthesize only the missing local portion, not replace shared common agents."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="agent_a",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {
+                    "id": "agent_a",
+                    "backend": {
+                        "type": "gemini",
+                        "model": "gemini-3-flash-preview",
+                        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                    },
+                },
+                {
+                    "id": "agent_b",
+                    "backend": {"type": "openai", "model": "gpt-5-mini"},
+                },
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                inherit_spawning_agent_backend=True,
+                agents=[
+                    {"id": "shared_eval", "backend": {"type": "openai", "model": "gpt-5-mini"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate deliverable quality",
+            parent_agent_id="agent_a",
+            subagent_id="inherit-plus-common",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert [agent["id"] for agent in yaml_config["agents"]] == ["shared_eval", "agent_a"]
+        assert yaml_config["agents"][1]["backend"]["type"] == "gemini"
+        assert yaml_config["agents"][1]["backend"]["model"] == "gemini-3-flash-preview"
+        assert yaml_config["agents"][1]["backend"]["base_url"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+    def test_inherits_parent_skill_settings_into_coordination(self, tmp_path):
+        """Subagent YAML should inherit parent skills settings when unset locally."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            parent_coordination_config={
+                "use_skills": True,
+                "massgen_skills": ["webapp-testing", "agent-browser"],
+                "skills_directory": ".agent/skills",
+                "load_previous_session_skills": True,
+            },
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate app behavior",
+            parent_agent_id="parent-agent",
+            subagent_id="inherit-skills",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        coord = yaml_config["orchestrator"]["coordination"]
+
+        assert coord["use_skills"] is True
+        assert coord["massgen_skills"] == ["webapp-testing", "agent-browser"]
+        assert coord["skills_directory"] == ".agent/skills"
+        assert coord["load_previous_session_skills"] is True
+
+    def test_disables_final_only_skip_final_fallback_for_subagent_configs(self, tmp_path):
+        """Subagent configs should opt out of final_only fallback when skip_final_presentation is used."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate app behavior",
+            parent_agent_id="parent-agent",
+            subagent_id="final-only-fallback-optout",
+            metadata={"refine": False},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        coord = yaml_config["orchestrator"]["coordination"]
+
+        assert coord["learning_capture_mode"] == "final_only"
+        assert coord["disable_final_only_round_capture_fallback"] is True
+        assert yaml_config["orchestrator"]["skip_final_presentation"] is True
+
+    def test_inherits_parent_multimodal_tool_settings(self, tmp_path):
+        """Subagent backend should inherit multimodal tool settings from parent backend."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_backend = {
+            "type": "openai",
+            "model": "gpt-4o",
+            "enable_multimodal_tools": True,
+            "multimodal_config": {
+                "image": {"backend": "openai", "model": "gpt-image-1"},
+                "audio": {"backend": "openai", "model": "gpt-4o-mini-tts"},
+            },
+            "image_generation_backend": "openai",
+            "image_generation_model": "gpt-image-1",
+            "audio_generation_backend": "openai",
+            "audio_generation_model": "gpt-4o-mini-tts",
+        }
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": parent_backend},
+            ],
+        )
+
+        config = SubagentConfig.create(
+            task="Generate and inspect media",
+            parent_agent_id="parent-agent",
+            subagent_id="inherit-multimodal",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        backend = yaml_config["agents"][0]["backend"]
+
+        assert backend["enable_multimodal_tools"] is True
+        assert backend["multimodal_config"] == parent_backend["multimodal_config"]
+        assert backend["image_generation_backend"] == "openai"
+        assert backend["image_generation_model"] == "gpt-image-1"
+        assert backend["audio_generation_backend"] == "openai"
+        assert backend["audio_generation_model"] == "gpt-4o-mini-tts"
+
+    def test_common_child_agents_fall_back_to_parent_multimodal_tool_settings(self, tmp_path):
+        """Shared subagent orchestrator agents should still inherit parent multimodal settings."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        parent_backend = {
+            "type": "codex",
+            "model": "gpt-5.4",
+            "enable_multimodal_tools": True,
+            "image_generation_backend": "openai",
+            "video_generation_backend": "openai",
+        }
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "parent-agent", "backend": parent_backend},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "eval_codex", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Inspect screenshots and media artifacts",
+            parent_agent_id="parent-agent",
+            subagent_id="common-agent-inherit-multimodal",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        backend = yaml_config["agents"][0]["backend"]
+
+        assert backend["enable_multimodal_tools"] is True
+        assert backend["image_generation_backend"] == "openai"
+        assert backend["video_generation_backend"] == "openai"
+
+    def test_omits_command_line_execution_mode_when_command_line_mcp_disabled(self, tmp_path):
+        """Subagent backend should omit execution mode when command-line MCP is disabled."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {
+                    "id": "agent_1",
+                    "backend": {
+                        "type": "openai",
+                        "model": "gpt-4o",
+                        "enable_mcp_command_line": False,
+                    },
+                },
+            ],
+        )
+
+        config = SubagentConfig.create(
+            task="Create criteria",
+            parent_agent_id="parent-agent",
+            subagent_id="no-cli-mode",
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+        backend = yaml_config["agents"][0]["backend"]
+
+        assert backend["enable_mcp_command_line"] is False
+        assert "command_line_execution_mode" not in backend
+
+    def test_promotes_voting_settings_from_coordination_to_orchestrator(self, tmp_path):
+        """voting/checklist settings should be top-level orchestrator fields in YAML."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                coordination={
+                    "voting_sensitivity": "checklist_gated",
+                    "voting_threshold": 9,
+                    "checklist_require_gap_report": True,
+                    "gap_report_mode": "separate",
+                    "checklist_criteria_preset": "persona",
+                },
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Generate personas",
+            parent_agent_id="parent-agent",
+            subagent_id="persona-sub",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        coord_cfg = orchestrator_cfg["coordination"]
+
+        assert orchestrator_cfg["voting_sensitivity"] == "checklist_gated"
+        assert orchestrator_cfg["voting_threshold"] == 9
+        assert orchestrator_cfg["checklist_require_gap_report"] is True
+        assert orchestrator_cfg["gap_report_mode"] == "separate"
+
+        # Non-top-level coordination settings should remain in coordination.
+        assert coord_cfg["checklist_criteria_preset"] == "persona"
+        assert "voting_sensitivity" not in coord_cfg
+        assert "voting_threshold" not in coord_cfg
+        assert "checklist_require_gap_report" not in coord_cfg
+        assert "gap_report_mode" not in coord_cfg
+
+    def test_multi_agent_quick_subagents_default_child_final_answer_strategy_to_synthesize(self, tmp_path):
+        """refine=False multi-agent subagents should synthesize child output by default."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate prior answers",
+            parent_agent_id="parent-agent",
+            subagent_id="quick-eval-default",
+            metadata={"refine": False},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert yaml_config["orchestrator"]["skip_final_presentation"] is True
+        assert yaml_config["orchestrator"]["final_answer_strategy"] == "synthesize"
+
+    def test_multi_agent_quick_subagents_keep_explicit_child_final_answer_strategy(self, tmp_path):
+        """Explicit child final_answer_strategy should override quick-mode synthesize default."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                final_answer_strategy="winner_reuse",
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}},
+                ],
+            ),
+        )
+
+        config = SubagentConfig.create(
+            task="Evaluate prior answers",
+            parent_agent_id="parent-agent",
+            subagent_id="quick-eval-explicit",
+            metadata={"refine": False},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        assert yaml_config["orchestrator"]["final_answer_strategy"] == "winner_reuse"
+
+    @pytest.mark.asyncio
+    async def test_spawn_parallel_passes_subagent_type_to_spawn_subagent(self, tmp_path):
+        """Blocking parallel spawns should preserve subagent_type through the manager layer."""
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentResult
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+        )
+
+        with patch.object(
+            manager,
+            "spawn_subagent",
+            new=AsyncMock(
+                return_value=SubagentResult.create_success(
+                    subagent_id="round_eval",
+                    answer="ok",
+                    workspace_path=str(parent_workspace),
+                    execution_time_seconds=0.1,
+                ),
+            ),
+        ) as mock_spawn:
+            await manager.spawn_parallel(
+                tasks=[
+                    {
+                        "task": "Critique all current answers and write a detailed improvement spec",
+                        "subagent_id": "round_eval",
+                        "subagent_type": "round_evaluator",
+                    },
+                ],
+                refine=False,
+            )
+
+        assert mock_spawn.await_args.kwargs["subagent_type"] == "round_evaluator"
+
+    def test_round_evaluator_child_yaml_omits_checklist_settings_and_mounts_temp_root(self, tmp_path):
+        """round_evaluator child YAML should keep presenter-stage synthesis, omit checklist settings, and mount temp roots."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+        temp_root = tmp_path / "temp_workspaces" / "run_001"
+        temp_root.mkdir(parents=True)
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            subagent_orchestrator_config=SubagentOrchestratorConfig(
+                enabled=True,
+                coordination={
+                    "voting_sensitivity": "checklist_gated",
+                    "voting_threshold": 9,
+                    "checklist_require_gap_report": True,
+                    "gap_report_mode": "separate",
+                },
+                agents=[
+                    {"id": "eval_a", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                    {"id": "eval_b", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}},
+                ],
+            ),
+            agent_temporary_workspace=str(temp_root),
+        )
+
+        config = SubagentConfig.create(
+            task="Critique all candidate answers and produce a detailed improvement spec.",
+            parent_agent_id="parent-agent",
+            subagent_id="round-eval",
+            metadata={"refine": False, "subagent_type": "round_evaluator"},
+        )
+        workspace = manager._create_workspace(config.id)
+
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        context_paths = orchestrator_cfg.get("context_paths", [])
+        path_set = {entry["path"] for entry in context_paths}
+
+        assert "voting_sensitivity" not in orchestrator_cfg
+        assert "voting_threshold" not in orchestrator_cfg
+        assert "checklist_require_gap_report" not in orchestrator_cfg
+        assert "gap_report_mode" not in orchestrator_cfg
+        assert orchestrator_cfg["final_answer_strategy"] == "synthesize"
+        assert orchestrator_cfg["skip_final_presentation"] is False
+        assert str(temp_root.resolve()) in path_set
+
+    def test_parent_voting_settings_not_promoted_without_subagent_orchestrator(self, tmp_path):
+        """General subagents should not inherit voting/checklist settings from parent coordination."""
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+            parent_coordination_config={
+                "voting_sensitivity": "checklist_gated",
+                "voting_threshold": 13,
+                "checklist_require_gap_report": True,
+                "gap_report_mode": "separate",
+            },
+        )
+
+        config = SubagentConfig.create(
+            task="General subagent task",
+            parent_agent_id="parent-agent",
+            subagent_id="general-sub",
+        )
+        workspace = manager._create_workspace(config.id)
+        yaml_config = manager._generate_subagent_yaml_config(config, workspace, context_paths=[])
+
+        orchestrator_cfg = yaml_config["orchestrator"]
+        assert "voting_sensitivity" not in orchestrator_cfg
+        assert "voting_threshold" not in orchestrator_cfg
+        assert "checklist_require_gap_report" not in orchestrator_cfg
+        assert "gap_report_mode" not in orchestrator_cfg
+
+
+class TestSubagentManagerContextNormalization:
+    def test_parent_workspace_added_to_context_paths(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[],
+        )
+
+        paths = manager._parent_context_paths
+        assert paths
+        assert paths[0]["path"] == str(parent_workspace.resolve())
+        assert paths[0]["permission"] == "read"
+        assert len([p for p in paths if p["path"] == str(parent_workspace.resolve())]) == 1
+
+    def test_relative_context_paths_resolved_and_read_only(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+        relative_dir = parent_workspace / "data"
+        relative_dir.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[],
+            parent_context_paths=[{"path": "data", "permission": "write"}],
+        )
+
+        resolved_paths = {entry["path"]: entry for entry in manager._parent_context_paths}
+        assert str(relative_dir.resolve()) in resolved_paths
+        assert resolved_paths[str(relative_dir.resolve())]["permission"] == "read"
+        workspace_path = str(parent_workspace.resolve())
+        assert workspace_path in resolved_paths
+        assert resolved_paths[workspace_path]["permission"] == "read"
+
+
+class TestSubagentRuntimeIsolationRouting:
+    def _make_manager(
+        self,
+        tmp_path,
+        *,
+        runtime_mode="isolated",
+        fallback_mode=None,
+        host_launch_prefix=None,
+    ):
+        from massgen.subagent.manager import SubagentManager
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir(parents=True, exist_ok=True)
+        return SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[],
+            subagent_runtime_mode=runtime_mode,
+            subagent_runtime_fallback_mode=fallback_mode,
+            subagent_host_launch_prefix=host_launch_prefix,
+        )
+
+    def test_default_runtime_mode_is_isolated(self, tmp_path):
+        manager = self._make_manager(tmp_path)
+        assert manager._subagent_runtime_mode == "isolated"
+        assert manager._subagent_runtime_fallback_mode is None
+
+    def test_isolated_runtime_requires_prereqs_in_container(self, tmp_path):
+        manager = self._make_manager(tmp_path, runtime_mode="isolated")
+        manager._running_inside_container = True
+
+        with pytest.raises(RuntimeError, match="subagent_runtime_fallback_mode"):
+            manager._resolve_effective_runtime_mode()
+
+    def test_isolated_runtime_can_fallback_to_inherited(self, tmp_path):
+        manager = self._make_manager(
+            tmp_path,
+            runtime_mode="isolated",
+            fallback_mode="inherited",
+        )
+        manager._running_inside_container = True
+
+        mode, warning = manager._resolve_effective_runtime_mode()
+
+        assert mode == "inherited"
+        assert warning is not None
+        assert "fallback" in warning.lower()
+
+    def test_isolated_runtime_uses_host_prefix_when_configured(self, tmp_path):
+        manager = self._make_manager(
+            tmp_path,
+            runtime_mode="isolated",
+            host_launch_prefix=["host-launch", "--exec"],
+        )
+        manager._running_inside_container = True
+
+        mode, warning = manager._resolve_effective_runtime_mode()
+        assert mode == "isolated"
+        assert warning is None
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="do the thing",
+            runtime_mode=mode,
+        )
+        assert cmd[:2] == ["host-launch", "--exec"]
+        assert "--config" in cmd
+
+    def test_subagent_command_disables_at_parsing_by_default(self, tmp_path):
+        """Subagent tasks are AI-generated and may contain @media, @keyframes etc.
+        The default must disable @-reference parsing to avoid false positives."""
+        manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        # Default SubagentOrchestratorConfig - no explicit parse_at_references
+        manager._subagent_orchestrator_config = SubagentOrchestratorConfig(
+            enabled=True,
+        )
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="Use CSS @media and @keyframes with wght@400",
+            runtime_mode="inherited",
+        )
+
+        assert "--no-parse-at-references" in cmd
+        assert cmd[-1] == "Use CSS @media and @keyframes with wght@400"
+
+    def test_subagent_command_allows_at_parsing_when_explicitly_enabled(self, tmp_path):
+        """When explicitly enabled, @-reference parsing is active."""
+        manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        manager._subagent_orchestrator_config = SubagentOrchestratorConfig(
+            enabled=True,
+            parse_at_references=True,
+        )
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="Review @src/main.py",
+            runtime_mode="inherited",
+        )
+
+        assert "--no-parse-at-references" not in cmd
+
+    def test_coordination_config_default_disables_at_parsing(self, tmp_path):
+        from massgen.cli import _parse_coordination_config
+
+        coordination = _parse_coordination_config(
+            {
+                "subagent_orchestrator": {
+                    "enabled": True,
+                    # No parse_at_references key - should default to False
+                },
+            },
+        )
+        manager = self._make_manager(tmp_path, runtime_mode="inherited")
+        manager._subagent_orchestrator_config = coordination.subagent_orchestrator
+
+        cmd = manager._build_subagent_command(
+            yaml_path=Path("/tmp/subagent.yaml"),
+            answer_file=Path("/tmp/answer.txt"),
+            full_task="Use CSS @import",
+            runtime_mode="inherited",
+        )
+
+        assert "--no-parse-at-references" in cmd
+
+    def test_inherited_mode_rejects_fallback_setting(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        with pytest.raises(ValueError, match="only valid when subagent_runtime_mode is 'isolated'"):
+            SubagentManager(
+                parent_workspace=str(tmp_path / "workspace"),
+                parent_agent_id="parent-agent",
+                orchestrator_id="orch",
+                parent_agent_configs=[],
+                subagent_runtime_mode="inherited",
+                subagent_runtime_fallback_mode="inherited",
+            )
+
+    @pytest.mark.asyncio
+    async def test_parallel_subagents_fail_fast_when_isolation_unavailable(self, tmp_path):
+        """Strict isolated mode should fail fast instead of silently sharing runtime."""
+        manager = self._make_manager(tmp_path, runtime_mode="isolated")
+        manager._running_inside_container = True
+
+        # Required for subagent spawn path.
+        parent_workspace = Path(manager.parent_workspace)
+        parent_workspace.mkdir(parents=True, exist_ok=True)
+        (parent_workspace / "CONTEXT.md").write_text("Test context for strict-isolation failure path.")
+
+        results = await manager.spawn_parallel(
+            tasks=[
+                {"task": "Start local evaluator server on 3000", "subagent_id": "eval_a", "context_paths": []},
+                {"task": "Start local evaluator server on 3000", "subagent_id": "eval_b", "context_paths": []},
+            ],
+            timeout_seconds=120,
+            refine=False,
+        )
+
+        assert len(results) == 2
+        for result in results:
+            assert result.success is False
+            assert result.status == "error"
+            assert "subagent_runtime_fallback_mode" in (result.error or "")
+
+
+# =============================================================================
+# Runtime Message Routing Tests (MAS-310)
+# =============================================================================
+
+
+class TestSendMessageToSubagent:
+    """Tests for SubagentManager.send_message_to_subagent()."""
+
+    def _make_manager(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True, exist_ok=True)
+        return SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+    def _register_running_subagent(self, manager, subagent_id, workspace_path):
+        """Register a fake running subagent in manager state."""
+        from massgen.subagent.models import SubagentConfig, SubagentState
+
+        config = SubagentConfig(id=subagent_id, task="test task", parent_agent_id="test-agent")
+        state = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(workspace_path),
+        )
+        manager._subagents[subagent_id] = state
+
+    def test_send_message_creates_inbox_file(self, tmp_path):
+        """Verify file written to {workspace}/.massgen/runtime_inbox/."""
+        manager = self._make_manager(tmp_path)
+        sub_workspace = tmp_path / "workspace" / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+        self._register_running_subagent(manager, "sub1", sub_workspace)
+
+        success, error = manager.send_message_to_subagent("sub1", "focus on performance")
+        assert success is True
+        assert error is None
+
+        inbox = sub_workspace / ".massgen" / "runtime_inbox"
+        assert inbox.exists()
+        msg_files = list(inbox.glob("msg_*.json"))
+        assert len(msg_files) == 1
+
+        data = json.loads(msg_files[0].read_text())
+        assert data["content"] == "focus on performance"
+        assert data["source"] == "parent"
+        assert "timestamp" in data
+
+    def test_send_message_returns_false_for_unknown_subagent(self, tmp_path):
+        """Nonexistent ID → (False, error)."""
+        manager = self._make_manager(tmp_path)
+        success, error = manager.send_message_to_subagent("nonexistent", "hello")
+        assert success is False
+        assert "not found" in error
+
+    def test_send_message_returns_false_for_non_running_subagent(self, tmp_path):
+        """Completed subagent → (False, error)."""
+        from massgen.subagent.models import SubagentConfig, SubagentState
+
+        manager = self._make_manager(tmp_path)
+        config = SubagentConfig(id="done1", task="test", parent_agent_id="test-agent")
+        state = SubagentState(
+            config=config,
+            status="completed",
+            workspace_path=str(tmp_path / "done_workspace"),
+        )
+        manager._subagents["done1"] = state
+
+        success, error = manager.send_message_to_subagent("done1", "hello")
+        assert success is False
+        assert "completed" in error
+
+    def test_send_message_rejects_when_answer_file_exists(self, tmp_path):
+        """Running subagent with answer.txt (race condition) → (False, error)."""
+        manager = self._make_manager(tmp_path)
+        sub_workspace = tmp_path / "workspace" / "subagents" / "sub_done" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+        self._register_running_subagent(manager, "sub_done", sub_workspace)
+
+        # Simulate subprocess having written answer.txt
+        (sub_workspace / "answer.txt").write_text("Final answer")
+
+        success, error = manager.send_message_to_subagent("sub_done", "too late")
+        assert success is False
+        assert "already completed" in error
+
+    def test_send_message_atomic_write(self, tmp_path):
+        """Verify .tmp → rename pattern (no partial reads)."""
+        manager = self._make_manager(tmp_path)
+        sub_workspace = tmp_path / "workspace" / "subagents" / "sub2" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+        self._register_running_subagent(manager, "sub2", sub_workspace)
+
+        success, error = manager.send_message_to_subagent("sub2", "test atomic")
+        assert success is True
+        assert error is None
+
+        inbox = sub_workspace / ".massgen" / "runtime_inbox"
+        # No .tmp files should remain
+        tmp_files = list(inbox.glob("*.tmp"))
+        assert tmp_files == [], "No .tmp files should remain after atomic write"
+
+    def test_multiple_messages_create_separate_files(self, tmp_path):
+        """Two sends → two files with incrementing sequence."""
+        manager = self._make_manager(tmp_path)
+        sub_workspace = tmp_path / "workspace" / "subagents" / "sub3" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+        self._register_running_subagent(manager, "sub3", sub_workspace)
+
+        manager.send_message_to_subagent("sub3", "message one")
+        manager.send_message_to_subagent("sub3", "message two")
+
+        inbox = sub_workspace / ".massgen" / "runtime_inbox"
+        msg_files = sorted(inbox.glob("msg_*.json"))
+        assert len(msg_files) == 2
+
+        contents = [json.loads(f.read_text())["content"] for f in msg_files]
+        assert "message one" in contents
+        assert "message two" in contents
+
+
+class TestGetRunningSubagentIds:
+    """Tests for SubagentManager.get_running_subagent_ids()."""
+
+    def test_returns_running_ids(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentConfig, SubagentState
+
+        manager = SubagentManager(
+            parent_workspace=str(tmp_path / "workspace"),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        for sid, status in [("a", "running"), ("b", "completed"), ("c", "running"), ("d", "failed")]:
+            config = SubagentConfig(id=sid, task="test", parent_agent_id="test-agent")
+            manager._subagents[sid] = SubagentState(config=config, status=status, workspace_path="")
+
+        running = manager.get_running_subagent_ids()
+        assert sorted(running) == ["a", "c"]
+
+
+class _FakeCancelableProcess:
+    """Minimal async subprocess stub for cancellation tests."""
+
+    def __init__(self) -> None:
+        self.returncode: int | None = None
+        self.terminated = False
+        self.killed = False
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+        self.returncode = -9
+
+    async def wait(self) -> int:
+        if self.returncode is None:
+            self.returncode = 0
+        return self.returncode
+
+
+class TestCancelAllSubagents:
+    """Tests for SubagentManager.cancel_all_subagents()."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_marks_running_subagents_cancelled(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentState
+
+        manager = SubagentManager(
+            parent_workspace=str(tmp_path / "workspace"),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        for subagent_id in ("sub_a", "sub_b"):
+            cfg = SubagentConfig(id=subagent_id, task="test", parent_agent_id="test-agent")
+            manager._subagents[subagent_id] = SubagentState(
+                config=cfg,
+                status="running",
+                workspace_path=str(tmp_path / subagent_id),
+                started_at=datetime.now(),
+            )
+            manager._active_processes[subagent_id] = _FakeCancelableProcess()
+
+        cancelled = await manager.cancel_all_subagents()
+
+        assert cancelled == 2
+        assert manager._active_processes == {}
+        for subagent_id in ("sub_a", "sub_b"):
+            state = manager._subagents[subagent_id]
+            assert state.status == "cancelled"
+            assert state.finished_at is not None
+            assert state.result is not None
+            assert state.result.error == "Subagent cancelled"
+
+
+class _FakeContinueProcess:
+    """Minimal async subprocess stub for continue_subagent tests."""
+
+    def __init__(self, workspace: Path) -> None:
+        self.returncode = 0
+        self._workspace = workspace
+
+    async def communicate(self):
+        answer_file = self._workspace / "answer_continued.txt"
+        answer_file.write_text("continued answer")
+        return b"", b""
+
+    def terminate(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        return None
+
+    async def wait(self) -> int:
+        return 0
+
+
+class TestContinueSubagent:
+    """Tests for SubagentManager.continue_subagent()."""
+
+    @pytest.mark.asyncio
+    async def test_continue_updates_in_memory_state_and_listed_status(self, tmp_path, monkeypatch):
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentState
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent")
+        cancelled_result = SubagentResult.create_error(
+            subagent_id="sub1",
+            error="Subagent cancelled",
+            workspace_path=str(sub_workspace),
+            execution_time_seconds=2.0,
+        )
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="cancelled",
+            workspace_path=str(sub_workspace),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+            result=cancelled_result,
+        )
+        manager._subagent_sessions["sub1"] = "sess-old"
+
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": "sess-old",
+                    "task": "research topic",
+                    "status": "cancelled",
+                    "workspace": str(sub_workspace),
+                    "created_at": datetime.now().isoformat(),
+                    "execution_time_seconds": 2.0,
+                    "success": False,
+                    "continuable": True,
+                    "source_agent": "test-agent",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry, indent=2))
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+            del args, kwargs
+            return _FakeContinueProcess(sub_workspace)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_session_has_saved_turns", lambda *args, **kwargs: True)
+        monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, "sess-new"))
+        monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue with more depth",
+        )
+
+        assert result.success is True
+        assert result.status == "completed"
+        assert result.answer == "continued answer"
+
+        state = manager._subagents["sub1"]
+        assert state.status == "completed"
+        assert state.result is not None
+        assert state.result.status == "completed"
+        assert state.result.answer == "continued answer"
+        assert state.finished_at is not None
+        assert manager._subagent_sessions["sub1"] == "sess-new"
+
+        listed = {entry["subagent_id"]: entry for entry in manager.list_subagents()}
+        assert listed["sub1"]["status"] == "completed"
+        assert listed["sub1"]["session_id"] == "sess-new"
+
+
+class TestContinueSubagentBackground:
+    """Tests for SubagentManager.continue_subagent_background()."""
+
+    @pytest.mark.asyncio
+    async def test_continue_background_returns_immediately_and_invokes_callback(self, tmp_path, monkeypatch):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent")
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="completed",
+            workspace_path=str(sub_workspace),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+            result=SubagentResult.create_success(
+                subagent_id="sub1",
+                answer="initial answer",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.0,
+            ),
+        )
+
+        continuation_calls: list[dict[str, object]] = []
+
+        async def _mock_continue(subagent_id: str, new_message: str, timeout_seconds: int | None = None):
+            continuation_calls.append(
+                {
+                    "subagent_id": subagent_id,
+                    "new_message": new_message,
+                    "timeout_seconds": timeout_seconds,
+                },
+            )
+            await asyncio.sleep(0)
+            return SubagentResult.create_success(
+                subagent_id=subagent_id,
+                answer="continued answer",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=2.0,
+            )
+
+        monkeypatch.setattr(manager, "continue_subagent", _mock_continue)
+
+        completed: list[tuple[str, SubagentResult]] = []
+        manager.register_completion_callback(lambda sid, result: completed.append((sid, result)))
+
+        info = manager.continue_subagent_background(
+            subagent_id="sub1",
+            new_message="continue with more depth",
+            timeout_seconds=240,
+        )
+
+        assert info["subagent_id"] == "sub1"
+        assert info["status"] == "running"
+        assert "sub1" in manager._background_tasks
+
+        result = await manager.wait_for_subagent("sub1", timeout=1.0)
+        assert result is not None
+        assert result.success is True
+        assert result.answer == "continued answer"
+
+        assert continuation_calls == [
+            {
+                "subagent_id": "sub1",
+                "new_message": "continue with more depth",
+                "timeout_seconds": 240,
+            },
+        ]
+        assert len(completed) == 1
+        assert completed[0][0] == "sub1"
+        assert completed[0][1].answer == "continued answer"
+        assert "sub1" not in manager._background_tasks
+
+    def test_continue_background_rejects_running_subagent(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent")
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(sub_workspace),
+            started_at=datetime.now(),
+        )
+
+        info = manager.continue_subagent_background(
+            subagent_id="sub1",
+            new_message="continue with more depth",
+        )
+
+        assert info["status"] == "error"
+        assert "send_message_to_subagent" in (info.get("error") or "")
+
+
+class TestParseSubprocessStatusSentinel:
+    """Tests for _parse_subprocess_status reading the .session_id sentinel file."""
+
+    def test_reads_sentinel_over_status_json(self, tmp_path):
+        """Sentinel file takes priority over broken status.json session_id."""
+        from massgen.subagent.manager import SubagentManager
+
+        manager = SubagentManager(
+            parent_workspace=str(tmp_path / "workspace"),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+
+        # Write sentinel with real session_id
+        sentinel_dir = workspace / ".massgen"
+        sentinel_dir.mkdir(parents=True)
+        (sentinel_dir / ".session_id").write_text("session_20260223_120000")
+
+        # Write status.json with broken session_id ("attempt_1")
+        log_dir = sentinel_dir / "massgen_logs" / "log_001" / "turn_1" / "attempt_1"
+        log_dir.mkdir(parents=True)
+        status = {
+            "meta": {"session_id": "attempt_1"},
+            "costs": {"total_input_tokens": 100, "total_output_tokens": 50},
+        }
+        (log_dir / "status.json").write_text(json.dumps(status))
+
+        token_usage, log_path, session_id = manager._parse_subprocess_status(workspace)
+
+        # Should return sentinel session_id, not "attempt_1"
+        assert session_id == "session_20260223_120000"
+        assert token_usage["input_tokens"] == 100
+
+    def test_no_sentinel_returns_none_session_id(self, tmp_path):
+        """Without sentinel, session_id should be None (not status.json's broken value)."""
+        from massgen.subagent.manager import SubagentManager
+
+        manager = SubagentManager(
+            parent_workspace=str(tmp_path / "workspace"),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        workspace = tmp_path / "ws"
+        workspace.mkdir()
+
+        # Write status.json with broken session_id but NO sentinel
+        massgen_dir = workspace / ".massgen"
+        massgen_dir.mkdir(parents=True)
+        log_dir = massgen_dir / "massgen_logs" / "log_001" / "turn_1" / "attempt_1"
+        log_dir.mkdir(parents=True)
+        status = {
+            "meta": {"session_id": "attempt_1"},
+            "costs": {"total_input_tokens": 100, "total_output_tokens": 50},
+        }
+        (log_dir / "status.json").write_text(json.dumps(status))
+
+        token_usage, log_path, session_id = manager._parse_subprocess_status(workspace)
+
+        # No sentinel → session_id should be None
+        assert session_id is None
+        # Token usage should still work
+        assert token_usage["input_tokens"] == 100
+
+
+class TestContinueSubagentContextRecovery:
+    """Tests for continue_subagent with cancelled subagents (no session_id)."""
+
+    @pytest.mark.asyncio
+    async def test_continue_cancelled_without_session_uses_context_recovery(self, tmp_path, monkeypatch):
+        """Cancelled subagent with no session_id falls back to context_recovery."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Create registry with no session_id and context_recovery
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": None,
+                    "task": "research topic",
+                    "status": "cancelled",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "context_recovery",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+
+        # Mock spawn_subagent to track the call
+        spawn_called = {}
+
+        async def _mock_spawn(**kwargs):
+            spawn_called.update(kwargs)
+            return SubagentResult.create_success(
+                subagent_id=kwargs.get("subagent_id", "sub1_recovery"),
+                answer="recovered answer",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.0,
+            )
+
+        monkeypatch.setattr(manager, "spawn_subagent", _mock_spawn)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue with more depth",
+        )
+
+        assert result.success is True
+        assert result.answer == "recovered answer"
+        # spawn_subagent should have been called with original task + new message
+        assert "research topic" in spawn_called["task"]
+        assert "continue with more depth" in spawn_called["task"]
+
+    @pytest.mark.asyncio
+    async def test_continue_cancelled_in_memory_fallback(self, tmp_path, monkeypatch):
+        """Cancelled subagent not in registry but in _subagents dict uses in-memory fallback."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Put in _subagents but NOT in registry
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent")
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="cancelled",
+            workspace_path=str(sub_workspace),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+        )
+
+        # Mock spawn_subagent
+        spawn_called = {}
+
+        async def _mock_spawn(**kwargs):
+            spawn_called.update(kwargs)
+            return SubagentResult.create_success(
+                subagent_id=kwargs.get("subagent_id", "sub1_recovery"),
+                answer="recovered",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.0,
+            )
+
+        monkeypatch.setattr(manager, "spawn_subagent", _mock_spawn)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="go deeper",
+        )
+
+        assert result.success is True
+        assert "research topic" in spawn_called["task"]
+
+    @pytest.mark.asyncio
+    async def test_continue_regression_unchanged(self, tmp_path, monkeypatch):
+        """Non-cancelled continue path still works (regression test)."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Registry with valid session_id
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": "sess-valid",
+                    "task": "research topic",
+                    "status": "completed",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+        (sub_workspace / ".massgen" / "sessions" / "sess-valid" / "turn_1").mkdir(parents=True, exist_ok=True)
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeContinueProcess(sub_workspace)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, "sess-new"))
+        monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue please",
+        )
+
+        assert result.success is True
+        assert result.answer == "continued answer"
+
+
+class _FakeFailedContinueProcess:
+    """Subprocess stub that simulates --session-id restore failure."""
+
+    def __init__(self) -> None:
+        self.returncode = 1
+
+    async def communicate(self):
+        return b"", b"ValueError: Cannot continue an empty session"
+
+    def terminate(self) -> None:
+        return None
+
+    def kill(self) -> None:
+        return None
+
+    async def wait(self) -> int:
+        return 1
+
+
+class TestContinueSubagentSessionFallback:
+    """Tests for fallback to context_recovery when --session-id subprocess fails."""
+
+    @pytest.mark.asyncio
+    async def test_session_restore_failure_falls_back_to_context_recovery(self, tmp_path, monkeypatch):
+        """When --session-id subprocess fails (e.g. empty session), fall back to context_recovery."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Registry with valid session_id (SIGINT cancel wrote sentinel)
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": "sess-from-sentinel",
+                    "task": "research jazz history",
+                    "status": "cancelled",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+        (sub_workspace / ".massgen" / "sessions" / "sess-valid" / "turn_1").mkdir(parents=True, exist_ok=True)
+
+        # The --session-id subprocess will fail (empty session)
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeFailedContinueProcess()
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, None))
+        monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
+
+        # Mock _continue_via_context_recovery to track the fallback
+        recovery_called = {}
+
+        async def _mock_recovery(sid, entry, msg, timeout, reuse_subagent_id=False):
+            recovery_called["subagent_id"] = sid
+            recovery_called["new_message"] = msg
+            recovery_called["reuse_subagent_id"] = reuse_subagent_id
+            return SubagentResult.create_success(
+                subagent_id=f"{sid}_recovery",
+                answer="recovered via fallback",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=2.0,
+            )
+
+        monkeypatch.setattr(manager, "_continue_via_context_recovery", _mock_recovery)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="now focus on rock and roll",
+        )
+
+        # Should have fallen back to context_recovery instead of returning error
+        assert result.success is True
+        assert result.answer == "recovered via fallback"
+        assert recovery_called["subagent_id"] == "sub1"
+        assert recovery_called["new_message"] == "now focus on rock and roll"
+        assert recovery_called["reuse_subagent_id"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_success_does_not_trigger_fallback(self, tmp_path, monkeypatch):
+        """When --session-id subprocess succeeds, no fallback happens (regression)."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": "sess-valid",
+                    "task": "research topic",
+                    "status": "completed",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+        (sub_workspace / ".massgen" / "sessions" / "sess-valid" / "turn_1").mkdir(parents=True, exist_ok=True)
+
+        async def _fake_create_subprocess_exec(*args, **kwargs):
+            return _FakeContinueProcess(sub_workspace)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_create_subprocess_exec)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+        monkeypatch.setattr(manager, "_parse_subprocess_status", lambda _workspace: ({}, None, "sess-new"))
+        monkeypatch.setattr(manager, "_write_subprocess_log_reference", lambda *args, **kwargs: None)
+
+        # Mock recovery — should NOT be called
+        recovery_called = False
+
+        async def _mock_recovery(sid, entry, msg, timeout, reuse_subagent_id=False):
+            nonlocal recovery_called
+            recovery_called = True
+            return SubagentResult.create_error(subagent_id=sid, error="should not reach here")
+
+        monkeypatch.setattr(manager, "_continue_via_context_recovery", _mock_recovery)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue please",
+        )
+
+        assert result.success is True
+        assert result.answer == "continued answer"
+        assert recovery_called is False
+
+    @pytest.mark.asyncio
+    async def test_empty_session_precheck_bypasses_session_restore_subprocess(self, tmp_path, monkeypatch):
+        """Empty session dirs should skip --session-id and go straight to context recovery."""
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        manager = SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+        sub_workspace = workspace / "subagents" / "sub1" / "workspace"
+        sub_workspace.mkdir(parents=True, exist_ok=True)
+
+        # Sentinel-recovered session id exists but has NO turn_* dirs (empty session).
+        session_id = "session_empty"
+        (sub_workspace / ".massgen" / "sessions" / session_id).mkdir(parents=True, exist_ok=True)
+
+        registry = {
+            "parent_agent_id": "test-agent",
+            "orchestrator_id": "test-orch",
+            "subagents": [
+                {
+                    "subagent_id": "sub1",
+                    "session_id": session_id,
+                    "task": "research jazz history",
+                    "status": "cancelled",
+                    "workspace": str(sub_workspace),
+                    "continuable_via": "session",
+                },
+            ],
+        }
+        registry_path = manager.subagents_base / "_registry.json"
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(json.dumps(registry))
+
+        # If precheck works, subprocess should never be launched.
+        async def _unexpected_subprocess(*args, **kwargs):  # noqa: ANN002, ANN003
+            raise AssertionError("continue_subagent should not invoke --session-id for empty sessions")
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", _unexpected_subprocess)
+        monkeypatch.setattr(manager, "_resolve_effective_runtime_mode", lambda: ("inherited", None))
+
+        recovery_called: dict[str, object] = {}
+
+        async def _mock_recovery(sid, entry, msg, timeout, reuse_subagent_id=False):
+            recovery_called["subagent_id"] = sid
+            recovery_called["message"] = msg
+            recovery_called["reuse_subagent_id"] = reuse_subagent_id
+            return SubagentResult.create_success(
+                subagent_id=sid,
+                answer="recovered without session subprocess",
+                workspace_path=str(sub_workspace),
+                execution_time_seconds=1.5,
+            )
+
+        monkeypatch.setattr(manager, "_continue_via_context_recovery", _mock_recovery)
+
+        result = await manager.continue_subagent(
+            subagent_id="sub1",
+            new_message="continue with rock and roll context",
+        )
+
+        assert result.success is True
+        assert result.answer == "recovered without session subprocess"
+        assert recovery_called["subagent_id"] == "sub1"
+        assert recovery_called["reuse_subagent_id"] is True
+
+
+# =============================================================================
+# list_subagents timeout/elapsed fields
+# =============================================================================
+
+
+class TestListSubagentsTimeoutFields:
+    """list_subagents() should expose elapsed/timeout/remaining for running subagents."""
+
+    def _make_manager(self, tmp_path):
+        from massgen.subagent.manager import SubagentManager
+
+        workspace = tmp_path / "workspace"
+        return SubagentManager(
+            parent_workspace=str(workspace),
+            parent_agent_id="test-agent",
+            orchestrator_id="test-orch",
+            parent_agent_configs=[],
+        )
+
+    def test_running_subagent_includes_timeout_fields(self, tmp_path):
+        """A running in-memory subagent should expose elapsed_seconds, timeout_seconds, seconds_remaining."""
+        manager = self._make_manager(tmp_path)
+
+        config = SubagentConfig(id="sub1", task="research topic", parent_agent_id="test-agent", timeout_seconds=300)
+        manager._subagents["sub1"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(tmp_path / "sub1"),
+            started_at=datetime.now(),
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub1"]
+
+        assert "elapsed_seconds" in entry, "running subagent must expose elapsed_seconds"
+        assert "timeout_seconds" in entry, "running subagent must expose timeout_seconds"
+        assert "seconds_remaining" in entry, "running subagent must expose seconds_remaining"
+        assert entry["timeout_seconds"] == 300.0
+        assert 0.0 <= entry["elapsed_seconds"] < 5.0  # started just now
+        assert entry["seconds_remaining"] <= 300.0
+        assert entry["seconds_remaining"] >= 295.0  # should be close to max
+
+    def test_completed_subagent_does_not_include_timeout_fields(self, tmp_path):
+        """A completed subagent should NOT have elapsed_seconds/timeout_seconds/seconds_remaining injected."""
+        manager = self._make_manager(tmp_path)
+
+        config = SubagentConfig(id="sub2", task="done task", parent_agent_id="test-agent", timeout_seconds=300)
+        result = SubagentResult.create_success(
+            subagent_id="sub2",
+            answer="done",
+            workspace_path=str(tmp_path / "sub2"),
+            execution_time_seconds=42.0,
+        )
+        manager._subagents["sub2"] = SubagentState(
+            config=config,
+            status="completed",
+            workspace_path=str(tmp_path / "sub2"),
+            started_at=datetime.now(),
+            finished_at=datetime.now(),
+            result=result,
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub2"]
+
+        assert "elapsed_seconds" not in entry, "completed subagent should not have elapsed_seconds injected"
+        assert "seconds_remaining" not in entry, "completed subagent should not have seconds_remaining injected"
+
+    def test_running_subagent_seconds_remaining_decreases_with_time(self, tmp_path):
+        """seconds_remaining should reflect time actually elapsed since started_at."""
+        from datetime import timedelta
+
+        manager = self._make_manager(tmp_path)
+
+        # Simulate a subagent that started 100 seconds ago
+        started = datetime.now() - timedelta(seconds=100)
+        config = SubagentConfig(id="sub3", task="slow task", parent_agent_id="test-agent", timeout_seconds=300)
+        manager._subagents["sub3"] = SubagentState(
+            config=config,
+            status="running",
+            workspace_path=str(tmp_path / "sub3"),
+            started_at=started,
+        )
+
+        listed = {e["subagent_id"]: e for e in manager.list_subagents()}
+        entry = listed["sub3"]
+
+        # elapsed should be ~100s
+        assert entry["elapsed_seconds"] >= 99.0
+        assert entry["elapsed_seconds"] < 110.0
+        # remaining should be ~200s
+        assert entry["seconds_remaining"] <= 201.0
+        assert entry["seconds_remaining"] >= 190.0

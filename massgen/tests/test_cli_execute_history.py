@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for execute-mode conversation history selection."""
 
 from types import SimpleNamespace

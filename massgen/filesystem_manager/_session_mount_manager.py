@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Session directory mount management for Docker containers.
 
 This module provides session-aware volume mounting for Docker containers,
@@ -7,7 +6,7 @@ recreation between turns.
 """
 
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class SessionMountManager:
@@ -34,8 +33,8 @@ class SessionMountManager:
                 (e.g., Path(".massgen/sessions"))
         """
         self.session_storage_base = session_storage_base
-        self.session_id: Optional[str] = None
-        self.session_dir: Optional[Path] = None
+        self.session_id: str | None = None
+        self.session_dir: Path | None = None
 
     def initialize_session(self, session_id: str) -> Path:
         """Create session directory, ready for mounting.
@@ -51,7 +50,7 @@ class SessionMountManager:
         self.session_dir.mkdir(parents=True, exist_ok=True)
         return self.session_dir
 
-    def get_mount_config(self) -> Optional[Dict[str, Any]]:
+    def get_mount_config(self) -> dict[str, Any] | None:
         """Return Docker volume mount config for session directory.
 
         Returns:
@@ -63,7 +62,7 @@ class SessionMountManager:
         resolved = self.session_dir.resolve()
         return {str(resolved): {"bind": str(resolved), "mode": "ro"}}
 
-    def get_session_dir(self) -> Optional[Path]:
+    def get_session_dir(self) -> Path | None:
         """Get the current session directory path.
 
         Returns:
@@ -71,7 +70,7 @@ class SessionMountManager:
         """
         return self.session_dir
 
-    def get_session_id(self) -> Optional[str]:
+    def get_session_id(self) -> str | None:
         """Get the current session ID.
 
         Returns:

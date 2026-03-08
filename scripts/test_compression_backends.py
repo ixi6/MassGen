@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Manual test script for reactive compression across multiple backends.
 
@@ -32,7 +31,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # Add massgen to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -43,7 +42,7 @@ from massgen.token_manager import TokenCostCalculator  # noqa: E402
 # Context window is looked up dynamically via TokenCostCalculator
 # default_fill_ratio: The fill ratio needed to reliably trigger compression for each backend
 # (determined through testing - some backends need higher ratios due to context window differences)
-BACKEND_CONFIGS: Dict[str, Dict[str, Any]] = {
+BACKEND_CONFIGS: dict[str, dict[str, Any]] = {
     "openai": {
         "type": "openai",
         "model": "gpt-4o-mini",
@@ -171,7 +170,7 @@ def get_context_window(provider: str, model: str) -> int:
 def load_files_to_target_tokens(
     target_tokens: int,
     base_path: Path,
-) -> Tuple[str, int, List[str]]:
+) -> tuple[str, int, list[str]]:
     """Load files until we reach target token count.
 
     If unique files aren't enough, repeats content to reach the target.
@@ -240,7 +239,7 @@ def load_files_to_target_tokens(
 def build_prefilled_messages(
     file_content: str,
     query: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Build messages with pre-filled context.
 
     Structure:
@@ -296,10 +295,10 @@ Please be thorough and detailed in your analysis."""
 
 async def test_backend_compression(
     backend_name: str,
-    config: Dict[str, Any],
+    config: dict[str, Any],
     fill_ratio: float = 0.8,
-    base_path: Optional[Path] = None,
-) -> Dict[str, Any]:
+    base_path: Path | None = None,
+) -> dict[str, Any]:
     """Test compression for a single backend.
 
     Args:
@@ -449,9 +448,9 @@ async def test_backend_compression(
 
 
 async def run_all_tests(
-    backends: Optional[List[str]] = None,
-    fill_ratio: Optional[float] = None,
-) -> List[Dict[str, Any]]:
+    backends: list[str] | None = None,
+    fill_ratio: float | None = None,
+) -> list[dict[str, Any]]:
     """Run compression tests for multiple backends.
 
     Args:
@@ -483,7 +482,7 @@ async def run_all_tests(
     return results
 
 
-def print_summary(results: List[Dict[str, Any]]) -> None:
+def print_summary(results: list[dict[str, Any]]) -> None:
     """Print summary of all test results."""
     print("\n" + "=" * 80)
     print("COMPRESSION TEST SUMMARY")

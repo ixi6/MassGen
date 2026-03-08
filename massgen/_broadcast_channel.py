@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """Broadcast channel for agent-to-agent and agent-to-human communication."""
 
 import asyncio
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Dict, List, Optional, Union
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -49,15 +48,15 @@ class BroadcastChannel:
             orchestrator: The orchestrator managing agents
         """
         self.orchestrator = orchestrator
-        self.active_broadcasts: Dict[str, BroadcastRequest] = {}
-        self.broadcast_responses: Dict[str, List[BroadcastResponse]] = {}
-        self.response_events: Dict[str, asyncio.Event] = {}
+        self.active_broadcasts: dict[str, BroadcastRequest] = {}
+        self.broadcast_responses: dict[str, list[BroadcastResponse]] = {}
+        self.response_events: dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
         self._human_input_lock = asyncio.Lock()  # Serialize human input prompts
         self._human_ask_others_lock = asyncio.Lock()  # Serialize entire ask_others flow in human mode
-        self._human_qa_history: List[Dict[str, str]] = []  # Human Q&A pairs for this turn
+        self._human_qa_history: list[dict[str, str]] = []  # Human Q&A pairs for this turn
 
-    def get_human_qa_history(self) -> List[Dict[str, str]]:
+    def get_human_qa_history(self) -> list[dict[str, str]]:
         """Get all human Q&A pairs from this turn.
 
         Returns:
@@ -68,8 +67,9 @@ class BroadcastChannel:
     async def create_broadcast(
         self,
         sender_agent_id: str,
-        question: Union[str, List[StructuredQuestion]],
-        timeout: Optional[int] = None,
+        question: str | list[StructuredQuestion],
+        timeout: int | None = None,
+        target_agents: list[str] | None = None,
     ) -> str:
         """Create a new broadcast request.
 
@@ -79,6 +79,8 @@ class BroadcastChannel:
                 - A simple string for open-ended questions
                 - A list of StructuredQuestion objects for structured questions with options
             timeout: Maximum time to wait for responses (uses config default if None)
+            target_agents: Optional list of specific agents to query (anonymous IDs like ['agent1', 'agent2']).
+                If None, broadcasts to all other agents. If provided, only queries specified agents.
 
         Returns:
             The request_id for this broadcast
@@ -100,12 +102,32 @@ class BroadcastChannel:
             if timeout is None:
                 timeout = self.orchestrator.config.coordination_config.broadcast_timeout
 
-            # Count expected responses based on mode
+            # Count expected responses based on mode and targeting
             if self.orchestrator.config.coordination_config.broadcast == "human":
                 # Human mode: only human responds, not other agents
                 expected_count = 1
+            elif target_agents:
+                # Targeted mode: only specified agents respond
+                # Resolve anonymous IDs to real IDs and filter out sender
+                real_target_ids = self._resolve_anonymous_to_real(target_agents)
+                filtered_targets = [t for t in real_target_ids if t != sender_agent_id]
+
+                # Validate that at least one valid target remains
+                if not filtered_targets:
+                    # Get valid anonymous agent IDs for error message
+                    valid_anon_ids = list(self.orchestrator.coordination_tracker.get_anonymous_agent_mapping().keys())
+                    # Filter out sender's anonymous ID
+                    sender_anon_id = self.orchestrator.coordination_tracker.get_reverse_agent_mapping().get(sender_agent_id)
+                    if sender_anon_id:
+                        valid_anon_ids = [aid for aid in valid_anon_ids if aid != sender_anon_id]
+
+                    error_msg = f"None of the specified target_agents are valid or available: {target_agents}. " f"Valid agent IDs (excluding sender): {valid_anon_ids}"
+                    logger.error(f"📢 [Broadcast] {error_msg}")
+                    raise ValueError(error_msg)
+
+                expected_count = len(filtered_targets)
             else:
-                # Agents mode: all agents except sender respond
+                # Broadcast mode: all agents except sender respond
                 expected_count = len(self.orchestrator.agents) - 1
 
             broadcast = BroadcastRequest(
@@ -115,6 +137,7 @@ class BroadcastChannel:
                 timestamp=datetime.now(),
                 timeout=timeout,
                 expected_response_count=expected_count,
+                target_agents=target_agents,  # Store for inject_into_agents()
             )
 
             self.active_broadcasts[request_id] = broadcast
@@ -177,8 +200,21 @@ class BroadcastChannel:
                 logger.error(f"[{target_id}] Shadow agent error: {e}")
                 return (target_id, None, str(e))
 
-        # Get all target agents (everyone except sender)
-        target_agents = [(agent_id, agent) for agent_id, agent in self.orchestrator.agents.items() if agent_id != broadcast.sender_agent_id]
+        # Get target agents based on broadcast.target_agents (if specified)
+        if broadcast.target_agents:
+            # Targeted mode: only query specified agents
+            real_target_ids = self._resolve_anonymous_to_real(broadcast.target_agents)
+            # Filter out sender and non-existent agents
+            target_agents = [(agent_id, agent) for agent_id, agent in self.orchestrator.agents.items() if agent_id in real_target_ids and agent_id != broadcast.sender_agent_id]
+            logger.info(
+                f"[Broadcast] Targeting specific agents: {broadcast.target_agents} -> {[aid for aid, _ in target_agents]}",
+            )
+        else:
+            # Broadcast mode: all agents except sender
+            target_agents = [(agent_id, agent) for agent_id, agent in self.orchestrator.agents.items() if agent_id != broadcast.sender_agent_id]
+            logger.info(
+                "[Broadcast] Broadcasting to all agents",
+            )
 
         if not target_agents:
             logger.warning(f"[Broadcast] No target agents for broadcast from {broadcast.sender_agent_id}")
@@ -229,8 +265,8 @@ class BroadcastChannel:
     async def wait_for_responses(
         self,
         request_id: str,
-        timeout: Optional[int] = None,
-    ) -> Dict[str, any]:
+        timeout: int | None = None,
+    ) -> dict[str, any]:
         """Wait for responses to be collected (blocking mode).
 
         Args:
@@ -256,7 +292,7 @@ class BroadcastChannel:
                 self.response_events[request_id].wait(),
                 timeout=timeout,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             async with self._lock:
                 broadcast.status = BroadcastStatus.TIMEOUT
 
@@ -266,7 +302,7 @@ class BroadcastChannel:
         self,
         request_id: str,
         responder_id: str,
-        content: Union[str, List[StructuredResponse]],
+        content: str | list[StructuredResponse],
         is_human: bool = False,
     ) -> None:
         """Collect a response from an agent or human.
@@ -305,7 +341,7 @@ class BroadcastChannel:
                 broadcast.status = BroadcastStatus.COMPLETE
                 self.response_events[request_id].set()
 
-    def get_broadcast_status(self, request_id: str) -> Dict[str, any]:
+    def get_broadcast_status(self, request_id: str) -> dict[str, any]:
         """Get the current status of a broadcast request.
 
         Args:
@@ -335,7 +371,7 @@ class BroadcastChannel:
             "waiting_for": waiting_for,
         }
 
-    def get_broadcast_responses(self, request_id: str) -> Dict[str, any]:
+    def get_broadcast_responses(self, request_id: str) -> dict[str, any]:
         """Get responses for a broadcast request.
 
         Args:
@@ -433,12 +469,39 @@ class BroadcastChannel:
                         logger.info(f"📢 [Human] Stored Q&A (total: {len(self._human_qa_history)})")
                     else:
                         logger.info("📢 [Human] No response provided (skipped)")
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     logger.info("📢 [Human] Timeout - no response received")
                 except Exception as e:
                     logger.error(f"📢 [Human] Error prompting for response: {e}")
             else:
                 logger.warning("📢 [Human] No coordination_ui available for prompting")
+
+    def _resolve_anonymous_to_real(self, anonymous_ids: list[str]) -> list[str]:
+        """Map anonymous agent IDs (agent1, agent2) to real IDs (agent_a, agent_b).
+
+        Args:
+            anonymous_ids: List of anonymous agent IDs (e.g., ['agent1', 'agent2'])
+
+        Returns:
+            List of real agent IDs corresponding to the anonymous IDs
+
+        Note:
+            Uses coordination tracker's forward mapping to resolve anonymous IDs.
+            Invalid anonymous IDs are filtered out (not included in result).
+        """
+        # Get forward mapping from coordination tracker (anonymous_id -> real_id)
+        anon_to_real = self.orchestrator.coordination_tracker.get_anonymous_agent_mapping()
+
+        # Map anonymous IDs to real IDs, filtering out invalid ones
+        real_ids = []
+        for anon_id in anonymous_ids:
+            real_id = anon_to_real.get(anon_id)
+            if real_id:
+                real_ids.append(real_id)
+            else:
+                logger.warning(f"📢 [Broadcast] Invalid anonymous agent ID: {anon_id} (not in mapping)")
+
+        return real_ids
 
     async def cleanup_broadcast(self, request_id: str) -> None:
         """Clean up resources for a completed broadcast.

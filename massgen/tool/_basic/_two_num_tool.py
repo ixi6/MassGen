@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Sample math tool for testing purposes.
 """

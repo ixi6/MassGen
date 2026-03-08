@@ -1,15 +1,16 @@
-# -*- coding: utf-8 -*-
 """
 Backend utilities for MCP integration.
 Contains all utilities that backends need for MCP functionality.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import random
 import time
-from typing import Any, AsyncGenerator, Awaitable, Callable, Literal
+from collections.abc import AsyncGenerator, Awaitable, Callable
+from typing import Any, Literal
 
 from ..logger_config import log_mcp_activity, logger
 

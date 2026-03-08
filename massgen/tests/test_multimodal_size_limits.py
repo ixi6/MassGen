@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Tests for size and dimension limits in multimodal tools (image, video, audio).
 

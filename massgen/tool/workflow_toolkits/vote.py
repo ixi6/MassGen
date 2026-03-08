@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 Vote toolkit for MassGen workflow coordination.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseToolkit, ToolType
 
@@ -13,9 +12,9 @@ class VoteToolkit(BaseToolkit):
 
     def __init__(
         self,
-        valid_agent_ids: Optional[List[str]] = None,
-        template_overrides: Optional[Dict[str, Any]] = None,
-        anon_agent_ids: Optional[List[str]] = None,
+        valid_agent_ids: list[str] | None = None,
+        template_overrides: dict[str, Any] | None = None,
+        anon_agent_ids: list[str] | None = None,
     ):
         """
         Initialize the Vote toolkit.
@@ -42,7 +41,7 @@ class VoteToolkit(BaseToolkit):
         """Type of this toolkit."""
         return ToolType.WORKFLOW
 
-    def is_enabled(self, config: Dict[str, Any]) -> bool:
+    def is_enabled(self, config: dict[str, Any]) -> bool:
         """
         Check if vote is enabled in configuration.
 
@@ -55,7 +54,7 @@ class VoteToolkit(BaseToolkit):
         # Enable by default for workflow, unless explicitly disabled
         return config.get("enable_workflow_tools", True)
 
-    def set_valid_agent_ids(self, agent_ids: List[str]):
+    def set_valid_agent_ids(self, agent_ids: list[str]):
         """
         Update the valid agent IDs for voting.
 
@@ -64,7 +63,7 @@ class VoteToolkit(BaseToolkit):
         """
         self.valid_agent_ids = agent_ids
 
-    def get_tools(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tools(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Get vote tool definition based on API format.
 

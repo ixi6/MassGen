@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
 """
 Multimodal stream chunk implementation.
 Handles media content including images, audio, video, and documents.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseStreamChunk, ChunkType
 
@@ -48,14 +48,14 @@ class MediaMetadata:
     """
 
     mime_type: str
-    size_bytes: Optional[int] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    duration_seconds: Optional[float] = None
-    filename: Optional[str] = None
-    checksum: Optional[str] = None
+    size_bytes: int | None = None
+    width: int | None = None
+    height: int | None = None
+    duration_seconds: float | None = None
+    filename: str | None = None
+    checksum: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary, excluding None values."""
         return {k: v for k, v in self.__dict__.items() if v is not None}
 
@@ -94,28 +94,28 @@ class MultimodalStreamChunk(BaseStreamChunk):
     """
 
     # Text content (optional caption/description)
-    text_content: Optional[str] = None
+    text_content: str | None = None
 
     # Media fields
-    media_type: Optional[MediaType] = None
-    media_encoding: Optional[MediaEncoding] = None
-    media_data: Optional[Any] = None  # URL, base64 string, bytes, or file_id
-    media_metadata: Optional[MediaMetadata] = None
+    media_type: MediaType | None = None
+    media_encoding: MediaEncoding | None = None
+    media_data: Any | None = None  # URL, base64 string, bytes, or file_id
+    media_metadata: MediaMetadata | None = None
 
     # Multiple attachments support
-    attachments: Optional[List[Dict[str, Any]]] = None
+    attachments: list[dict[str, Any]] | None = None
 
     # Progress tracking for large media
-    progress_percentage: Optional[float] = None
-    bytes_transferred: Optional[int] = None
-    total_bytes: Optional[int] = None
+    progress_percentage: float | None = None
+    bytes_transferred: int | None = None
+    total_bytes: int | None = None
 
     # Streaming support
     is_partial: bool = False
-    chunk_index: Optional[int] = None
-    total_chunks: Optional[int] = None
+    chunk_index: int | None = None
+    total_chunks: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert to dictionary with proper serialization.
 
@@ -188,7 +188,7 @@ class MultimodalStreamChunk(BaseStreamChunk):
 
         return False
 
-    def get_progress(self) -> Optional[float]:
+    def get_progress(self) -> float | None:
         """
         Get progress percentage.
 

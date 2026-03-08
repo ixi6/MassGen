@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Conversation memory implementation for MassGen.
 
@@ -7,7 +6,8 @@ for quick access during active chat sessions.
 """
 
 import uuid
-from typing import Any, Dict, Iterable, List, Optional, Union
+from collections.abc import Iterable
+from typing import Any
 
 from ._base import MemoryBase
 
@@ -35,9 +35,9 @@ class ConversationMemory(MemoryBase):
     def __init__(self) -> None:
         """Initialize an empty conversation memory."""
         super().__init__()
-        self.messages: List[Dict[str, Any]] = []
+        self.messages: list[dict[str, Any]] = []
 
-    def state_dict(self) -> Dict[str, Any]:
+    def state_dict(self) -> dict[str, Any]:
         """
         Serialize memory state to a dictionary.
 
@@ -50,7 +50,7 @@ class ConversationMemory(MemoryBase):
 
     def load_state_dict(
         self,
-        state_dict: Dict[str, Any],
+        state_dict: dict[str, Any],
         strict: bool = True,
     ) -> None:
         """
@@ -96,7 +96,7 @@ class ConversationMemory(MemoryBase):
             f"The retrieve method is not implemented in {self.__class__.__name__}. " "Use get_messages() to access conversation history directly.",
         )
 
-    async def delete(self, index: Union[Iterable, int]) -> None:
+    async def delete(self, index: Iterable | int) -> None:
         """
         Delete message(s) by index position.
 
@@ -126,7 +126,7 @@ class ConversationMemory(MemoryBase):
 
     async def add(
         self,
-        messages: Union[List[Dict[str, Any]], Dict[str, Any], None],
+        messages: list[dict[str, Any]] | dict[str, Any] | None,
         allow_duplicates: bool = False,
     ) -> None:
         """
@@ -184,7 +184,7 @@ class ConversationMemory(MemoryBase):
 
         self.messages.extend(processed_messages)
 
-    async def get_messages(self, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def get_messages(self, limit: int | None = None) -> list[dict[str, Any]]:
         """
         Get all messages in the conversation.
 
@@ -215,7 +215,7 @@ class ConversationMemory(MemoryBase):
         """
         self.messages = []
 
-    async def get_last_message(self) -> Optional[Dict[str, Any]]:
+    async def get_last_message(self) -> dict[str, Any] | None:
         """
         Get the most recent message.
 
@@ -226,7 +226,7 @@ class ConversationMemory(MemoryBase):
             return None
         return self.messages[-1].copy()
 
-    async def get_messages_by_role(self, role: str) -> List[Dict[str, Any]]:
+    async def get_messages_by_role(self, role: str) -> list[dict[str, Any]]:
         """
         Filter messages by role.
 

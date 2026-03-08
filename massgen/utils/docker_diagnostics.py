@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Docker diagnostics module for comprehensive error detection and reporting.
 
 This module provides detailed diagnostics for Docker-related issues, distinguishing
@@ -11,7 +10,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class DockerStatus(Enum):
@@ -28,7 +27,7 @@ class DockerStatus(Enum):
 
 
 # Platform-specific error messages and resolution steps
-ERROR_MESSAGES: Dict[DockerStatus, Dict[str, Dict[str, Any]]] = {
+ERROR_MESSAGES: dict[DockerStatus, dict[str, dict[str, Any]]] = {
     DockerStatus.BINARY_NOT_INSTALLED: {
         "darwin": {
             "message": "Docker is not installed on this Mac.",
@@ -179,7 +178,7 @@ def _get_platform() -> str:
     return "linux"  # Default to Linux for unknown platforms
 
 
-def _get_error_info(status: DockerStatus, plat: str) -> Dict[str, Any]:
+def _get_error_info(status: DockerStatus, plat: str) -> dict[str, Any]:
     """Get error message and steps for a status and platform."""
     status_messages = ERROR_MESSAGES.get(status, ERROR_MESSAGES[DockerStatus.UNKNOWN_ERROR])
 
@@ -203,13 +202,13 @@ class DockerDiagnostics:
     pip_library_installed: bool = False
     daemon_running: bool = False
     has_permissions: bool = False
-    images_available: Dict[str, bool] = field(default_factory=dict)
-    docker_version: Optional[str] = None
-    api_version: Optional[str] = None
+    images_available: dict[str, bool] = field(default_factory=dict)
+    docker_version: str | None = None
+    api_version: str | None = None
     platform: str = field(default_factory=_get_platform)
     error_message: str = ""
-    resolution_steps: List[str] = field(default_factory=list)
-    raw_error: Optional[str] = None
+    resolution_steps: list[str] = field(default_factory=list)
+    raw_error: str | None = None
 
     def __post_init__(self):
         """Populate error message and resolution steps if not provided."""
@@ -220,7 +219,7 @@ class DockerDiagnostics:
             if not self.resolution_steps:
                 self.resolution_steps = info.get("steps", [])
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "status": self.status.value,
@@ -264,7 +263,7 @@ class DockerDiagnostics:
         return "\n".join(lines)
 
 
-def check_docker_binary() -> tuple[bool, Optional[str]]:
+def check_docker_binary() -> tuple[bool, str | None]:
     """Check if Docker binary is installed and accessible.
 
     Returns:
@@ -300,7 +299,7 @@ def check_docker_pip_library() -> bool:
         return False
 
 
-def check_docker_daemon() -> tuple[bool, bool, Optional[str]]:
+def check_docker_daemon() -> tuple[bool, bool, str | None]:
     """Check if Docker daemon is running and accessible.
 
     Returns:
@@ -338,7 +337,7 @@ def check_docker_daemon() -> tuple[bool, bool, Optional[str]]:
         return False, True, str(e)
 
 
-def check_docker_images(images: List[str]) -> Dict[str, bool]:
+def check_docker_images(images: list[str]) -> dict[str, bool]:
     """Check which Docker images are available locally.
 
     Args:
@@ -363,7 +362,7 @@ def check_docker_images(images: List[str]) -> Dict[str, bool]:
 
 
 def diagnose_docker(
-    required_images: Optional[List[str]] = None,
+    required_images: list[str] | None = None,
     check_images: bool = True,
 ) -> DockerDiagnostics:
     """Perform comprehensive Docker diagnostics.
@@ -433,7 +432,7 @@ def diagnose_docker(
         )
 
     # Step 4: Check images (optional)
-    images_available: Dict[str, bool] = {}
+    images_available: dict[str, bool] = {}
     if check_images and required_images:
         images_available = check_docker_images(required_images)
         has_required_images = any(images_available.values())
@@ -441,7 +440,7 @@ def diagnose_docker(
         if not has_required_images:
             return DockerDiagnostics(
                 status=DockerStatus.IMAGES_MISSING,
-                is_available=False,
+                is_available=True,
                 binary_installed=True,
                 pip_library_installed=True,
                 daemon_running=True,
@@ -467,7 +466,7 @@ def diagnose_docker(
 
 def get_docker_error_message(
     status: DockerStatus,
-    platform_override: Optional[str] = None,
+    platform_override: str | None = None,
     include_steps: bool = True,
 ) -> str:
     """Get a formatted error message for a Docker status.

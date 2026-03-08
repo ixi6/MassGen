@@ -63,6 +63,8 @@ In interactive mode:
 2. **Multi-Agent Collaboration** - Agents continue to vote and reach consensus on each turn
 3. **Session Management** - All conversation state preserved in ``.massgen/sessions/``
 4. **Natural Conversation** - Type your questions, press Enter, get collaborative responses
+5. **Queued Runtime Input Persistence** - If runtime-injected queue content is promoted to a fallback turn prompt and that turn is cancelled, the prompt is still kept as a user-history entry for future turns
+6. **Restart-Safe Runtime Instructions** - Runtime input already delivered to an agent stays in that agent's context for the rest of the turn, including round restarts, and is shown as a ``<RUNTIME USER INSTRUCTIONS>`` block after the original-message section
 
 **Example session:**
 

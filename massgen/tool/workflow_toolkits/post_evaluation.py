@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Post-evaluation toolkit for MassGen orchestration restart feature.
 
@@ -6,7 +5,7 @@ This toolkit provides tools for post-evaluation phase where the winning agent
 evaluates its own answer and decides whether to submit or restart with improvements.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseToolkit, ToolType
 
@@ -14,7 +13,7 @@ from .base import BaseToolkit, ToolType
 class PostEvaluationToolkit(BaseToolkit):
     """Post-evaluation toolkit for orchestration restart feature."""
 
-    def __init__(self, template_overrides: Optional[Dict[str, Any]] = None):
+    def __init__(self, template_overrides: dict[str, Any] | None = None):
         """
         Initialize the PostEvaluation toolkit.
 
@@ -33,7 +32,7 @@ class PostEvaluationToolkit(BaseToolkit):
         """Type of this toolkit."""
         return ToolType.WORKFLOW
 
-    def is_enabled(self, config: Dict[str, Any]) -> bool:
+    def is_enabled(self, config: dict[str, Any]) -> bool:
         """
         Check if post-evaluation is enabled in configuration.
 
@@ -45,7 +44,7 @@ class PostEvaluationToolkit(BaseToolkit):
         """
         return config.get("enable_post_evaluation_tools", True)
 
-    def get_tools(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tools(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Get post-evaluation tool definitions based on API format.
 
@@ -67,7 +66,7 @@ class PostEvaluationToolkit(BaseToolkit):
             # Default Chat Completions format
             return self._get_chat_completions_tools()
 
-    def _get_claude_tools(self) -> List[Dict[str, Any]]:
+    def _get_claude_tools(self) -> list[dict[str, Any]]:
         """Get Claude native format tools."""
         submit_tool = {
             "name": "submit",
@@ -111,7 +110,7 @@ class PostEvaluationToolkit(BaseToolkit):
 
         return [submit_tool, restart_tool]
 
-    def _get_response_tools(self) -> List[Dict[str, Any]]:
+    def _get_response_tools(self) -> list[dict[str, Any]]:
         """Get Response API format tools."""
         submit_tool = {
             "type": "function",
@@ -163,7 +162,7 @@ class PostEvaluationToolkit(BaseToolkit):
 
         return [submit_tool, restart_tool]
 
-    def _get_chat_completions_tools(self) -> List[Dict[str, Any]]:
+    def _get_chat_completions_tools(self) -> list[dict[str, Any]]:
         """Get Chat Completions format tools."""
         submit_tool = {
             "type": "function",

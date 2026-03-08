@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Comprehensive test suite for Computer Use tools in MassGen.
 
@@ -16,7 +15,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, List, Optional
 
 # Test configuration
 TEST_CONFIG = {
@@ -30,7 +28,7 @@ TEST_CONFIG = {
 class ComputerUseTestResult:
     """Test result container."""
 
-    def __init__(self, name: str, passed: bool, message: str = "", details: Optional[Dict] = None):
+    def __init__(self, name: str, passed: bool, message: str = "", details: dict | None = None):
         self.name = name
         self.passed = passed
         self.message = message
@@ -48,7 +46,7 @@ class ComputerUseTestSuite:
     """Test suite for all computer use tools."""
 
     def __init__(self):
-        self.results: List[ComputerUseTestResult] = []
+        self.results: list[ComputerUseTestResult] = []
         self.base_path = Path(__file__).parent.parent
 
     def add_result(self, result: ComputerUseTestResult):
@@ -58,13 +56,13 @@ class ComputerUseTestSuite:
 
     # ==================== Syntax & Structure Tests ====================
 
-    def test_file_syntax(self, filepath: Path, required_functions: List[str]) -> ComputerUseTestResult:
+    def test_file_syntax(self, filepath: Path, required_functions: list[str]) -> ComputerUseTestResult:
         """Test Python file syntax and structure."""
         if not filepath.exists():
             return ComputerUseTestResult(f"File Exists: {filepath.name}", False, f"File not found: {filepath}")
 
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 content = f.read()
 
             tree = ast.parse(content)
@@ -96,10 +94,10 @@ class ComputerUseTestSuite:
         except Exception as e:
             return ComputerUseTestResult(f"Syntax: {filepath.name}", False, f"Error: {e}")
 
-    def test_imports(self, filepath: Path, required_imports: List[str]) -> ComputerUseTestResult:
+    def test_imports(self, filepath: Path, required_imports: list[str]) -> ComputerUseTestResult:
         """Test required imports."""
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 content = f.read()
 
             tree = ast.parse(content)
@@ -172,7 +170,7 @@ class ComputerUseTestSuite:
     def test_openai_response_api(self, filepath: Path) -> ComputerUseTestResult:
         """Test if OpenAI Response API is properly implemented."""
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 content = f.read()
 
             # Check for key Response API patterns
@@ -231,7 +229,7 @@ class ComputerUseTestSuite:
     def test_gemini_api_patterns(self, filepath: Path) -> ComputerUseTestResult:
         """Test Gemini API implementation patterns."""
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 content = f.read()
 
             patterns = [
@@ -291,7 +289,7 @@ class ComputerUseTestSuite:
     def test_claude_api_patterns(self, filepath: Path) -> ComputerUseTestResult:
         """Test Claude API implementation patterns."""
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 content = f.read()
 
             patterns = [
@@ -352,7 +350,7 @@ class ComputerUseTestSuite:
     def test_browser_actions(self, filepath: Path) -> ComputerUseTestResult:
         """Test browser automation action support."""
         try:
-            with open(filepath, "r") as f:
+            with open(filepath) as f:
                 content = f.read()
 
             actions = ["navigate", "click", "type", "extract", "screenshot"]

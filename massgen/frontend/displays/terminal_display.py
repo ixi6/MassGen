@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Terminal Display for MassGen Coordination
 
@@ -6,7 +5,6 @@ Rich terminal interface with live updates, agent columns, and coordination event
 """
 
 import os
-from typing import List, Optional
 
 from .base_display import BaseDisplay
 
@@ -14,7 +12,7 @@ from .base_display import BaseDisplay
 class TerminalDisplay(BaseDisplay):
     """Rich terminal display with live agent columns and coordination events."""
 
-    def __init__(self, agent_ids: List[str], **kwargs):
+    def __init__(self, agent_ids: list[str], **kwargs):
         """Initialize terminal display.
 
         Args:
@@ -48,7 +46,7 @@ class TerminalDisplay(BaseDisplay):
         except (OSError, AttributeError):
             return 80
 
-    def initialize(self, question: str, log_filename: Optional[str] = None):
+    def initialize(self, question: str, log_filename: str | None = None):
         """Initialize the display with column headers."""
         self.log_filename = log_filename
 
@@ -89,7 +87,7 @@ class TerminalDisplay(BaseDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ):
         """Update content for a specific agent."""
         if agent_id not in self.agent_ids:

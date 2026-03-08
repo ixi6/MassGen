@@ -4,7 +4,7 @@
 
 <p align="center">
   <a href="https://www.python.org/downloads/">
-    <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+" style="margin-right: 5px;">
+    <img src="https://img.shields.io/badge/python-3.11+-blue.svg" alt="Python 3.11+" style="margin-right: 5px;">
   </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License" style="margin-right: 5px;">

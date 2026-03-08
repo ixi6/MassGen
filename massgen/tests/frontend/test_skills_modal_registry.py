@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for SkillsModal registry content parameter.
 
 Covers:
@@ -8,7 +7,7 @@ Covers:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -25,7 +24,7 @@ from massgen.frontend.displays.textual.widgets.modals.skills_modals import (  # 
     SkillsModal,
 )
 
-SAMPLE_SKILLS: Dict[str, List[Dict[str, Any]]] = {
+SAMPLE_SKILLS: dict[str, list[dict[str, Any]]] = {
     "builtin": [{"name": "pdf", "description": "PDF toolkit"}],
     "project": [{"name": "xlsx", "description": "Excel toolkit"}],
     "user": [],

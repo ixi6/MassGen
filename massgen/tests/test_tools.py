@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Test script for MassGen tool implementation."""
 
 import asyncio

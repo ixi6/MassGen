@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """Data structures for broadcast communication system."""
 
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 class BroadcastStatus(Enum):
@@ -30,7 +29,7 @@ class QuestionOption:
     label: str
     description: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "id": self.id,
@@ -39,7 +38,7 @@ class QuestionOption:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "QuestionOption":
+    def from_dict(cls, data: dict[str, Any]) -> "QuestionOption":
         """Create from dictionary."""
         return cls(
             id=data["id"],
@@ -61,12 +60,12 @@ class StructuredQuestion:
     """
 
     text: str
-    options: List[QuestionOption]
+    options: list[QuestionOption]
     multi_select: bool = False
     allow_other: bool = True
     required: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "text": self.text,
@@ -77,7 +76,7 @@ class StructuredQuestion:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "StructuredQuestion":
+    def from_dict(cls, data: dict[str, Any]) -> "StructuredQuestion":
         """Create from dictionary (e.g., from tool arguments)."""
         options = [QuestionOption.from_dict(opt) if isinstance(opt, dict) else opt for opt in data.get("options", [])]
         return cls(
@@ -100,10 +99,10 @@ class StructuredResponse:
     """
 
     question_index: int
-    selected_options: List[str]
-    other_text: Optional[str] = None
+    selected_options: list[str]
+    other_text: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         return {
             "questionIndex": self.question_index,
@@ -112,7 +111,7 @@ class StructuredResponse:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "StructuredResponse":
+    def from_dict(cls, data: dict[str, Any]) -> "StructuredResponse":
         """Create from dictionary."""
         return cls(
             question_index=data["questionIndex"],
@@ -136,20 +135,23 @@ class BroadcastRequest:
         timeout: Maximum time to wait for responses (seconds)
         responses_received: Number of responses collected so far
         expected_response_count: Expected number of responses (num agents + human if applicable)
+        target_agents: Optional list of specific agents to query (anonymous IDs like ['agent1', 'agent2']).
+            If None, broadcasts to all other agents. If provided, only queries specified agents.
         response_mode: How the broadcast should be handled ("inline" only for now; other modes like "background" could be added in future)
         metadata: Additional metadata for the broadcast
     """
 
     id: str
     sender_agent_id: str
-    question: Union[str, List[StructuredQuestion]]
+    question: str | list[StructuredQuestion]
     timestamp: datetime
     status: BroadcastStatus = BroadcastStatus.PENDING
     timeout: int = 300
     responses_received: int = 0
     expected_response_count: int = 0
+    target_agents: list[str] | None = None
     response_mode: str = "inline"  # Always "inline" for now. Could support other modes (e.g., "background") in future if needed.
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_structured(self) -> bool:
@@ -180,13 +182,13 @@ class BroadcastRequest:
         return len(self.question)
 
     @property
-    def structured_questions(self) -> List[StructuredQuestion]:
+    def structured_questions(self) -> list[StructuredQuestion]:
         """Get the list of structured questions (empty list if simple question)."""
         if isinstance(self.question, list):
             return self.question
         return []
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         # Serialize question appropriately
         if isinstance(self.question, str):
@@ -225,17 +227,17 @@ class BroadcastResponse:
 
     request_id: str
     responder_id: str
-    content: Union[str, List[StructuredResponse]]
+    content: str | list[StructuredResponse]
     timestamp: datetime
     is_human: bool = False
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def is_structured(self) -> bool:
         """Check if this is a structured response."""
         return isinstance(self.content, list)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
         # Serialize content appropriately
         if isinstance(self.content, str):

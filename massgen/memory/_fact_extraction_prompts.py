@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Custom fact extraction prompts for mem0 memory system.
 

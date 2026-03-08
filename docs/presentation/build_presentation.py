@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Presentation builder that assembles modular components extracted from working presentations.
 """

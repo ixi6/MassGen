@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """File explorer side panel for the final answer card.
 
 Shows workspace file changes (new/modified) in a tree with click-to-preview.
@@ -8,7 +7,6 @@ Falls back to scanning the workspace directory when no explicit context_paths ar
 import os
 import time
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from textual.containers import Vertical
 from textual.widgets import Static, Tree
@@ -28,15 +26,15 @@ class FileExplorerPanel(Vertical):
 
     def __init__(
         self,
-        context_paths: Optional[Dict[str, List[str]]] = None,
-        workspace_path: Optional[str] = None,
-        id: Optional[str] = None,
+        context_paths: dict[str, list[str]] | None = None,
+        workspace_path: str | None = None,
+        id: str | None = None,
     ) -> None:
         super().__init__(id=id or "file_explorer_panel")
         self.context_paths = context_paths or {}
         self.workspace_path = workspace_path
-        self._all_paths: Dict[str, str] = {}  # display path -> status ("new"/"modified"/"workspace")
-        self._path_lookup: Dict[str, str] = {}  # display path -> absolute path
+        self._all_paths: dict[str, str] = {}  # display path -> status ("new"/"modified"/"workspace")
+        self._path_lookup: dict[str, str] = {}  # display path -> absolute path
         self._timing_debug = tui_debug_enabled() and os.environ.get("MASSGEN_TUI_TIMING_DEBUG", "").lower() in (
             "1",
             "true",
@@ -45,7 +43,7 @@ class FileExplorerPanel(Vertical):
         )
 
         # Populate from explicit context_paths first, but cap entries for responsiveness.
-        context_entries: List[tuple[str, str]] = []
+        context_entries: list[tuple[str, str]] = []
         context_entries.extend((path, "new") for path in self.context_paths.get("new", []))
         context_entries.extend((path, "modified") for path in self.context_paths.get("modified", []))
         if context_entries:
@@ -56,7 +54,7 @@ class FileExplorerPanel(Vertical):
             if remaining > 0:
                 self._add_path(f"... ({remaining} more files)", "workspace", absolute_path="")
 
-    def _add_path(self, display_path: str, status: str, absolute_path: Optional[str] = None) -> None:
+    def _add_path(self, display_path: str, status: str, absolute_path: str | None = None) -> None:
         """Track a path for display and lookup."""
         self._all_paths[display_path] = status
         self._path_lookup[display_path] = absolute_path or display_path
@@ -199,7 +197,7 @@ class FileExplorerPanel(Vertical):
         tree.show_root = False
 
         # Build directory structure
-        dirs: Dict[str, any] = {}
+        dirs: dict[str, any] = {}
         for display_path, status in sorted(self._all_paths.items()):
             parts = Path(display_path).parts
             # Add directory nodes
@@ -234,7 +232,7 @@ class FileExplorerPanel(Vertical):
         except Exception:
             return
         tree.clear()
-        dirs: Dict[str, any] = {}
+        dirs: dict[str, any] = {}
         for display_path, status in sorted(self._all_paths.items()):
             parts = Path(display_path).parts
             current = tree.root

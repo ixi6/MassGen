@@ -9,10 +9,10 @@ agents:
       cwd: "workspace1"
       enable_audio_generation: true
       custom_tools:
-        - name: ["text_to_speech_transcription_generation"]
+        - name: ["generate_media"]
           category: "multimodal"
-          path: "massgen/tool/_multimodal_tools/text_to_speech_transcription_generation.py"
-          function: ["text_to_speech_transcription_generation"]
+          path: "massgen/tool/_multimodal_tools/generation/generate_media.py"
+          function: ["generate_media"]
         - name: ["understand_audio"]
           category: "multimodal"
           path: "massgen/tool/_multimodal_tools/understand_audio.py"
@@ -31,10 +31,10 @@ agents:
       cwd: "workspace2"
       enable_audio_generation: true
       custom_tools:
-        - name: ["text_to_speech_transcription_generation"]
+        - name: ["generate_media"]
           category: "multimodal"
-          path: "massgen/tool/_multimodal_tools/text_to_speech_transcription_generation.py"
-          function: ["text_to_speech_transcription_generation"]
+          path: "massgen/tool/_multimodal_tools/generation/generate_media.py"
+          function: ["generate_media"]
         - name: ["understand_audio"]
           category: "multimodal"
           path: "massgen/tool/_multimodal_tools/understand_audio.py"

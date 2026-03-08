@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Filesystem Manager for MassGen - Handles workspace and snapshot management.
 
@@ -15,11 +14,14 @@ The manager is backend-agnostic and works with any backend that has filesystem
 MCP tools configured.
 """
 
+import json
 import os
 import shutil
+import stat
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..logger_config import get_log_session_dir, logger
 from ..mcp_tools.client import HookType
@@ -28,6 +30,25 @@ from . import _workspace_tools_server as wc_module
 from ._base import Permission
 from ._constants import FRAMEWORK_MCPS
 from ._path_permission_manager import PathPermissionManager
+
+
+def _remove_readonly(func, path, _exc_unused):
+    """Error handler for shutil.rmtree to handle read-only files on Windows (e.g. .git/objects).
+
+    Signature accepts three args so it works with both the ``onerror``
+    callback (func, path, exc_info) and the ``onexc`` callback
+    (func, path, exc) introduced in Python 3.12.
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _safe_rmtree(path):
+    """shutil.rmtree that handles read-only files on Windows."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_remove_readonly)
+    else:
+        shutil.rmtree(path, onerror=_remove_readonly)
 
 
 def git_commit_if_changed(workspace: Path, message: str) -> bool:
@@ -103,6 +124,20 @@ def git_commit_if_changed(workspace: Path, message: str) -> bool:
         return False
 
 
+_WORKSPACE_METADATA_DIRS = frozenset({".git", ".codex", ".massgen", "memory"})
+
+
+def has_meaningful_content(path: Path | None) -> bool:
+    """Check if a directory contains meaningful deliverable content.
+
+    Excludes symlinks and workspace/backend metadata directories
+    that are not agent-produced deliverables.
+    """
+    if not path or not path.exists() or not path.is_dir():
+        return False
+    return any(not item.is_symlink() and item.name not in _WORKSPACE_METADATA_DIRS for item in path.iterdir())
+
+
 class FilesystemManager:
     """
     Manages filesystem operations for backends with MCP filesystem support.
@@ -117,37 +152,37 @@ class FilesystemManager:
         self,
         cwd: str,
         agent_temporary_workspace_parent: str = None,
-        context_paths: List[Dict[str, Any]] = None,
+        context_paths: list[dict[str, Any]] = None,
         context_write_access_enabled: bool = False,
         enforce_read_before_delete: bool = True,
         enable_image_generation: bool = False,
         enable_mcp_command_line: bool = False,
-        command_line_allowed_commands: List[str] = None,
-        command_line_blocked_commands: List[str] = None,
+        command_line_allowed_commands: list[str] = None,
+        command_line_blocked_commands: list[str] = None,
         command_line_execution_mode: str = "local",
         command_line_docker_image: str = "ghcr.io/massgen/mcp-runtime:latest",
-        command_line_docker_memory_limit: Optional[str] = None,
-        command_line_docker_cpu_limit: Optional[float] = None,
+        command_line_docker_memory_limit: str | None = None,
+        command_line_docker_cpu_limit: float | None = None,
         command_line_docker_network_mode: str = "none",
         command_line_docker_enable_sudo: bool = False,
-        command_line_docker_credentials: Optional[Dict[str, Any]] = None,
-        command_line_docker_packages: Optional[Dict[str, Any]] = None,
+        command_line_docker_credentials: dict[str, Any] | None = None,
+        command_line_docker_packages: dict[str, Any] | None = None,
         enable_audio_generation: bool = False,
         enable_file_generation: bool = False,
         exclude_file_operation_mcps: bool = False,
         use_mcpwrapped_for_tool_filtering: bool = False,
         use_no_roots_wrapper: bool = False,
         enable_code_based_tools: bool = False,
-        custom_tools_path: Optional[str] = None,
+        custom_tools_path: str | None = None,
         auto_discover_custom_tools: bool = False,
-        exclude_custom_tools: Optional[List[str]] = None,
-        direct_mcp_servers: Optional[List[str]] = None,
-        shared_tools_directory: Optional[str] = None,
-        instance_id: Optional[str] = None,
-        filesystem_session_id: Optional[str] = None,
-        session_storage_base: Optional[str] = None,
+        exclude_custom_tools: list[str] | None = None,
+        direct_mcp_servers: list[str] | None = None,
+        shared_tools_directory: str | None = None,
+        instance_id: str | None = None,
+        filesystem_session_id: str | None = None,
+        session_storage_base: str | None = None,
         use_two_tier_workspace: bool = False,
-        write_mode: Optional[str] = None,
+        write_mode: str | None = None,
     ):
         """
         Initialize FilesystemManager.
@@ -368,11 +403,12 @@ class FilesystemManager:
     def setup_orchestration_paths(
         self,
         agent_id: str,
-        snapshot_storage: Optional[str] = None,
-        agent_temporary_workspace: Optional[str] = None,
-        skills_directory: Optional[str] = None,
-        massgen_skills: Optional[List[str]] = None,
+        snapshot_storage: str | None = None,
+        agent_temporary_workspace: str | None = None,
+        skills_directory: str | None = None,
+        massgen_skills: list[str] | None = None,
         load_previous_session_skills: bool = False,
+        workspace_token: str | None = None,
     ) -> None:
         """
         Setup orchestration-specific paths for snapshots and temporary workspace.
@@ -384,21 +420,24 @@ class FilesystemManager:
             agent_temporary_workspace: Base path for temporary workspace during context sharing
             skills_directory: Path to skills directory to mount in Docker (e.g., .agent/skills)
             load_previous_session_skills: If True, include evolving skills from previous sessions
+            workspace_token: Anonymous token for temp workspace path to hide real agent_id (MAS-338)
         """
         logger.info(
             f"[FilesystemManager.setup_orchestration_paths] Called for agent_id={agent_id}, snapshot_storage={snapshot_storage}, "
             f"agent_temporary_workspace={agent_temporary_workspace}, skills_directory={skills_directory}",
         )
         self.agent_id = agent_id
+        # Use token for temp workspace path to avoid leaking real agent_id (MAS-338)
+        self.workspace_token = workspace_token or agent_id
 
         # Setup snapshot storage if provided
         if snapshot_storage and self.agent_id:
             self.snapshot_storage = Path(snapshot_storage) / self.agent_id
             self.snapshot_storage.mkdir(parents=True, exist_ok=True)
 
-        # Setup temporary workspace for context sharing
+        # Setup temporary workspace for context sharing (uses token to hide real agent_id)
         if agent_temporary_workspace and self.agent_id:
-            self.agent_temporary_workspace = self._setup_workspace(self.agent_temporary_workspace_parent / self.agent_id)
+            self.agent_temporary_workspace = self._setup_workspace(self.agent_temporary_workspace_parent / self.workspace_token)
 
         # Note: Agent log directories are created on-demand when save_snapshot() is called,
         # not preemptively here. This avoids creating empty directories for agents that
@@ -493,10 +532,10 @@ class FilesystemManager:
 
     def recreate_container_for_write_access(
         self,
-        skills_directory: Optional[str] = None,
-        massgen_skills: Optional[List[str]] = None,
+        skills_directory: str | None = None,
+        massgen_skills: list[str] | None = None,
         load_previous_session_skills: bool = False,
-        extra_mount_paths: Optional[List[tuple]] = None,
+        extra_mount_paths: list[tuple] | None = None,
     ) -> None:
         """
         Recreate the Docker container with write access enabled for context paths.
@@ -596,8 +635,8 @@ class FilesystemManager:
 
     def setup_local_skills(
         self,
-        skills_directory: Optional[str] = None,
-        massgen_skills: Optional[List[str]] = None,
+        skills_directory: str | None = None,
+        massgen_skills: list[str] | None = None,
         load_previous_session_skills: bool = False,
     ) -> None:
         """
@@ -855,7 +894,7 @@ class FilesystemManager:
 
         logger.info(f"[FilesystemManager] Restored {restored_count} memory files from previous turn")
 
-    def _compute_tools_config_hash(self, servers_with_tools: List[Dict[str, Any]]) -> str:
+    def _compute_tools_config_hash(self, servers_with_tools: list[dict[str, Any]]) -> str:
         """Compute hash of tool configuration for shared_tools directory naming.
 
         Args:
@@ -986,7 +1025,7 @@ class FilesystemManager:
     def _get_auto_excluded_tools_by_api_keys(
         self,
         custom_tools_path: Path,
-    ) -> List[str]:
+    ) -> list[str]:
         """Automatically exclude tools based on unavailable API keys.
 
         Reads TOOL.md files to check requires_api_keys, compares against
@@ -1054,7 +1093,7 @@ class FilesystemManager:
 
         return excluded
 
-    def _get_available_api_keys(self) -> Optional[set]:
+    def _get_available_api_keys(self) -> set | None:
         """Get set of API keys that will be available in Docker container.
 
         Returns:
@@ -1098,7 +1137,7 @@ class FilesystemManager:
 
         return available
 
-    def _extract_mcp_tool_schemas(self, mcp_client) -> List[Dict[str, Any]]:
+    def _extract_mcp_tool_schemas(self, mcp_client) -> list[dict[str, Any]]:
         """Extract tool schemas from MCP client, organized by server.
 
         Only extracts user-added MCP servers. Framework MCPs (defined in FRAMEWORK_MCPS
@@ -1230,7 +1269,7 @@ class FilesystemManager:
                 except Exception as e:
                     logger.warning(f"[FilesystemManager] Failed to create symlink for {dir_name}: {e}")
 
-    def update_backend_mcp_config(self, backend_config: Dict[str, Any]) -> Dict[str, Any]:
+    def update_backend_mcp_config(self, backend_config: dict[str, Any]) -> dict[str, Any]:
         """
         Update MCP server configuration with agent_id and skills directory after they're available.
 
@@ -1333,7 +1372,7 @@ class FilesystemManager:
                 elif item.is_file():
                     item.unlink()
                 elif item.is_dir():
-                    shutil.rmtree(item)
+                    _safe_rmtree(item)
 
         # Setup two-tier workspace structure if enabled
         if init_two_tier and self.use_two_tier_workspace:
@@ -1445,7 +1484,7 @@ class FilesystemManager:
         include_only_write_tools: bool = False,
         use_mcpwrapped: bool = False,
         use_no_roots_wrapper: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Generate MCP filesystem server configuration.
 
@@ -1544,7 +1583,7 @@ class FilesystemManager:
 
         return config
 
-    def get_workspace_tools_mcp_config(self, backend_type: Optional[str] = None) -> Dict[str, Any]:
+    def get_workspace_tools_mcp_config(self, backend_type: str | None = None) -> dict[str, Any]:
         """
         Generate workspace tools MCP server configuration.
 
@@ -1607,7 +1646,7 @@ class FilesystemManager:
 
         return config
 
-    def get_command_line_mcp_config(self) -> Dict[str, Any]:
+    def get_command_line_mcp_config(self) -> dict[str, Any]:
         """
         Generate command line execution MCP server configuration.
 
@@ -1668,7 +1707,7 @@ class FilesystemManager:
 
         return config
 
-    def inject_filesystem_mcp(self, backend_config: Dict[str, Any]) -> Dict[str, Any]:
+    def inject_filesystem_mcp(self, backend_config: dict[str, Any]) -> dict[str, Any]:
         """
         Inject filesystem and workspace tools MCP servers into backend configuration.
 
@@ -1773,7 +1812,7 @@ class FilesystemManager:
 
         return backend_config
 
-    def inject_command_line_mcp(self, backend_config: Dict[str, Any]) -> Dict[str, Any]:
+    def inject_command_line_mcp(self, backend_config: dict[str, Any]) -> dict[str, Any]:
         """
         Inject only the command_line MCP server into backend configuration.
 
@@ -1824,7 +1863,7 @@ class FilesystemManager:
 
         return backend_config
 
-    def get_pre_tool_hooks(self) -> Dict[str, List]:
+    def get_pre_tool_hooks(self) -> dict[str, list]:
         """
         Get pre-tool hooks configuration for MCP clients.
 
@@ -1832,7 +1871,7 @@ class FilesystemManager:
             Dict mapping hook types to lists of hook functions
         """
 
-        async def mcp_hook_wrapper(tool_name: str, tool_args: Dict[str, Any]) -> bool:
+        async def mcp_hook_wrapper(tool_name: str, tool_args: dict[str, Any]) -> bool:
             """Wrapper to adapt our hook signature to MCP client expectations."""
             allowed, reason = await self.path_permission_manager.pre_tool_use_hook(tool_name, tool_args)
             if not allowed and reason:
@@ -1841,7 +1880,7 @@ class FilesystemManager:
 
         return {HookType.PRE_TOOL_USE: [mcp_hook_wrapper]}
 
-    def get_claude_code_hooks_config(self) -> Dict[str, Any]:
+    def get_claude_code_hooks_config(self) -> dict[str, Any]:
         """
         Get Claude Agent SDK hooks configuration.
 
@@ -1860,7 +1899,7 @@ class FilesystemManager:
         self.path_permission_manager.context_write_access_enabled = True
         logger.info("[FilesystemManager] Context write access enabled - agent can now modify files with write permissions")
 
-    async def save_snapshot(self, timestamp: Optional[str] = None, is_final: bool = False) -> None:
+    async def save_snapshot(self, timestamp: str | None = None, is_final: bool = False, preserve_existing_snapshot: bool = False) -> None:
         """
         Save a snapshot of the workspace. Always saves to snapshot_storage if available (keeping only most recent).
         Additionally saves to log directories if logging is enabled.
@@ -1878,20 +1917,6 @@ class FilesystemManager:
         if self.use_two_tier_workspace:
             commit_prefix = "[FINAL]" if is_final else "[SNAPSHOT]"
             self._git_commit_if_changed(self.cwd, f"{commit_prefix} Auto-commit before snapshot")
-
-        def has_meaningful_content(path: Optional[Path]) -> bool:
-            """Check if a directory contains meaningful deliverable content.
-
-            Excludes:
-            - .git directory (version control metadata)
-            - memory directory (workspace metadata, not deliverables)
-            - symlinks (reference to other locations)
-
-            Returns True only if there are actual deliverable files/directories.
-            """
-            if not path or not path.exists() or not path.is_dir():
-                return False
-            return any(not item.is_symlink() and item.name not in (".git", "memory") for item in path.iterdir())
 
         # Use current workspace as source
         source_path = Path(self.cwd)
@@ -1918,13 +1943,15 @@ class FilesystemManager:
         try:
             # --- 1. Save to snapshot_storage ---
             if self.snapshot_storage:
-                # Don't overwrite a non-empty snapshot with an empty workspace
-                if not workspace_has_content and snapshot_storage_has_content:
+                if preserve_existing_snapshot and snapshot_storage_has_content:
+                    # Interrupted save: never overwrite a submitted answer's snapshot
+                    logger.info(f"[FilesystemManager] Preserving existing snapshot during interrupted save ({self.snapshot_storage})")
+                elif not workspace_has_content and snapshot_storage_has_content:
                     logger.info(f"[FilesystemManager] Skipping snapshot_storage update - workspace is empty but snapshot_storage has content ({self.snapshot_storage})")
                 else:
                     # Normal case: overwrite with current workspace
                     if self.snapshot_storage.exists():
-                        shutil.rmtree(self.snapshot_storage)
+                        _safe_rmtree(self.snapshot_storage)
                     self.snapshot_storage.mkdir(parents=True, exist_ok=True)
 
                     items_copied = 0
@@ -1953,7 +1980,7 @@ class FilesystemManager:
                 if is_final:
                     dest_dir = log_session_dir / "final" / self.agent_id / "workspace"
                     if dest_dir.exists():
-                        shutil.rmtree(dest_dir)
+                        _safe_rmtree(dest_dir)
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     logger.info(f"[FilesystemManager.save_snapshot] Final log snapshot dest_dir: {dest_dir}")
                 else:
@@ -2021,10 +2048,15 @@ class FilesystemManager:
                 if item.name == ".git":
                     logger.debug(f"[FilesystemManager] Preserving .git directory during clear: {item}")
                     continue
+                # Preserve .massgen directory — it holds subagent MCP config
+                # files written at session start that must survive across rounds.
+                if item.name == ".massgen":
+                    logger.debug(f"[FilesystemManager] Preserving .massgen directory during clear: {item}")
+                    continue
                 if item.is_file():
                     item.unlink()
                 elif item.is_dir():
-                    shutil.rmtree(item)
+                    _safe_rmtree(item)
 
             logger.info("[FilesystemManager] Workspace cleared successfully, ready for new agent execution")
 
@@ -2103,7 +2135,181 @@ class FilesystemManager:
             except Exception:
                 pass
 
-    async def copy_snapshots_to_temp_workspace(self, all_snapshots: Dict[str, Path], agent_mapping: Dict[str, str]) -> Optional[Path]:
+    @staticmethod
+    def _rewrite_temp_workspace_path(raw_value: str, source_snapshot_root: Path, temp_snapshot_root: Path) -> str:
+        """Rewrite an absolute workspace path to the copied temp workspace path."""
+        if not isinstance(raw_value, str):
+            return raw_value
+
+        candidate = raw_value.strip()
+        if not candidate:
+            return raw_value
+
+        source_root = str(source_snapshot_root.resolve())
+        temp_root = str(temp_snapshot_root.resolve())
+
+        if candidate.startswith(source_root):
+            suffix = candidate[len(source_root) :]
+            return f"{temp_root}{suffix}"
+
+        try:
+            source_path = Path(candidate).resolve(strict=False)
+        except Exception:
+            return raw_value
+
+        markers = (
+            "/.massgen_scratch/",
+            "/scratch/",
+            "/deliverable/",
+            "/memory/",
+        )
+        normalized = str(source_path).replace("\\", "/")
+        for marker in markers:
+            marker_index = normalized.find(marker)
+            if marker_index < 0:
+                continue
+            rel_suffix = normalized[marker_index + 1 :]  # drop leading slash
+            source_candidate = source_snapshot_root / rel_suffix
+            if source_candidate.exists():
+                return str((temp_snapshot_root / rel_suffix).resolve())
+
+        try:
+            rel = source_path.relative_to(source_snapshot_root.resolve())
+            return str((temp_snapshot_root / rel).resolve())
+        except Exception:
+            return raw_value
+
+    @classmethod
+    def _rewrite_media_ledger_value(cls, value: Any, source_snapshot_root: Path, temp_snapshot_root: Path) -> Any:
+        """Recursively rewrite absolute paths in media ledger values."""
+        if isinstance(value, dict):
+            return {
+                key: cls._rewrite_media_ledger_value(
+                    nested,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                for key, nested in value.items()
+            }
+
+        if isinstance(value, list):
+            return [
+                cls._rewrite_media_ledger_value(
+                    nested,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                for nested in value
+            ]
+
+        if not isinstance(value, str):
+            return value
+
+        raw = value.strip()
+        if raw and raw[0] in ("{", "["):
+            try:
+                parsed = json.loads(value)
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if parsed is not None:
+                rewritten = cls._rewrite_media_ledger_value(
+                    parsed,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                return json.dumps(rewritten, ensure_ascii=False, separators=(",", ":"))
+
+        return cls._rewrite_temp_workspace_path(
+            value,
+            source_snapshot_root,
+            temp_snapshot_root,
+        )
+
+    def _normalize_media_call_ledger_paths(
+        self,
+        source_snapshot_root: Path,
+        temp_snapshot_root: Path,
+    ) -> None:
+        """Rewrite copied media ledger paths so they are valid in temp workspace."""
+        ledger_path = temp_snapshot_root / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        if not ledger_path.exists():
+            return
+
+        try:
+            payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.debug(f"[FilesystemManager] Failed to parse media ledger for rewrite: {ledger_path} ({e})")
+            return
+
+        if not isinstance(payload, dict):
+            return
+
+        entries = payload.get("entries")
+        if not isinstance(entries, list):
+            return
+
+        changed = False
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+
+            tool_arguments = entry.get("tool_arguments")
+            if tool_arguments is not None:
+                rewritten_args = self._rewrite_media_ledger_value(
+                    tool_arguments,
+                    source_snapshot_root,
+                    temp_snapshot_root,
+                )
+                if rewritten_args != tool_arguments:
+                    entry["tool_arguments"] = rewritten_args
+                    changed = True
+
+            mappings = entry.get("file_mappings")
+            if not isinstance(mappings, list):
+                continue
+
+            rewritten_mappings: list[Any] = []
+            mapping_changed = False
+            for item in mappings:
+                if not isinstance(item, str):
+                    rewritten_mappings.append(item)
+                    continue
+
+                if "->" in item:
+                    left, _, right = item.partition("->")
+                    rewritten_right = self._rewrite_temp_workspace_path(
+                        right.strip(),
+                        source_snapshot_root,
+                        temp_snapshot_root,
+                    )
+                    rewritten_item = f"{left.strip()} -> {rewritten_right}"
+                else:
+                    rewritten_item = self._rewrite_temp_workspace_path(
+                        item,
+                        source_snapshot_root,
+                        temp_snapshot_root,
+                    )
+
+                rewritten_mappings.append(rewritten_item)
+                if rewritten_item != item:
+                    mapping_changed = True
+
+            if mapping_changed:
+                entry["file_mappings"] = rewritten_mappings
+                changed = True
+
+        if not changed:
+            return
+
+        try:
+            ledger_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+        except Exception as e:
+            logger.debug(f"[FilesystemManager] Failed to persist normalized media ledger: {ledger_path} ({e})")
+
+    async def copy_snapshots_to_temp_workspace(self, all_snapshots: dict[str, Path], agent_mapping: dict[str, str]) -> Path | None:
         """
         Copy snapshots from multiple agents to temporary workspace for context sharing.
 
@@ -2124,7 +2330,7 @@ class FilesystemManager:
 
         # Clear existing temporary workspace
         if self.agent_temporary_workspace.exists():
-            shutil.rmtree(self.agent_temporary_workspace)
+            _safe_rmtree(self.agent_temporary_workspace)
         self.agent_temporary_workspace.mkdir(parents=True, exist_ok=True)
 
         # Copy all snapshots using anonymous IDs
@@ -2144,6 +2350,10 @@ class FilesystemManager:
                         dirs_exist_ok=True,
                         symlinks=True,
                         ignore_dangling_symlinks=True,
+                    )
+                    self._normalize_media_call_ledger_paths(
+                        source_snapshot_root=snapshot_path,
+                        temp_snapshot_root=dest_dir,
                     )
 
         return self.agent_temporary_workspace
@@ -2246,6 +2456,16 @@ class FilesystemManager:
         """
         return self.cwd
 
+    def get_workspace_root(self) -> Path:
+        """
+        Get the persistent workspace root that was created at initialization.
+
+        This is the path that subagent MCP servers and other long-lived
+        metadata should use, even if the active workspace (`cwd`) temporarily
+        switches to a worktree/temporary directory during restarts.
+        """
+        return self._original_cwd
+
     def cleanup(self) -> None:
         """Cleanup temporary resources (not the main workspace) and Docker containers."""
         # Cleanup isolation contexts if manager is active
@@ -2264,7 +2484,7 @@ class FilesystemManager:
         if self.shared_tools_directory and self.shared_tools_directory.exists():
             try:
                 logger.info(f"[FilesystemManager] Cleaning up shared tools directory: {self.shared_tools_directory}")
-                shutil.rmtree(self.shared_tools_directory)
+                _safe_rmtree(self.shared_tools_directory)
             except Exception as e:
                 logger.warning(f"[FilesystemManager] Failed to cleanup shared tools directory: {e}")
 
@@ -2272,7 +2492,7 @@ class FilesystemManager:
         if self.local_skills_directory and self.local_skills_directory.exists():
             try:
                 logger.info(f"[FilesystemManager] Cleaning up local skills directory: {self.local_skills_directory}")
-                shutil.rmtree(self.local_skills_directory)
+                _safe_rmtree(self.local_skills_directory)
             except Exception as e:
                 logger.warning(f"[FilesystemManager] Failed to cleanup local skills directory: {e}")
 
@@ -2299,6 +2519,6 @@ class FilesystemManager:
             if p == Path("/") or len(p.parts) < 3:
                 raise AssertionError(f"Unsafe path for deletion: {p}")
 
-            shutil.rmtree(p)
+            _safe_rmtree(p)
         except Exception as e:
             logger.warning(f"[FilesystemManager] cleanup failed for {p}: {e}")

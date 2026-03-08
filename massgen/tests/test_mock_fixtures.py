@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Smoke tests for shared mock fixtures in conftest.py."""
 
 import pytest

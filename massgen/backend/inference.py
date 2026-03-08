@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Inference backend supporting both vLLM and SGLang servers using OpenAI-compatible Chat Completions API.
 
@@ -9,10 +8,12 @@ Defaults are tailored for local inference servers:
 This backend delegates most behavior to ChatCompletionsBackend, only
 customizing provider naming, API key resolution, and backend-specific extra_body parameters.
 """
+
 from __future__ import annotations
 
 import os
-from typing import Any, AsyncGenerator, Dict, List, Optional, Set
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from ..api_params_handler._chat_completions_api_params_handler import (
     ChatCompletionsAPIParamsHandler,
@@ -24,7 +25,7 @@ from .chat_completions import ChatCompletionsBackend
 class InferenceAPIParamsHandler(ChatCompletionsAPIParamsHandler):
     """API params handler for InferenceBackend that excludes backend-specific parameters."""
 
-    def get_excluded_params(self) -> Set[str]:
+    def get_excluded_params(self) -> set[str]:
         """Get parameters to exclude from Chat Completions API calls, including backend-specific ones."""
         return (
             super()
@@ -48,7 +49,7 @@ class InferenceBackend(ChatCompletionsBackend):
     thinking mode, and separate reasoning.
     """
 
-    def __init__(self, backend_type: str = "vllm", api_key: Optional[str] = None, **kwargs):
+    def __init__(self, backend_type: str = "vllm", api_key: str | None = None, **kwargs):
         """Initialize inference backend.
 
         Args:
@@ -84,7 +85,7 @@ class InferenceBackend(ChatCompletionsBackend):
             return "SGLang"
         return "vLLM"
 
-    def _build_extra_body(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+    def _build_extra_body(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Build backend-specific extra_body parameters and strip them from kwargs.
 
         Args:
@@ -93,7 +94,7 @@ class InferenceBackend(ChatCompletionsBackend):
         Returns:
             Dictionary of backend-specific parameters for extra_body
         """
-        extra_body: Dict[str, Any] = {}
+        extra_body: dict[str, Any] = {}
 
         # Add vLLM and sglang specific parameters from kwargs while preventing them from reaching parent payload
         top_k = kwargs.pop("top_k", None)
@@ -119,10 +120,10 @@ class InferenceBackend(ChatCompletionsBackend):
 
     async def stream_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Stream response using OpenAI-compatible Chat Completions API with backend-specific parameters.
 
         Args:
@@ -148,7 +149,7 @@ class InferenceBackend(ChatCompletionsBackend):
         async for chunk in super().stream_with_tools(messages, tools, **kwargs):
             yield chunk
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Return list of supported builtin tools.
 
         Local inference servers (vLLM/SGLang) do not provide provider-specific builtin tools.

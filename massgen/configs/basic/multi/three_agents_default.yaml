@@ -12,7 +12,7 @@ agents:
   - id: "agent_b"
     backend:
       type: "openai"
-      model: "gpt-5.2"
+      model: "gpt-5.4"
       text:
         verbosity: "low"
       reasoning:

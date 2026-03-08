@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Deterministic non-API integration tests for timeout and selection behavior."""
 
 from __future__ import annotations

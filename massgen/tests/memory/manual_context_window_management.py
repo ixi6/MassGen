@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Test script for Context Window Management with Memory.
 
@@ -38,7 +37,7 @@ def load_config(config_path: str = None) -> dict:
         # Default to the config in same directory
         config_path = Path(__file__).parent / "gpt5mini_gemini_context_window_management.yaml"
 
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         return yaml.safe_load(f)
 
 

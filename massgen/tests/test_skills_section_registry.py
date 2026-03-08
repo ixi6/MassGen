@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for SkillsSection registry integration and recently-added fallback.
 
 Covers:
@@ -167,6 +166,15 @@ def test_usage_instructions_mention_skill_hierarchy() -> None:
     # Should mention that skills can contain multiple sections or sub-capabilities
     lower = content.lower()
     assert "section" in lower or "sub-capabilit" in lower or "hierarchi" in lower
+
+
+def test_usage_instructions_include_workspace_and_home_skill_paths() -> None:
+    """Usage instructions should mention both workspace and home skills paths."""
+    section = SkillsSection(SKILLS)
+    content = section.build_content()
+
+    assert ".agent/skills/" in content
+    assert "~/.agent/skills/" in content
 
 
 # ---------------------------------------------------------------------------

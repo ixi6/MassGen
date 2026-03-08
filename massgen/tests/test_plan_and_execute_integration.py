@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Integration tests for plan-and-execute workflow."""
 
 import json

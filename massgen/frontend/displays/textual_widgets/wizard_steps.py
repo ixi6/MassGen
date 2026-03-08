@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Reusable Step Components for MassGen TUI Wizards.
 
@@ -15,7 +14,7 @@ Provides pre-built step components for common wizard interactions:
 - CompleteStep: Completion message with next steps
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical
@@ -27,19 +26,9 @@ from .wizard_base import StepComponent, WizardState
 
 def _step_log(msg: str) -> None:
     """Log to TUI debug file."""
-    try:
-        import logging
+    from massgen.frontend.displays.shared.tui_debug import tui_log
 
-        log = logging.getLogger("massgen.tui.debug")
-        if not log.handlers:
-            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-            handler.setFormatter(logging.Formatter("%(asctime)s [STEP] %(message)s", datefmt="%H:%M:%S"))
-            log.addHandler(handler)
-            log.setLevel(logging.DEBUG)
-            log.propagate = False
-        log.debug(msg)
-    except Exception:
-        pass
+    tui_log(f"[STEP] {msg}")
 
 
 class WelcomeStep(StepComponent):
@@ -62,10 +51,10 @@ class WelcomeStep(StepComponent):
         wizard_state: WizardState,
         title: str = "Welcome",
         subtitle: str = "",
-        features: Optional[List[str]] = None,
+        features: list[str] | None = None,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._title = title
@@ -93,11 +82,11 @@ class SingleSelectStep(StepComponent):
     def __init__(
         self,
         wizard_state: WizardState,
-        options: List[Tuple[str, str, str]],  # (value, label, description)
-        default_value: Optional[str] = None,
+        options: list[tuple[str, str, str]],  # (value, label, description)
+        default_value: str | None = None,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize single select step.
 
@@ -109,8 +98,8 @@ class SingleSelectStep(StepComponent):
         super().__init__(wizard_state, id=id, classes=classes)
         self._options = options
         self._default_value = default_value
-        self._selected_value: Optional[str] = default_value
-        self._option_list: Optional[OptionList] = None
+        self._selected_value: str | None = default_value
+        self._option_list: OptionList | None = None
 
     def compose(self) -> ComposeResult:
         # Build native options with rich text formatting
@@ -159,7 +148,7 @@ class SingleSelectStep(StepComponent):
             if idx is not None and self._option_list:
                 self._option_list.highlighted = idx
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if not self._selected_value:
             return "Please select an option"
         return None
@@ -175,13 +164,13 @@ class MultiSelectStep(StepComponent):
     def __init__(
         self,
         wizard_state: WizardState,
-        options: List[Tuple[str, str, str]],  # (value, label, description)
-        default_values: Optional[List[str]] = None,
+        options: list[tuple[str, str, str]],  # (value, label, description)
+        default_values: list[str] | None = None,
         min_selections: int = 0,
-        max_selections: Optional[int] = None,
+        max_selections: int | None = None,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize multi-select step.
 
@@ -197,7 +186,7 @@ class MultiSelectStep(StepComponent):
         self._default_values = default_values or []
         self._min_selections = min_selections
         self._max_selections = max_selections
-        self._checkboxes: Dict[str, Checkbox] = {}
+        self._checkboxes: dict[str, Checkbox] = {}
 
     def compose(self) -> ComposeResult:
         # Use Vertical for better layout control
@@ -218,7 +207,7 @@ class MultiSelectStep(StepComponent):
                 self._checkboxes[value] = checkbox
                 yield checkbox
 
-    def get_value(self) -> List[str]:
+    def get_value(self) -> list[str]:
         return [value for value, checkbox in self._checkboxes.items() if checkbox.value]
 
     def set_value(self, value: Any) -> None:
@@ -226,7 +215,7 @@ class MultiSelectStep(StepComponent):
             for opt_value, checkbox in self._checkboxes.items():
                 checkbox.value = opt_value in value
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         selected = self.get_value()
         if len(selected) < self._min_selections:
             return f"Please select at least {self._min_selections} option(s)"
@@ -245,11 +234,11 @@ class ProviderSelectStep(StepComponent):
     def __init__(
         self,
         wizard_state: WizardState,
-        providers: List[Tuple[str, str, bool]],  # (provider_id, display_name, is_configured)
+        providers: list[tuple[str, str, bool]],  # (provider_id, display_name, is_configured)
         allow_multiple: bool = False,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize provider select step.
 
@@ -261,9 +250,9 @@ class ProviderSelectStep(StepComponent):
         super().__init__(wizard_state, id=id, classes=classes)
         self._providers = providers
         self._allow_multiple = allow_multiple
-        self._selected: List[str] = []
-        self._option_list: Optional[OptionList] = None
-        self._checkboxes: Dict[str, Checkbox] = {}
+        self._selected: list[str] = []
+        self._option_list: OptionList | None = None
+        self._checkboxes: dict[str, Checkbox] = {}
 
     def compose(self) -> ComposeResult:
         if self._allow_multiple:
@@ -310,7 +299,7 @@ class ProviderSelectStep(StepComponent):
         self._selected = [pid for pid, checkbox in self._checkboxes.items() if checkbox.value]
         _step_log(f"ProviderSelectStep: Selected {self._selected}")
 
-    def get_value(self) -> List[str]:
+    def get_value(self) -> list[str]:
         if self._allow_multiple:
             return [pid for pid, cb in self._checkboxes.items() if cb.value]
         return self._selected.copy()
@@ -332,7 +321,7 @@ class ProviderSelectStep(StepComponent):
                     if idx is not None:
                         self._option_list.highlighted = idx
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if not self.get_value():
             return "Please select at least one provider"
         return None
@@ -351,8 +340,8 @@ class ToggleStep(StepComponent):
         description: str = "",
         default_value: bool = False,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize toggle step.
 
@@ -366,7 +355,7 @@ class ToggleStep(StepComponent):
         self._label = label
         self._description = description
         self._default_value = default_value
-        self._switch: Optional[Switch] = None
+        self._switch: Switch | None = None
 
     def compose(self) -> ComposeResult:
         with Container(classes="toggle-container"):
@@ -397,8 +386,8 @@ class PasswordInputStep(StepComponent):
         hint: str = "",
         placeholder: str = "",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize password input step.
 
@@ -412,7 +401,7 @@ class PasswordInputStep(StepComponent):
         self._label = label
         self._hint = hint
         self._placeholder = placeholder
-        self._input: Optional[Input] = None
+        self._input: Input | None = None
 
     def compose(self) -> ComposeResult:
         with Container(classes="password-container"):
@@ -434,7 +423,7 @@ class PasswordInputStep(StepComponent):
         if self._input and isinstance(value, str):
             self._input.value = value
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         value = self.get_value()
         if not value or not value.strip():
             return "Please enter a value"
@@ -455,8 +444,8 @@ class TextInputStep(StepComponent):
         placeholder: str = "",
         required: bool = False,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize text input step.
 
@@ -472,7 +461,7 @@ class TextInputStep(StepComponent):
         self._hint = hint
         self._placeholder = placeholder
         self._required = required
-        self._input: Optional[Input] = None
+        self._input: Input | None = None
 
     def compose(self) -> ComposeResult:
         with Container(classes="text-input-container"):
@@ -493,7 +482,7 @@ class TextInputStep(StepComponent):
         if self._input and isinstance(value, str):
             self._input.value = value
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if self._required:
             value = self.get_value()
             if not value or not value.strip():
@@ -515,8 +504,8 @@ class TextAreaStep(StepComponent):
         default_value: str = "",
         required: bool = False,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize text area step.
 
@@ -532,7 +521,7 @@ class TextAreaStep(StepComponent):
         self._hint = hint
         self._default_value = default_value
         self._required = required
-        self._textarea: Optional[TextArea] = None
+        self._textarea: TextArea | None = None
 
     def compose(self) -> ComposeResult:
         with Container(classes="text-input-container"):
@@ -553,7 +542,7 @@ class TextAreaStep(StepComponent):
         if self._textarea and isinstance(value, str):
             self._textarea.text = value
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if self._required:
             value = self.get_value()
             if not value or not value.strip():
@@ -570,12 +559,12 @@ class ModelSelectStep(StepComponent):
     def __init__(
         self,
         wizard_state: WizardState,
-        models: List[str],
+        models: list[str],
         label: str = "Select Model",
-        default_model: Optional[str] = None,
+        default_model: str | None = None,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize model select step.
 
@@ -589,7 +578,7 @@ class ModelSelectStep(StepComponent):
         self._models = models
         self._label = label
         self._default_model = default_model
-        self._select: Optional[Select] = None
+        self._select: Select | None = None
 
     def compose(self) -> ComposeResult:
         with Container(classes="model-select-container"):
@@ -608,7 +597,7 @@ class ModelSelectStep(StepComponent):
             )
             yield self._select
 
-    def get_value(self) -> Optional[str]:
+    def get_value(self) -> str | None:
         if self._select and self._select.value != Select.BLANK:
             return str(self._select.value)
         return None
@@ -617,7 +606,7 @@ class ModelSelectStep(StepComponent):
         if self._select and isinstance(value, str) and value in self._models:
             self._select.value = value
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if not self.get_value():
             return "Please select a model"
         return None
@@ -635,8 +624,8 @@ class PreviewStep(StepComponent):
         title: str = "Preview",
         content_callback=None,  # Callable[[WizardState], str]
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize preview step.
 
@@ -648,7 +637,7 @@ class PreviewStep(StepComponent):
         super().__init__(wizard_state, id=id, classes=classes)
         self._title = title
         self._content_callback = content_callback
-        self._textarea: Optional[TextArea] = None
+        self._textarea: TextArea | None = None
 
     def compose(self) -> ComposeResult:
         with Container(classes="preview-container"):
@@ -692,11 +681,11 @@ class CompleteStep(StepComponent):
         wizard_state: WizardState,
         title: str = "Complete!",
         message: str = "",
-        next_steps: Optional[List[str]] = None,
+        next_steps: list[str] | None = None,
         icon: str = "OK",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize complete step.
 
@@ -743,12 +732,12 @@ class SaveLocationStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected_location: str = ".env"
-        self._option_list: Optional[OptionList] = None
+        self._option_list: OptionList | None = None
 
     def compose(self) -> ComposeResult:
         # Build native options
@@ -806,12 +795,12 @@ class LaunchOptionsStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected_option: str = "terminal"
-        self._option_list: Optional[OptionList] = None
+        self._option_list: OptionList | None = None
 
     def compose(self) -> ComposeResult:
         # Build native options

@@ -1,12 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Fuzzy model name matching utility for config builder.
 Allows users to type approximate model names and find exact matches.
 
 Based on contribution from acrobat3 (K. from JP).
 """
-
-from typing import List
 
 from massgen.backend.capabilities import BACKEND_CAPABILITIES
 
@@ -35,6 +32,7 @@ COMMON_MODELS_BY_PROVIDER = {
         "openai/o3",
         "openai/o3-mini",
         # Google models
+        "google/gemini-3.1-pro-preview",
         "google/gemini-2.5-flash",
         "google/gemini-2.5-pro",
         "google/gemini-2.0-flash-exp",
@@ -154,6 +152,13 @@ COMMON_MODELS_BY_PROVIDER = {
         "kimi-k2-instruct",
         "kimi-k2-base",
     ],
+    "nvidia_nim": [
+        "moonshotai/kimi-k2.5",
+        "deepseek-ai/deepseek-r1",
+        "meta/llama-3.3-70b-instruct",
+        "nvidia/llama-3.1-nemotron-70b-instruct",
+        "mistralai/mistral-large-2-instruct",
+    ],
     "qwen": [
         "qwen3-max",
         "qwen3-max-2025-09-23",
@@ -179,7 +184,7 @@ COMMON_MODELS_BY_PROVIDER = {
 }
 
 
-def get_all_models_for_provider(provider_type: str, use_api: bool = True) -> List[str]:
+def get_all_models_for_provider(provider_type: str, use_api: bool = True) -> list[str]:
     """Get all models for a specific provider from capabilities registry.
 
     For providers with many models (marked as "custom"), attempts to fetch from API first,
@@ -206,6 +211,7 @@ def get_all_models_for_provider(provider_type: str, use_api: bool = True) -> Lis
         "nebius",
         "fireworks",
         "moonshot",
+        "nvidia_nim",
         "qwen",
         "openai",
     ]

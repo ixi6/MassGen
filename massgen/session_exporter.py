@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Session export functionality for MassGen runs.
 
 Exports MassGen sessions by sharing via GitHub Gist.
@@ -12,7 +11,6 @@ Enhanced to support multi-turn session sharing:
 import json
 import re
 from pathlib import Path
-from typing import List, Optional
 
 from rich.console import Console
 
@@ -24,7 +22,7 @@ from .share import TurnInfo
 # =============================================================================
 
 
-def find_session_root(log_dir_arg: Optional[str] = None) -> Path:
+def find_session_root(log_dir_arg: str | None = None) -> Path:
     """Find the session root directory (containing all turns).
 
     Unlike find_latest_log() which returns the last turn's attempt directory,
@@ -87,7 +85,7 @@ def find_session_root(log_dir_arg: Optional[str] = None) -> Path:
     return logs[0]
 
 
-def get_session_turns(session_root: Path, include_all_attempts: bool = True) -> List[TurnInfo]:
+def get_session_turns(session_root: Path, include_all_attempts: bool = True) -> list[TurnInfo]:
     """Get all turns in a session with metadata.
 
     Args:
@@ -98,7 +96,7 @@ def get_session_turns(session_root: Path, include_all_attempts: bool = True) -> 
     Returns:
         List of TurnInfo objects for each turn/attempt, sorted by turn number then attempt number
     """
-    turns: List[TurnInfo] = []
+    turns: list[TurnInfo] = []
 
     # Find all turn directories
     turn_dirs = sorted(session_root.glob("turn_*"))
@@ -177,7 +175,7 @@ def get_session_turns(session_root: Path, include_all_attempts: bool = True) -> 
     return turns
 
 
-def parse_turn_range(range_str: str, total_turns: int) -> List[int]:
+def parse_turn_range(range_str: str, total_turns: int) -> list[int]:
     """Parse a turn range specification.
 
     Supported formats:
@@ -259,7 +257,7 @@ def find_latest_log() -> Path:
     raise FileNotFoundError(f"No valid log attempt found in {logs_dir}")
 
 
-def resolve_log_dir(log_dir_arg: Optional[str]) -> Path:
+def resolve_log_dir(log_dir_arg: str | None) -> Path:
     """Resolve log directory from argument or find latest.
 
     Args:

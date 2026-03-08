@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import os
@@ -6,7 +5,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 
@@ -60,12 +59,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 class _XfailEntry:
     nodeid: str
     reason: str
-    link: Optional[str]
-    expires: Optional[date]
+    link: str | None
+    expires: date | None
     strict: bool
 
 
-_expired_xfails: List[_XfailEntry] = []
+_expired_xfails: list[_XfailEntry] = []
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -78,6 +77,8 @@ def _isolate_test_logs(tmp_path_factory: pytest.TempPathFactory):
     try:
         import massgen.logger_config as logger_config
 
+        session = logger_config.LoggingSession.create()
+        logger_config.set_current_session(session)
         logger_config.reset_logging_session()
     except Exception:
         pass
@@ -89,6 +90,7 @@ def _isolate_test_logs(tmp_path_factory: pytest.TempPathFactory):
             import massgen.logger_config as logger_config
 
             logger_config.reset_logging_session()
+            logger_config._current_session.set(None)
         except Exception:
             pass
 
@@ -105,8 +107,8 @@ class MockLLMBackend:
 
     def __init__(
         self,
-        responses: Optional[List[str]] = None,
-        tool_call_responses: Optional[List[List[Dict[str, Any]]]] = None,
+        responses: list[str] | None = None,
+        tool_call_responses: list[list[dict[str, Any]]] | None = None,
         provider_name: str = "mock_provider",
         stateful: bool = False,
         model: str = "mock-model",
@@ -116,7 +118,7 @@ class MockLLMBackend:
         self._call_count = 0
         self._provider_name = provider_name
         self._stateful = stateful
-        self.config: Dict[str, Any] = {"model": model}
+        self.config: dict[str, Any] = {"model": model}
         self.filesystem_manager = None
         self._current_stage = None
         self._planning_mode = False
@@ -139,21 +141,21 @@ class MockLLMBackend:
     def get_provider_name(self) -> str:
         return self._provider_name
 
-    def extract_tool_name(self, tool_call: Dict[str, Any]) -> str:
+    def extract_tool_name(self, tool_call: dict[str, Any]) -> str:
         if "name" in tool_call:
             return str(tool_call.get("name", ""))
         if isinstance(tool_call.get("function"), dict):
             return str(tool_call["function"].get("name", ""))
         return ""
 
-    def extract_tool_arguments(self, tool_call: Dict[str, Any]) -> Any:
+    def extract_tool_arguments(self, tool_call: dict[str, Any]) -> Any:
         if "arguments" in tool_call:
             return tool_call.get("arguments", {})
         if isinstance(tool_call.get("function"), dict):
             return tool_call["function"].get("arguments", {})
         return {}
 
-    def create_tool_result_message(self, tool_call: Dict[str, Any], result: str) -> Dict[str, Any]:
+    def create_tool_result_message(self, tool_call: dict[str, Any], result: str) -> dict[str, Any]:
         """Create a tool result message in chat-completions-compatible shape."""
         tool_call_id = str(tool_call.get("id", "mock_tool_call"))
         return {
@@ -162,12 +164,20 @@ class MockLLMBackend:
             "content": result,
         }
 
-    async def stream_with_tools(self, messages: List[Dict[str, Any]], tools: Optional[List[Dict[str, Any]]] = None, **kwargs):
+    def filter_enforcement_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        unknown_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Default: return all calls (mock represents a non-Claude backend)."""
+        return tool_calls
+
+    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None, **kwargs):
         from massgen.backend.base import StreamChunk
 
         _ = (messages, tools, kwargs)
         response = self.responses[self._call_count % len(self.responses)]
-        scripted_tool_calls: Optional[List[Dict[str, Any]]] = None
+        scripted_tool_calls: list[dict[str, Any]] | None = None
         if self._call_count < len(self.tool_call_responses):
             scripted_tool_calls = self.tool_call_responses[self._call_count]
         self._call_count += 1
@@ -187,8 +197,8 @@ def mock_backend():
     """Factory fixture for a deterministic mock backend."""
 
     def _factory(
-        responses: Optional[List[str]] = None,
-        tool_call_responses: Optional[List[List[Dict[str, Any]]]] = None,
+        responses: list[str] | None = None,
+        tool_call_responses: list[list[dict[str, Any]]] | None = None,
         provider_name: str = "mock_provider",
         stateful: bool = False,
         model: str = "mock-model",
@@ -211,9 +221,9 @@ def mock_agent(mock_backend):
 
     def _factory(
         agent_id: str = "test_agent",
-        responses: Optional[List[str]] = None,
+        responses: list[str] | None = None,
         system_message: str = "Test system message",
-        backend_kwargs: Optional[Dict[str, Any]] = None,
+        backend_kwargs: dict[str, Any] | None = None,
     ) -> Any:
         backend_kwargs = backend_kwargs or {}
         backend = mock_backend(
@@ -236,10 +246,10 @@ def mock_orchestrator(mock_agent):
 
     def _factory(
         num_agents: int = 2,
-        agent_responses: Optional[List[List[str]]] = None,
-        config: Optional[Any] = None,
+        agent_responses: list[list[str]] | None = None,
+        config: Any | None = None,
     ) -> Any:
-        agents: Dict[str, Any] = {}
+        agents: dict[str, Any] = {}
         for i in range(num_agents):
             agent_id = f"agent_{chr(ord('a') + i)}"
             responses = None
@@ -251,7 +261,7 @@ def mock_orchestrator(mock_agent):
                 system_message=f"You are {agent_id}",
             )
 
-        kwargs: Dict[str, Any] = {"agents": agents}
+        kwargs: dict[str, Any] = {"agents": agents}
         if config is not None:
             kwargs["config"] = config
         return Orchestrator(**kwargs)
@@ -259,7 +269,7 @@ def mock_orchestrator(mock_agent):
     return _factory
 
 
-def _parse_iso_date(d: Any) -> Optional[date]:
+def _parse_iso_date(d: Any) -> date | None:
     if d is None:
         return None
     if isinstance(d, date) and not isinstance(d, datetime):
@@ -278,7 +288,7 @@ def _parse_iso_date(d: Any) -> Optional[date]:
     return None
 
 
-def _load_xfail_registry(path: str) -> Dict[str, _XfailEntry]:
+def _load_xfail_registry(path: str) -> dict[str, _XfailEntry]:
     p = Path(path)
     if not p.exists():
         return {}
@@ -293,7 +303,7 @@ def _load_xfail_registry(path: str) -> Dict[str, _XfailEntry]:
     if not isinstance(raw, dict):
         return {}
 
-    entries: Dict[str, _XfailEntry] = {}
+    entries: dict[str, _XfailEntry] = {}
     for nodeid, cfg in raw.items():
         if not isinstance(nodeid, str) or not nodeid.strip():
             continue
@@ -320,7 +330,7 @@ def _should_skip_marker(item: pytest.Item, marker: str) -> bool:
     return item.get_closest_marker(marker) is not None
 
 
-def pytest_collection_modifyitems(config: pytest.Config, items: List[pytest.Item]) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     run_integration = bool(config.getoption("--run-integration"))
     run_live_api = bool(config.getoption("--run-live-api"))
     run_docker = bool(config.getoption("--run-docker"))

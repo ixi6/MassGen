@@ -1,10 +1,11 @@
-# -*- coding: utf-8 -*-
 """
 Base adapter class for external agent agents.
 """
+
 import asyncio
 from abc import ABC, abstractmethod
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from massgen.backend.base import StreamChunk
 from massgen.utils import CoordinationStage
@@ -30,8 +31,8 @@ class AgentAdapter(ABC):
     @abstractmethod
     async def execute_streaming(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """
@@ -57,7 +58,7 @@ class AgentAdapter(ABC):
     async def simulate_streaming(
         self,
         content: str,
-        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        tool_calls: list[dict[str, Any]] | None = None,
         delay: float = 0.01,
     ) -> AsyncGenerator[StreamChunk, None]:
         """
@@ -95,7 +96,7 @@ class AgentAdapter(ABC):
         yield StreamChunk(type="done")
 
     @staticmethod
-    def _get_tool_name(tool: Dict[str, Any]) -> str:
+    def _get_tool_name(tool: dict[str, Any]) -> str:
         """
         Extract tool name from tool schema.
 
@@ -109,7 +110,7 @@ class AgentAdapter(ABC):
 
     def convert_messages_from_massgen(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
     ) -> Any:
         """
         Convert MassGen messages to agent-specific format.
@@ -127,7 +128,7 @@ class AgentAdapter(ABC):
     def convert_response_to_massgen(
         self,
         response: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Convert agent response to MassGen format.
 
@@ -146,7 +147,7 @@ class AgentAdapter(ABC):
 
     def convert_tools_from_massgen(
         self,
-        tools: List[Dict[str, Any]],
+        tools: list[dict[str, Any]],
     ) -> Any:
         """
         Convert MassGen tools to agent-specific format.

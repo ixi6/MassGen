@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for the redesigned skill-creation-from-analysis workflow.
 
 Covers:

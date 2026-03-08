@@ -79,7 +79,7 @@ Design Principles
 Coordination Protocol
 ---------------------
 
-MassGen uses a "parallel study group" coordination protocol inspired by advanced systems like xAI's Grok Heavy and Google DeepMind's Gemini Deep Think.
+MassGen uses a coordination protocol built around redundancy and iterative refinement, with cycles of restarts and voting-based consensus to validate quality.
 
 Vote-Based Consensus
 ~~~~~~~~~~~~~~~~~~~~

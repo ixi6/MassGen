@@ -1,11 +1,12 @@
-# -*- coding: utf-8 -*-
 """
 Base class with MCP (Model Context Protocol) support.
 Provides common MCP functionality for backends that support MCP integration.
 Inherits from LLMBackend and adds MCP-specific features.
 """
+
 from __future__ import annotations
 
+import ast
 import asyncio
 import base64
 import json
@@ -14,20 +15,18 @@ import time
 import types
 import uuid
 from abc import abstractmethod
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import (
+    TYPE_CHECKING,
     Any,
-    AsyncGenerator,
-    Callable,
-    Dict,
-    List,
     NamedTuple,
-    Optional,
-    Set,
-    Tuple,
 )
+
+if TYPE_CHECKING:
+    from massgen.subagent.background_delegate import BackgroundToolDelegate
 
 import httpx
 
@@ -71,8 +70,10 @@ from ..structured_logging import get_tracer, log_tool_execution, trace_llm_api_c
 from ..token_manager.token_manager import ToolExecutionMetric
 from ..tool import ToolManager
 from ..utils import CoordinationStage
+from ..utils.tool_argument_normalization import normalize_json_object_argument
 from ._constants import configure_openrouter_extra_body
 from .base import LLMBackend, StreamChunk, get_multimodal_tool_definitions
+from .capabilities import normalize_backend_type
 
 
 @dataclass
@@ -103,10 +104,10 @@ class ToolExecutionResult:
     isolated from shared state until we're ready to merge them.
     """
 
-    call: Dict[str, Any]
-    chunks: List[StreamChunk]
-    messages: List[Dict[str, Any]]
-    exception: Optional[BaseException] = None
+    call: dict[str, Any]
+    chunks: list[StreamChunk]
+    messages: list[dict[str, Any]]
+    exception: BaseException | None = None
 
 
 class UploadFileError(Exception):
@@ -123,7 +124,7 @@ class CustomToolChunk(NamedTuple):
     data: str  # Chunk data to stream to user
     completed: bool  # True for the last chunk only
     accumulated_result: str  # Final accumulated result (only when completed=True)
-    meta_info: Optional[Dict[str, Any]] = None  # Multimodal metadata (e.g., from read_media)
+    meta_info: dict[str, Any] | None = None  # Multimodal metadata (e.g., from read_media)
 
 
 class EvictionResult(NamedTuple):
@@ -139,44 +140,81 @@ class EvictionResult(NamedTuple):
     was_evicted: bool
 
 
+BACKGROUND_TOOL_START_NAME = "custom_tool__start_background_tool"
+BACKGROUND_TOOL_STATUS_NAME = "custom_tool__get_background_tool_status"
+BACKGROUND_TOOL_RESULT_NAME = "custom_tool__get_background_tool_result"
+BACKGROUND_TOOL_CANCEL_NAME = "custom_tool__cancel_background_tool"
+BACKGROUND_TOOL_LIST_NAME = "custom_tool__list_background_tools"
+BACKGROUND_TOOL_WAIT_NAME = "custom_tool__wait_for_background_tool"
+BACKGROUND_TOOL_MANAGEMENT_NAMES = {
+    BACKGROUND_TOOL_START_NAME,
+    BACKGROUND_TOOL_STATUS_NAME,
+    BACKGROUND_TOOL_RESULT_NAME,
+    BACKGROUND_TOOL_CANCEL_NAME,
+    BACKGROUND_TOOL_LIST_NAME,
+    BACKGROUND_TOOL_WAIT_NAME,
+}
+BACKGROUND_TOOL_TERMINAL_STATUSES = {"completed", "error", "cancelled"}
+BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS = 30.0
+BACKGROUND_TOOL_WAIT_MAX_TIMEOUT_SECONDS = 600.0
+BACKGROUND_TOOL_WAIT_POLL_INTERVAL_SECONDS = 0.2
+
+
+@dataclass
+class BackgroundToolJob:
+    """Runtime state for a background tool execution."""
+
+    job_id: str
+    tool_name: str
+    tool_type: str
+    arguments: dict[str, Any]
+    status: str
+    created_at: float
+    source_call_id: str | None = None
+    started_at: float | None = None
+    completed_at: float | None = None
+    result: str | None = None
+    error: str | None = None
+
+
 class ExecutionContext(BaseModel):
     """Execution context for MCP tool execution."""
 
-    messages: List[Dict[str, Any]] = []
-    agent_system_message: Optional[str] = None
-    agent_id: Optional[str] = None
-    backend_name: Optional[str] = None
-    backend_type: Optional[str] = None  # Backend type for capability lookup (e.g., "openai", "claude")
-    model: Optional[str] = None  # Model name for capability lookup
-    current_stage: Optional[CoordinationStage] = None
+    messages: list[dict[str, Any]] = []
+    agent_system_message: str | None = None
+    agent_id: str | None = None
+    backend_name: str | None = None
+    backend_type: str | None = None  # Backend type for capability lookup (e.g., "openai", "claude")
+    model: str | None = None  # Model name for capability lookup
+    current_stage: CoordinationStage | None = None
 
     # Workspace context for file operations and multimodal tools
-    agent_cwd: Optional[str] = None  # Working directory for file operations
-    allowed_paths: Optional[List[str]] = None  # Allowed paths for file access
-    multimodal_config: Optional[Dict[str, Any]] = None  # Multimodal generation config
+    agent_cwd: str | None = None  # Working directory for file operations
+    allowed_paths: list[str] | None = None  # Allowed paths for file access
+    multimodal_config: dict[str, Any] | None = None  # Multimodal generation config
 
     # Task context for external API calls (multimodal tools, subagents)
     # Loaded from CONTEXT.md in the workspace
-    task_context: Optional[str] = None
+    task_context: str | None = None
 
     # These will be computed after initialization
-    system_messages: Optional[List[Dict[str, Any]]] = None
-    user_messages: Optional[List[Dict[str, Any]]] = None
-    prompt: Optional[List[Dict[str, Any]]] = None
+    system_messages: list[dict[str, Any]] | None = None
+    user_messages: list[dict[str, Any]] | None = None
+    prompt: list[dict[str, Any]] | None = None
 
     def __init__(
         self,
-        messages: Optional[List[Dict[str, Any]]] = None,
-        agent_system_message: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        backend_name: Optional[str] = None,
-        backend_type: Optional[str] = None,
-        model: Optional[str] = None,
-        current_stage: Optional[CoordinationStage] = None,
-        agent_cwd: Optional[str] = None,
-        allowed_paths: Optional[List[str]] = None,
-        multimodal_config: Optional[Dict[str, Any]] = None,
-        task_context: Optional[str] = None,
+        messages: list[dict[str, Any]] | None = None,
+        agent_system_message: str | None = None,
+        agent_id: str | None = None,
+        backend_name: str | None = None,
+        backend_type: str | None = None,
+        model: str | None = None,
+        current_stage: CoordinationStage | None = None,
+        agent_cwd: str | None = None,
+        allowed_paths: list[str] | None = None,
+        multimodal_config: dict[str, Any] | None = None,
+        task_context: str | None = None,
     ):
         """Initialize execution context."""
         super().__init__(
@@ -325,7 +363,7 @@ SUPPORTED_AUDIO_MIME_TYPES = {
 class CustomToolAndMCPBackend(LLMBackend):
     """Base backend class with MCP (Model Context Protocol) support."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         """Initialize backend with MCP support."""
         super().__init__(api_key, **kwargs)
 
@@ -336,6 +374,16 @@ class CustomToolAndMCPBackend(LLMBackend):
         # Custom tools support - initialize before api_params_handler
         self.custom_tool_manager = ToolManager()
         self._custom_tool_names: set[str] = set()
+        self._background_tool_jobs: dict[str, BackgroundToolJob] = {}
+        self._background_tool_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._pending_background_tool_results: list[dict[str, Any]] = []
+        self._background_tool_wait_seen_ids: set[str] = set()
+        self._background_wait_interrupt_provider: Callable[[str], Any] | None = None
+        self._background_tool_delegate: BackgroundToolDelegate | None = None
+        self._background_tool_management_names: set[str] = set(
+            BACKGROUND_TOOL_MANAGEMENT_NAMES,
+        )
+        self._custom_tool_names.update(self._background_tool_management_names)
 
         # Store execution context for custom tool execution
         self._execution_context = None
@@ -412,7 +460,7 @@ class CustomToolAndMCPBackend(LLMBackend):
 
         self.allowed_tools = kwargs.pop("allowed_tools", None)
         self.exclude_tools = kwargs.pop("exclude_tools", None)
-        self._mcp_client: Optional[MCPClient] = None
+        self._mcp_client: MCPClient | None = None
         self._mcp_initialized = False
 
         # MCP tool execution monitoring
@@ -421,7 +469,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         self._mcp_function_names: set[str] = set()
 
         # Granular tool execution metrics tracking
-        self._tool_execution_metrics: List["ToolExecutionMetric"] = []
+        self._tool_execution_metrics: list[ToolExecutionMetric] = []
         self._current_round_number: int = 0
 
         # Circuit breaker for MCP tools (stdio + streamable-http)
@@ -451,7 +499,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 )
 
         # Function registry for mcp_tools-based servers (stdio + streamable-http)
-        self._mcp_functions: Dict[str, Function] = {}
+        self._mcp_functions: dict[str, Function] = {}
 
         # Thread safety for counters
         self._stats_lock = asyncio.Lock()
@@ -464,7 +512,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         self.agent_id = kwargs.get("agent_id", None)
 
         # Initialize General Hook Manager for Pre/PostToolUse hooks
-        self._general_hook_manager: Optional[GeneralHookManager] = None
+        self._general_hook_manager: GeneralHookManager | None = None
         hooks_config = self.config.get("hooks") or kwargs.get("hooks")
         if hooks_config:
             self._general_hook_manager = GeneralHookManager()
@@ -492,7 +540,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         """Set the GeneralHookManager (used by orchestrator for global hooks)."""
         self._general_hook_manager = manager
 
-    def set_subagent_spawn_callback(self, callback: Callable[[str, Dict[str, Any], str], None]) -> None:
+    def set_subagent_spawn_callback(self, callback: Callable[[str, dict[str, Any], str], None]) -> None:
         """Set callback for subagent spawn notifications.
 
         This callback is invoked (in a background thread) when spawn_subagents is called,
@@ -503,7 +551,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         """
         self._subagent_spawn_callback = callback
 
-    def _build_multimodal_config_from_params(self) -> Dict[str, Any]:
+    def _build_multimodal_config_from_params(self) -> dict[str, Any]:
         """Build multimodal_config from individual generation config variables.
 
         Reads the following config variables and builds a structured config:
@@ -514,7 +562,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         Returns:
             Dict with structure: {"image": {"backend": ..., "model": ...}, ...}
         """
-        multimodal_config: Dict[str, Any] = {}
+        multimodal_config: dict[str, Any] = {}
 
         # Image generation config
         image_backend = self.config.get("image_generation_backend")
@@ -581,11 +629,11 @@ class CustomToolAndMCPBackend(LLMBackend):
         """Set the current round number for tool metrics tracking."""
         self._current_round_number = round_number
 
-    def get_tool_metrics(self) -> List[Dict[str, Any]]:
+    def get_tool_metrics(self) -> list[dict[str, Any]]:
         """Get all tool execution metrics as list of dicts."""
         return [m.to_dict() for m in self._tool_execution_metrics]
 
-    def get_tool_metrics_summary(self) -> Dict[str, Any]:
+    def get_tool_metrics_summary(self) -> dict[str, Any]:
         """Get aggregated tool metrics summary with distribution statistics.
 
         Returns:
@@ -599,14 +647,14 @@ class CustomToolAndMCPBackend(LLMBackend):
                 "by_tool": {},
             }
 
-        by_tool: Dict[str, Dict[str, Any]] = {}
+        by_tool: dict[str, dict[str, Any]] = {}
         total_failures = 0
         total_time_ms = 0.0
 
         # First pass: collect all values per tool for distribution calculation
-        tool_input_chars: Dict[str, List[int]] = {}
-        tool_output_chars: Dict[str, List[int]] = {}
-        tool_exec_times: Dict[str, List[float]] = {}
+        tool_input_chars: dict[str, list[int]] = {}
+        tool_output_chars: dict[str, list[int]] = {}
+        tool_exec_times: dict[str, list[float]] = {}
 
         for m in self._tool_execution_metrics:
             name = m.tool_name
@@ -690,7 +738,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             "by_tool": by_tool,
         }
 
-    def _backend_call_to_nlip(self, call: Dict[str, Any]) -> Optional[NLIPToolCall]:
+    def _backend_call_to_nlip(self, call: dict[str, Any]) -> NLIPToolCall | None:
         """
         Convert backend tool call format to NLIP format with validation.
 
@@ -711,22 +759,25 @@ class CustomToolAndMCPBackend(LLMBackend):
                 logger.error(f"[NLIP] Missing name in backend call: {call}")
                 return None
 
-            # Parse arguments (handle both string and dict)
-            args = call.get("arguments", "{}")
-            if isinstance(args, str):
-                try:
-                    args = json.loads(args) if args else {}
-                except json.JSONDecodeError as exc:
-                    snippet = args[:200] + "..." if len(args) > 200 else args
-                    logger.error(
-                        f"[NLIP] Failed to parse arguments for {name}: {exc}. " f"Invalid JSON (truncated): {snippet}",
-                    )
-                    return None
-            elif not isinstance(args, dict):
+            # Parse arguments (handle dict, JSON string, and double-encoded JSON string).
+            args_raw = call.get("arguments", "{}")
+            try:
+                args, decode_passes = normalize_json_object_argument(
+                    args_raw,
+                    field_name="arguments",
+                )
+            except ValueError as exc:
+                snippet = args_raw[:200] + "..." if isinstance(args_raw, str) and len(args_raw) > 200 else str(args_raw)
                 logger.error(
-                    f"[NLIP] Arguments must be string or dict, got {type(args)}",
+                    f"[NLIP] Failed to parse arguments for {name}: {exc}. " f"Invalid JSON (truncated): {snippet}",
                 )
                 return None
+            if decode_passes > 1:
+                logger.info(
+                    "[NLIP] Normalized %s decode passes for %s arguments",
+                    decode_passes,
+                    name,
+                )
 
             return NLIPToolCall(
                 tool_id=call_id,
@@ -738,14 +789,14 @@ class CustomToolAndMCPBackend(LLMBackend):
             logger.error(f"[NLIP] Conversion failed: {exc}")
             return None
 
-    def _build_nlip_request(self, call: Dict[str, Any]) -> NLIPRequest:
+    def _build_nlip_request(self, call: dict[str, Any]) -> NLIPRequest:
         """Construct an NLIP request payload for a backend tool call."""
         if not self._nlip_router:
             raise RuntimeError("NLIP router is not configured")
 
         # Inject agent_cwd into arguments (same as standard path)
         original_args = call.get("arguments", "{}")
-        arguments = json.loads(original_args or "{}") if isinstance(original_args, str) else dict(original_args or {})
+        arguments = self._parse_tool_arguments(original_args)
         if self.filesystem_manager and self.filesystem_manager.cwd:
             if "agent_cwd" not in arguments or arguments.get("agent_cwd") is None:
                 arguments["agent_cwd"] = self.filesystem_manager.cwd
@@ -760,7 +811,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         if not nlip_call:
             raise ValueError("Failed to convert call to NLIP format")
 
-        execution_context: Dict[str, Any] = {}
+        execution_context: dict[str, Any] = {}
         if getattr(self, "_execution_context", None):
             try:
                 execution_context = self._execution_context.model_dump()
@@ -808,13 +859,13 @@ class CustomToolAndMCPBackend(LLMBackend):
         self,
         stream,
         all_params,
-        agent_id: Optional[str] = None,
-    ) -> AsyncGenerator[StreamChunk, None]:
+        agent_id: str | None = None,
+    ) -> AsyncGenerator[StreamChunk]:
         """Process stream."""
         yield StreamChunk(type="error", error="Not implemented")
 
     # Custom tools support
-    def _register_custom_tools(self, custom_tools: List[Dict[str, Any]]) -> None:
+    def _register_custom_tools(self, custom_tools: list[dict[str, Any]]) -> None:
         """Register custom tools with the tool manager.
 
         Supports flexible configuration:
@@ -1009,7 +1060,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         field_value: Any,
         num_functions: int,
         field_name: str,
-    ) -> Optional[List[Any]]:
+    ) -> list[Any] | None:
         """Process a config field that can be a single value or list.
 
         Conversion rules:
@@ -1062,8 +1113,8 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _stream_execution_results(
         self,
-        tool_request: Dict[str, Any],
-    ) -> AsyncGenerator[Tuple[str, bool, Optional[Dict[str, Any]]], None]:
+        tool_request: dict[str, Any],
+    ) -> AsyncGenerator[tuple[str, bool, dict[str, Any] | None]]:
         """Stream execution results from tool manager, yielding (data, is_log, meta_info) tuples.
 
         Args:
@@ -1096,9 +1147,9 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def stream_custom_tool_execution(
         self,
-        call: Dict[str, Any],
-        agent_id_override: Optional[str] = None,
-    ) -> AsyncGenerator[CustomToolChunk, None]:
+        call: dict[str, Any],
+        agent_id_override: str | None = None,
+    ) -> AsyncGenerator[CustomToolChunk]:
         """Stream custom tool execution with differentiation between logs and final results.
 
         This method:
@@ -1119,6 +1170,36 @@ class CustomToolAndMCPBackend(LLMBackend):
         import json
 
         tool_name = call.get("name", "")
+
+        # Internal background-management tools are handled directly here
+        # (they are schemas-only and not registered in ToolManager).
+        # Normalize MCP-prefixed names so the dispatcher matches correctly.
+        if self._is_background_management_tool(tool_name):
+            bg_tool_name = tool_name
+            _massgen_prefix = "mcp__massgen_custom_tools__"
+            if bg_tool_name.startswith(_massgen_prefix):
+                bg_tool_name = bg_tool_name[len(_massgen_prefix) :]
+            try:
+                parsed_arguments = self._parse_tool_arguments(call.get("arguments", "{}"))
+            except Exception as e:  # noqa: BLE001
+                result_payload = {
+                    "success": False,
+                    "error": f"Invalid arguments: {e}",
+                }
+            else:
+                result_payload = await self._execute_background_management_tool(
+                    bg_tool_name,
+                    parsed_arguments,
+                    source_call_id=str(call.get("call_id", "") or ""),
+                )
+
+            result_text = json.dumps(result_payload, ensure_ascii=False)
+            yield CustomToolChunk(
+                data="",
+                completed=True,
+                accumulated_result=result_text,
+            )
+            return
 
         # Check if this is a broadcast tool - handle specially
         if tool_name in (
@@ -1179,8 +1260,8 @@ class CustomToolAndMCPBackend(LLMBackend):
                 )
                 return
 
-        # Parse arguments for regular custom tools
-        arguments = json.loads(call["arguments"]) if isinstance(call["arguments"], str) else call["arguments"]
+        # Parse arguments for regular custom tools.
+        arguments = self._parse_tool_arguments(call.get("arguments", "{}"))
 
         # Ensure agent_cwd is always injected if filesystem_manager is available
         # This provides a fallback in case preset_args didn't work during registration
@@ -1203,7 +1284,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         }
 
         accumulated_result = ""
-        accumulated_meta_info: Optional[Dict[str, Any]] = None
+        accumulated_meta_info: dict[str, Any] | None = None
 
         # Stream all results and accumulate only is_log=True
         async for data, is_log, meta_info in self._stream_execution_results(
@@ -1231,14 +1312,992 @@ class CustomToolAndMCPBackend(LLMBackend):
             meta_info=accumulated_meta_info,
         )
 
-    def _get_custom_tools_schemas(self) -> List[Dict[str, Any]]:
+    def _get_custom_tools_schemas(self) -> list[dict[str, Any]]:
         """Get OpenAI-formatted schemas for all registered custom tools."""
-        return self.custom_tool_manager.fetch_tool_schemas()
+        schemas = self.custom_tool_manager.fetch_tool_schemas()
+        schemas.extend(self._get_background_tool_management_schemas())
+        return schemas
+
+    @staticmethod
+    def _build_background_management_schema(
+        name: str,
+        description: str,
+        properties: dict[str, Any],
+        required: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Create an OpenAI function schema for an internal background tool."""
+        return {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required or [],
+                },
+            },
+        }
+
+    def _get_background_tool_management_schemas(self) -> list[dict[str, Any]]:
+        """Schemas for internal background-tool management helpers."""
+        return [
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_START_NAME,
+                description=(
+                    "Start any custom or MCP tool in the background and return a job_id "
+                    "for polling or cancellation. You can provide target arguments via "
+                    "`arguments` (or `args`), or pass them as top-level fields."
+                ),
+                properties={
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Exact tool name to run (custom_tool__* or mcp__*).",
+                    },
+                    "tool": {
+                        "type": "string",
+                        "description": "Alias for tool_name.",
+                    },
+                    "arguments": {
+                        "type": "object",
+                        "description": "Arguments for the target tool.",
+                        "default": {},
+                    },
+                    "args": {
+                        "type": "object",
+                        "description": "Alias for arguments.",
+                        "default": {},
+                    },
+                },
+                required=[],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_STATUS_NAME,
+                description="Get lightweight status for a background tool job.",
+                properties={
+                    "job_id": {
+                        "type": "string",
+                        "description": "Background job identifier returned by start_background_tool.",
+                    },
+                },
+                required=["job_id"],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_RESULT_NAME,
+                description="Get the current or final result payload for a background tool job.",
+                properties={
+                    "job_id": {
+                        "type": "string",
+                        "description": "Background job identifier returned by start_background_tool.",
+                    },
+                },
+                required=["job_id"],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_WAIT_NAME,
+                description=("Block until the next unseen background tool job reaches a terminal " "state or the timeout elapses."),
+                properties={
+                    "timeout_seconds": {
+                        "type": "number",
+                        "description": ("Maximum seconds to wait for a completed background job. " "Default: 30."),
+                        "default": BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS,
+                    },
+                },
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_CANCEL_NAME,
+                description="Cancel a running background tool job.",
+                properties={
+                    "job_id": {
+                        "type": "string",
+                        "description": "Background job identifier returned by start_background_tool.",
+                    },
+                },
+                required=["job_id"],
+            ),
+            self._build_background_management_schema(
+                name=BACKGROUND_TOOL_LIST_NAME,
+                description=("List background tool jobs. By default returns only currently running jobs; " "set include_all=true to include completed/error/cancelled history."),
+                properties={
+                    "include_all": {
+                        "type": "boolean",
+                        "description": "Include terminal jobs (completed/error/cancelled). Default false.",
+                        "default": False,
+                    },
+                },
+            ),
+        ]
+
+    @staticmethod
+    def _parse_tool_arguments(arguments: Any) -> dict[str, Any]:
+        """Parse tool arguments into a dictionary."""
+        parsed, decode_passes = normalize_json_object_argument(
+            arguments,
+            field_name="arguments",
+        )
+        if decode_passes > 1:
+            logger.info(
+                "[ToolArgs] Normalized %s decode passes for tool arguments",
+                decode_passes,
+            )
+        return parsed
+
+    def _is_background_management_tool(self, tool_name: str) -> bool:
+        """Return whether a tool name is one of the internal background helpers.
+
+        Handles both direct names (``custom_tool__list_background_tools``) and
+        MCP-prefixed variants
+        (``mcp__massgen_custom_tools__custom_tool__list_background_tools``) so
+        the backend intercepts background management calls regardless of whether
+        ``enable_code_based_tools`` is on.
+        """
+        normalized = (tool_name or "").strip()
+        massgen_prefix = "mcp__massgen_custom_tools__"
+        if normalized.startswith(massgen_prefix):
+            normalized = normalized[len(massgen_prefix) :]
+        return normalized in self._background_tool_management_names
+
+    def _resolve_background_tool_type(self, tool_name: str) -> str | None:
+        """Resolve the execution type for a background target tool."""
+        if not tool_name:
+            return None
+        if tool_name in {"new_answer", "vote", "stop"}:
+            return None
+        if self._is_background_management_tool(tool_name):
+            return None
+        if tool_name in self._custom_tool_names:
+            return "custom"
+        if tool_name in self._mcp_functions:
+            return "mcp"
+        return None
+
+    @staticmethod
+    def _is_subagent_spawn_target_tool(tool_name: str) -> bool:
+        """Return True when target tool resolves to subagent spawning."""
+        normalized = str(tool_name or "").strip().lower()
+        return "spawn_subagent" in normalized and "subagent" in normalized
+
+    @staticmethod
+    def _normalize_subagent_spawn_background_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
+        """Force wrapped subagent spawn arguments into background mode."""
+        normalized = dict(arguments)
+        normalized["background"] = True
+        normalized.pop("run_in_background", None)
+        mode = normalized.get("mode")
+        if not (isinstance(mode, str) and mode.lower() == "background"):
+            normalized.pop("mode", None)
+        return normalized
+
+    @staticmethod
+    def _parse_json_or_python_dict(raw_text: str) -> dict[str, Any] | None:
+        """Parse dictionary payloads from JSON or Python repr text."""
+        if not isinstance(raw_text, str):
+            return None
+        text = raw_text.strip()
+        if not text:
+            return None
+
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(text)
+            except Exception:  # noqa: BLE001
+                continue
+            if isinstance(parsed, dict):
+                return parsed
+        return None
+
+    @staticmethod
+    def _looks_like_json_payload(raw_text: str) -> bool:
+        stripped = str(raw_text or "").lstrip()
+        return stripped.startswith("{") or stripped.startswith("[")
+
+    @classmethod
+    def _annotate_custom_tool_outcome_from_payload(
+        cls,
+        payload: dict[str, Any],
+        *,
+        ready: bool,
+    ) -> None:
+        """Attach tool-level outcome fields for terminal custom-tool jobs."""
+        if not ready or payload.get("tool_type") != "custom":
+            return
+
+        status = str(payload.get("status") or "")
+        if status in {"error", "cancelled"}:
+            payload["tool_success"] = False
+            payload["tool_error"] = str(payload.get("error") or "Custom tool execution failed")
+            return
+
+        if status != "completed":
+            payload["tool_success"] = None
+            return
+
+        raw_result = str(payload.get("result") or "").strip()
+        if not raw_result:
+            payload["tool_success"] = False
+            payload["tool_error"] = "No final result payload captured from custom tool execution"
+            return
+
+        parsed = cls._parse_json_or_python_dict(raw_result)
+        if parsed is not None:
+            parsed_success = parsed.get("success")
+            if isinstance(parsed_success, bool):
+                payload["tool_success"] = parsed_success
+                if not parsed_success:
+                    parsed_error = parsed.get("error")
+                    payload["tool_error"] = str(parsed_error) if parsed_error is not None else "Custom tool reported success=false"
+            else:
+                payload["tool_success"] = True
+            return
+
+        if raw_result.startswith("Error:"):
+            payload["tool_success"] = False
+            payload["tool_error"] = raw_result
+            return
+
+        if cls._looks_like_json_payload(raw_result):
+            payload["tool_success"] = None
+            payload["result_parse_error"] = "Could not parse custom tool JSON result payload"
+            return
+
+        payload["tool_success"] = True
+
+    def _mcp_tool_declares_argument(self, tool_name: str, argument_name: str) -> bool:
+        """Return True when an MCP tool schema explicitly declares an argument."""
+        function = self._mcp_functions.get(tool_name)
+        if not function:
+            return False
+        parameters = getattr(function, "parameters", None)
+        if not isinstance(parameters, dict):
+            return False
+        properties = parameters.get("properties")
+        if not isinstance(properties, dict):
+            return False
+        return argument_name in properties
+
+    def _strip_background_control_args(
+        self,
+        arguments: dict[str, Any],
+        *,
+        tool_name: str | None = None,
+    ) -> dict[str, Any]:
+        """Remove synthetic background control flags before dispatching tools."""
+        cleaned = dict(arguments)
+        preserve_background = bool(tool_name) and self._mcp_tool_declares_argument(tool_name, "background")
+        preserve_run_in_background = bool(tool_name) and self._mcp_tool_declares_argument(tool_name, "run_in_background")
+        preserve_mode = bool(tool_name) and self._mcp_tool_declares_argument(tool_name, "mode")
+
+        if not preserve_background and isinstance(cleaned.get("background"), bool):
+            cleaned.pop("background", None)
+        if not preserve_run_in_background and isinstance(cleaned.get("run_in_background"), bool):
+            cleaned.pop("run_in_background", None)
+        mode = cleaned.get("mode")
+        if not preserve_mode and isinstance(mode, str) and mode.lower() in {"background"}:
+            cleaned.pop("mode", None)
+        return cleaned
+
+    @staticmethod
+    def _is_default_media_background_tool(tool_name: str) -> bool:
+        """Return True for media tools that should default to background execution."""
+        normalized = (tool_name or "").strip()
+        massgen_prefix = "mcp__massgen_custom_tools__"
+        if normalized.startswith(massgen_prefix):
+            normalized = normalized[len(massgen_prefix) :]
+        return normalized in {
+            "read_media",
+            "generate_media",
+            "custom_tool__read_media",
+            "custom_tool__generate_media",
+        }
+
+    @staticmethod
+    def _is_explicit_foreground_request(arguments: dict[str, Any]) -> bool:
+        """Return True when args explicitly request foreground/blocking behavior."""
+        if arguments.get("background") is False:
+            return True
+        if arguments.get("run_in_background") is False:
+            return True
+        return False
+
+    def _should_auto_background_execution(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> bool:
+        """Return True when this call should run in background mode automatically."""
+        if self._is_background_management_tool(tool_name):
+            return False
+        if tool_name in {"new_answer", "vote", "stop"}:
+            return False
+        if not isinstance(arguments, dict):
+            return False
+
+        if self._is_explicit_foreground_request(arguments):
+            return False
+        if self._is_default_media_background_tool(tool_name):
+            return True
+
+        # If the target MCP tool natively defines background controls, let that
+        # tool own the semantics instead of wrapping it as a framework background
+        # job (for example spawn_subagents(background=True)).
+        if self._mcp_tool_declares_argument(tool_name, "background") or self._mcp_tool_declares_argument(tool_name, "run_in_background") or self._mcp_tool_declares_argument(tool_name, "mode"):
+            return False
+
+        mode = arguments.get("mode")
+        mode_is_background = isinstance(mode, str) and mode.lower() in {"background"}
+        return arguments.get("background") is True or mode_is_background
+
+    def _validate_background_tool_prerequisites(self, tool_name: str) -> None:
+        """Validate required prerequisites before starting a background tool."""
+        if not self._is_default_media_background_tool(tool_name):
+            return
+
+        workspace_path: str | None = None
+        if self.filesystem_manager and getattr(self.filesystem_manager, "cwd", None):
+            workspace_path = str(self.filesystem_manager.cwd)
+
+        try:
+            from massgen.context.task_context import TaskContextError, load_task_context
+
+            load_task_context(workspace_path, required=True)
+        except TaskContextError as exc:
+            raise ValueError(
+                f"CONTEXT.md must be created before starting {tool_name} in background. {exc}",
+            ) from exc
+
+    @staticmethod
+    def _format_unix_timestamp(timestamp: float | None) -> str | None:
+        """Convert unix timestamp to ISO string."""
+        if timestamp is None:
+            return None
+        return datetime.fromtimestamp(timestamp).isoformat()
+
+    def _serialize_background_job(
+        self,
+        job: BackgroundToolJob,
+        include_result: bool = False,
+    ) -> dict[str, Any]:
+        """Serialize background job state for tool responses and hook injection."""
+        payload: dict[str, Any] = {
+            "job_id": job.job_id,
+            "tool_name": job.tool_name,
+            "tool_type": job.tool_type,
+            "status": job.status,
+            "created_at": self._format_unix_timestamp(job.created_at),
+            "started_at": self._format_unix_timestamp(job.started_at),
+            "completed_at": self._format_unix_timestamp(job.completed_at),
+            "source_call_id": job.source_call_id,
+        }
+        if include_result and job.result is not None:
+            payload["result"] = job.result
+        if job.error:
+            payload["error"] = job.error
+        return payload
+
+    def _enqueue_completed_background_job(self, job: BackgroundToolJob) -> None:
+        """Store completed job payload for post-tool hook injection."""
+        self._pending_background_tool_results.append(
+            self._serialize_background_job(job, include_result=True),
+        )
+
+    def get_pending_background_tool_results(self) -> list[dict[str, Any]]:
+        """Return and clear completed background job payloads pending injection."""
+        pending = list(self._pending_background_tool_results)
+        self._pending_background_tool_results.clear()
+        return pending
+
+    def _pop_next_pending_background_tool_result(self) -> dict[str, Any] | None:
+        """Pop one completed background job payload from the shared delivery queue."""
+        if not self._pending_background_tool_results:
+            return None
+        return self._pending_background_tool_results.pop(0)
+
+    def register_background_delegate(self, delegate: BackgroundToolDelegate) -> None:
+        """Register a delegate that extends background tool management with external job types.
+
+        The delegate is consulted by the 6 background tool handler methods for IDs
+        that are not native background tool jobs (e.g., subagent IDs).
+        """
+        self._background_tool_delegate = delegate
+
+    def set_background_wait_interrupt_provider(
+        self,
+        provider: Callable[[str], Any] | None,
+    ) -> None:
+        """Set an optional provider used to interrupt wait_for_background_tool.
+
+        The provider receives the agent ID and may return a dict with:
+        - interrupt_reason: str
+        - injected_content: str
+        """
+        self._background_wait_interrupt_provider = provider
+
+    async def _get_background_wait_interrupt_payload(self) -> dict[str, Any] | None:
+        """Return normalized wait interrupt payload, if any."""
+        if not self._background_wait_interrupt_provider:
+            return None
+
+        agent_id = str(self.agent_id or "unknown")
+        try:
+            payload = self._background_wait_interrupt_provider(agent_id)
+            if asyncio.iscoroutine(payload):
+                payload = await payload
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "[BackgroundTools] Wait interrupt provider failed for %s: %s",
+                agent_id,
+                e,
+                exc_info=True,
+            )
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        raw_reason = payload.get("interrupt_reason", "runtime_injection_available")
+        interrupt_reason = str(raw_reason).strip() or "runtime_injection_available"
+        injected_content = payload.get("injected_content")
+        if injected_content is not None:
+            injected_content = str(injected_content)
+
+        return {
+            "interrupt_reason": interrupt_reason,
+            "injected_content": injected_content,
+        }
+
+    async def _execute_background_tool_target(
+        self,
+        tool_name: str,
+        tool_type: str,
+        arguments: dict[str, Any],
+    ) -> tuple[str, bool]:
+        """Execute a target tool for a background job."""
+        if tool_type == "custom":
+            call = {
+                "name": tool_name,
+                "arguments": json.dumps(arguments),
+            }
+            final_result = ""
+            async for chunk in self.stream_custom_tool_execution(call):
+                if chunk.completed:
+                    final_result = chunk.accumulated_result
+            final_text = str(final_result or "").strip()
+            if not final_text or final_text == "Tool executed successfully":
+                return ("No final result payload captured from custom tool execution", True)
+            return (final_text, False)
+
+        if tool_type == "mcp":
+            result_str, result_obj = await self._execute_mcp_function_with_retry(
+                tool_name,
+                json.dumps(arguments),
+            )
+            is_error = bool(result_str.startswith("Error:"))
+
+            display_result = result_str
+            if not is_error and result_obj is not None and hasattr(result_obj, "content"):
+                extracted = self._extract_text_from_content(result_obj.content)
+                if extracted:
+                    display_result = extracted
+            return (display_result, is_error)
+
+        raise ValueError(f"Unsupported background tool type: {tool_type}")
+
+    async def _run_background_tool_job(self, job_id: str) -> None:
+        """Execute a background job and persist its terminal state."""
+        job = self._background_tool_jobs.get(job_id)
+        if not job:
+            return
+
+        job.started_at = time.time()
+        try:
+            result, is_error = await self._execute_background_tool_target(
+                job.tool_name,
+                job.tool_type,
+                job.arguments,
+            )
+            if is_error:
+                job.status = "error"
+                job.error = result
+            else:
+                job.status = "completed"
+                job.result = result
+        except asyncio.CancelledError:
+            job.status = "cancelled"
+            job.error = job.error or "Background tool execution cancelled"
+            raise
+        except Exception as e:  # noqa: BLE001
+            job.status = "error"
+            job.error = f"Background tool failed: {e}"
+            logger.warning(
+                f"[{self.backend_name}] Background tool {job.tool_name} failed: {e}",
+                exc_info=True,
+            )
+        finally:
+            job.completed_at = time.time()
+            self._background_tool_tasks.pop(job_id, None)
+            if job.status in BACKGROUND_TOOL_TERMINAL_STATUSES:
+                self._enqueue_completed_background_job(job)
+
+    async def _start_background_tool_job(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        source_call_id: str | None = None,
+    ) -> BackgroundToolJob:
+        """Start a background job for a custom or MCP tool."""
+        tool_type = self._resolve_background_tool_type(tool_name)
+        if tool_type is None:
+            raise ValueError(
+                f"Tool '{tool_name}' is not available for background execution",
+            )
+        self._validate_background_tool_prerequisites(tool_name)
+
+        job_id = f"bgtool_{uuid.uuid4().hex[:12]}"
+        job = BackgroundToolJob(
+            job_id=job_id,
+            tool_name=tool_name,
+            tool_type=tool_type,
+            arguments=dict(arguments),
+            status="running",
+            created_at=time.time(),
+            source_call_id=source_call_id,
+        )
+        self._background_tool_jobs[job_id] = job
+        self._background_tool_tasks[job_id] = asyncio.create_task(
+            self._run_background_tool_job(job_id),
+            name=f"background_tool:{tool_name}:{job_id}",
+        )
+        return job
+
+    def _trigger_subagent_spawn_callback(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        source_call_id: str | None = None,
+    ) -> None:
+        """Trigger immediate subagent-card callback for spawn requests."""
+        if not self._is_subagent_spawn_target_tool(tool_name):
+            return
+        callback = getattr(self, "_subagent_spawn_callback", None)
+        if callback is None:
+            return
+
+        import threading
+
+        safe_call_id = str(source_call_id or f"spawn_subagent_{uuid.uuid4().hex[:8]}")
+        try:
+            thread = threading.Thread(
+                target=callback,
+                args=(tool_name, dict(arguments), safe_call_id),
+                daemon=True,
+            )
+            thread.start()
+        except Exception as e:  # noqa: BLE001
+            logger.debug("Subagent spawn callback failed: %s", e)
+
+    async def _start_background_subagent_spawn(
+        self,
+        tool_name: str,
+        target_arguments: dict[str, Any],
+        source_call_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Treat wrapped subagent spawns like direct spawn_subagents(background=true)."""
+        normalized_arguments = self._normalize_subagent_spawn_background_arguments(
+            target_arguments,
+        )
+        self._trigger_subagent_spawn_callback(
+            tool_name,
+            normalized_arguments,
+            source_call_id=source_call_id,
+        )
+
+        result_str, result_obj = await self._execute_mcp_function_with_retry(
+            tool_name,
+            json.dumps(normalized_arguments),
+        )
+        if result_str.startswith("Error:"):
+            return {
+                "success": False,
+                "error": result_str.removeprefix("Error:").strip() or result_str,
+            }
+
+        display_result = result_str
+        if result_obj is not None and hasattr(result_obj, "content"):
+            extracted = self._extract_text_from_content(result_obj.content)
+            if extracted:
+                display_result = extracted
+
+        payload = self._parse_json_or_python_dict(display_result)
+        if isinstance(payload, dict):
+            if payload.get("success") is True and "mode" not in payload:
+                payload["mode"] = "background"
+            return self._attach_subagent_background_ids(payload)
+
+        return {
+            "success": True,
+            "operation": "spawn_subagents",
+            "mode": "background",
+            "result": display_result,
+        }
+
+    @staticmethod
+    def _attach_subagent_background_ids(payload: dict[str, Any]) -> dict[str, Any]:
+        """Ensure subagent background payloads expose both job and subagent IDs."""
+        subagents_raw = payload.get("subagents")
+        if not isinstance(subagents_raw, list):
+            return payload
+
+        subagents: list[dict[str, Any]] = []
+        job_ids: list[str] = []
+        for item in subagents_raw:
+            if not isinstance(item, dict):
+                continue
+            entry = dict(item)
+            subagent_id = str(entry.get("subagent_id") or entry.get("id") or "").strip()
+            job_id = str(entry.get("job_id") or subagent_id).strip()
+            if subagent_id:
+                entry["subagent_id"] = subagent_id
+            if job_id:
+                entry["job_id"] = job_id
+                job_ids.append(job_id)
+            subagents.append(entry)
+
+        if subagents:
+            payload["subagents"] = subagents
+
+        if not job_ids:
+            return payload
+
+        unique_job_ids = list(dict.fromkeys(job_ids))
+        payload.setdefault("job_ids", unique_job_ids)
+
+        if len(unique_job_ids) == 1:
+            payload.setdefault("job_id", unique_job_ids[0])
+            first_subagent_id = str(subagents[0].get("subagent_id") or "").strip() if subagents else ""
+            if first_subagent_id:
+                payload.setdefault("subagent_id", first_subagent_id)
+
+        return payload
+
+    async def _start_background_tool_from_request(
+        self,
+        arguments: dict[str, Any],
+        source_call_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Handle custom_tool__start_background_tool."""
+        tool_name, target_arguments, parse_error = self._extract_background_start_request(arguments)
+        if parse_error:
+            return {"success": False, "error": parse_error}
+
+        if self._is_subagent_spawn_target_tool(tool_name):
+            try:
+                return await self._start_background_subagent_spawn(
+                    tool_name,
+                    target_arguments,
+                    source_call_id=source_call_id,
+                )
+            except Exception as e:  # noqa: BLE001
+                return {"success": False, "error": str(e)}
+
+        try:
+            job = await self._start_background_tool_job(
+                tool_name,
+                target_arguments,
+                source_call_id=source_call_id,
+            )
+        except Exception as e:  # noqa: BLE001
+            return {"success": False, "error": str(e)}
+
+        payload = self._serialize_background_job(job)
+        payload.update(
+            {
+                "success": True,
+                "message": f"Started {tool_name} in background",
+            },
+        )
+        return payload
+
+    def _extract_background_start_request(
+        self,
+        arguments: dict[str, Any],
+    ) -> tuple[str, dict[str, Any], str | None]:
+        """Extract target tool name/args from flexible start_background_tool payload."""
+        tool_name = str(
+            arguments.get("tool_name") or arguments.get("tool") or "",
+        ).strip()
+        if not tool_name:
+            return ("", {}, "tool_name is required")
+
+        if "arguments" in arguments and arguments.get("arguments") is not None:
+            target_arguments: Any = arguments.get("arguments")
+        elif "args" in arguments and arguments.get("args") is not None:
+            target_arguments = arguments.get("args")
+        else:
+            target_arguments = {key: value for key, value in arguments.items() if key not in {"tool_name", "tool", "arguments", "args"}}
+
+        if target_arguments is None:
+            target_arguments = {}
+
+        try:
+            target_arguments, decode_passes = normalize_json_object_argument(
+                target_arguments,
+                field_name="arguments",
+            )
+        except ValueError:
+            return ("", {}, "arguments must be a JSON object")
+        if decode_passes > 1:
+            logger.info(
+                "[BackgroundTools] Normalized %s decode passes for start arguments (%s)",
+                decode_passes,
+                tool_name,
+            )
+
+        # Merge top-level extras (if any) without overriding explicit nested args.
+        top_level_extras = {key: value for key, value in arguments.items() if key not in {"tool_name", "tool", "arguments", "args"}}
+        for key, value in top_level_extras.items():
+            target_arguments.setdefault(key, value)
+
+        return (tool_name, target_arguments, None)
+
+    async def _get_background_tool_status_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__get_background_tool_status."""
+        job_id = str(arguments.get("job_id", "")).strip()
+        if not job_id:
+            return {"success": False, "error": "job_id is required"}
+
+        job = self._background_tool_jobs.get(job_id)
+        if job:
+            payload = self._serialize_background_job(job)
+            payload["success"] = True
+            return payload
+
+        # Check delegate for subagent-managed jobs
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                if await delegate.owns(job_id):
+                    return await delegate.get_status(job_id)
+            except Exception:
+                logger.debug("[BackgroundTools] Delegate get_status failed for %s", job_id, exc_info=True)
+
+        return {"success": False, "error": f"Background job not found: {job_id}"}
+
+    async def _get_background_tool_result_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__get_background_tool_result."""
+        job_id = str(arguments.get("job_id", "")).strip()
+        if not job_id:
+            return {"success": False, "error": "job_id is required"}
+
+        job = self._background_tool_jobs.get(job_id)
+        if job:
+            ready = job.status in BACKGROUND_TOOL_TERMINAL_STATUSES
+            payload = self._serialize_background_job(job, include_result=True)
+            payload.update({"success": True, "ready": ready})
+            self._annotate_custom_tool_outcome_from_payload(payload, ready=ready)
+            if not ready:
+                payload["message"] = "Background tool still running"
+            return payload
+
+        # Check delegate for subagent-managed jobs
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                if await delegate.owns(job_id):
+                    return await delegate.get_result(job_id)
+            except Exception:
+                logger.debug("[BackgroundTools] Delegate get_result failed for %s", job_id, exc_info=True)
+
+        return {"success": False, "error": f"Background job not found: {job_id}"}
+
+    @staticmethod
+    def _coerce_background_wait_timeout(arguments: dict[str, Any]) -> float:
+        """Normalize wait timeout to a safe bounded value."""
+        raw_timeout = arguments.get(
+            "timeout_seconds",
+            BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS,
+        )
+        try:
+            timeout_seconds = float(raw_timeout)
+        except (TypeError, ValueError):
+            timeout_seconds = BACKGROUND_TOOL_WAIT_DEFAULT_TIMEOUT_SECONDS
+        if timeout_seconds < 0:
+            return 0.0
+        return min(timeout_seconds, BACKGROUND_TOOL_WAIT_MAX_TIMEOUT_SECONDS)
+
+    def _next_waitable_background_job(self) -> BackgroundToolJob | None:
+        """Get the next unseen terminal background job for wait calls."""
+        candidates = [job for job in self._background_tool_jobs.values() if job.status in BACKGROUND_TOOL_TERMINAL_STATUSES and job.job_id not in self._background_tool_wait_seen_ids]
+        if not candidates:
+            return None
+        candidates.sort(
+            key=lambda job: (
+                job.completed_at if job.completed_at is not None else job.created_at,
+                job.created_at,
+            ),
+        )
+        return candidates[0]
+
+    async def _wait_for_background_tool_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__wait_for_background_tool."""
+        timeout_seconds = self._coerce_background_wait_timeout(arguments)
+        wait_started_at = time.time()
+
+        while True:
+            payload = self._pop_next_pending_background_tool_result()
+            if payload is not None:
+                job_id = str(payload.get("job_id", "")).strip()
+                if job_id:
+                    self._background_tool_wait_seen_ids.add(job_id)
+                payload.update(
+                    {
+                        "success": True,
+                        "ready": True,
+                        "waited_seconds": round(time.time() - wait_started_at, 3),
+                    },
+                )
+                self._annotate_custom_tool_outcome_from_payload(payload, ready=True)
+                return payload
+
+            interrupt_payload = await self._get_background_wait_interrupt_payload()
+            if interrupt_payload is not None:
+                return {
+                    "success": True,
+                    "ready": False,
+                    "interrupted": True,
+                    "interrupt_reason": interrupt_payload.get("interrupt_reason"),
+                    "injected_content": interrupt_payload.get("injected_content"),
+                    "waited_seconds": round(time.time() - wait_started_at, 3),
+                    "message": "Background wait interrupted by runtime input",
+                }
+
+            elapsed = time.time() - wait_started_at
+            if elapsed >= timeout_seconds:
+                return {
+                    "success": True,
+                    "ready": False,
+                    "timed_out": True,
+                    "waited_seconds": round(elapsed, 3),
+                    "message": "No background tool completed before timeout",
+                }
+
+            sleep_seconds = min(
+                BACKGROUND_TOOL_WAIT_POLL_INTERVAL_SECONDS,
+                max(timeout_seconds - elapsed, 0.0),
+            )
+            if sleep_seconds <= 0:
+                await asyncio.sleep(0)
+            else:
+                await asyncio.sleep(sleep_seconds)
+
+    async def _cancel_background_tool_from_request(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Handle custom_tool__cancel_background_tool."""
+        job_id = str(arguments.get("job_id", "")).strip()
+        if not job_id:
+            return {"success": False, "error": "job_id is required"}
+
+        job = self._background_tool_jobs.get(job_id)
+        if job:
+            task = self._background_tool_tasks.get(job_id)
+            if task and not task.done():
+                job.status = "cancelled"
+                job.error = "Cancelled by user request"
+                task.cancel()
+
+            payload = self._serialize_background_job(job)
+            payload["success"] = True
+            return payload
+
+        # Check delegate for subagent-managed jobs
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                if await delegate.owns(job_id):
+                    return await delegate.cancel(job_id)
+            except Exception:
+                logger.debug("[BackgroundTools] Delegate cancel failed for %s", job_id, exc_info=True)
+
+        return {"success": False, "error": f"Background job not found: {job_id}"}
+
+    @staticmethod
+    def _coerce_include_all_background_jobs(arguments: dict[str, Any] | None) -> bool:
+        """Normalize include_all flag for background list requests."""
+        if not isinstance(arguments, dict):
+            return False
+
+        raw_include_all = arguments.get("include_all", arguments.get("all"))
+        if isinstance(raw_include_all, bool):
+            return raw_include_all
+        if isinstance(raw_include_all, str):
+            return raw_include_all.strip().lower() in {"1", "true", "yes", "on", "all"}
+        return False
+
+    async def _list_background_tools_from_request(self, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Handle custom_tool__list_background_tools."""
+        include_all = self._coerce_include_all_background_jobs(arguments)
+        jobs = [self._serialize_background_job(job) for job in self._background_tool_jobs.values() if include_all or job.status not in BACKGROUND_TOOL_TERMINAL_STATUSES]
+
+        # Merge delegate jobs (e.g., subagents)
+        delegate = self._background_tool_delegate
+        if delegate:
+            try:
+                delegate_jobs = await delegate.list_jobs(include_all=include_all)
+                jobs.extend(delegate_jobs)
+            except Exception:
+                logger.debug("[BackgroundTools] Delegate list_jobs failed", exc_info=True)
+
+        jobs.sort(key=lambda job: job.get("created_at") or "", reverse=True)
+        return {
+            "success": True,
+            "count": len(jobs),
+            "include_all": include_all,
+            "jobs": jobs,
+        }
+
+    async def _execute_background_management_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        source_call_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Dispatch internal background-management custom tools."""
+        if tool_name == BACKGROUND_TOOL_START_NAME:
+            return await self._start_background_tool_from_request(
+                arguments,
+                source_call_id=source_call_id,
+            )
+        if tool_name == BACKGROUND_TOOL_STATUS_NAME:
+            return await self._get_background_tool_status_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_RESULT_NAME:
+            return await self._get_background_tool_result_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_WAIT_NAME:
+            return await self._wait_for_background_tool_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_CANCEL_NAME:
+            return await self._cancel_background_tool_from_request(arguments)
+        if tool_name == BACKGROUND_TOOL_LIST_NAME:
+            return await self._list_background_tools_from_request(arguments)
+
+        return {"success": False, "error": f"Unknown background management tool: {tool_name}"}
+
+    async def _cancel_all_background_tool_jobs(self) -> None:
+        """Cancel all running background jobs (called during backend cleanup)."""
+        running_tasks: list[asyncio.Task[Any]] = []
+        for job_id, task in list(self._background_tool_tasks.items()):
+            if task.done():
+                continue
+            job = self._background_tool_jobs.get(job_id)
+            if job:
+                job.status = "cancelled"
+                job.error = "Cancelled during backend cleanup"
+            task.cancel()
+            running_tasks.append(task)
+
+        if running_tasks:
+            await asyncio.gather(*running_tasks, return_exceptions=True)
 
     def _categorize_tool_calls(
         self,
-        captured_calls: List[Dict[str, Any]],
-    ) -> Tuple[List[Dict], List[Dict], List[Dict]]:
+        captured_calls: list[dict[str, Any]],
+    ) -> tuple[list[dict], list[dict], list[dict]]:
         """Categorize tool calls into MCP, custom, and provider categories.
 
         Args:
@@ -1251,9 +2310,9 @@ class CustomToolAndMCPBackend(LLMBackend):
             Provider calls include workflow tools (new_answer, vote) that must NOT
             be executed by backends.
         """
-        mcp_calls: List[Dict] = []
-        custom_calls: List[Dict] = []
-        provider_calls: List[Dict] = []
+        mcp_calls: list[dict] = []
+        custom_calls: list[dict] = []
+        provider_calls: list[dict] = []
 
         for call in captured_calls:
             call_name = call.get("name", "")
@@ -1271,8 +2330,8 @@ class CustomToolAndMCPBackend(LLMBackend):
     @abstractmethod
     def _append_tool_result_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         result: Any,
         tool_type: str,
     ) -> None:
@@ -1293,8 +2352,8 @@ class CustomToolAndMCPBackend(LLMBackend):
     @abstractmethod
     def _append_tool_error_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         error_msg: str,
         tool_type: str,
     ) -> None:
@@ -1420,7 +2479,7 @@ class CustomToolAndMCPBackend(LLMBackend):
 
             return EvictionResult(text=reference, was_evicted=True)
 
-        except (OSError, IOError, PermissionError, UnicodeEncodeError) as e:
+        except (OSError, PermissionError, UnicodeEncodeError) as e:
             logger.warning(
                 f"[ToolEviction] Failed to evict {tool_name} result ({token_count:,} tokens): {e}. " "Keeping result in memory - this may cause context overflow on next API call.",
                 exc_info=True,
@@ -1429,11 +2488,11 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _execute_tool_with_logging(
         self,
-        call: Dict[str, Any],
+        call: dict[str, Any],
         config: ToolExecutionConfig,
-        updated_messages: List[Dict[str, Any]],
-        processed_call_ids: Set[str],
-    ) -> AsyncGenerator[StreamChunk, None]:
+        updated_messages: list[dict[str, Any]],
+        processed_call_ids: set[str],
+    ) -> AsyncGenerator[StreamChunk]:
         """Execute a tool with unified logging and error handling.
 
         Args:
@@ -1480,11 +2539,15 @@ class CustomToolAndMCPBackend(LLMBackend):
         try:
             # Execute PreToolUse hooks if hook manager is available
             if self._general_hook_manager:
+                workspace_path = None
+                if self.filesystem_manager and getattr(self.filesystem_manager, "cwd", None):
+                    workspace_path = str(self.filesystem_manager.cwd)
                 hook_context = {
                     "hook_type": "PreToolUse",
                     "session_id": getattr(self, "session_id", ""),
                     "orchestrator_id": getattr(self, "orchestrator_id", ""),
                     "agent_id": self.agent_id,
+                    "workspace_path": workspace_path,
                 }
                 pre_result = await self._general_hook_manager.execute_hooks(
                     HookType.PRE_TOOL_USE,
@@ -1572,22 +2635,135 @@ class CustomToolAndMCPBackend(LLMBackend):
                 display=False,  # Verbose diagnostic - shown in tool card instead
             )
 
-            # Special handling for subagent spawn - notify TUI immediately via callback
-            # This runs in a thread to bypass async generator buffering
-            if "spawn_subagent" in tool_name.lower() and hasattr(self, "_subagent_spawn_callback"):
-                import threading
+            # Auto-background mode: if a tool call includes background=true or mode=background,
+            # schedule it and return a pollable job ID instead of blocking inline execution.
+            try:
+                parsed_arguments = self._parse_tool_arguments(arguments_str)
+            except Exception:
+                parsed_arguments = {}
 
+            auto_background = self._should_auto_background_execution(
+                tool_name,
+                parsed_arguments,
+            )
+            if auto_background:
+                background_args = self._strip_background_control_args(
+                    parsed_arguments,
+                    tool_name=tool_name,
+                )
                 try:
-                    args_for_callback = json.loads(arguments_str) if arguments_str else {}
-                    # Run callback in thread to avoid blocking
-                    thread = threading.Thread(
-                        target=self._subagent_spawn_callback,
-                        args=(tool_name, args_for_callback, call_id),
-                        daemon=True,
+                    background_job = await self._start_background_tool_job(
+                        tool_name=tool_name,
+                        arguments=background_args,
+                        source_call_id=call_id,
                     )
-                    thread.start()
-                except Exception as e:
-                    logger.debug(f"Subagent spawn callback failed: {e}")
+                except Exception as e:  # noqa: BLE001
+                    error_msg = f"Error starting background execution for {tool_name}: {e}"
+                    self._append_tool_error_message(
+                        updated_messages,
+                        call,
+                        error_msg,
+                        config.tool_type,
+                    )
+                    processed_call_ids.add(call_id)
+                    yield StreamChunk(
+                        type=config.chunk_type,
+                        status=config.status_error,
+                        content=f"{config.error_emoji} {error_msg}",
+                        source=f"{config.source_prefix}{tool_name}",
+                        tool_call_id=call_id,
+                    )
+                    if emitter:
+                        emitter.emit_tool_complete(
+                            tool_id=call_id,
+                            tool_name=tool_name,
+                            result=error_msg,
+                            elapsed_seconds=time.time() - metric.start_time,
+                            status="error",
+                            is_error=True,
+                            agent_id=self.agent_id,
+                        )
+                    metric.end_time = time.time()
+                    metric.success = False
+                    metric.error_message = error_msg[:500]
+                    self._tool_execution_metrics.append(metric)
+                    return
+
+                background_payload = {
+                    "success": True,
+                    "status": "background",
+                    "job_id": background_job.job_id,
+                    "tool_name": tool_name,
+                    "message": f"{tool_name} is running in background",
+                }
+                background_result = json.dumps(background_payload, ensure_ascii=False)
+
+                self._append_tool_result_message(
+                    updated_messages,
+                    call,
+                    background_result,
+                    config.tool_type,
+                )
+                processed_call_ids.add(call_id)
+
+                yield StreamChunk(
+                    type=config.chunk_type,
+                    status="function_call_output",
+                    content=f"Results for Calling {tool_name}: {background_result}",
+                    source=f"{config.source_prefix}{tool_name}",
+                    tool_call_id=call_id,
+                    display=False,
+                )
+                yield StreamChunk(
+                    type=config.chunk_type,
+                    status=config.status_response,
+                    content=f"🕒 {tool_name} running in background (job_id={background_job.job_id})",
+                    source=f"{config.source_prefix}{tool_name}",
+                    tool_call_id=call_id,
+                )
+
+                if emitter:
+                    emitter.emit_tool_complete(
+                        tool_id=call_id,
+                        tool_name=tool_name,
+                        result=background_result,
+                        elapsed_seconds=time.time() - metric.start_time,
+                        status="background",
+                        is_error=False,
+                        async_id=background_job.job_id,
+                        agent_id=self.agent_id,
+                    )
+
+                metric.end_time = time.time()
+                metric.output_chars = len(background_result)
+                metric.success = True
+                self._tool_execution_metrics.append(metric)
+                return
+
+            # Media tools default to background mode, so explicit foreground
+            # overrides may include control args (for example background=false).
+            # Strip these before direct execution to avoid passing them through.
+            if self._is_default_media_background_tool(tool_name) and isinstance(parsed_arguments, dict):
+                foreground_args = self._strip_background_control_args(
+                    parsed_arguments,
+                    tool_name=tool_name,
+                )
+                if foreground_args != parsed_arguments:
+                    arguments_str = json.dumps(foreground_args, ensure_ascii=False)
+                    call["arguments"] = arguments_str
+                    metric.input_chars = len(arguments_str)
+
+            # Special handling for subagent spawn - notify TUI immediately.
+            if self._is_subagent_spawn_target_tool(tool_name):
+                try:
+                    args_for_callback = self._parse_tool_arguments(arguments_str) if arguments_str else {}
+                except Exception:
+                    args_for_callback = {}
+                self._trigger_subagent_spawn_callback(
+                    tool_name,
+                    args_for_callback,
+                    source_call_id=call_id,
+                )
 
             # Record tool call to execution trace (if available via mixin)
             if hasattr(self, "_execution_trace") and self._execution_trace:
@@ -1742,11 +2918,15 @@ class CustomToolAndMCPBackend(LLMBackend):
             post_hook_injection = None
             post_hook_reminder = None
             if self._general_hook_manager:
+                workspace_path = None
+                if self.filesystem_manager and getattr(self.filesystem_manager, "cwd", None):
+                    workspace_path = str(self.filesystem_manager.cwd)
                 hook_context = {
                     "hook_type": "PostToolUse",
                     "session_id": getattr(self, "session_id", ""),
                     "orchestrator_id": getattr(self, "orchestrator_id", ""),
                     "agent_id": self.agent_id,
+                    "workspace_path": workspace_path,
                 }
                 post_result = await self._general_hook_manager.execute_hooks(
                     HookType.POST_TOOL_USE,
@@ -2047,9 +3227,9 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _run_tool_call(
         self,
-        call: Dict[str, Any],
+        call: dict[str, Any],
         config: ToolExecutionConfig,
-        semaphore: Optional[asyncio.Semaphore] = None,
+        semaphore: asyncio.Semaphore | None = None,
     ) -> ToolExecutionResult:
         """Run a single tool call and collect its chunks/messages.
 
@@ -2057,10 +3237,10 @@ class CustomToolAndMCPBackend(LLMBackend):
         per-call side effects isolated until we're ready to merge them into
         shared message history.
         """
-        per_call_messages: List[Dict[str, Any]] = []
-        per_call_processed_ids: Set[str] = set()
-        chunks: List[StreamChunk] = []
-        exc: Optional[BaseException] = None
+        per_call_messages: list[dict[str, Any]] = []
+        per_call_processed_ids: set[str] = set()
+        chunks: list[StreamChunk] = []
+        exc: BaseException | None = None
 
         async def _inner() -> None:
             nonlocal exc
@@ -2097,14 +3277,14 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _execute_tool_calls(
         self,
-        all_calls: List[Dict[str, Any]],
-        tool_config_for_call: Callable[[Dict[str, Any]], ToolExecutionConfig],
-        all_params: Dict[str, Any],
-        updated_messages: List[Dict[str, Any]],
-        processed_call_ids: Set[str],
+        all_calls: list[dict[str, Any]],
+        tool_config_for_call: Callable[[dict[str, Any]], ToolExecutionConfig],
+        all_params: dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        processed_call_ids: set[str],
         log_prefix: str,
         chunk_adapter: Callable[[StreamChunk], Any],
-    ) -> AsyncGenerator[Any, None]:
+    ) -> AsyncGenerator[Any]:
         """Execute a batch of tool calls with optional parallelism.
 
         This centralizes the parallel/sequential scheduling logic so all
@@ -2142,19 +3322,19 @@ class CustomToolAndMCPBackend(LLMBackend):
         # Wrap each call so we know its index when it completes.
         async def _runner(
             idx: int,
-            call: Dict[str, Any],
+            call: dict[str, Any],
             config: ToolExecutionConfig,
-        ) -> Tuple[int, ToolExecutionResult]:
+        ) -> tuple[int, ToolExecutionResult]:
             result = await self._run_tool_call(call, config, semaphore)
             return idx, result
 
-        tasks: List[asyncio.Task[Tuple[int, ToolExecutionResult]]] = []
+        tasks: list[asyncio.Task[tuple[int, ToolExecutionResult]]] = []
         for idx, call in enumerate(all_calls):
             config = tool_config_for_call(call)
             task = asyncio.create_task(_runner(idx, call, config))
             tasks.append(task)
 
-        results_by_index: Dict[int, ToolExecutionResult] = {}
+        results_by_index: dict[int, ToolExecutionResult] = {}
 
         # Stream each tool's output as soon as it finishes, then clear its chunk buffer.
         for fut in asyncio.as_completed(tasks):
@@ -2206,25 +3386,59 @@ class CustomToolAndMCPBackend(LLMBackend):
                 result.chunks.clear()
 
         # After all tools complete, merge buffered messages into history in API order.
+        all_per_call_messages: list[list[dict[str, Any]]] = []
         for idx, call in enumerate(all_calls):
             result = results_by_index.get(idx)
             if not result:
                 continue
 
             if result.messages:
-                updated_messages.extend(result.messages)
+                all_per_call_messages.append(result.messages)
 
             call_id = call.get("call_id", "")
             if call_id:
                 processed_call_ids.add(call_id)
 
+        self._merge_parallel_tool_results(updated_messages, all_per_call_messages)
+
+    def _merge_parallel_tool_results(
+        self,
+        updated_messages: list[dict[str, Any]],
+        all_per_call_messages: list[list[dict[str, Any]]],
+    ) -> None:
+        """Merge per-call tool result messages into shared history after parallel execution.
+
+        Default implementation: append each per-call message list directly (correct for
+        OpenAI/Gemini, where each tool result is its own message).
+
+        Override in backends that require all tool results for a turn to be in a single
+        message (e.g. Claude, where the API enforces tool_result consolidation).
+        """
+        for msgs in all_per_call_messages:
+            updated_messages.extend(msgs)
+
+    def filter_enforcement_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        unknown_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return the subset of tool_calls that are safe to send tool_result enforcement for.
+
+        Default: return all calls unchanged.  For OpenAI/Gemini the assistant message
+        always preserves the tool_calls field, so every tool_result is valid.
+
+        Override in backends where unknown tool calls are stripped from assistant message
+        history, making tool_result enforcement produce an API error (e.g. Claude).
+        """
+        return tool_calls
+
     async def _stream_tool_execution_via_nlip(
         self,
-        call: Dict[str, Any],
+        call: dict[str, Any],
         config: ToolExecutionConfig,
-        updated_messages: List[Dict[str, Any]],
-        processed_call_ids: Set[str],
-    ) -> AsyncGenerator[StreamChunk, None]:
+        updated_messages: list[dict[str, Any]],
+        processed_call_ids: set[str],
+    ) -> AsyncGenerator[StreamChunk]:
         """Stream NLIP tool execution while mirroring native telemetry."""
         if not self._nlip_router:
             raise RuntimeError("NLIP router is not configured")
@@ -2351,10 +3565,10 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     def _convert_nlip_stream_chunk(
         self,
-        content: Optional[Dict[str, Any]],
+        content: dict[str, Any] | None,
         config: ToolExecutionConfig,
         tool_name: str,
-    ) -> Optional[StreamChunk]:
+    ) -> StreamChunk | None:
         """Convert NLIP streaming payload into a StreamChunk."""
         if not content:
             logger.debug(f"[NLIP] No content in stream chunk for {tool_name}")
@@ -2387,9 +3601,9 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     @staticmethod
     def _select_matching_tool_result(
-        tool_results: List[Any],
+        tool_results: list[Any],
         call_id: str,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Return the NLIPToolResult that matches the requested call_id."""
         if not tool_results:
             logger.error("[NLIP] No tool results available for selection")
@@ -2459,7 +3673,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         return fallback
 
     @staticmethod
-    def _extract_text_from_content(content: Any) -> Optional[str]:
+    def _extract_text_from_content(content: Any) -> str | None:
         """Extract text from MCP-style content payload."""
         if not content:
             return None
@@ -2649,7 +3863,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         function_name: str,
         arguments_json: str,
         max_retries: int = 3,
-    ) -> Tuple[str, Any]:
+    ) -> tuple[str, Any]:
         """Execute MCP function with exponential backoff retry logic."""
         # Check if this specific MCP tool is blocked by planning mode
         if self.is_mcp_tool_blocked(function_name):
@@ -2665,10 +3879,19 @@ class CustomToolAndMCPBackend(LLMBackend):
 
         # Convert JSON string to dict for shared utility
         try:
-            args = json.loads(arguments_json) if isinstance(arguments_json, str) else arguments_json
-        except (json.JSONDecodeError, ValueError) as e:
-            error_str = f"Error: Invalid JSON arguments: {e}"
+            args, decode_passes = normalize_json_object_argument(
+                arguments_json,
+                field_name="arguments",
+            )
+        except ValueError as e:
+            error_str = f"Error: {e}"
             return error_str, {"error": error_str}
+        if decode_passes > 1:
+            logger.info(
+                "[MCP] Normalized %s decode passes for %s arguments",
+                decode_passes,
+                function_name,
+            )
 
         # Stats callback for tracking
         async def stats_callback(action: str) -> int:
@@ -2730,9 +3953,9 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _process_upload_files(
         self,
-        messages: List[Dict[str, Any]],
-        all_params: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        all_params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         """Process upload_files config entries and attach to messages.
 
         Supports these forms:
@@ -2780,7 +4003,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             return messages
 
         processed_messages = list(messages)
-        extra_content: List[Dict[str, Any]] = []
+        extra_content: list[dict[str, Any]] = []
         has_file_search_files = False
 
         for entry in upload_entries:
@@ -2983,8 +4206,8 @@ class CustomToolAndMCPBackend(LLMBackend):
     def _process_file_path_entry(
         self,
         file_path_value: str,
-        all_params: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
+        all_params: dict[str, Any],
+    ) -> dict[str, Any] | None:
         """Process file path entry and validate against provider-specific restrictions.
 
         Note: This base implementation validates against OpenAI File Search extensions.
@@ -3040,7 +4263,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             "source": "local",
         }
 
-    def _resolve_local_path(self, raw_path: str, all_params: Dict[str, Any]) -> Path:
+    def _resolve_local_path(self, raw_path: str, all_params: dict[str, Any]) -> Path:
         """Resolve a local path using cwd from all_params or config, mirroring file_path resolution."""
         resolved = Path(raw_path).expanduser()
         if not resolved.is_absolute():
@@ -3062,7 +4285,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                 f"Media file size {file_size / (1024 * 1024):.2f} MB exceeds limit of {limit_mb:.0f} MB: {path}",
             )
 
-    def _read_base64(self, path: Path) -> Tuple[str, str]:
+    def _read_base64(self, path: Path) -> tuple[str, str]:
         """Read file bytes and return (base64, guessed_mime_type)."""
         mime_type, _ = mimetypes.guess_type(path.as_posix())
         try:
@@ -3075,8 +4298,8 @@ class CustomToolAndMCPBackend(LLMBackend):
     async def _fetch_audio_url_as_base64(
         self,
         url: str,
-        all_params: Dict[str, Any],
-    ) -> Tuple[str, str]:
+        all_params: dict[str, Any],
+    ) -> tuple[str, str]:
         """
         Fetch audio from URL and return (base64_encoded_data, mime_type).
 
@@ -3150,9 +4373,9 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _compress_messages_for_context_recovery(
         self,
-        messages: List[Dict[str, Any]],
-        buffer_content: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        buffer_content: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Compress messages for context error recovery.
 
         Default implementation that subclasses inherit automatically.
@@ -3186,10 +4409,10 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def stream_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Stream response using OpenAI Response API with unified MCP/non-MCP processing."""
 
         agent_id = kwargs.get("agent_id", None)
@@ -3211,7 +4434,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             agent_system_message=kwargs.get("system_message", None),
             agent_id=agent_id or self.agent_id,  # Use kwargs agent_id, fallback to instance attribute
             backend_name=self.backend_name,
-            backend_type=self.get_provider_name(),  # For multimodal capability lookup
+            backend_type=normalize_backend_type(self.get_provider_name()),  # For multimodal capability lookup
             model=kwargs.get(
                 "model",
                 "",
@@ -3289,7 +4512,7 @@ class CustomToolAndMCPBackend(LLMBackend):
                         await self._record_mcp_circuit_breaker_failure(e, agent_id)
 
                         # Handle MCP exceptions with fallback
-                        async for (chunk) in self._stream_handle_custom_and_mcp_exceptions(
+                        async for chunk in self._stream_handle_custom_and_mcp_exceptions(
                             e,
                             messages,
                             tools,
@@ -3490,11 +4713,11 @@ class CustomToolAndMCPBackend(LLMBackend):
     @abstractmethod
     async def _stream_with_custom_and_mcp_tools(
         self,
-        current_messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        current_messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         yield StreamChunk(type="error", error="Not implemented")
 
     @abstractmethod
@@ -3503,11 +4726,11 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _stream_without_custom_and_mcp_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Simple passthrough streaming without MCP processing."""
 
         # Extract internal flags before merging kwargs (prevents API errors from unknown params)
@@ -3582,11 +4805,11 @@ class CustomToolAndMCPBackend(LLMBackend):
     async def _stream_handle_custom_and_mcp_exceptions(
         self,
         error: Exception,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Handle MCP exceptions with fallback streaming."""
 
         """Handle MCP errors with specific messaging and fallback to non-MCP tools."""
@@ -3625,7 +4848,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         ):
             yield chunk
 
-    def _track_mcp_function_names(self, tools: List[Dict[str, Any]]) -> None:
+    def _track_mcp_function_names(self, tools: list[dict[str, Any]]) -> None:
         """Track MCP function names for fallback filtering."""
         for tool in tools:
             if tool.get("type") == "function":
@@ -3658,7 +4881,7 @@ class CustomToolAndMCPBackend(LLMBackend):
     async def _record_mcp_circuit_breaker_failure(
         self,
         error: Exception,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         """Record MCP failure for circuit breaker if enabled."""
         if self._circuit_breakers_enabled and self._mcp_tools_circuit_breaker:
@@ -3684,7 +4907,7 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def _record_mcp_circuit_breaker_success(
         self,
-        servers_to_use: List[Dict[str, Any]],
+        servers_to_use: list[dict[str, Any]],
     ) -> None:
         """Record MCP success for circuit breaker if enabled."""
         if self._circuit_breakers_enabled and self._mcp_tools_circuit_breaker and self._mcp_client and MCPCircuitBreakerManager:
@@ -3705,8 +4928,8 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     def _trim_message_history(
         self,
-        messages: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Trim message history to prevent unbounded growth."""
         if MCPMessageManager:
             return MCPMessageManager.trim_message_history(
@@ -3717,6 +4940,7 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def cleanup_mcp(self) -> None:
         """Cleanup MCP connections."""
+        await self._cancel_all_background_tool_jobs()
         if self._mcp_client and MCPResourceManager:
             await MCPResourceManager.cleanup_mcp_client(
                 self._mcp_client,
@@ -3728,7 +4952,7 @@ class CustomToolAndMCPBackend(LLMBackend):
             self._mcp_functions.clear()
             self._mcp_function_names.clear()
 
-    async def __aenter__(self) -> "CustomToolAndMCPBackend":
+    async def __aenter__(self) -> CustomToolAndMCPBackend:
         """Async context manager entry."""
         # Initialize MCP tools if configured
         if MCPResourceManager:
@@ -3741,9 +4965,9 @@ class CustomToolAndMCPBackend(LLMBackend):
 
     async def __aexit__(
         self,
-        exc_type: Optional[type],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[object],
+        exc_type: type | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
     ) -> None:
         """Async context manager exit with automatic resource cleanup."""
         if MCPResourceManager:
@@ -3753,6 +4977,8 @@ class CustomToolAndMCPBackend(LLMBackend):
                 backend_name=self.backend_name,
                 agent_id=self.agent_id,
             )
+
+        await self._cancel_all_background_tool_jobs()
 
         # Don't suppress the original exception if one occurred
         return False
@@ -3771,7 +4997,7 @@ class CustomToolAndMCPBackend(LLMBackend):
     def yield_mcp_status_chunks(
         self,
         use_mcp: bool,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Yield MCP status chunks for connection and availability."""
 
         async def _generator():
@@ -3832,7 +5058,7 @@ class CustomToolAndMCPBackend(LLMBackend):
         # Fallback to naming convention (custom_tool__<name>)
         return tool_name.startswith("custom_tool__")
 
-    def get_mcp_tools_formatted(self) -> List[Dict[str, Any]]:
+    def get_mcp_tools_formatted(self) -> list[dict[str, Any]]:
         """Get MCP tools formatted for specific API format."""
         if not self._mcp_functions:
             return []

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for plan review and execute popover widgets."""
 
 import json
@@ -94,7 +93,7 @@ def test_plan_review_modal_routes_continue_action():
         revision=2,
     )
 
-    modal._feedback_value = "Tighten scope and rebalance chunks."
+    modal._rework_feedback_value = "Tighten scope and rebalance chunks."
     modal.refresh = lambda *args, **kwargs: None
     captured = {}
     modal.dismiss = lambda result: captured.setdefault("result", result)
@@ -118,7 +117,7 @@ def test_plan_review_modal_blocks_continue_without_feedback():
     modal.on_button_pressed(_ButtonEvent("continue_btn"))
 
     assert "result" not in captured
-    assert "Enter a planning prompt" in modal._action_status
+    assert "Enter a planning prompt" in modal._rework_action_status
 
 
 def test_plan_review_modal_routes_finalize_action():
@@ -495,6 +494,32 @@ def test_submit_question_queues_input_during_execution_without_bypass():
     textual_display_module.TextualApp._submit_question(app, "C02_backend")
 
     assert queued_inputs == ["C02_backend"]
+    assert app.question_input.cleared is True
+    assert clear_calls == [True]
+    assert setup_calls == []
+
+
+def test_submit_question_does_not_queue_empty_input_during_execution():
+    queued_inputs = []
+    clear_calls = []
+    setup_calls = []
+
+    app = SimpleNamespace(
+        question_input=_DummyQuestionInput(),
+        _mode_state=SimpleNamespace(plan_mode="execute"),
+        _plan_options_popover=SimpleNamespace(classes=set()),
+        _clear_cancelled_state=lambda: clear_calls.append(True),
+        _is_execution_in_progress=lambda: True,
+        _human_input_hook=object(),
+        _status_bar=SimpleNamespace(_current_phase="coordination"),
+        _queue_human_input=lambda text: queued_inputs.append(text),
+        _setup_plan_execution=lambda text: setup_calls.append(text),
+    )
+
+    textual_display_module.TextualApp._submit_question(app, "   ")
+
+    assert queued_inputs == []
+    assert app.question_input.cleared is True
     assert clear_calls == [True]
     assert setup_calls == []
 

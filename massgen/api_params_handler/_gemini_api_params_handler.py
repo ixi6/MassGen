@@ -1,15 +1,14 @@
-# -*- coding: utf-8 -*-
 """
 Gemini API parameters handler building SDK config with parameter mapping and exclusions.
 """
 
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from ._api_params_handler_base import APIParamsHandlerBase
 
 
 class GeminiAPIParamsHandler(APIParamsHandlerBase):
-    def get_excluded_params(self) -> Set[str]:
+    def get_excluded_params(self) -> set[str]:
         base = self.get_base_excluded_params()
         extra = {
             "enable_web_search",
@@ -30,11 +29,11 @@ class GeminiAPIParamsHandler(APIParamsHandlerBase):
         }
         return set(base) | extra
 
-    def get_provider_tools(self, all_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_provider_tools(self, all_params: dict[str, Any]) -> list[dict[str, Any]]:
         """
         These are SDK Tool objects (from google.genai.types), not JSON tool declarations.
         """
-        tools: List[Any] = []
+        tools: list[Any] = []
 
         if all_params.get("enable_web_search", False):
             try:
@@ -56,7 +55,7 @@ class GeminiAPIParamsHandler(APIParamsHandlerBase):
 
         return tools
 
-    async def build_api_params(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], all_params: Dict[str, Any]) -> Dict[str, Any]:
+    async def build_api_params(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], all_params: dict[str, Any]) -> dict[str, Any]:
         """
         Build a config dict for google-genai Client.generate_content_stream.
         - Map max_tokens -> max_output_tokens
@@ -65,7 +64,7 @@ class GeminiAPIParamsHandler(APIParamsHandlerBase):
         - Do not handle MCP tools or coordination schema here
         """
         excluded = self.get_excluded_params()
-        config: Dict[str, Any] = {}
+        config: dict[str, Any] = {}
 
         for key, value in all_params.items():
             if key in excluded or value is None:

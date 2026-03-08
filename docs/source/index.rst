@@ -41,8 +41,8 @@ MassGen: Multi-Agent Scaling System for GenAI
 .. raw:: html
 
    <a href="https://www.youtube.com/watch?v=Dp2oldJJImw" style="display: block; text-align: center;">
-     <img src="_static/images/readme.gif" width="800" alt="MassGen Demo - Multi-agent collaboration in action" class="theme-image-light">
-     <img src="_static/images/readme.gif" width="800" alt="MassGen Demo - Multi-agent collaboration in action" class="theme-image-dark">
+     <img src="_static/images/readme.gif" width="800" alt="MassGen Demo - Multi-agent collaboration in action (4x speed)" class="theme-image-light">
+     <img src="_static/images/readme.gif" width="800" alt="MassGen Demo - Multi-agent collaboration in action (4x speed)" class="theme-image-dark">
    </a>
 
 What is MassGen?
@@ -58,7 +58,7 @@ MassGen is a cutting-edge multi-agent system that leverages the power of collabo
 * **Share Workspaces** - When agents provide answers, their workspace is captured so others can review their work
 * **Natural Consensus** - Coordination continues until all agents vote, then the agent with most votes presents the final answer
 
-Think of it as a "parallel study group" for AI - inspired by advanced systems like **xAI's Grok Heavy** and **Google DeepMind's Gemini Deep Think**. Agents learn from each other to produce better results than any single agent could achieve alone.
+MassGen is a cutting-edge multi-agent framework that coordinates AI agents through **redundancy and iterative refinement**. Agents tackle the full problem, observe and build on each other's work across cycles of refinement and restarts, then vote — and the best collectively validated answer wins. This lays the groundwork for principled multi-agent scaling and self-improvement.
 
 .. raw:: html
 
@@ -190,17 +190,17 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.51 (February 13, 2026)** - Reviewing Coordination & Change Documents
+**v0.1.60 (March 6, 2026)** - Multimodal Tools, Subagent Enhancements & GPT-5.4
 
-Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. ``--cwd-context`` CLI flag.
+Rewritten read_media tool with clearer schema and new MediaCallLedgerHook for media call tracking. Subagent enhancements with inherit_spawning_agent_backend and final_answer_strategy options. GPT-5.4 as default OpenAI flagship. Decomp mode cooperates with checklist workflow. Codex prompt caching calculation fix for pricing accuracy.
 
-**v0.1.50 (February 11, 2026)** - Chunked Plan Execution & Skill Lifecycle Management
+**v0.1.59 (March 4, 2026)** - Quality Round Improvements
 
-Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
+Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and Docker skill write access fixes. Media generation fixes for video gen skills and impact metric restoration.
 
-**v0.1.49 (February 9, 2026)** - Coordination Quality: Log Analysis TUI, Fairness Gate & Checklist Voting
+**v0.1.58 (March 2, 2026)** - Multimodal Revamp, Nvidia NIM Backend & Quality Rethinking
 
-Log analysis mode built into TUI mode bar for in-app run analysis. Fairness gate prevents fast agents from dominating coordination. Checklist voting tool for structured quality evaluation. Automated testing infrastructure with CI/CD and SVG snapshot baselines. Persona easing now accessible from TUI mode bar.
+Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image generation, and Grok multimedia. Nvidia NIM backend for NVIDIA Inference Microservices. Quality rethinking subagent for per-element craft improvements. Smarter checklists with improve/preserve listings and evaluation criteria defaults.
 
 :doc:`Full changelog → <changelog>`
 

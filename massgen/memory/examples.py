@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Usage examples for MassGen memory system.
 

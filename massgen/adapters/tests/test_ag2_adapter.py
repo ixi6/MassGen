@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for AG2Adapter (single agent case only).
 """
+
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 

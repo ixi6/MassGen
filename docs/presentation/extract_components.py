@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Extract components from working presentations (m2l.html, columbia.html)
 """

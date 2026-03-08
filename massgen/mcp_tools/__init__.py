@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MCP (Model Context Protocol) integration for MassGen.
 

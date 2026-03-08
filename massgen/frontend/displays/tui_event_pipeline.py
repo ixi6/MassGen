@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Unified TUI event pipeline adapter.
 
@@ -8,7 +7,8 @@ using ContentProcessor as the single source of truth for parsing.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from massgen.events import MassGenEvent
 
@@ -28,15 +28,15 @@ class TimelineEventAdapter:
         self,
         panel: Any,
         *,
-        agent_id: Optional[str] = None,
-        on_output_applied: Optional[Callable[[ContentOutput], None]] = None,
+        agent_id: str | None = None,
+        on_output_applied: Callable[[ContentOutput], None] | None = None,
     ) -> None:
         self._panel = panel
         self._agent_id = agent_id or getattr(panel, "agent_id", None)
         self._processor = ContentProcessor()
         self._round_number = 1
         self._tool_count = 0
-        self._final_answer: Optional[str] = None
+        self._final_answer: str | None = None
         self._final_answer_received = False  # Track when definitive final_answer event received
         self._last_separator_round = 0
         self._on_output_applied = on_output_applied
@@ -46,7 +46,7 @@ class TimelineEventAdapter:
         return self._round_number
 
     @property
-    def final_answer(self) -> Optional[str]:
+    def final_answer(self) -> str | None:
         return self._final_answer
 
     def reset(self) -> None:
@@ -88,7 +88,7 @@ class TimelineEventAdapter:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _get_timeline(self) -> Optional[Any]:
+    def _get_timeline(self) -> Any | None:
         if hasattr(self._panel, "_get_timeline"):
             return self._panel._get_timeline()
         return None
@@ -267,6 +267,7 @@ class TimelineEventAdapter:
         tool_data = output.tool_data
         if tool_data is None:
             return
+        tool_name_lower = str(getattr(tool_data, "tool_name", "") or "").lower()
 
         is_planning_tool = False
         if hasattr(self._panel, "_is_planning_mcp_tool"):
@@ -278,10 +279,18 @@ class TimelineEventAdapter:
         is_subagent_tool = False
         if hasattr(self._panel, "_is_subagent_tool"):
             try:
+                is_subagent_tool = self._panel._is_subagent_tool(
+                    tool_data.tool_name,
+                    getattr(tool_data, "args_full", None),
+                )
+            except TypeError:
                 is_subagent_tool = self._panel._is_subagent_tool(tool_data.tool_name)
             except Exception:
                 is_subagent_tool = False
 
+        # Keep continue_subagent visually consistent with normal tools while still
+        # rendering/updating SubagentCard state.
+        render_tool_card_for_subagent = is_subagent_tool and ("continue_subagent" in tool_name_lower)
         skip_batching = is_planning_tool or is_subagent_tool
 
         if tool_data.status == "running":
@@ -307,7 +316,13 @@ class TimelineEventAdapter:
                     tui_log(f"[TimelineEventAdapter] {e}")
             elif is_subagent_tool and hasattr(self._panel, "_show_subagent_card_from_args"):
                 try:
-                    self._panel._show_subagent_card_from_args(tool_data, timeline)
+                    self._panel._show_subagent_card_from_args(
+                        tool_data,
+                        timeline,
+                        round_number=round_number,
+                    )
+                    if render_tool_card_for_subagent:
+                        timeline.add_tool(tool_data, round_number=round_number)
                 except Exception as e:
                     tui_log(f"[TimelineEventAdapter] {e}")
             elif is_planning_tool:
@@ -329,7 +344,7 @@ class TimelineEventAdapter:
                 else:
                     timeline.add_tool(tool_data, round_number=round_number)
         else:
-            if not is_planning_tool and not is_subagent_tool:
+            if not is_planning_tool and (not is_subagent_tool or render_tool_card_for_subagent):
                 # Check if this tool already exists in the timeline
                 try:
                     existing = timeline.get_tool(tool_data.tool_id)

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Common chat interface for MassGen agents.
 
@@ -11,7 +10,8 @@ or a coordinated multi-agent system.
 
 import uuid
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Any
 
 from .backend.base import LLMBackend, StreamChunk
 from .logger_config import log_streaming_debug, logger
@@ -33,12 +33,12 @@ class ChatAgent(ABC):
 
     def __init__(
         self,
-        session_id: Optional[str] = None,
-        conversation_memory: Optional[ConversationMemory] = None,
-        persistent_memory: Optional[PersistentMemoryBase] = None,
+        session_id: str | None = None,
+        conversation_memory: ConversationMemory | None = None,
+        persistent_memory: PersistentMemoryBase | None = None,
     ):
         self.session_id = session_id or f"chat_session_{uuid.uuid4().hex[:8]}"
-        self.conversation_history: List[Dict[str, Any]] = []
+        self.conversation_history: list[dict[str, Any]] = []
 
         # Memory components
         self.conversation_memory = conversation_memory
@@ -47,8 +47,8 @@ class ChatAgent(ABC):
     @abstractmethod
     async def chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] = None,
         reset_chat: bool = False,
         clear_history: bool = False,
         current_stage: CoordinationStage = None,
@@ -86,7 +86,7 @@ class ChatAgent(ABC):
             yield chunk
 
     @abstractmethod
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current agent status and state."""
 
     @abstractmethod
@@ -94,7 +94,7 @@ class ChatAgent(ABC):
         """Reset agent state for new conversation."""
 
     @abstractmethod
-    def get_configurable_system_message(self) -> Optional[str]:
+    def get_configurable_system_message(self) -> str | None:
         """
         Get the user-configurable part of the system message.
 
@@ -106,7 +106,7 @@ class ChatAgent(ABC):
         """
 
     # Common conversation management
-    def get_conversation_history(self) -> List[Dict[str, Any]]:
+    def get_conversation_history(self) -> list[dict[str, Any]]:
         """Get full conversation history."""
         return self.conversation_history.copy()
 
@@ -120,7 +120,7 @@ class ChatAgent(ABC):
         """Add tool result to conversation history."""
         self.add_to_history("tool", result, tool_call_id=tool_call_id)
 
-    def get_last_tool_calls(self) -> List[Dict[str, Any]]:
+    def get_last_tool_calls(self) -> list[dict[str, Any]]:
         """Get tool calls from the last assistant message."""
         for message in reversed(self.conversation_history):
             if message.get("role") == "assistant" and "tool_calls" in message:
@@ -143,15 +143,15 @@ class SingleAgent(ChatAgent):
     def __init__(
         self,
         backend: LLMBackend,
-        agent_id: Optional[str] = None,
-        system_message: Optional[str] = None,
-        session_id: Optional[str] = None,
-        conversation_memory: Optional[ConversationMemory] = None,
-        persistent_memory: Optional[PersistentMemoryBase] = None,
-        context_monitor: Optional[Any] = None,
+        agent_id: str | None = None,
+        system_message: str | None = None,
+        session_id: str | None = None,
+        conversation_memory: ConversationMemory | None = None,
+        persistent_memory: PersistentMemoryBase | None = None,
+        context_monitor: Any | None = None,
         record_all_tool_calls: bool = False,
         record_reasoning: bool = False,
-        voting_sensitivity: Optional[str] = None,
+        voting_sensitivity: str | None = None,
     ):
         """
         Initialize single agent.
@@ -226,7 +226,7 @@ class SingleAgent(ChatAgent):
         self._current_turn_mcp_calls = []  # MCP tool calls with args/results
 
     @staticmethod
-    def _sanitize_messages_for_openai(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _sanitize_messages_for_openai(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Sanitize messages to ensure they are valid for OpenAI API.
 
@@ -283,7 +283,7 @@ class SingleAgent(ChatAgent):
 
         return str(chunk_type)
 
-    async def _process_stream(self, backend_stream, tools: List[Dict[str, Any]] = None) -> AsyncGenerator[StreamChunk, None]:
+    async def _process_stream(self, backend_stream, tools: list[dict[str, Any]] = None) -> AsyncGenerator[StreamChunk, None]:
         """Common streaming logic for processing backend responses."""
         assistant_response = ""
         tool_calls = []
@@ -651,13 +651,13 @@ class SingleAgent(ChatAgent):
 
     async def chat(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] = None,
         reset_chat: bool = False,
         clear_history: bool = False,
         current_stage: CoordinationStage = None,
-        orchestrator_turn: Optional[int] = None,
-        previous_winners: Optional[List[Dict[str, Any]]] = None,
+        orchestrator_turn: int | None = None,
+        previous_winners: list[dict[str, Any]] | None = None,
         vote_only: bool = False,
     ) -> AsyncGenerator[StreamChunk, None]:
         """
@@ -872,7 +872,7 @@ class SingleAgent(ChatAgent):
             log_streaming_debug(chunk, agent_id=self.agent_id)  # Full repr goes to streaming_debug.log
             yield chunk
 
-    def _get_backend_params(self) -> Dict[str, Any]:
+    def _get_backend_params(self) -> dict[str, Any]:
         """Get additional backend parameters. Override in subclasses."""
         params = {}
         # Include vote_only if set (for Gemini vote-only schema)
@@ -880,7 +880,7 @@ class SingleAgent(ChatAgent):
             params["vote_only"] = True
         return params
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current agent status."""
         return {
             "agent_type": "single",
@@ -906,7 +906,7 @@ class SingleAgent(ChatAgent):
         if self.system_message:
             self.conversation_history.append({"role": "system", "content": self.system_message})
 
-    def get_configurable_system_message(self) -> Optional[str]:
+    def get_configurable_system_message(self) -> str | None:
         """Get the user-configurable part of the system message."""
         return self.system_message
 
@@ -946,13 +946,13 @@ class ConfigurableAgent(SingleAgent):
         self,
         config,  # AgentConfig - avoid circular import
         backend: LLMBackend,
-        session_id: Optional[str] = None,
-        conversation_memory: Optional[ConversationMemory] = None,
-        persistent_memory: Optional[PersistentMemoryBase] = None,
-        context_monitor: Optional[Any] = None,
+        session_id: str | None = None,
+        conversation_memory: ConversationMemory | None = None,
+        persistent_memory: PersistentMemoryBase | None = None,
+        context_monitor: Any | None = None,
         record_all_tool_calls: bool = False,
         record_reasoning: bool = False,
-        voting_sensitivity: Optional[str] = None,
+        voting_sensitivity: str | None = None,
     ):
         """
         Initialize configurable agent.
@@ -1016,7 +1016,7 @@ class ConfigurableAgent(SingleAgent):
                         enabled=True,
                     )
 
-    def _get_backend_params(self) -> Dict[str, Any]:
+    def _get_backend_params(self) -> dict[str, Any]:
         """Get backend parameters from config."""
         params = self.config.get_backend_params()
         # Include vote_only if set (for Gemini vote-only schema)
@@ -1024,7 +1024,7 @@ class ConfigurableAgent(SingleAgent):
             params["vote_only"] = True
         return params
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current agent status with config details."""
         status = super().get_status()
         status.update(
@@ -1039,7 +1039,7 @@ class ConfigurableAgent(SingleAgent):
         )
         return status
 
-    def get_configurable_system_message(self) -> Optional[str]:
+    def get_configurable_system_message(self) -> str | None:
         """Get the user-configurable part of the system message for ConfigurableAgent."""
         # Try multiple sources in order of preference
 

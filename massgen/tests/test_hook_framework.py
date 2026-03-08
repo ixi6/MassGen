@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for the general hook framework.
 
@@ -16,11 +15,15 @@ from datetime import datetime, timezone
 import pytest
 
 from massgen.mcp_tools.hooks import (
+    BackgroundToolCompleteHook,
     GeneralHookManager,
     HighPriorityTaskReminderHook,
     HookEvent,
     HookResult,
     HookType,
+    HumanInputHook,
+    InjectionDeliveryStatus,
+    MediaCallLedgerHook,
     MidStreamInjectionHook,
     PatternHook,
     PythonCallableHook,
@@ -553,6 +556,176 @@ class TestGeneralHookManager:
 # =============================================================================
 
 
+class TestHumanInputHook:
+    """Tests for HumanInputHook targeted runtime delivery semantics."""
+
+    @pytest.mark.asyncio
+    async def test_targeted_message_only_injects_to_selected_agent(self):
+        hook = HumanInputHook()
+        hook.set_pending_input("Only agent_b should receive this.", target_agents=["agent_b"])
+
+        result_a = await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert result_a.inject is None
+        assert not hook.has_pending_input_for_agent("agent_a")
+        assert hook.has_pending_input_for_agent("agent_b")
+
+        result_b = await hook.execute("tool_x", "{}", context={"agent_id": "agent_b"})
+        assert result_b.inject is not None
+        assert "Only agent_b should receive this." in result_b.inject["content"]
+        assert not hook.has_pending_input_for_agent("agent_b")
+        assert not hook.has_pending_input()
+
+    @pytest.mark.asyncio
+    async def test_group_target_lingers_per_agent_until_each_receives(self):
+        hook = HumanInputHook()
+        hook.set_pending_input(
+            "Broadcast to both agents.",
+            target_agents=["agent_a", "agent_b"],
+        )
+
+        result_a = await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert result_a.inject is not None
+        assert hook.get_pending_count_for_agent("agent_a") == 0
+        assert hook.get_pending_count_for_agent("agent_b") == 1
+        assert hook.has_pending_input()
+
+        result_b = await hook.execute("tool_x", "{}", context={"agent_id": "agent_b"})
+        assert result_b.inject is not None
+        assert hook.get_pending_count_for_agent("agent_b") == 0
+        assert not hook.has_pending_input()
+
+    @pytest.mark.asyncio
+    async def test_inject_callback_receives_agent_id(self):
+        hook = HumanInputHook()
+        captured: list[tuple[str, str]] = []
+
+        hook.set_inject_callback(lambda content, agent_id: captured.append((content, agent_id)))
+        hook.set_pending_input("Callback payload", target_agents=["agent_a"])
+
+        await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert captured == [("Callback payload", "agent_a")]
+
+    def test_queue_callback_receives_target_agents_and_message_id(self):
+        hook = HumanInputHook()
+        captured: list[tuple[str, list[str] | None, int | None]] = []
+
+        hook.set_queue_callback(
+            lambda content, target_agents, message_id: captured.append(
+                (content, target_agents, message_id),
+            ),
+        )
+        message_id = hook.set_pending_input(
+            "Queued callback payload",
+            target_agents=["agent_b", "agent_a"],
+        )
+
+        assert captured == [
+            (
+                "Queued callback payload",
+                ["agent_a", "agent_b"],
+                message_id,
+            ),
+        ]
+
+    def test_queue_callback_receives_source_when_supported(self):
+        hook = HumanInputHook()
+        captured: list[tuple[str, list[str] | None, int | None, str]] = []
+
+        hook.set_queue_callback(
+            lambda content, target_agents, message_id, source: captured.append(
+                (content, target_agents, message_id, source),
+            ),
+        )
+        message_id = hook.set_pending_input(
+            "Queued callback payload",
+            target_agents=["agent_a"],
+            source="parent",
+        )
+
+        assert captured == [
+            (
+                "Queued callback payload",
+                ["agent_a"],
+                message_id,
+                "parent",
+            ),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_pending_messages_snapshot_and_pop_latest(self):
+        hook = HumanInputHook()
+        first_id = hook.set_pending_input(
+            "First queued message",
+            target_agents=["agent_a", "agent_b"],
+        )
+        second_id = hook.set_pending_input(
+            "Second queued message",
+            target_agents=["agent_b"],
+        )
+
+        pending = hook.get_pending_messages(agent_ids=["agent_a", "agent_b"])
+        assert [entry["id"] for entry in pending] == [first_id, second_id]
+        assert pending[0]["pending_agents"] == ["agent_a", "agent_b"]
+        assert pending[1]["pending_agents"] == ["agent_b"]
+
+        removed = hook.pop_latest_pending_input()
+        assert removed is not None
+        assert removed["id"] == second_id
+        assert removed["content"] == "Second queued message"
+
+        pending_after = hook.get_pending_messages(agent_ids=["agent_a", "agent_b"])
+        assert [entry["id"] for entry in pending_after] == [first_id]
+
+    def test_pending_messages_include_source_label(self):
+        hook = HumanInputHook()
+        msg_id = hook.set_pending_input(
+            "From parent",
+            target_agents=["agent_a"],
+            source="parent",
+        )
+
+        pending = hook.get_pending_messages(agent_ids=["agent_a"])
+        assert len(pending) == 1
+        assert pending[0]["id"] == msg_id
+        assert pending[0]["source"] == "parent"
+        assert pending[0]["source_label"] == "parent"
+
+    @pytest.mark.asyncio
+    async def test_inject_callback_receives_per_message_delivery_metadata(self):
+        hook = HumanInputHook()
+        captured: list[tuple[str, str, list[dict]]] = []
+
+        hook.set_inject_callback(
+            lambda content, agent_id, delivered: captured.append((content, agent_id, delivered)),
+        )
+        first_id = hook.set_pending_input("Message one", target_agents=["agent_a"])
+        second_id = hook.set_pending_input("Message two", target_agents=["agent_a"])
+
+        await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+
+        assert captured
+        combined_content, delivered_agent, delivered_items = captured[0]
+        assert delivered_agent == "agent_a"
+        assert "Message one" in combined_content
+        assert "Message two" in combined_content
+        assert [item["id"] for item in delivered_items] == [first_id, second_id]
+        assert [item["content"] for item in delivered_items] == ["Message one", "Message two"]
+
+    @pytest.mark.asyncio
+    async def test_delivered_message_history_persists_after_pending_queue_drains(self):
+        hook = HumanInputHook()
+        message_id = hook.set_pending_input("Persist this runtime instruction.", target_agents=["agent_a"])
+
+        result = await hook.execute("tool_x", "{}", context={"agent_id": "agent_a"})
+        assert result.inject is not None
+        assert message_id is not None
+        assert not hook.has_pending_input()
+
+        delivered = hook.get_delivered_messages_for_agent("agent_a")
+        assert [entry["id"] for entry in delivered] == [message_id]
+        assert [entry["content"] for entry in delivered] == ["Persist this runtime instruction."]
+
+
 class TestMidStreamInjectionHook:
     """Tests for MidStreamInjectionHook."""
 
@@ -679,6 +852,200 @@ class TestHighPriorityTaskReminderHook:
         assert "=" * 60 in result.inject["content"]  # Border separator
         assert "memory/long_term" in result.inject["content"]  # Memory paths
         assert result.inject["strategy"] == "user_message"
+
+
+class TestMediaCallLedgerHook:
+    """Tests for PostToolUse media call ledger capture."""
+
+    @pytest.mark.asyncio
+    async def test_read_media_call_writes_ledger_and_context_snapshot(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "CONTEXT.md").write_text("# Task\nEvaluate hero screenshot", encoding="utf-8")
+        long_prompt = ("Compare visual hierarchy and spacing in detail. " * 20).strip()
+
+        hook = MediaCallLedgerHook()
+        arguments_raw = json.dumps(
+            {
+                "prompt": long_prompt,
+                "inputs": [{"files": {"hero": "artifacts/hero.png"}}],
+            },
+        )
+
+        result = await hook.execute(
+            "custom_tool__read_media",
+            arguments_raw,
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps(
+                    {
+                        "success": True,
+                        "operation": "read_media",
+                        "response": "looks good",
+                    },
+                ),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        assert ledger_path.exists()
+
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        assert isinstance(payload, dict)
+        entries = payload.get("entries")
+        assert isinstance(entries, list)
+        assert entries
+        last_entry = entries[-1]
+        assert last_entry["tool"] == "read_media"
+        assert "tool_arguments_raw" not in last_entry
+        assert last_entry["tool_arguments"]["prompt"] == long_prompt
+        assert last_entry["tool_arguments"]["inputs"][0]["files"]["hero"] == "artifacts/hero.png"
+        assert "prompt" not in last_entry
+        assert "mode" not in last_entry
+        assert "continue_from" not in last_entry
+        assert any("hero ->" in mapping for mapping in last_entry["file_mappings"])
+        assert ".massgen_scratch/verification/context_snapshots/" in str(last_entry["context_snapshot_path"])
+
+        snapshot_dir = workspace / ".massgen_scratch" / "verification" / "context_snapshots"
+        snapshots = sorted(snapshot_dir.glob("context_*.md"))
+        assert snapshots
+        assert "Evaluate hero screenshot" in snapshots[0].read_text(encoding="utf-8")
+
+    @pytest.mark.asyncio
+    async def test_read_media_stringified_inputs_are_preserved_and_mapped(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "CONTEXT.md").write_text("# Task\nEvaluate screenshot", encoding="utf-8")
+
+        hook = MediaCallLedgerHook()
+        stringified_inputs = '[{"files":{"home":"artifacts/home.png"}}]'
+        arguments_raw = json.dumps(
+            {
+                "prompt": "Analyze home screenshot",
+                "inputs": stringified_inputs,
+            },
+        )
+
+        result = await hook.execute(
+            "custom_tool__read_media",
+            arguments_raw,
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps({"success": True, "operation": "read_media"}),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        last_entry = payload["entries"][-1]
+        assert last_entry["tool_arguments_raw"] == arguments_raw
+        assert last_entry["tool_arguments"]["inputs"] == stringified_inputs
+        assert any("input[0].home ->" in mapping and "artifacts/home.png" in mapping for mapping in last_entry["file_mappings"])
+
+    @pytest.mark.asyncio
+    async def test_generate_media_logs_context_used_false_when_disabled(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+
+        hook = MediaCallLedgerHook()
+
+        result = await hook.execute(
+            "custom_tool__generate_media",
+            json.dumps(
+                {
+                    "prompt": "Cinematic skyline",
+                    "mode": "image",
+                    "use_context": False,
+                    "input_images": ["assets/ref.png"],
+                    "continue_from": "img_prev_123",
+                },
+            ),
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps(
+                    {
+                        "success": True,
+                        "operation": "generate_media",
+                        "file_path": str(workspace / "out.png"),
+                        "backend": "openai",
+                        "model": "gpt-image-1",
+                        "metadata": {"continuation_id": "cont_456"},
+                    },
+                ),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        last_entry = payload["entries"][-1]
+        assert last_entry["tool"] == "generate_media"
+        assert last_entry["context_used"] is False
+        assert any("out.png" in mapping for mapping in last_entry["file_mappings"])
+
+    @pytest.mark.asyncio
+    async def test_generate_media_with_context_enabled_records_snapshot(self, tmp_path):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+        (workspace / "CONTEXT.md").write_text("# Task\nRender launch poster", encoding="utf-8")
+
+        hook = MediaCallLedgerHook()
+
+        result = await hook.execute(
+            "custom_tool__generate_media",
+            json.dumps(
+                {
+                    "prompt": "Launch poster",
+                    "mode": "image",
+                    "use_context": True,
+                },
+            ),
+            context={
+                "agent_id": "agent_a",
+                "workspace_path": str(workspace),
+                "tool_output": json.dumps(
+                    {
+                        "success": True,
+                        "operation": "generate_media",
+                        "file_path": str(workspace / "poster.png"),
+                    },
+                ),
+            },
+        )
+
+        assert result.allowed is True
+        ledger_path = workspace / ".massgen_scratch" / "verification" / "media_call_ledger.json"
+        payload = json.loads(ledger_path.read_text(encoding="utf-8"))
+        last_entry = payload["entries"][-1]
+        assert last_entry["context_used"] is True
+        assert isinstance(last_entry["context_snapshot_path"], str)
+
+    @pytest.mark.asyncio
+    async def test_media_call_ledger_hook_fails_open_on_write_error(self, tmp_path, monkeypatch):
+        workspace = tmp_path / "workspace"
+        workspace.mkdir(parents=True)
+
+        hook = MediaCallLedgerHook()
+
+        def _raise(*args, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(hook, "_append_entry", _raise)
+
+        result = await hook.execute(
+            "custom_tool__read_media",
+            json.dumps({"prompt": "Analyze", "inputs": [{"files": {"img": "a.png"}}]}),
+            context={"workspace_path": str(workspace), "tool_output": '{"success": true}'},
+        )
+
+        assert result.allowed is True
+        assert result.has_errors()
+        assert any("Media call ledger" in err for err in result.hook_errors)
 
 
 # =============================================================================
@@ -1004,8 +1371,8 @@ class TestClaudeCodeNativeHookAdapter:
         )
 
         assert "hookSpecificOutput" in claude_format
-        assert claude_format["hookSpecificOutput"]["modifiedOutput"] == "Injected content"
-        assert claude_format["hookSpecificOutput"]["injectionStrategy"] == "tool_result"
+        assert claude_format["hookSpecificOutput"]["additionalContext"] == "Injected content"
+        assert "modifiedOutput" not in claude_format["hookSpecificOutput"]
 
     def test_convert_modified_input_to_claude_format(self):
         """Test converting PreToolUse modified input result to Claude SDK format."""
@@ -1025,6 +1392,37 @@ class TestClaudeCodeNativeHookAdapter:
         assert "hookSpecificOutput" in claude_format
         assert claude_format["hookSpecificOutput"]["updatedInput"] == {"modified_arg": "new_value"}
         assert claude_format["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    @pytest.mark.asyncio
+    async def test_hook_wrapper_post_tool_use_injection_uses_additional_context(self):
+        """PostToolUse wrapper should emit additionalContext for injected content."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+
+        def injecting_hook(event):
+            return HookResult(
+                allowed=True,
+                inject={"content": "Injected content", "strategy": "user_message"},
+            )
+
+        hook = PythonCallableHook("injector", injecting_hook, matcher="*")
+        native = adapter.convert_hook_to_native(hook, HookType.POST_TOOL_USE)
+        wrapper_func = native.hooks[0]
+
+        input_data = {
+            "hook_event_name": "PostToolUse",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "notes.txt", "content": "hello"},
+            "tool_output": "File created",
+        }
+
+        result = await wrapper_func(input_data, "tool-use-123", None)
+
+        assert "hookSpecificOutput" in result
+        assert result["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert result["hookSpecificOutput"]["additionalContext"] == "Injected content"
+        assert "modifiedOutput" not in result["hookSpecificOutput"]
 
     def test_convert_hook_to_native_returns_hook_matcher(self):
         """Test that convert_hook_to_native returns a HookMatcher."""
@@ -1247,6 +1645,31 @@ class TestSubagentCompleteHook:
         assert result.inject is None
 
     @pytest.mark.asyncio
+    async def test_async_getter_is_awaited(self):
+        """Test hook awaits async getters (used by async MCP polling paths)."""
+        from massgen.mcp_tools.hooks import SubagentCompleteHook
+        from massgen.subagent.models import SubagentResult
+
+        hook = SubagentCompleteHook()
+        mock_result = SubagentResult.create_success(
+            subagent_id="async-subagent",
+            answer="async result",
+            workspace_path="/workspace/async-subagent",
+            execution_time_seconds=2.5,
+        )
+
+        async def async_getter():
+            return [("async-subagent", mock_result)]
+
+        hook.set_pending_results_getter(async_getter)
+
+        result = await hook.execute("some_tool", "{}")
+
+        assert result.allowed is True
+        assert result.inject is not None
+        assert "async-subagent" in result.inject["content"]
+
+    @pytest.mark.asyncio
     async def test_single_result_injection(self):
         """Test hook injects a single completed subagent result."""
         from massgen.mcp_tools.hooks import SubagentCompleteHook
@@ -1451,3 +1874,250 @@ class TestSubagentCompleteHook:
         assert "42.5" in content or "42" in content
         # Should include workspace path
         assert "/workspace/meta-task" in content
+
+
+class TestBackgroundToolCompleteHook:
+    """Tests for BackgroundToolCompleteHook - injects completed background tool results."""
+
+    @pytest.mark.asyncio
+    async def test_no_getter_returns_allow(self):
+        hook = BackgroundToolCompleteHook()
+        result = await hook.execute("some_tool", "{}")
+        assert result.allowed is True
+        assert result.inject is None
+
+    @pytest.mark.asyncio
+    async def test_empty_getter_returns_allow(self):
+        hook = BackgroundToolCompleteHook()
+        hook.set_completed_jobs_getter(lambda: [])
+        result = await hook.execute("some_tool", "{}")
+        assert result.allowed is True
+        assert result.inject is None
+
+    @pytest.mark.asyncio
+    async def test_completed_jobs_are_injected(self):
+        hook = BackgroundToolCompleteHook()
+        hook.set_completed_jobs_getter(
+            lambda: [
+                {
+                    "job_id": "bgtool_1",
+                    "tool_name": "custom_tool__generate_media",
+                    "status": "completed",
+                    "result": "Generated image at /tmp/image.png",
+                },
+                {
+                    "job_id": "bgtool_2",
+                    "tool_name": "mcp__command_line__execute_command",
+                    "status": "error",
+                    "error": "Command timed out",
+                },
+            ],
+        )
+
+        result = await hook.execute("some_tool", "{}")
+        assert result.inject is not None
+        assert result.inject["strategy"] == "tool_result"
+        assert "BACKGROUND TOOL RESULTS" in result.inject["content"]
+        assert "bgtool_1" in result.inject["content"]
+        assert "bgtool_2" in result.inject["content"]
+        assert "custom_tool__generate_media" in result.inject["content"]
+        assert "mcp__command_line__execute_command" in result.inject["content"]
+
+
+# =============================================================================
+# InjectionDeliveryStatus Tests
+# =============================================================================
+
+
+class TestInjectionDeliveryStatus:
+    """Tests for the InjectionDeliveryStatus enum."""
+
+    def test_has_required_members(self):
+        assert InjectionDeliveryStatus.QUEUED.value == "queued"
+        assert InjectionDeliveryStatus.DELIVERED.value == "delivered"
+        assert InjectionDeliveryStatus.DEFERRED.value == "deferred"
+        assert InjectionDeliveryStatus.FAILED.value == "failed"
+
+    def test_has_exactly_four_members(self):
+        assert len(InjectionDeliveryStatus) == 4
+
+
+# =============================================================================
+# HumanInputHook suppress_inject_callback Tests
+# =============================================================================
+
+
+class TestHumanInputHookSuppressCallback:
+    """Codex flush path suppresses the inject callback so TUI doesn't show
+    'Delivered' before the model actually consumes the hook file."""
+
+    @pytest.mark.asyncio
+    async def test_suppress_inject_callback_prevents_callback(self):
+        hook = HumanInputHook()
+        hook.set_pending_input("test message")
+
+        callback_fired = []
+        hook.set_inject_callback(lambda content, agent_id, *a: callback_fired.append(agent_id))
+
+        result = await hook.execute(
+            "_flush",
+            "{}",
+            context={"agent_id": "agent_a", "suppress_inject_callback": True},
+        )
+
+        assert result.inject is not None
+        assert "test message" in result.inject["content"]
+        assert callback_fired == [], "Callback must NOT fire when suppress_inject_callback=True"
+
+    @pytest.mark.asyncio
+    async def test_callback_fires_without_suppress_flag(self):
+        hook = HumanInputHook()
+        hook.set_pending_input("test message")
+
+        callback_fired = []
+        hook.set_inject_callback(lambda content, agent_id, *a: callback_fired.append(agent_id))
+
+        result = await hook.execute(
+            "some_tool",
+            "{}",
+            context={"agent_id": "agent_a"},
+        )
+
+        assert result.inject is not None
+        assert callback_fired == ["agent_a"], "Callback must fire without suppress flag"
+
+
+# =============================================================================
+# RuntimeInboxPoller Tests
+# =============================================================================
+
+
+class TestRuntimeInboxPoller:
+    """Tests for RuntimeInboxPoller file-based inbox polling."""
+
+    def test_poll_returns_messages_in_order(self, tmp_path):
+        """Write 3 message files, verify poll returns them sorted by timestamp."""
+        from massgen.mcp_tools.hooks import RuntimeInboxPoller
+
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+
+        # Create 3 messages with different timestamps in name
+        for i, ts in enumerate(["1740000001", "1740000003", "1740000002"]):
+            msg = {"content": f"message {ts}", "source": "parent", "timestamp": "2025-01-01T00:00:00Z"}
+            (inbox / f"msg_{ts}_{i}.json").write_text(json.dumps(msg))
+
+        poller = RuntimeInboxPoller(inbox_dir=inbox, min_poll_interval=0.0)
+        messages = poller.poll()
+
+        assert len(messages) == 3
+        assert messages[0]["content"] == "message 1740000001"
+        assert messages[1]["content"] == "message 1740000002"
+        assert messages[2]["content"] == "message 1740000003"
+
+    def test_poll_deletes_consumed_files(self, tmp_path):
+        """Verify files are removed after reading."""
+        from massgen.mcp_tools.hooks import RuntimeInboxPoller
+
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+
+        msg = {"content": "delete me", "source": "parent", "timestamp": "2025-01-01T00:00:00Z"}
+        (inbox / "msg_1740000000_0.json").write_text(json.dumps(msg))
+
+        poller = RuntimeInboxPoller(inbox_dir=inbox, min_poll_interval=0.0)
+        messages = poller.poll()
+
+        assert len(messages) == 1
+        assert messages[0]["content"] == "delete me"
+        assert not list(inbox.glob("msg_*.json")), "Consumed files should be deleted"
+
+    def test_poll_returns_empty_when_no_directory(self, tmp_path):
+        """Inbox dir doesn't exist → empty list."""
+        from massgen.mcp_tools.hooks import RuntimeInboxPoller
+
+        poller = RuntimeInboxPoller(inbox_dir=tmp_path / "nonexistent", min_poll_interval=0.0)
+        messages = poller.poll()
+
+        assert messages == []
+
+    def test_poll_rate_limited(self, tmp_path):
+        """Two rapid polls, second returns empty list."""
+        from massgen.mcp_tools.hooks import RuntimeInboxPoller
+
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+
+        msg = {"content": "first", "source": "parent", "timestamp": "2025-01-01T00:00:00Z"}
+        (inbox / "msg_1740000000_0.json").write_text(json.dumps(msg))
+
+        poller = RuntimeInboxPoller(inbox_dir=inbox, min_poll_interval=10.0)
+        first = poller.poll()
+        assert len(first) == 1
+
+        # Write another message
+        msg2 = {"content": "second", "source": "parent", "timestamp": "2025-01-01T00:00:01Z"}
+        (inbox / "msg_1740000001_0.json").write_text(json.dumps(msg2))
+
+        second = poller.poll()
+        assert second == [], "Second poll within min_poll_interval should return empty"
+
+    def test_poll_returns_source_field(self, tmp_path):
+        """Poll should preserve the message source for TUI labeling."""
+        from massgen.mcp_tools.hooks import RuntimeInboxPoller
+
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+
+        msg = {
+            "content": "from parent",
+            "source": "parent",
+            "timestamp": "2025-01-01T00:00:00Z",
+        }
+        (inbox / "msg_1740000000_0.json").write_text(json.dumps(msg))
+
+        poller = RuntimeInboxPoller(inbox_dir=inbox, min_poll_interval=0.0)
+        messages = poller.poll()
+
+        assert len(messages) == 1
+        assert messages[0]["content"] == "from parent"
+        assert messages[0]["source"] == "parent"
+
+    def test_poll_skips_malformed_json(self, tmp_path):
+        """Bad JSON file is skipped (not consumed), valid ones returned."""
+        from massgen.mcp_tools.hooks import RuntimeInboxPoller
+
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+
+        # Valid message
+        msg = {"content": "valid", "source": "parent", "timestamp": "2025-01-01T00:00:00Z"}
+        (inbox / "msg_1740000001_0.json").write_text(json.dumps(msg))
+
+        # Malformed message
+        (inbox / "msg_1740000002_0.json").write_text("not json{{{")
+
+        poller = RuntimeInboxPoller(inbox_dir=inbox, min_poll_interval=0.0)
+        messages = poller.poll()
+
+        assert len(messages) == 1
+        assert messages[0]["content"] == "valid"
+        # Malformed file should be consumed to prevent infinite re-reads
+        assert not (inbox / "msg_1740000002_0.json").exists()
+
+    def test_poll_idempotent(self, tmp_path):
+        """Consumed files not re-read on subsequent polls."""
+        from massgen.mcp_tools.hooks import RuntimeInboxPoller
+
+        inbox = tmp_path / "inbox"
+        inbox.mkdir()
+
+        msg = {"content": "once only", "source": "parent", "timestamp": "2025-01-01T00:00:00Z"}
+        (inbox / "msg_1740000000_0.json").write_text(json.dumps(msg))
+
+        poller = RuntimeInboxPoller(inbox_dir=inbox, min_poll_interval=0.0)
+        first = poller.poll()
+        assert len(first) == 1
+
+        second = poller.poll()
+        assert second == [], "Already consumed messages should not reappear"

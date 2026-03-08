@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Log analysis and display for MassGen runs.
 
 Provides CLI commands to analyze and display metrics from MassGen run logs.
@@ -11,7 +10,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import yaml
 from rich.console import Console
@@ -22,7 +21,7 @@ from rich.table import Table
 DEFAULT_ANALYSIS_CONFIG = Path(__file__).parent / "configs" / "analysis" / "log_analysis.yaml"
 
 
-def _natural_sort_key(path: Union[Path, str]) -> list:
+def _natural_sort_key(path: Path | str) -> list:
     """Generate a sort key for natural ordering of paths with numeric components.
 
     Splits the path string into numeric and non-numeric parts, converting
@@ -76,7 +75,7 @@ def has_analysis_report(log_dir: Path) -> bool:
 class LogAnalyzer:
     """Analyze MassGen log directories."""
 
-    def __init__(self, log_dir: Optional[Path] = None):
+    def __init__(self, log_dir: Path | None = None):
         """Initialize analyzer with a specific log directory or find the latest.
 
         Args:
@@ -111,25 +110,25 @@ class LogAnalyzer:
                 return attempts[-1]
         return log
 
-    def _load_metrics_summary(self) -> Dict[str, Any]:
+    def _load_metrics_summary(self) -> dict[str, Any]:
         """Load metrics summary JSON."""
         path = self.log_dir / "metrics_summary.json"
         if path.exists():
             return json.loads(path.read_text())
         return {}
 
-    def _load_metrics_events(self) -> Dict[str, Any]:
+    def _load_metrics_events(self) -> dict[str, Any]:
         """Load metrics events JSON."""
         path = self.log_dir / "metrics_events.json"
         if path.exists():
             return json.loads(path.read_text())
         return {}
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get summary data for display."""
         return self.metrics_summary
 
-    def get_tools_breakdown(self, sort_by: str = "time") -> List[Dict[str, Any]]:
+    def get_tools_breakdown(self, sort_by: str = "time") -> list[dict[str, Any]]:
         """Get tool breakdown sorted by time or calls.
 
         Args:
@@ -154,7 +153,7 @@ class LogAnalyzer:
         key = "time_ms" if sort_by == "time" else "calls"
         return sorted(result, key=lambda x: x[key], reverse=True)
 
-    def get_round_history(self) -> List[Dict[str, Any]]:
+    def get_round_history(self) -> list[dict[str, Any]]:
         """Get round history for all agents."""
         agents = self.metrics_summary.get("agents", {})
         all_rounds = []
@@ -540,7 +539,7 @@ def open_log_directory(log_dir: Path, console: Console) -> int:
         return 1
 
 
-def generate_analysis_prompt(log_dir: Path, turn: Optional[int] = None) -> str:
+def generate_analysis_prompt(log_dir: Path, turn: int | None = None) -> str:
     """Generate a minimal prompt for Claude Code to analyze a log directory.
 
     Args:
@@ -562,7 +561,7 @@ def generate_analysis_prompt(log_dir: Path, turn: Optional[int] = None) -> str:
     return prompt
 
 
-def display_analyze_prompt(console: Console, log_dir: Path, turn: Optional[int] = None) -> None:
+def display_analyze_prompt(console: Console, log_dir: Path, turn: int | None = None) -> None:
     """Display analysis prompt with helpful context.
 
     Args:
@@ -595,10 +594,10 @@ def display_analyze_prompt(console: Console, log_dir: Path, turn: Optional[int] 
 
 def run_self_analysis(
     log_dir: Path,
-    config_path: Optional[Path] = None,
+    config_path: Path | None = None,
     ui_mode: str = "automation",
-    console: Optional[Console] = None,
-    turn: Optional[int] = None,
+    console: Console | None = None,
+    turn: int | None = None,
     force: bool = False,
 ) -> int:
     """Run MassGen to analyze a log directory using multi-agent coordination.
@@ -671,7 +670,6 @@ def run_self_analysis(
         turn_dir = turn_dirs[-1]
 
     report_path = turn_dir / "ANALYSIS_REPORT.md"
-
     # Handle existing report
     if report_path.exists():
         if force:

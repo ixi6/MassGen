@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Chat Completions API parameters handler.
 Handles parameter building for OpenAI Chat Completions API format.
@@ -6,7 +5,7 @@ Handles parameter building for OpenAI Chat Completions API format.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from ._api_params_handler_base import APIParamsHandlerBase
 
@@ -14,7 +13,7 @@ from ._api_params_handler_base import APIParamsHandlerBase
 class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
     """Handler for Chat Completions API parameters."""
 
-    def get_excluded_params(self) -> Set[str]:
+    def get_excluded_params(self) -> set[str]:
         """Get parameters to exclude from Chat Completions API calls."""
         return self.get_base_excluded_params().union(
             {
@@ -36,7 +35,7 @@ class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
             },
         )
 
-    def get_provider_tools(self, all_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_provider_tools(self, all_params: dict[str, Any]) -> list[dict[str, Any]]:
         """Get provider tools for Chat Completions format."""
         provider_tools = []
 
@@ -82,7 +81,7 @@ class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
 
         return provider_tools
 
-    def build_base_api_params(self, messages: List[Dict[str, Any]], all_params: Dict[str, Any]) -> Dict[str, Any]:
+    def build_base_api_params(self, messages: list[dict[str, Any]], all_params: dict[str, Any]) -> dict[str, Any]:
         """Build base API parameters for Chat Completions requests."""
         # Sanitize: remove trailing assistant tool_calls without corresponding tool results
         sanitized_messages = self._sanitize_messages_for_api(messages)
@@ -104,10 +103,10 @@ class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
 
     async def build_api_params(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        all_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        all_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build Chat Completions API parameters."""
         # Sanitize messages if needed
         if hasattr(self.backend, "_sanitize_messages_for_api"):
@@ -142,11 +141,10 @@ class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
             converted_tools = self.formatter.format_tools(tools)
             combined_tools.extend(converted_tools)
 
-        # Add custom tools
-        custom_tools = self.custom_tool_manager.registered_tools
+        # Add custom tools (includes internal background lifecycle helpers when available)
+        custom_tools = self.get_custom_tools()
         if custom_tools:
-            converted_custom_tools = self.formatter.format_custom_tools(custom_tools)
-            combined_tools.extend(converted_custom_tools)
+            combined_tools.extend(custom_tools)
 
         # MCP tools
         mcp_tools = self.get_mcp_tools()
@@ -158,7 +156,7 @@ class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
 
         return api_params
 
-    def _sanitize_messages_for_api(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _sanitize_messages_for_api(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Ensure assistant tool_calls are valid per OpenAI Chat Completions rules:
         - For any assistant message with tool_calls, each tool_call.id must have a following
@@ -168,7 +166,7 @@ class ChatCompletionsAPIParamsHandler(APIParamsHandlerBase):
         This prevents 400 wrong_api_format errors.
         """
         try:
-            sanitized: List[Dict[str, Any]] = []
+            sanitized: list[dict[str, Any]] = []
             len(messages)
             for i, msg in enumerate(messages):
                 if msg.get("role") == "assistant" and "tool_calls" in msg:

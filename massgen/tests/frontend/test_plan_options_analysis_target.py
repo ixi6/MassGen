@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for PlanOptionsPopover analysis target type initialization and state.
 
 Covers:

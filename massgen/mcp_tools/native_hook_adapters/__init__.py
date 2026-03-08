@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Native hook adapters for backend-specific hook integration.
 
 This module provides adapters for converting MassGen's hook framework

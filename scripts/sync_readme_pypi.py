@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Sync README.md to README_PYPI.md by replacing relative asset paths with full GitHub URLs.
 

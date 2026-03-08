@@ -73,9 +73,10 @@ function ApiKeysSection() {
 
   // Sort providers: popular ones first, then alphabetically
   const popularProviderIds = ['openai', 'claude', 'gemini', 'grok'];
-  // Separate Claude Code from other providers (it has special auth)
+  // Separate CLI-auth providers from other providers (they have special auth)
   const claudeCodeProvider = providers.find((p) => p.id === 'claude_code');
-  const otherProviders = providers.filter((p) => p.id !== 'claude_code');
+  const copilotProvider = providers.find((p) => p.id === 'copilot');
+  const otherProviders = providers.filter((p) => p.id !== 'claude_code' && p.id !== 'copilot');
   const configuredProviders = otherProviders.filter((p) => p.has_api_key);
   const unconfiguredProviders = otherProviders.filter((p) => !p.has_api_key);
 
@@ -174,6 +175,23 @@ function ApiKeysSection() {
               {showPasswords['CLAUDE_CODE_API_KEY'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
+        </div>
+      )}
+
+      {/* GitHub Copilot Section */}
+      {copilotProvider && (
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <span className="font-medium text-gray-800 dark:text-gray-200">GitHub Copilot</span>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                (available if logged in via <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">copilot</code> CLI <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">/login</code> and <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">github-copilot-sdk</code> installed)
+              </span>
+            </div>
+          </div>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            No API key required. Uses Copilot CLI or GitHub token authentication.
+          </p>
         </div>
       )}
 
@@ -561,6 +579,12 @@ const DEFAULT_SKILL_PACKAGES: SkillPackage[] = [
     id: 'agent_browser',
     name: 'Vercel Agent Browser Skill',
     description: 'Skill for browser-native automation via the agent-browser runtime.',
+    installed: false,
+  },
+  {
+    id: 'remotion',
+    name: 'Remotion Skill',
+    description: 'Video generation and editing skill powered by Remotion.',
     installed: false,
   },
   {

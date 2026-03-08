@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 Base classes for workflow toolkits.
 """
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any
 
 
 class ToolType(Enum):
@@ -44,7 +43,7 @@ class BaseToolkit(ABC):
         """Type of the toolkit."""
 
     @abstractmethod
-    def get_tools(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tools(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Get tool definitions based on configuration.
 
@@ -57,7 +56,7 @@ class BaseToolkit(ABC):
         """
 
     @abstractmethod
-    def is_enabled(self, config: Dict[str, Any]) -> bool:
+    def is_enabled(self, config: dict[str, Any]) -> bool:
         """
         Check if the toolkit is enabled based on configuration.
 

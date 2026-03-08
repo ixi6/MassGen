@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MCP Tool Code Generator
 
@@ -17,7 +16,7 @@ References:
 """
 
 from textwrap import indent
-from typing import Any, Dict, List
+from typing import Any
 
 
 class MCPToolCodeGenerator:
@@ -53,7 +52,7 @@ class MCPToolCodeGenerator:
         self,
         server_name: str,
         tool_name: str,
-        tool_schema: Dict[str, Any],
+        tool_schema: dict[str, Any],
     ) -> str:
         """Generate Python wrapper code for a single MCP tool.
 
@@ -155,9 +154,9 @@ if __name__ == "__main__":
 
     def _build_function_params(
         self,
-        properties: Dict[str, Any],
-        required: List[str],
-    ) -> List[str]:
+        properties: dict[str, Any],
+        required: list[str],
+    ) -> list[str]:
         """Build function parameter list from JSON schema properties.
 
         Args:
@@ -203,7 +202,7 @@ if __name__ == "__main__":
         }
         return type_map.get(json_type, "Any")
 
-    def _get_default_value(self, param_schema: Dict[str, Any]) -> str:
+    def _get_default_value(self, param_schema: dict[str, Any]) -> str:
         """Get default value for optional parameter.
 
         Args:
@@ -222,8 +221,8 @@ if __name__ == "__main__":
     def _build_docstring(
         self,
         description: str,
-        properties: Dict[str, Any],
-        required: List[str],
+        properties: dict[str, Any],
+        required: list[str],
     ) -> str:
         """Build function docstring from schema.
 
@@ -253,7 +252,7 @@ if __name__ == "__main__":
 
         return indent("\n".join(lines), "    ")
 
-    def _build_args_dict(self, properties: Dict[str, Any]) -> str:
+    def _build_args_dict(self, properties: dict[str, Any]) -> str:
         """Build arguments dictionary for MCP call.
 
         Args:
@@ -271,7 +270,7 @@ if __name__ == "__main__":
     def generate_server_init(
         self,
         server_name: str,
-        tool_names: List[str],
+        tool_names: list[str],
     ) -> str:
         """Generate __init__.py for a server module.
 
@@ -501,7 +500,7 @@ async def cleanup():
 
         return code
 
-    def generate_tools_init(self, servers: List[str]) -> str:
+    def generate_tools_init(self, servers: list[str]) -> str:
         """Generate __init__.py for the tools/ directory.
 
         Args:

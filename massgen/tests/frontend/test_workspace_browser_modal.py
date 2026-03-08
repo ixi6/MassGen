@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for workspace-browser scanning safeguards."""
 
 from massgen.frontend.displays.textual.widgets.modals.browser_modals import (

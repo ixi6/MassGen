@@ -368,6 +368,10 @@ MassGen supports multiple ways to specify configurations:
    uv run massgen --config my-saved-config "Question"
    # Looks for ~/.config/massgen/agents/my-saved-config.yaml
 
+   # Quickstart with explicit output filename
+   uv run massgen --quickstart --config team-config
+   # Saves generated config to .massgen/team-config.yaml
+
 Viewing Results
 ---------------
 

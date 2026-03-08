@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Standalone MCP server that exposes the MassGen submit_checklist tool.
 
 This allows CLI-based backends (Codex) to use the checklist-gated voting
@@ -20,14 +19,41 @@ import argparse
 import json
 import logging
 import re
+import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import fastmcp
 
 logger = logging.getLogger(__name__)
 
 SERVER_NAME = "massgen_checklist"
+
+
+def _resolve_hook_middleware() -> Any:
+    """Return hook middleware class in both package and file-path launch modes."""
+    try:
+        from massgen.mcp_tools.hook_middleware import MassGenHookMiddleware
+
+        return MassGenHookMiddleware
+    except ImportError:
+        pass
+
+    try:
+        from .hook_middleware import MassGenHookMiddleware
+
+        return MassGenHookMiddleware
+    except ImportError:
+        pass
+
+    # fastmcp file-path launches can drop package context; add repo root explicitly.
+    project_root = str(Path(__file__).resolve().parents[2])
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    from massgen.mcp_tools.hook_middleware import MassGenHookMiddleware
+
+    return MassGenHookMiddleware
 
 
 async def create_server() -> fastmcp.FastMCP:
@@ -39,18 +65,32 @@ async def create_server() -> fastmcp.FastMCP:
         required=True,
         help="Path to JSON file containing checklist specs and state",
     )
+    parser.add_argument(
+        "--hook-dir",
+        type=str,
+        default=None,
+        help="Optional path to directory for hook IPC files (PostToolUse injection).",
+    )
     args = parser.parse_args()
 
     mcp = fastmcp.FastMCP(SERVER_NAME)
+
+    # Attach hook middleware for PostToolUse injection if hook_dir is configured
+    if args.hook_dir:
+        MassGenHookMiddleware = _resolve_hook_middleware()
+        mcp.add_middleware(MassGenHookMiddleware(Path(args.hook_dir)))
+        logger.info("Hook middleware attached (hook_dir=%s)", args.hook_dir)
     specs_path = Path(args.specs)
 
-    _register_checklist_tool(mcp, specs_path)
+    initial_specs = _read_specs(specs_path)
+    injection_dir = initial_specs.get("state", {}).get("planning_injection_dir")
+    _register_checklist_tool(mcp, specs_path, injection_dir=injection_dir)
 
     logger.info(f"Checklist MCP server ready (specs: {specs_path})")
     return mcp
 
 
-def _read_specs(specs_path: Path) -> Dict[str, Any]:
+def _read_specs(specs_path: Path) -> dict[str, Any]:
     """Read specs file, returning empty dict on error."""
     try:
         with open(specs_path) as f:
@@ -69,9 +109,372 @@ def _extract_score(entry: Any) -> int:
     return 0
 
 
-def _resolve_report_file(report_path: str, state: Dict[str, Any]) -> tuple[Path | None, str | None]:
+def _find_plateaued_criteria(
+    current_items: list[dict],
+    checklist_history: list[dict],
+    items: list[str] | None = None,
+    item_categories: dict[str, str] | None = None,
+    min_rounds: int = 2,
+) -> list[dict]:
+    """Return detail dicts for criteria whose scores haven't improved.
+
+    Each returned dict contains:
+    - id: criterion ID (e.g. "E1")
+    - text: criterion text (from items list)
+    - category: must/should/could
+    - score_history: list of scores across rounds (prior + current)
+    - current_score: latest score
+
+    This rich detail is designed to be passed directly to quality/novelty
+    subagents so they have full context about what's stuck and by how much.
+    """
+    if len(checklist_history) < min_rounds:
+        return []
+    items = items or []
+    item_categories = item_categories or {}
+    current_by_id = {d["id"]: d["score"] for d in current_items}
+    plateaued = []
+    for cid, current_score in current_by_id.items():
+        stuck = True
+        score_history = []
+        for entry in checklist_history[-min_rounds:]:
+            prev_items = {d["id"]: d["score"] for d in entry.get("items_detail", [])}
+            prev_score = prev_items.get(cid)
+            score_history.append(prev_score)
+            if prev_score is None or current_score > prev_score + 1:
+                stuck = False
+                break
+        if stuck:
+            idx = int(cid[1:]) - 1
+            score_history.append(current_score)
+            plateaued.append(
+                {
+                    "id": cid,
+                    "text": items[idx] if idx < len(items) else cid,
+                    "category": item_categories.get(cid, "unknown"),
+                    "score_history": score_history,
+                    "current_score": current_score,
+                },
+            )
+    return plateaued
+
+
+_VALID_IMPACTS = {"transformative", "structural", "incremental"}
+_MAX_DIAGNOSTIC_ARTIFACT_PATHS = 20
+
+
+def _extract_absolute_paths_from_text(text: str, max_paths: int = _MAX_DIAGNOSTIC_ARTIFACT_PATHS) -> list[str]:
+    """Extract unique absolute Unix paths from free-form text.
+
+    This is used to surface artifact/report paths already captured by evaluator
+    reports so novelty/quality subagents can inspect evidence directly instead
+    of re-running evaluation.
+    """
+    if not text or max_paths <= 0:
+        return []
+
+    # Match path-like tokens beginning with "/" while avoiding URL "//" segments.
+    raw_tokens = re.findall(r"(?<![:/])(/[^\s`\"'<>|]+)", text)
+    seen: set[str] = set()
+    extracted: list[str] = []
+    for token in raw_tokens:
+        cleaned = token.rstrip(".,;:!?)]}\"'")
+        if not cleaned:
+            continue
+        if cleaned.startswith("//"):
+            continue
+        if not Path(cleaned).is_absolute():
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        extracted.append(cleaned)
+        if len(extracted) >= max_paths:
+            break
+    return extracted
+
+
+def _normalize_evaluation_input_packet(
+    latest_evaluation: dict[str, Any] | None,
+    failed_criteria: list[str],
+) -> dict[str, Any]:
+    """Return a stable, JSON-serializable evaluation packet for subagent handoff."""
+    source = latest_evaluation if isinstance(latest_evaluation, dict) else {}
+    packet: dict[str, Any] = {
+        "failed_criteria": list(source.get("failed_criteria") or failed_criteria or []),
+        "failing_criteria_detail": list(source.get("failing_criteria_detail") or []),
+        "plateaued_criteria": list(source.get("plateaued_criteria") or []),
+        "checklist_explanation": str(source.get("checklist_explanation") or ""),
+        "diagnostic_report_path": str(source.get("diagnostic_report_path") or ""),
+        "diagnostic_report_artifact_paths": [],
+    }
+    raw_paths = source.get("diagnostic_report_artifact_paths") or []
+    if isinstance(raw_paths, list):
+        clean_paths: list[str] = []
+        for path_value in raw_paths:
+            path_text = str(path_value).strip()
+            if not path_text:
+                continue
+            if path_text not in clean_paths:
+                clean_paths.append(path_text)
+            if len(clean_paths) >= _MAX_DIAGNOSTIC_ARTIFACT_PATHS:
+                break
+        packet["diagnostic_report_artifact_paths"] = clean_paths
+    return packet
+
+
+def _build_novelty_quality_task_templates(evaluation_input: dict[str, Any]) -> dict[str, str]:
+    """Create copy-ready task templates for novelty and quality_rethinking subagents."""
+    payload = json.dumps(evaluation_input, indent=2, ensure_ascii=False)
+    shared_preamble = (
+        "Use the Evaluation Input (verbatim) block below as source of truth. "
+        "Do NOT re-evaluate, re-score, or repeat checklist analysis.\n"
+        "If diagnostic report/artifact paths are present, inspect them first and ground your proposals in that evidence.\n\n"
+        "Evaluation Input (verbatim):\n"
+    )
+    novelty_template = "You are the novelty subagent. Propose 2-3 fundamentally different directions to break the plateau.\n" + shared_preamble + payload
+    quality_template = "You are the quality_rethinking subagent. Propose 3-5 targeted craft upgrades within current structure.\n" + shared_preamble + payload
+    return {
+        "novelty_task_template": novelty_template,
+        "quality_rethinking_task_template": quality_template,
+    }
+
+
+def _normalize_improvement_entry(entry: Any) -> dict[str, Any]:
+    """Normalize an improvement entry to {"plan": str, "sources": list, "impact": str}."""
+    if isinstance(entry, str):
+        return {"plan": entry, "sources": [], "impact": "incremental"}
+    if isinstance(entry, dict):
+        impact = entry.get("impact", "incremental")
+        if impact not in _VALID_IMPACTS:
+            impact = "incremental"
+        return {
+            "plan": str(entry.get("plan", "")),
+            "sources": list(entry.get("sources", [])),
+            "impact": impact,
+        }
+    return {"plan": str(entry), "sources": [], "impact": "incremental"}
+
+
+def _normalize_preserve_entry(entry: Any) -> dict[str, str]:
+    """Normalize a preserve entry to {"what": str, "source": str}."""
+    if isinstance(entry, str):
+        return {"what": entry, "source": ""}
+    if isinstance(entry, dict):
+        return {
+            "what": str(entry.get("what", "")),
+            "source": str(entry.get("source", "")),
+        }
+    return {"what": str(entry), "source": ""}
+
+
+def evaluate_proposed_improvements(
+    improvements: dict[str, Any],
+    failed_criteria: list[str],
+    items: list[str],
+    all_criteria_ids: list[str] | None = None,
+    preserve: dict[str, Any] | None = None,
+    state: dict[str, Any] | None = None,
+    latest_evaluation: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Validate that improvements cover all failing criteria and preserve strengths."""
+    if not isinstance(improvements, dict):
+        return {"valid": False, "error": "improvements must be a dict mapping criterion IDs to lists"}
+
+    if not failed_criteria:
+        return {"valid": False, "error": "No failed criteria to improve"}
+
+    missing = [cid for cid in failed_criteria if cid not in improvements]
+    empty = [cid for cid in failed_criteria if cid in improvements and not improvements[cid]]
+
+    if missing or empty:
+        issues = []
+        if missing:
+            issues.append(f"Missing improvements for: {', '.join(missing)}")
+        if empty:
+            issues.append(f"Empty improvements for: {', '.join(empty)}")
+        return {
+            "valid": False,
+            "error": "; ".join(issues),
+            "missing_criteria": missing,
+            "empty_criteria": empty,
+            "failed_criteria": failed_criteria,
+        }
+
+    # --- Preserve validation (only when all_criteria_ids is provided) ---
+    preserve = preserve or {}
+    normalized_preserve: dict[str, dict[str, str]] = {}
+
+    if all_criteria_ids is not None:
+        # Require at least one preserve entry when criteria exist
+        if all_criteria_ids and not preserve:
+            return {
+                "valid": False,
+                "error": ("Preserve is required: specify what to protect from regression. " f"Criteria available: {', '.join(all_criteria_ids)}"),
+            }
+
+        # Validate each preserve entry
+        for cid, entry in preserve.items():
+            if cid not in all_criteria_ids:
+                return {
+                    "valid": False,
+                    "error": f"Preserve key {cid} is not a valid criterion ID. Valid: {', '.join(all_criteria_ids)}",
+                }
+            norm = _normalize_preserve_entry(entry)
+            if not norm["what"].strip():
+                return {
+                    "valid": False,
+                    "error": f"Preserve entry for {cid} has empty 'what' — describe what to protect.",
+                }
+            normalized_preserve[cid] = norm
+    else:
+        # Backward compat: normalize whatever was passed but don't enforce
+        for cid, entry in preserve.items():
+            normalized_preserve[cid] = _normalize_preserve_entry(entry)
+
+    # --- Impact gate: require at least min_non_incremental (structural/transformative) ---
+    _state = state or {}
+    improvements_cfg = _state.get("improvements", {})
+    min_transformative = improvements_cfg.get("min_transformative", 0)
+    min_structural = improvements_cfg.get("min_structural", 0)
+    min_non_incremental = improvements_cfg.get("min_non_incremental", 1)
+
+    all_entries = [_normalize_improvement_entry(e) for entries in improvements.values() for e in entries]
+    transformative_count = sum(1 for e in all_entries if e.get("impact") == "transformative")
+    structural_count = sum(1 for e in all_entries if e.get("impact") == "structural")
+    non_incremental_count = transformative_count + structural_count
+
+    impact_failures = []
+    if transformative_count < min_transformative:
+        impact_failures.append(f"transformative: {transformative_count}/{min_transformative}")
+    if structural_count < min_structural:
+        impact_failures.append(f"structural: {structural_count}/{min_structural}")
+    if non_incremental_count < min_non_incremental:
+        impact_failures.append(
+            f"non-incremental combined: {non_incremental_count}/{min_non_incremental}",
+        )
+
+    if impact_failures:
+        return {
+            "valid": False,
+            "error": (
+                f"Improvement impact requirements not met ({', '.join(impact_failures)}). "
+                "A round at this cost needs bolder changes. Consider spawning a novelty or "
+                "quality_rethinking subagent in background to generate stronger directions, "
+                "then revise your proposal."
+            ),
+        }
+
+    # --- Build task plan: improvements first, then single verify_preserve checkpoint ---
+    task_plan: list[dict[str, Any]] = []
+    answer_count = _state.get("agent_answer_count", 0)
+    try:
+        answer_count = int(answer_count)
+    except (TypeError, ValueError):
+        answer_count = 0
+    spawn_novelty = bool(_state.get("enable_novelty_on_iteration")) and answer_count >= 1
+    spawn_quality_rethinking = bool(_state.get("enable_quality_rethink_on_iteration")) and answer_count >= 1
+    should_inject_iteration_spawn = bool(_state.get("subagents_enabled")) and (spawn_novelty or spawn_quality_rethinking)
+
+    if should_inject_iteration_spawn and failed_criteria:
+        evaluation_input = _normalize_evaluation_input_packet(latest_evaluation, failed_criteria)
+        task_plan.append(
+            {
+                "id": "novelty_quality_spawn",
+                "type": "novelty_quality_spawn",
+                "description": (
+                    "Spawn novelty and/or quality_rethinking subagents in background "
+                    "IMMEDIATELY (before implementing improvements). Use the provided "
+                    "`subagent_task_templates` and paste `evaluation_input` verbatim so "
+                    "subagents can propose improvements without re-evaluating. Integrate "
+                    "their output before submitting your new answer. If neither type is "
+                    "available, skip this task."
+                ),
+                "priority": "high",
+                "verification": "Novelty/quality subagents spawned via spawn_subagents(background=True)",
+                "verification_method": "list_subagents() shows spawned novelty/quality subagents",
+                "metadata": {
+                    "type": "novelty_quality_spawn",
+                    "failing_criteria": list(failed_criteria),
+                    "spawn_novelty": spawn_novelty,
+                    "spawn_quality_rethinking": spawn_quality_rethinking,
+                    "evaluation_input": evaluation_input,
+                    "subagent_task_templates": _build_novelty_quality_task_templates(evaluation_input),
+                },
+            },
+        )
+
+    # Improvement entries
+    for cid in failed_criteria:
+        criterion_idx = int(cid[1:]) - 1
+        criterion_text = items[criterion_idx] if criterion_idx < len(items) else cid
+        for imp_entry in improvements[cid]:
+            norm = _normalize_improvement_entry(imp_entry)
+            task_entry = {
+                "type": "improve",
+                "criterion_id": cid,
+                "criterion": criterion_text,
+                "plan": norm["plan"],
+                "sources": norm["sources"],
+                "impact": norm["impact"],
+                # Keep backward-compat "improvement" key
+                "improvement": norm["plan"],
+            }
+            if norm["impact"] in ("structural", "transformative"):
+                # Advisory delegation signal; agent still chooses whether to delegate.
+                task_entry["subagent_name"] = "builder"
+            task_plan.append(task_entry)
+
+    # Single verify_preserve checkpoint at the END (not N individual preserve rows)
+    if normalized_preserve:
+        preserve_items = [{"criterion_id": cid, "what": p["what"], "source": p["source"]} for cid, p in normalized_preserve.items()]
+        verify_description = (
+            "Before submitting: verify these strengths haven't regressed — " "confirm each preserved item is present in the actual output, " "and that passing criteria scores haven't dropped."
+        )
+        if bool(_state.get("subagents_enabled")):
+            verify_description += (
+                " If subagents are enabled, delegate this checkpoint to an evaluator or critic "
+                "subagent for explicit before-vs-after comparison and regression checks, "
+                "without revealing which answer is yours."
+            )
+
+        verify_task: dict[str, Any] = {
+            "type": "verify_preserve",
+            "description": verify_description,
+            "items": preserve_items,
+            "priority": "high",
+        }
+        if bool(_state.get("subagents_enabled")):
+            # Advisory: evaluator subagent is a strong fit for regression/comparison checks.
+            verify_task["subagent_name"] = "evaluator"
+        task_plan.append(verify_task)
+
+    result: dict[str, Any] = {
+        "valid": True,
+        "task_plan": task_plan,
+        "message": (
+            f"Improvements validated for {len(failed_criteria)} criteria. "
+            f"{len(normalized_preserve)} criteria marked for preservation. "
+            "Add each item from task_plan to your task plan tool, then "
+            "execute them. The verify_preserve item at the end is a final "
+            "guardrail — confirm preserved strengths are intact before submitting. "
+            "Do not skip criteria or substitute easier work."
+        ),
+    }
+    if normalized_preserve:
+        result["preserve"] = normalized_preserve
+    return result
+
+
+def _resolve_report_file(report_path: str, state: dict[str, Any]) -> tuple[Path | None, str | None]:
     """Resolve report path to a workspace-local absolute path."""
-    raw_path = (report_path or "").strip()
+    if report_path is None:
+        raw_path = ""
+    elif isinstance(report_path, str):
+        raw_path = report_path.strip()
+    else:
+        return None, "Invalid `report_path`: expected a string path."
+
     if not raw_path:
         return None, "Missing `report_path`."
 
@@ -91,145 +494,347 @@ def _resolve_report_file(report_path: str, state: Dict[str, Any]) -> tuple[Path 
     return candidate, None
 
 
-def _evaluate_gap_report(report_path: str, state: Dict[str, Any]) -> Dict[str, Any]:
-    """Evaluate markdown gap report quality independently of checklist scores."""
-    require_report = bool(state.get("require_gap_report", True))
-    report_cutoff = int(state.get("report_cutoff", 70))
+_DIAGNOSTIC_REPORT_MIN_LENGTH = 100
 
-    result: Dict[str, Any] = {
-        "required": require_report,
-        "provided": bool((report_path or "").strip()),
-        "path": (report_path or "").strip(),
-        "score": 0,
-        "cutoff": report_cutoff,
-        "passed": not require_report,
+
+def _evaluate_gap_report(report_path: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Check diagnostic report file existence, substance, and capture content.
+
+    When ``require_diagnostic_report`` is True in state, the report is gated:
+    missing, empty, or trivially short reports cause ``passed=False``, which
+    the caller uses to override the verdict to iterate. No keyword or
+    heuristic matching is performed — the system prompt tells agents what
+    sections to write, and we trust that (matching GEPA's approach).
+
+    Report content is captured in ``result["content"]`` for logging and
+    potential forwarding to future rounds.
+    """
+    require_report = bool(state.get("require_diagnostic_report", False))
+    if report_path is None:
+        report_path_text = ""
+    elif isinstance(report_path, str):
+        report_path_text = report_path.strip()
+    else:
+        report_path_text = ""
+
+    result: dict[str, Any] = {
+        "provided": bool(report_path_text),
+        "path": report_path_text,
+        "passed": True,  # default: pass (backward compat when gate inactive)
+        "gate_active": require_report,
+        "content": None,
         "issues": [],
-        "categories_hit": [],
-        "actionable_items": 0,
-        "has_good_enough_section": False,
     }
 
-    if not require_report and not result["provided"]:
+    if not result["provided"]:
+        if require_report:
+            result["passed"] = False
+            result["issues"].append(
+                "Diagnostic report is required before submitting scores. "
+                "Write a markdown diagnostic report covering Failure Patterns, "
+                "Root Causes, and Goal Alignment, then provide its path via report_path.",
+            )
         return result
 
     resolved, error = _resolve_report_file(report_path, state)
     if error:
-        if not require_report:
-            return result
         result["issues"].append(error)
+        if require_report:
+            result["passed"] = False
         return result
     if resolved is None:
+        if require_report:
+            result["passed"] = False
         return result
 
     result["resolved_path"] = str(resolved)
     if not resolved.exists():
         result["issues"].append(f"Report file not found: {resolved}")
+        if require_report:
+            result["passed"] = False
         return result
     if not resolved.is_file():
         result["issues"].append(f"Report path is not a file: {resolved}")
+        if require_report:
+            result["passed"] = False
         return result
 
     try:
         report_text = resolved.read_text(encoding="utf-8")
     except Exception as exc:
         result["issues"].append(f"Unable to read report file: {exc}")
+        if require_report:
+            result["passed"] = False
         return result
 
-    stripped = report_text.strip()
-    if not stripped:
+    if not report_text.strip():
         result["issues"].append("Report file is empty.")
+        if require_report:
+            result["passed"] = False
         return result
 
-    lowered = stripped.lower()
-    categories = {
-        "output_quality": [
-            "output quality",
-            "result quality",
-            "end result",
-            "deliverable",
-            "user perspective",
-            "craft",
-            "impression",
-            "richness",
-            "artifact",
-            "proud to deliver",
-        ],
-        "requirements_scope": ["requirements", "scope", "user intent", "acceptance criteria"],
-        "correctness": ["correctness", "logic", "bug", "edge case", "failure mode"],
-        "quality_polish": ["ux", "ui", "polish", "clarity", "content quality", "accessibility", "a11y"],
-        "performance_reliability": ["performance", "latency", "reliability", "robustness", "error handling"],
-        "security_safety": ["security", "privacy", "safety", "permissions", "compliance"],
-        "testing_validation": ["test", "validation", "verification", "observability", "monitoring", "metrics"],
-        "decision_quality": [
-            "decision",
-            "changedoc",
-            "rationale",
-            "alternative",
-            "traceability",
-            "implementation field",
-            "origin",
-            "missing decision",
-            "weak rationale",
-        ],
-    }
-    categories_hit = [category for category, keywords in categories.items() if any(keyword in lowered for keyword in keywords)]
-    result["categories_hit"] = categories_hit
+    result["file_exists"] = True
+    result["content"] = report_text
+    result["artifact_paths"] = _extract_absolute_paths_from_text(report_text)
 
-    actionable_items = len(re.findall(r"(?m)^\s*(?:[-*]|\d+[.)])\s+", stripped))
-    result["actionable_items"] = actionable_items
-    result["has_good_enough_section"] = bool(
-        re.search(r"(?i)\b(already good enough|good enough|already strong|keep as[- ]is)\b", stripped),
-    )
+    has_multimodal = bool(state.get("has_multimodal_tools", False))
+    min_length = 300 if has_multimodal else _DIAGNOSTIC_REPORT_MIN_LENGTH
 
-    length_score = min(25, int(len(stripped) / 40))
-    coverage_score = min(35, len(categories_hit) * 5)
-    actionability_score = min(25, actionable_items * 2)
-    good_enough_score = 15 if result["has_good_enough_section"] else 0
-    score = length_score + coverage_score + actionability_score + good_enough_score
-    result["score"] = score
-
-    if len(categories_hit) < 5:
-        result["issues"].append("Report is not broad enough across evaluation angles.")
-    if actionable_items < 6:
-        result["issues"].append("Report needs more concrete, actionable improvement items.")
-    if not result["has_good_enough_section"]:
-        result["issues"].append("Report must include what is already good enough.")
-    if score < report_cutoff:
-        result["issues"].append(
-            f"Report score {score} is below cutoff {report_cutoff}.",
-        )
-
-    result["passed"] = score >= report_cutoff and not result["issues"]
-    if not require_report:
-        # Keep diagnostics, but don't fail the gate when config disables it.
-        result["passed"] = True
-        result["issues"] = []
+    if require_report and len(report_text.strip()) < min_length:
+        result["passed"] = False
+        msg = "Report is too short to contain meaningful diagnostic analysis. " "Include Failure Patterns, Root Causes, and Goal Alignment sections."
+        if has_multimodal:
+            msg += " When visual evaluation tools are available, your diagnostic " "report must include specific findings from read_media analysis."
+        result["issues"].append(msg)
 
     return result
 
 
+def _is_per_agent_scores(scores: dict[str, Any], item_prefix: str) -> bool:
+    """Return True if scores is per-agent format (keyed by agent label, not E/T-prefixed)."""
+    if not scores:
+        return False
+    return not any(k.startswith(item_prefix) or k.startswith("T") or k.startswith("E") for k in scores)
+
+
+def _extract_submitted_agent_labels(scores_payload: Any, item_prefix: str = "E") -> set[str]:
+    """Extract top-level agent labels from submit_checklist scores payload."""
+    if not isinstance(scores_payload, dict) or not scores_payload:
+        return set()
+    top_level_keys = {str(k) for k in scores_payload.keys()}
+    if any(k.startswith(item_prefix) or k.startswith("E") or k.startswith("T") for k in top_level_keys):
+        return set()
+    return top_level_keys
+
+
+def _normalize_pending_recheck_labels(raw_labels: Any) -> set[str]:
+    """Normalize pending checklist recheck labels from state payloads."""
+    if isinstance(raw_labels, str):
+        label = raw_labels.strip()
+        return {label} if label else set()
+    if isinstance(raw_labels, (list, tuple, set)):
+        normalized: set[str] = set()
+        for raw in raw_labels:
+            label = str(raw).strip()
+            if label:
+                normalized.add(label)
+        return normalized
+    return set()
+
+
+def _extract_flat_scores(
+    per_agent: dict[str, Any],
+    item_prefix: str,
+    n_items: int,
+) -> tuple[str, dict[str, Any], dict[str, dict[str, int]]]:
+    """Find the best agent by aggregate score and return (best_label, flat_scores, per_agent_summary).
+
+    per_agent_summary maps agent_label -> {criterion: score} for inclusion in the response.
+    """
+    per_agent_summary: dict[str, dict[str, int]] = {}
+    best_label = ""
+    best_total = -1
+    best_scores: dict[str, Any] = {}
+
+    for agent_label, agent_scores in per_agent.items():
+        if not isinstance(agent_scores, dict):
+            continue
+        total = sum(_extract_score(agent_scores.get(f"{item_prefix}{i+1}", agent_scores.get(f"E{i+1}", 0))) for i in range(n_items))
+        summary = {f"{item_prefix}{i+1}": _extract_score(agent_scores.get(f"{item_prefix}{i+1}", agent_scores.get(f"E{i+1}", 0))) for i in range(n_items)}
+        per_agent_summary[agent_label] = summary
+        if total > best_total:
+            best_total = total
+            best_label = agent_label
+            best_scores = agent_scores
+
+    return best_label, best_scores, per_agent_summary
+
+
+def _validation_error_payload(
+    *,
+    explanation: str,
+    report_eval: dict[str, Any],
+    required: int,
+    error_code: str,
+    incomplete_scores: bool = False,
+    report_gate_triggered: bool = False,
+) -> dict[str, Any]:
+    """Build a standardized validation-error response payload."""
+    payload: dict[str, Any] = {
+        "status": "validation_error",
+        "requires_resubmission": True,
+        "error_code": error_code,
+        "explanation": explanation,
+        "incomplete_scores": bool(incomplete_scores),
+        "true_count": 0,
+        "required": required,
+        "items": [],
+        "failed_criteria": [],
+        "plateaued_criteria": [],
+        "report": report_eval,
+        "report_gate_triggered": bool(report_gate_triggered),
+    }
+    return payload
+
+
 def evaluate_checklist_submission(
-    scores: Dict[str, Any],
-    improvements: str,
+    scores: dict[str, Any],
     report_path: str,
     items: list,
-    state: Dict[str, Any],
-) -> Dict[str, Any]:
+    state: dict[str, Any],
+    checklist_history: list[dict] | None = None,
+) -> dict[str, Any]:
     """Evaluate checklist submission and return verdict payload used by stdio + SDK."""
-    if not isinstance(scores, dict):
-        scores = {}
-
     terminate_action = state.get("terminate_action", "vote")
     iterate_action = state.get("iterate_action", "new_answer")
     has_existing_answers = state.get("has_existing_answers", False)
     required = state.get("required", len(items))
     cutoff = state.get("cutoff", 70)
+    decomposition_mode = bool(state.get("decomposition_mode", False))
+    current_answer_label = str(state.get("current_answer_label") or "").strip()
+
+    # Determine item prefix: use E-prefix (new default), but accept T-prefix
+    # submissions for backwards compatibility
+    item_prefix = state.get("item_prefix", "E")
+
+    # Detect per-agent format and normalise to flat scores for verdict logic.
+    # Per-agent: {"agent1": {"E1": ..., "E2": ...}, "agent2": {...}}
+    # Flat (legacy): {"E1": ..., "E2": ...}
+    best_agent: str | None = None
+    per_agent_scores: dict[str, dict[str, int]] | None = None
+    available_agent_labels: list[str] = state.get("available_agent_labels") or []
+
+    if not isinstance(scores, dict):
+        report_eval = _evaluate_gap_report(report_path, state)
+        return _validation_error_payload(
+            explanation="Invalid `scores`: expected a JSON object.",
+            report_eval=report_eval,
+            required=required,
+            error_code="scores_type_invalid",
+        )
+
+    if _is_per_agent_scores(scores, item_prefix):
+        if decomposition_mode:
+            if current_answer_label and isinstance(scores.get(current_answer_label), dict):
+                scores = scores[current_answer_label]
+            elif len(scores) == 1:
+                only_scores = next(iter(scores.values()))
+                if isinstance(only_scores, dict):
+                    scores = only_scores
+                else:
+                    report_eval = _evaluate_gap_report(report_path, state)
+                    return _validation_error_payload(
+                        explanation=(
+                            "Decomposition mode checklist evaluation must score your current "
+                            "subtask output. Submit flat scores (`E1`, `E2`, ...) or provide "
+                            f"your current answer label ({current_answer_label or 'current answer label'}) only."
+                        ),
+                        report_eval=report_eval,
+                        required=required,
+                        error_code="decomposition_scores_invalid",
+                    )
+            else:
+                report_eval = _evaluate_gap_report(report_path, state)
+                return _validation_error_payload(
+                    explanation=(
+                        "Decomposition mode checklist evaluation must score your current "
+                        "subtask output, not rank all peer answers. Submit flat scores "
+                        f"(`E1`, `E2`, ...) or provide only your current answer label ({current_answer_label or 'current answer label'})."
+                    ),
+                    report_eval=report_eval,
+                    required=required,
+                    error_code="decomposition_scores_invalid",
+                )
+        else:
+            # Validate completeness for ALL agents before selecting best.
+            expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}
+            incomplete_agents = []
+            for agent_label, agent_scores in scores.items():
+                if not isinstance(agent_scores, dict):
+                    continue
+                agent_keys = {k.replace("T", item_prefix, 1) if k.startswith("T") else k for k in agent_scores}
+                missing = sorted(expected_keys - agent_keys)
+                if missing:
+                    incomplete_agents.append((agent_label, missing))
+            if incomplete_agents and has_existing_answers:
+                report_eval = _evaluate_gap_report(report_path, state)
+                details = "; ".join(f"{a}: missing {', '.join(m)}" for a, m in incomplete_agents)
+                return _validation_error_payload(
+                    explanation=(f"Incomplete per-agent submission: {details}. " f"You must score ALL {len(items)} criteria for EVERY agent. " "Resubmit with complete scores."),
+                    report_eval=report_eval,
+                    required=required,
+                    error_code="incomplete_agent_criteria",
+                    incomplete_scores=True,
+                )
+            # Validate all available agents are covered when labels are known.
+            if available_agent_labels and has_existing_answers:
+                missing_agents = sorted(set(available_agent_labels) - set(scores.keys()))
+                if missing_agents:
+                    report_eval = _evaluate_gap_report(report_path, state)
+                    return _validation_error_payload(
+                        explanation=(
+                            f"Missing scores for available agents: {', '.join(missing_agents)}. "
+                            "You must score ALL agents you have context for: "
+                            f"{', '.join(sorted(available_agent_labels))}. "
+                            "Resubmit with per-agent scores covering every agent."
+                        ),
+                        report_eval=report_eval,
+                        required=required,
+                        error_code="missing_agent_scores",
+                        incomplete_scores=True,
+                    )
+            best_agent, scores, per_agent_scores = _extract_flat_scores(scores, item_prefix, len(items))
+    elif len(available_agent_labels) >= 2 and has_existing_answers and not decomposition_mode:
+        # Flat format submitted but multiple agents are available — require per-agent format.
+        report_eval = _evaluate_gap_report(report_path, state)
+        return _validation_error_payload(
+            explanation=(
+                f"You submitted flat scores but you have {len(available_agent_labels)} agents available "
+                f"({', '.join(sorted(available_agent_labels))}). "
+                "Use per-agent format to score ALL available agents: "
+                f'{{"{available_agent_labels[0]}": {{"E1": {{"score": N, "reasoning": "..."}}, ...}}, '
+                f'"{available_agent_labels[1]}": {{...}}}}.'
+            ),
+            report_eval=report_eval,
+            required=required,
+            error_code="flat_scores_disallowed",
+            incomplete_scores=True,
+        )
+
+    # Reject incomplete submissions — agent must score ALL criteria
+    expected_keys = {f"{item_prefix}{i+1}" for i in range(len(items))}
+    submitted_keys = set(scores.keys())
+    # Accept both E-prefix and T-prefix
+    submitted_normalized = set()
+    for k in submitted_keys:
+        if k.startswith("T"):
+            submitted_normalized.add(k.replace("T", item_prefix, 1))
+        elif k.startswith("E"):
+            submitted_normalized.add(k)
+        else:
+            submitted_normalized.add(k)
+    missing_keys = sorted(expected_keys - submitted_normalized)
+
+    if missing_keys and has_existing_answers:
+        report_eval = _evaluate_gap_report(report_path, state)
+        return _validation_error_payload(
+            explanation=(
+                f"Incomplete submission: missing scores for {', '.join(missing_keys)}. "
+                f"You must score ALL {len(items)} criteria ({item_prefix}1-{item_prefix}{len(items)}). "
+                "Resubmit with scores for every criterion."
+            ),
+            report_eval=report_eval,
+            required=required,
+            error_code="missing_criteria_scores",
+            incomplete_scores=True,
+        )
 
     items_detail = []
     true_count = 0
     for i, _item_text in enumerate(items):
-        key = f"T{i+1}"
-        entry = scores.get(key, 0)
+        key = f"{item_prefix}{i+1}"
+        # Accept both E-prefix and T-prefix submissions for backwards compat
+        entry = scores.get(key, scores.get(f"T{i+1}", scores.get(f"E{i+1}", 0)))
         score = _extract_score(entry)
         passed = score >= cutoff
         if passed:
@@ -237,66 +842,348 @@ def evaluate_checklist_submission(
         items_detail.append({"id": key, "score": score, "passed": passed})
 
     report_eval = _evaluate_gap_report(report_path, state)
-    report_gate_triggered = False
+
+    plateaued_failing: list[dict] = []
 
     if not has_existing_answers:
         verdict = iterate_action
         explanation = f"First answer — no existing answers to evaluate. Verdict: {verdict}."
     else:
+        # Verdict determined solely by item scores
         verdict = terminate_action if true_count >= required else iterate_action
-        if report_eval.get("required", True) and not report_eval.get("passed", False):
-            verdict = iterate_action
-            report_gate_triggered = True
+        failed_ids = [d["id"] for d in items_detail if not d["passed"]]
+        failed_set = set(failed_ids)
 
         if verdict == iterate_action:
-            failed_ids = [d["id"] for d in items_detail if not d["passed"]]
-            improvements_text = improvements.strip() if improvements else ""
             explanation = f"{true_count} of {len(items)} items passed (required: {required}). " f"Verdict: {verdict}. "
             if failed_ids:
                 explanation += f"Items that need improvement: {', '.join(failed_ids)}. "
-            if report_gate_triggered:
-                explanation += "Gap report quality is not yet sufficient; expand the report across " "more angles with more concrete actions before stopping. "
-            explanation += "Your new answer MUST make material changes — do NOT simply copy or " "resubmit the same content."
-            if improvements_text:
-                explanation += (
-                    f" Your own improvements analysis identified: {improvements_text} "
-                    f"— use this as your implementation plan. The result must be "
-                    f"obviously better, not just marginally different."
-                )
+
+            # Per-criterion plateau → targeted subagent guidance
+            _item_categories = state.get("item_categories", {})
+            plateaued_all = _find_plateaued_criteria(
+                items_detail,
+                checklist_history or [],
+                items=items,
+                item_categories=_item_categories,
+                min_rounds=2,
+            )
+            plateaued_failing = [d for d in plateaued_all if d["id"] in failed_set]
+
+            _quality_rethinking_enabled = state.get(
+                "quality_rethinking_subagent_enabled",
+                False,
+            )
+            _novelty_enabled = state.get("novelty_subagent_enabled", False)
+            _answer_count = state.get("agent_answer_count", 0)
+            try:
+                _answer_count = int(_answer_count)
+            except (TypeError, ValueError):
+                _answer_count = 0
+            _iter_novelty_enabled = bool(state.get("enable_novelty_on_iteration")) and _answer_count >= 1
+            _iter_quality_enabled = bool(state.get("enable_quality_rethink_on_iteration")) and _answer_count >= 1
+            _spawn_novelty = _novelty_enabled and _iter_novelty_enabled
+            _spawn_quality = _quality_rethinking_enabled and _iter_quality_enabled
+
+            if has_existing_answers and plateaued_failing:
+                # Build score trajectory strings like "E5 (should, scores: 5→6→6)"
+                trajectory_parts = []
+                for pd in plateaued_failing:
+                    scores_str = "\u2192".join(str(s) for s in pd["score_history"])
+                    trajectory_parts.append(
+                        f"{pd['id']} ({pd['category']}, scores: {scores_str})",
+                    )
+                plateaued_str = ", ".join(trajectory_parts)
+                if _quality_rethinking_enabled and _novelty_enabled:
+                    explanation += (
+                        f"Criteria {plateaued_str} have plateaued. "
+                        "Spawn a quality_rethinking subagent AND a novelty subagent "
+                        "side-by-side in background \u2014 pass each the "
+                        "plateaued_criteria detail from this result (it contains "
+                        "criterion text, category, and full score history). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
+                elif _quality_rethinking_enabled:
+                    explanation += (
+                        f"Criteria {plateaued_str} have plateaued. "
+                        "Spawn a quality_rethinking subagent in background \u2014 pass "
+                        "it the plateaued_criteria detail from this result. It will "
+                        "propose per-element craft improvements targeted at raising "
+                        "these specific scores. "
+                    )
+                elif _novelty_enabled:
+                    explanation += (
+                        f"Criteria {plateaued_str} have plateaued. "
+                        "Spawn a novelty subagent in background \u2014 pass it the "
+                        "plateaued_criteria detail from this result. It will propose "
+                        "fundamentally different approaches to break through. "
+                    )
+
+            # Iteration-trigger mode: fire configured quality/novelty guidance
+            # on round 2+ (not just when criteria plateau).
+            elif failed_ids and (_spawn_quality or _spawn_novelty):
+                if _spawn_quality and _spawn_novelty:
+                    explanation += (
+                        "Spawn a quality_rethinking subagent AND a novelty subagent "
+                        "side-by-side in background \u2014 pass each the "
+                        "failing_criteria_detail from this result (it contains "
+                        "criterion text and category for every failing criterion). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
+                elif _spawn_quality:
+                    explanation += (
+                        "Spawn a quality_rethinking subagent in background \u2014 pass "
+                        "it the failing_criteria_detail from this result (it contains "
+                        "criterion text and category for every failing criterion). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
+                elif _spawn_novelty:
+                    explanation += (
+                        "Spawn a novelty subagent in background \u2014 pass it the "
+                        "failing_criteria_detail from this result (it contains "
+                        "criterion text and category for every failing criterion). "
+                        "Meanwhile, proceed with propose_improvements and start "
+                        "implementing. Integrate subagent proposals when they return. "
+                    )
+
+            explanation += "NEXT STEP: Call `propose_improvements` with specific improvements " "for each failing criterion. This is required before implementing."
         else:
-            explanation = f"{true_count} of {len(items)} items passed (required: {required}). " f"Verdict: {verdict}."
+            explanation = f"{true_count} of {len(items)} items passed (required: {required}). Verdict: {verdict}."
 
-    report_summary = f" Gap report score: {report_eval.get('score', 0)}/{report_eval.get('cutoff', 70)} " f"({'pass' if report_eval.get('passed') else 'fail'})."
-    if report_eval.get("issues"):
-        report_summary += f" Report issues: {'; '.join(report_eval['issues'])}."
-    explanation += report_summary
+    # Apply diagnostic report gate (skip on first answer — nothing to diagnose yet).
+    # Missing/invalid report is treated as a validation error: caller must fix and resubmit.
+    report_gate_triggered = False
+    if has_existing_answers and not report_eval.get("passed", True):
+        report_gate_triggered = True
+        report_issues = "; ".join(report_eval.get("issues", []))
+        return _validation_error_payload(
+            explanation=("Diagnostic report validation failed. " f"{report_issues} Fix the report and resubmit submit_checklist."),
+            report_eval=report_eval,
+            required=required,
+            error_code="diagnostic_report_invalid",
+            report_gate_triggered=True,
+        )
 
-    return {
+    # Include report diagnostics for transparency on accepted submissions.
+    if report_eval.get("provided"):
+        report_summary = " Diagnostic report provided."
+        if report_eval.get("issues"):
+            report_summary += f" Report notes: {'; '.join(report_eval['issues'])}."
+        explanation += report_summary
+
+    # Reuse plateaued_failing from the iterate branch if computed, otherwise
+    # compute fresh for the result dict (e.g. when report gate changed verdict).
+    if not plateaued_failing and has_existing_answers and verdict != terminate_action:
+        _item_cats = state.get("item_categories", {})
+        _plateaued = _find_plateaued_criteria(
+            items_detail,
+            checklist_history or [],
+            items=items,
+            item_categories=_item_cats,
+            min_rounds=2,
+        )
+        _failed_set = {d["id"] for d in items_detail if not d["passed"]}
+        plateaued_failing = [d for d in _plateaued if d["id"] in _failed_set]
+
+    result = {
+        "status": "accepted",
         "verdict": verdict,
         "explanation": explanation,
         "true_count": true_count,
         "required": required,
         "items": items_detail,
+        "failed_criteria": [d["id"] for d in items_detail if not d["passed"]],
+        "plateaued_criteria": plateaued_failing,
         "report": report_eval,
         "report_gate_triggered": report_gate_triggered,
     }
+    if best_agent is not None:
+        result["best_agent"] = best_agent
+    if per_agent_scores is not None:
+        result["per_agent_scores"] = per_agent_scores
+
+    # In iteration-trigger mode, include detail for ALL failing criteria so
+    # agents can pass rich context to quality/novelty subagents on round 2+.
+    _answer_count = state.get("agent_answer_count", 0)
+    try:
+        _answer_count = int(_answer_count)
+    except (TypeError, ValueError):
+        _answer_count = 0
+    _iter_novelty_enabled = bool(state.get("enable_novelty_on_iteration")) and _answer_count >= 1
+    _iter_quality_enabled = bool(state.get("enable_quality_rethink_on_iteration")) and _answer_count >= 1
+    _spawn_novelty = bool(state.get("novelty_subagent_enabled", False)) and _iter_novelty_enabled
+    _spawn_quality = bool(state.get("quality_rethinking_subagent_enabled", False)) and _iter_quality_enabled
+    if (_spawn_novelty or _spawn_quality) and result.get("failed_criteria"):
+        _item_cats = state.get("item_categories", {})
+        failing_detail = []
+        for d in items_detail:
+            if not d["passed"]:
+                idx = int(d["id"][1:]) - 1
+                failing_detail.append(
+                    {
+                        "id": d["id"],
+                        "text": items[idx] if idx < len(items) else d["id"],
+                        "category": _item_cats.get(d["id"], "unknown"),
+                        "current_score": d["score"],
+                    },
+                )
+        result["failing_criteria_detail"] = failing_detail
+
+    return result
 
 
-def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
+def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
+    """Convert task_plan items from evaluate_proposed_improvements to injection format.
+
+    Args:
+        task_plan: List of dicts with "type" key ("improve" or "verify_preserve")
+
+    Returns:
+        List of dicts ready for inject_tasks.json consumption by planning MCP
+    """
+    tasks = []
+    for item in task_plan:
+        if item["type"] == "improve":
+            task = {
+                "description": f"[{item['criterion_id']}] {item['plan']}",
+                "verification": item["criterion"],
+                "priority": "high",
+                "type": "improve",
+                "criterion_id": item["criterion_id"],
+                "impact": item.get("impact", "incremental"),
+                "sources": item.get("sources", []),
+                "metadata": {
+                    "criterion_id": item["criterion_id"],
+                    "criterion": item["criterion"],
+                    "type": "improve",
+                    "impact": item.get("impact", "incremental"),
+                    "sources": item.get("sources", []),
+                    "injected": True,
+                },
+            }
+            if item.get("subagent_name"):
+                task["subagent_name"] = item["subagent_name"]
+                task["metadata"]["subagent_name"] = item["subagent_name"]
+            if item.get("subagent_id"):
+                task["subagent_id"] = item["subagent_id"]
+                task["metadata"]["subagent_id"] = item["subagent_id"]
+            tasks.append(task)
+        elif item["type"] == "novelty_quality_spawn":
+            metadata = {
+                "type": "novelty_quality_spawn",
+                "failing_criteria": item.get("metadata", {}).get("failing_criteria", []),
+                "spawn_novelty": item.get("metadata", {}).get("spawn_novelty", True),
+                "spawn_quality_rethinking": item.get("metadata", {}).get("spawn_quality_rethinking", True),
+                "injected": True,
+            }
+            if "evaluation_input" in item.get("metadata", {}):
+                metadata["evaluation_input"] = item.get("metadata", {}).get("evaluation_input")
+            if "subagent_task_templates" in item.get("metadata", {}):
+                metadata["subagent_task_templates"] = item.get("metadata", {}).get("subagent_task_templates")
+            tasks.append(
+                {
+                    "id": item.get("id", "novelty_quality_spawn"),
+                    "description": item["description"],
+                    "verification": item.get(
+                        "verification",
+                        "Novelty/quality subagents spawned via spawn_subagents(background=True)",
+                    ),
+                    "verification_method": item.get(
+                        "verification_method",
+                        "list_subagents() shows spawned novelty/quality subagents",
+                    ),
+                    "priority": item.get("priority", "high"),
+                    "type": "novelty_quality_spawn",
+                    "metadata": metadata,
+                },
+            )
+        elif item["type"] == "verify_preserve":
+            bullet_list = "; ".join(f"[{p['criterion_id']}] {p['what']} ({p['source']})" for p in item["items"])
+            blind_eval_suffix = ""
+            if item.get("subagent_name") in {"evaluator", "critic"}:
+                blind_eval_suffix = " For anti-bias comparison, pass all candidate answers with neutral labels " "without revealing which answer is yours."
+            task: dict[str, Any] = {
+                "description": (
+                    f"Before submitting: verify preserved strengths haven't regressed — {bullet_list}. "
+                    "Confirm each preserved item is present in the actual output (run/render/screenshot, "
+                    "not just checking the code), and that passing criteria scores haven't dropped."
+                    f"{blind_eval_suffix}"
+                ),
+                "verification": (
+                    "All preserved elements verified in actual output (run/render/screenshot as appropriate), " "not just present in source files; passing criteria scores confirmed not dropped"
+                ),
+                "priority": "high",
+                "metadata": {
+                    "type": "verify_preserve",
+                    "items": item["items"],
+                    "injected": True,
+                },
+            }
+            if item.get("subagent_name"):
+                task["subagent_name"] = item["subagent_name"]
+                task["metadata"]["subagent_name"] = item["subagent_name"]
+            if item.get("subagent_id"):
+                task["subagent_id"] = item["subagent_id"]
+                task["metadata"]["subagent_id"] = item["subagent_id"]
+            tasks.append(task)
+    return tasks
+
+
+def _write_inject_file(injection_dir: Path | None, task_plan: list[dict]) -> None:
+    """Write inject_tasks.json atomically to injection_dir for planning MCP consumption.
+
+    Args:
+        injection_dir: Path to injection directory, or None (no-op)
+        task_plan: Raw task_plan from evaluate_proposed_improvements
+    """
+    if injection_dir is None:
+        return
+
+    injection_dir = Path(injection_dir)
+    injection_dir.mkdir(parents=True, exist_ok=True)
+    tasks = _convert_task_plan_to_inject_format(task_plan)
+    inject_file = injection_dir / "inject_tasks.json"
+    tmp_file = injection_dir / "inject_tasks.json.tmp"
+
+    tmp_file.write_text(json.dumps(tasks, indent=2))
+    import os
+
+    os.replace(str(tmp_file), str(inject_file))
+
+
+def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path, injection_dir: str | None = None) -> None:
     """Register the submit_checklist tool on the FastMCP server."""
     import inspect
+
+    # Resolve injection dir for planning task injection
+    _injection_dir_path: Path | None = Path(injection_dir) if injection_dir else None
 
     # Read specs once at startup just for the tool schema
     specs = _read_specs(specs_path)
     items = specs.get("items", [])
+    schema_state = specs.get("state", {})
+    schema_decomposition_mode = bool(schema_state.get("decomposition_mode", False))
+
+    # Track last failed criteria so propose_improvements can validate coverage
+    _last_result: dict[str, Any] = {
+        "status": "none",
+        "verdict": None,
+        "failed_criteria": [],
+        "items": [],
+        "all_criteria_ids": [],
+        "failing_criteria_detail": [],
+        "plateaued_criteria": [],
+        "checklist_explanation": "",
+        "diagnostic_report_path": "",
+        "diagnostic_report_artifact_paths": [],
+    }
 
     # Create handler that re-reads state on each call.
-    # Each score entry is {"score": int, "reasoning": str} — the reasoning
-    # forces the model to justify each item but is not used in verdict logic.
-    # `improvements` captures unrealized potential.
     async def submit_checklist(
         scores: dict,
-        improvements: str = "",
         report_path: str = "",
     ) -> str:
         # Codex sometimes sends scores as a JSON string; normalise to dict
@@ -316,30 +1203,171 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         current = _read_specs(specs_path)
         current_items = current.get("items", items)
         state = current.get("state", {})
+        decomposition_mode = bool(state.get("decomposition_mode", False))
+        item_prefix = str(state.get("item_prefix", "E"))
+        submitted_agent_labels = _extract_submitted_agent_labels(scores, item_prefix=item_prefix)
+        pending_recheck_labels = _normalize_pending_recheck_labels(state.get("pending_checklist_recheck_labels"))
+        checklist_first_answer = bool(state.get("checklist_first_answer", False))
+        max_calls = int(state.get("max_checklist_calls_per_round", 1) or 1)
+        has_runtime_submit_state = any(
+            key in state
+            for key in (
+                "agent_answer_count",
+                "checklist_first_answer",
+                "max_checklist_calls_per_round",
+                "checklist_calls_this_round",
+            )
+        )
+        try:
+            raw_agent_answer_count = state.get("agent_answer_count", None)
+            if raw_agent_answer_count is None:
+                agent_answer_count = 1 if state.get("has_existing_answers", False) else 0
+            else:
+                agent_answer_count = int(raw_agent_answer_count or 0)
+        except (TypeError, ValueError):
+            agent_answer_count = 1 if state.get("has_existing_answers", False) else 0
+        current_answer_label = str(state.get("current_answer_label") or "").strip()
+        if agent_answer_count == 0 and current_answer_label and bool(state.get("has_existing_answers", False)):
+            agent_answer_count = 1
+        try:
+            checklist_calls_this_round = int(state.get("checklist_calls_this_round", 0) or 0)
+        except (TypeError, ValueError):
+            checklist_calls_this_round = 0
+
+        if raw_agent_answer_count is not None and not checklist_first_answer and agent_answer_count == 0:
+            return json.dumps(
+                {
+                    "error": (
+                        "submit_checklist is not available before your first answer is submitted. "
+                        "Build your initial answer, verify it, then call the `new_answer` workflow tool. "
+                        "Checklist evaluation begins from round 2."
+                    ),
+                },
+            )
+
+        state_for_eval = state
+        using_recheck_exception = False
+        if has_runtime_submit_state and checklist_calls_this_round >= max_calls:
+            if not pending_recheck_labels:
+                return json.dumps(
+                    {
+                        "error": (
+                            f"submit_checklist already called {checklist_calls_this_round} time(s) "
+                            f"this round (max: {max_calls}). You already have your improvement plan. "
+                            "Implement those improvements, verify your changes, then call the "
+                            "`new_answer` workflow tool to submit your completed work. "
+                            "Do not call `submit_checklist` again."
+                        ),
+                    },
+                )
+
+            using_recheck_exception = True
+            available_labels = set(state.get("available_agent_labels") or [])
+            submitted_covers_full = decomposition_mode or (bool(submitted_agent_labels) and (not available_labels or available_labels.issubset(submitted_agent_labels)))
+            submitted_covers_delta = decomposition_mode or (bool(submitted_agent_labels) and pending_recheck_labels.issubset(submitted_agent_labels))
+            if submitted_covers_delta and not submitted_covers_full and not decomposition_mode:
+                state_for_eval = dict(state)
+                state_for_eval["available_agent_labels"] = sorted(pending_recheck_labels)
+
         result = evaluate_checklist_submission(
             scores=scores,
-            improvements=improvements,
             report_path=report_path,
             items=current_items,
-            state=state,
+            state=state_for_eval,
+            checklist_history=list(state.get("checklist_history") or []),
         )
+
+        result_status = str(
+            result.get("status", "accepted" if result.get("verdict") else "validation_error"),
+        )
+        iterate_action = state.get("iterate_action", "new_answer")
+        if result_status == "accepted" and result.get("verdict") == iterate_action:
+            result = dict(result)
+            result["explanation"] = (
+                result.get("explanation", "") + " NEXT: Call `propose_improvements` with specific improvements for each failing criterion. " + "Then implement your plan and call `new_answer`."
+            )
+
+        report_data = result.get("report") if isinstance(result.get("report"), dict) else {}
+        resolved_path = str(report_data.get("resolved_path") or "")
+        fallback_path = str(report_data.get("path") or "")
+        result_status = str(
+            result.get("status", "accepted" if result.get("verdict") else "validation_error"),
+        )
+        submission_has_validation_error = bool(
+            (result_status != "accepted") or result.get("error") or result.get("incomplete_scores") or result.get("report_gate_triggered"),
+        )
+
+        if not submission_has_validation_error:
+            history = list(state.get("checklist_history") or [])
+            history.append(
+                {
+                    "verdict": result.get("verdict"),
+                    "true_count": result.get("true_count"),
+                    "total_score": sum(d["score"] for d in result.get("items", [])),
+                    "items_detail": result.get("items", []),
+                },
+            )
+            state["checklist_history"] = history
+            state["checklist_calls_this_round"] = checklist_calls_this_round + 1
+            submitted_covers_full = False
+            submitted_covers_delta = False
+            if decomposition_mode:
+                submitted_covers_full = True
+                submitted_covers_delta = True
+            elif pending_recheck_labels and submitted_agent_labels:
+                available_labels = set(state.get("available_agent_labels") or [])
+                submitted_covers_full = bool(available_labels) and available_labels.issubset(submitted_agent_labels)
+                submitted_covers_delta = pending_recheck_labels.issubset(submitted_agent_labels)
+            if pending_recheck_labels and ((submitted_agent_labels and (submitted_covers_delta or submitted_covers_full)) or (using_recheck_exception and decomposition_mode)):
+                state["pending_checklist_recheck_labels"] = []
+            try:
+                write_checklist_specs(current_items, state, specs_path)
+            except Exception as exc:
+                logger.warning(f"Failed to persist checklist runtime state: {exc}")
+
+        _last_result["status"] = str(
+            result.get("status", "accepted" if result.get("verdict") else "validation_error"),
+        )
+        _last_result["verdict"] = result.get("verdict")
+        _last_result["failed_criteria"] = result.get("failed_criteria", [])
+        _last_result["items"] = current_items
+        _last_result["all_criteria_ids"] = [f"E{i+1}" for i in range(len(current_items))]
+        _last_result["failing_criteria_detail"] = list(result.get("failing_criteria_detail", []))
+        _last_result["plateaued_criteria"] = list(result.get("plateaued_criteria", []))
+        _last_result["checklist_explanation"] = str(result.get("explanation", ""))
+        _last_result["diagnostic_report_path"] = resolved_path or fallback_path
+        _last_result["diagnostic_report_artifact_paths"] = list(report_data.get("artifact_paths", []))
         return json.dumps(result)
 
-    submit_checklist.__doc__ = (
-        "Submit your checklist evaluation. Each score in 'scores' must be an "
-        "object with 'score' (0-100) and 'reasoning' (why you gave that score). "
-        "The 'improvements' field should describe features or content that an "
-        "ideal answer would have but no existing answer has attempted. "
-        "Use 'report_path' to provide a markdown gap report when report gating "
-        "is enabled."
-    )
+    if schema_decomposition_mode:
+        submit_checklist.__doc__ = (
+            "Submit your checklist evaluation for your current subtask output. "
+            "Use flat scores in 'scores' with criterion keys like "
+            '{"E1": {"score": 8, "reasoning": "..."}, "E2": {...}}. '
+            "If peer work changed your integration points, re-evaluate your current work "
+            "against the latest context before deciding whether to stop or iterate. "
+            "Use 'report_path' to provide a markdown gap report when report gating is enabled."
+        )
+    else:
+        submit_checklist.__doc__ = (
+            "Submit your checklist evaluation. "
+            "Score each agent's answer separately per criterion, then submit all "
+            "agent scores in 'scores' as a nested object: "
+            '{"agent1.1": {"E1": {"score": 8, "reasoning": "..."}, ...}, "agent2.1": {...}}. '
+            "Use the exact agent labels from the <CURRENT ANSWERS> headers in your context "
+            "(labels follow the format agentX.Y — use the full label including the .Y suffix). "
+            "The verdict is determined by the strongest agent's scores — the agent "
+            "with the highest aggregate across all criteria. Include all agents so "
+            "the evaluation is transparent and auditable. "
+            "Use 'report_path' to provide a markdown gap report when report gating "
+            "is enabled."
+        )
 
-    # Set proper signature so FastMCP sees both parameters
+    # Set proper signature so FastMCP sees all parameters
     sig = inspect.Signature(
         [
             inspect.Parameter("scores", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-            inspect.Parameter("improvements", inspect.Parameter.POSITIONAL_OR_KEYWORD),
-            inspect.Parameter("report_path", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("report_path", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=""),
         ],
     )
     submit_checklist.__signature__ = sig
@@ -349,7 +1377,121 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
         description=submit_checklist.__doc__,
     )(submit_checklist)
 
-    logger.info("Registered submit_checklist MCP tool")
+    # propose_improvements: validate improvement coverage for all failing criteria
+    async def propose_improvements(improvements: dict, preserve: dict = None) -> str:
+        if isinstance(improvements, str):
+            try:
+                improvements = json.loads(improvements)
+            except (json.JSONDecodeError, TypeError):
+                return json.dumps(
+                    {"valid": False, "error": "improvements must be a JSON object"},
+                )
+        if isinstance(preserve, str):
+            try:
+                preserve = json.loads(preserve)
+            except (json.JSONDecodeError, TypeError):
+                preserve = None
+
+        current_for_improve = _read_specs(specs_path)
+        state_for_improve = current_for_improve.get("state", {})
+        iterate_action = state_for_improve.get("iterate_action", "new_answer")
+        status = str(_last_result.get("status", "none"))
+        verdict = _last_result.get("verdict")
+        if status != "accepted":
+            return json.dumps(
+                {
+                    "valid": False,
+                    "error": ("propose_improvements is unavailable because your latest submit_checklist " "result was a validation error. Fix and resubmit submit_checklist first."),
+                },
+            )
+        if verdict != iterate_action:
+            return json.dumps(
+                {
+                    "valid": False,
+                    "error": ("propose_improvements is only available after submit_checklist returns " f"an iterate verdict ({iterate_action})."),
+                },
+            )
+        pending_recheck_labels = _normalize_pending_recheck_labels(state_for_improve.get("pending_checklist_recheck_labels"))
+        if pending_recheck_labels:
+            pending_labels_text = ", ".join(sorted(pending_recheck_labels))
+            return json.dumps(
+                {
+                    "valid": False,
+                    "error": (
+                        "propose_improvements is unavailable because newer injected answer labels "
+                        f"still require checklist re-evaluation: {pending_labels_text}. "
+                        "Re-run submit_checklist on the newest labels first."
+                    ),
+                },
+            )
+        result = evaluate_proposed_improvements(
+            improvements=improvements,
+            failed_criteria=_last_result["failed_criteria"],
+            items=_last_result["items"],
+            all_criteria_ids=_last_result.get("all_criteria_ids"),
+            preserve=preserve,
+            state=state_for_improve,
+            latest_evaluation={
+                "failed_criteria": _last_result.get("failed_criteria", []),
+                "failing_criteria_detail": _last_result.get("failing_criteria_detail", []),
+                "plateaued_criteria": _last_result.get("plateaued_criteria", []),
+                "checklist_explanation": _last_result.get("checklist_explanation", ""),
+                "diagnostic_report_path": _last_result.get("diagnostic_report_path", ""),
+                "diagnostic_report_artifact_paths": _last_result.get("diagnostic_report_artifact_paths", []),
+            },
+        )
+        if result.get("valid") and _injection_dir_path:
+            _write_inject_file(_injection_dir_path, result["task_plan"])
+            task_count = len(result["task_plan"])
+            result = dict(result)  # Don't mutate original
+            result["message"] = (
+                f"Your task plan has been pre-populated with {task_count} items. "
+                "Call get_task_plan to see the list and start executing. "
+                "Preserve items are guardrails — verify after implementing. "
+                "Do not skip criteria."
+            )
+            # Append subagent delegation guidance when subagents are enabled
+            if state_for_improve.get("subagents_enabled"):
+                builder_criteria_ids: list[str] = []
+                for task in result["task_plan"]:
+                    if task.get("type") == "improve" and task.get("subagent_name") == "builder":
+                        cid = task.get("criterion_id")
+                        if cid and cid not in builder_criteria_ids:
+                            builder_criteria_ids.append(cid)
+                if builder_criteria_ids:
+                    result["message"] += " Builder-suggested criteria: " + ", ".join(builder_criteria_ids) + "."
+                has_novelty_spawn = bool(result["task_plan"]) and result["task_plan"][0].get("type") == "novelty_quality_spawn"
+                if has_novelty_spawn:
+                    result["message"] += " A novelty/quality spawn task is first in your plan —" " spawn it in background before implementing improvements."
+                result["message"] += (
+                    " Spawn one builder per task — do NOT bundle multiple E{x}" " into a single builder spec. Each builder task is" " independent — spawn all in a single spawn_subagents()" " call."
+                )
+        return json.dumps(result)
+
+    propose_improvements.__doc__ = (
+        "Propose specific improvements for each failing criterion. "
+        "Must be called after submit_checklist returns an iterate verdict. "
+        "Pass 'improvements' mapping criterion IDs (e.g. 'E2') to lists of "
+        "entries, each with 'plan' (what to do) and 'sources' (which answers "
+        "to draw from). Pass 'preserve' mapping criterion IDs to entries with "
+        "'what' (strength to protect) and 'source' (which answer). A criterion "
+        "can appear in both improvements and preserve."
+    )
+
+    propose_sig = inspect.Signature(
+        [
+            inspect.Parameter("improvements", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("preserve", inspect.Parameter.POSITIONAL_OR_KEYWORD, default=None),
+        ],
+    )
+    propose_improvements.__signature__ = propose_sig
+
+    mcp.tool(
+        name="propose_improvements",
+        description=propose_improvements.__doc__,
+    )(propose_improvements)
+
+    logger.info("Registered submit_checklist + propose_improvements MCP tools")
 
 
 # ---------- spec file I/O ----------
@@ -357,7 +1499,7 @@ def _register_checklist_tool(mcp: fastmcp.FastMCP, specs_path: Path) -> None:
 
 def write_checklist_specs(
     items: list,
-    state: Dict[str, Any],
+    state: dict[str, Any],
     output_path: Path,
 ) -> Path:
     """Write checklist specs + state to a JSON file.
@@ -376,21 +1518,28 @@ def write_checklist_specs(
     return output_path
 
 
-def build_server_config(specs_path: Path) -> Dict[str, Any]:
+def build_server_config(
+    specs_path: Path,
+    hook_dir: Path | None = None,
+) -> dict[str, Any]:
     """Build a stdio MCP server config dict for the checklist server."""
     script_path = Path(__file__).resolve()
+
+    cmd_args = [
+        "run",
+        f"{script_path}:create_server",
+        "--",
+        "--specs",
+        str(specs_path),
+    ]
+    if hook_dir is not None:
+        cmd_args.extend(["--hook-dir", str(hook_dir)])
 
     return {
         "name": SERVER_NAME,
         "type": "stdio",
         "command": "fastmcp",
-        "args": [
-            "run",
-            f"{script_path}:create_server",
-            "--",
-            "--specs",
-            str(specs_path),
-        ],
+        "args": cmd_args,
         "env": {"FASTMCP_SHOW_CLI_BANNER": "false"},
         "tool_timeout_sec": 120,
     }

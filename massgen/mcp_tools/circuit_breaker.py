@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MCP Circuit Breaker implementation for handling server failures.
 
@@ -7,7 +6,7 @@ Provides unified failure tracking and circuit breaker functionality across all M
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ..logger_config import log_mcp_activity
 
@@ -46,9 +45,9 @@ class MCPCircuitBreaker:
 
     def __init__(
         self,
-        config: Optional[CircuitBreakerConfig] = None,
-        backend_name: Optional[str] = None,
-        agent_id: Optional[str] = None,
+        config: CircuitBreakerConfig | None = None,
+        backend_name: str | None = None,
+        agent_id: str | None = None,
     ):
         """
         Initialize circuit breaker.
@@ -61,9 +60,9 @@ class MCPCircuitBreaker:
         self.config = config or CircuitBreakerConfig()
         self.backend_name = backend_name
         self.agent_id = agent_id
-        self._server_status: Dict[str, ServerStatus] = {}
+        self._server_status: dict[str, ServerStatus] = {}
 
-    def should_skip_server(self, server_name: str, agent_id: Optional[str] = None) -> bool:
+    def should_skip_server(self, server_name: str, agent_id: str | None = None) -> bool:
         """
         Check if server should be skipped due to circuit breaker.
 
@@ -117,9 +116,9 @@ class MCPCircuitBreaker:
     def record_failure(
         self,
         server_name: str,
-        agent_id: Optional[str] = None,
-        error_type: Optional[str] = None,
-        error_message: Optional[str] = None,
+        agent_id: str | None = None,
+        error_type: str | None = None,
+        error_message: str | None = None,
     ) -> None:
         """
         Record a server failure for circuit breaker.
@@ -140,7 +139,7 @@ class MCPCircuitBreaker:
         status.last_failure_time = current_time
 
         # Build log details with optional error info
-        log_details: Dict[str, Any] = {
+        log_details: dict[str, Any] = {
             "server_name": server_name,
             "failure_count": status.failure_count,
         }
@@ -167,7 +166,7 @@ class MCPCircuitBreaker:
                 agent_id=self.agent_id or agent_id,
             )
 
-    def record_success(self, server_name: str, agent_id: Optional[str] = None) -> None:
+    def record_success(self, server_name: str, agent_id: str | None = None) -> None:
         """
         Record a successful connection, resetting failure count.
 

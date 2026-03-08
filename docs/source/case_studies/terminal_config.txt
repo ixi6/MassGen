@@ -19,7 +19,7 @@ agents:
 - id: agent_c
   backend:
     type: openai
-    model: gpt-5.2
+    model: gpt-5.4
     cwd: workspace
     exclude_file_operation_mcps: false
     enable_web_search: false

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Documentation Duplication Detection Script
 
@@ -22,7 +21,6 @@ import re
 from collections import defaultdict
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 
 class DuplicationDetector:
@@ -32,10 +30,10 @@ class DuplicationDetector:
         self.docs_path = docs_path / "source"
         self.threshold = threshold
         self.min_words = min_words
-        self.paragraphs: Dict[Path, List[str]] = {}
-        self.duplications: List[Tuple[Path, Path, str, float]] = []
+        self.paragraphs: dict[Path, list[str]] = {}
+        self.duplications: list[tuple[Path, Path, str, float]] = []
 
-    def extract_paragraphs(self, content: str) -> List[str]:
+    def extract_paragraphs(self, content: str) -> list[str]:
         """Extract paragraphs from RST content, excluding code blocks and tables."""
         # Remove code blocks
         content = re.sub(r".. code-block::.*?\n\n(?:   .*\n)*", "", content, flags=re.DOTALL)
@@ -111,7 +109,7 @@ class DuplicationDetector:
     def generate_report(self, output_path: Path):
         """Generate duplication report."""
         # Group duplications by file pairs
-        file_pairs: Dict[Tuple[Path, Path], List[Tuple[str, float]]] = defaultdict(list)
+        file_pairs: dict[tuple[Path, Path], list[tuple[str, float]]] = defaultdict(list)
 
         for file1, file2, para, sim in self.duplications:
             pair = tuple(sorted([file1, file2]))
@@ -180,7 +178,7 @@ class DuplicationDetector:
             print("  Your documentation follows single source of truth principles.")
         else:
             # Count by file
-            file_counts: Dict[Path, int] = defaultdict(int)
+            file_counts: dict[Path, int] = defaultdict(int)
             for file1, file2, para, sim in self.duplications:
                 file_counts[file1] += 1
                 file_counts[file2] += 1

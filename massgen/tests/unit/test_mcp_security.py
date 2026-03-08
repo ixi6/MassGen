@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for MCP security validation helpers."""
 
 import pytest

@@ -1,16 +1,15 @@
-# -*- coding: utf-8 -*-
 """
 Git discovery and utility functions using GitPython.
 """
 
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from git import InvalidGitRepositoryError, Repo
 from loguru import logger
 
 
-def get_git_root(path: str) -> Optional[str]:
+def get_git_root(path: str) -> str | None:
     """
     Find the root of the git repository containing the given path.
 
@@ -30,7 +29,7 @@ def get_git_root(path: str) -> Optional[str]:
         return None
 
 
-def get_git_branch(path: str) -> Optional[str]:
+def get_git_branch(path: str) -> str | None:
     """
     Get the current git branch name.
 
@@ -49,7 +48,7 @@ def get_git_branch(path: str) -> Optional[str]:
         return None
 
 
-def get_git_status(path: str) -> Dict[str, bool]:
+def get_git_status(path: str) -> dict[str, bool]:
     """
     Get current git status (dirty, untracked).
 
@@ -59,7 +58,7 @@ def get_git_status(path: str) -> Dict[str, bool]:
     Returns:
         Dictionary with 'is_dirty' and 'has_untracked' flags
     """
-    status: Dict[str, Any] = {"is_dirty": False, "has_untracked": False}
+    status: dict[str, Any] = {"is_dirty": False, "has_untracked": False}
     try:
         repo = Repo(path, search_parent_directories=True)
         status["is_dirty"] = repo.is_dirty()
@@ -69,7 +68,7 @@ def get_git_status(path: str) -> Dict[str, bool]:
     return status
 
 
-def get_current_commit(path: str) -> Optional[str]:
+def get_current_commit(path: str) -> str | None:
     """
     Get the current commit SHA.
 
@@ -91,7 +90,7 @@ def is_git_repo(path: str) -> bool:
     return get_git_root(path) is not None
 
 
-def get_repo(path: str) -> Optional[Repo]:
+def get_repo(path: str) -> Repo | None:
     """
     Get a Repo object for the given path.
 
@@ -107,7 +106,7 @@ def get_repo(path: str) -> Optional[Repo]:
         return None
 
 
-def get_changes(repo: Repo, base_ref: Optional[str] = None) -> List[Dict[str, str]]:
+def get_changes(repo: Repo, base_ref: str | None = None) -> list[dict[str, str]]:
     """
     Get list of all changes (committed, staged, unstaged, untracked) in a repo.
 
@@ -119,7 +118,7 @@ def get_changes(repo: Repo, base_ref: Optional[str] = None) -> List[Dict[str, st
     Returns:
         List of dicts with 'status' and 'path' keys
     """
-    changes_by_path: Dict[str, str] = {}
+    changes_by_path: dict[str, str] = {}
 
     def _record_name_status(diff_output: str) -> None:
         for line in diff_output.splitlines():

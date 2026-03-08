@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Session state management for MassGen.
 
 This module provides functionality to save and restore session state,
@@ -11,13 +10,13 @@ import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 def _build_cancelled_turn_history_entry(
-    partial_result: Dict[str, Any],
+    partial_result: dict[str, Any],
     question: str,
 ) -> str:
     """Build conversation history entry for a cancelled turn.
@@ -94,22 +93,22 @@ class SessionState:
     """
 
     session_id: str
-    conversation_history: List[Dict[str, str]] = field(default_factory=list)
+    conversation_history: list[dict[str, str]] = field(default_factory=list)
     current_turn: int = 0
-    last_workspace_path: Optional[Path] = None
-    winning_agents_history: List[Dict[str, Any]] = field(default_factory=list)
-    previous_turns: List[Dict[str, Any]] = field(default_factory=list)
+    last_workspace_path: Path | None = None
+    winning_agents_history: list[dict[str, Any]] = field(default_factory=list)
+    previous_turns: list[dict[str, Any]] = field(default_factory=list)
     session_storage_path: str = "sessions"  # Where the session was actually found
-    log_directory: Optional[str] = None  # Log directory to reuse for all turns
-    incomplete_turn: Optional[Dict[str, Any]] = None  # Last incomplete turn if cancelled
-    incomplete_turn_workspaces: Dict[str, Path] = field(default_factory=dict)  # agent_id -> workspace
+    log_directory: str | None = None  # Log directory to reuse for all turns
+    incomplete_turn: dict[str, Any] | None = None  # Last incomplete turn if cancelled
+    incomplete_turn_workspaces: dict[str, Path] = field(default_factory=dict)  # agent_id -> workspace
 
 
 def restore_session(
     session_id: str,
     session_storage: str = "sessions",
-    registry: Optional[Any] = None,
-) -> Optional[SessionState]:
+    registry: Any | None = None,
+) -> SessionState | None:
     """Restore complete session state from disk.
 
     Loads all turn data from session storage directory, reconstructing:
@@ -223,7 +222,7 @@ def restore_session(
                             )
                             turn_data["partial_answers"] = partial_answers
                             turn_data["agents_with_answers"] = list(partial_answers.keys())
-                        except (json.JSONDecodeError, IOError):
+                        except (json.JSONDecodeError, OSError):
                             pass
 
                     # Load all agent workspaces for incomplete turns
@@ -240,7 +239,7 @@ def restore_session(
                         )
 
                 previous_turns.append(turn_data)
-            except (json.JSONDecodeError, IOError) as e:
+            except (json.JSONDecodeError, OSError) as e:
                 logger.warning(f"Failed to load metadata for turn {turn_num}: {e}")
 
     # Build conversation history from turns
@@ -293,7 +292,7 @@ def restore_session(
                             "content": answer_text,
                         },
                     )
-                except IOError as e:
+                except OSError as e:
                     logger.warning(f"Failed to load answer for turn {turn_data['turn']}: {e}")
 
     # Validate that we have actual conversation content
@@ -315,7 +314,7 @@ def restore_session(
             logger.debug(
                 f"Loaded {len(winning_agents_history)} winning agent(s) " f"from {winning_agents_file}: {winning_agents_history}",
             )
-        except (json.JSONDecodeError, IOError) as e:
+        except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"Failed to load winning agents history from {winning_agents_file}: {e}")
 
     # Find most recent workspace
@@ -327,7 +326,7 @@ def restore_session(
             last_workspace_path = workspace_path
 
     # Extract incomplete turn workspaces if present
-    incomplete_turn_workspaces: Dict[str, Path] = {}
+    incomplete_turn_workspaces: dict[str, Path] = {}
     if incomplete_turn and incomplete_turn.get("agent_workspaces"):
         incomplete_turn_workspaces = incomplete_turn["agent_workspaces"]
 
@@ -360,7 +359,7 @@ def save_partial_turn(
     session_id: str,
     turn_number: int,
     question: str,
-    partial_result: Dict[str, Any],
+    partial_result: dict[str, Any],
     session_storage: str = "sessions",
 ) -> Path:
     """Save partial turn data when a session is cancelled mid-coordination.

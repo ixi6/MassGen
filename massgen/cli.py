@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 MassGen Command Line Interface
 
@@ -31,18 +30,13 @@ import shutil
 import sys
 import threading
 import webbrowser
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
-    Dict,
-    List,
     Literal,
-    Optional,
-    Tuple,
-    Union,
 )
 
 if TYPE_CHECKING:
@@ -66,20 +60,22 @@ from .backend.chat_completions import ChatCompletionsBackend
 from .backend.claude import ClaudeBackend
 from .backend.claude_code import ClaudeCodeBackend
 from .backend.codex import CodexBackend
+from .backend.copilot import CopilotBackend
 from .backend.gemini import GeminiBackend
 from .backend.grok import GrokBackend
 from .backend.inference import InferenceBackend
 from .backend.lmstudio import LMStudioBackend
 from .backend.response import ResponseBackend
 from .chat_agent import ConfigurableAgent, SingleAgent
-from .config_builder import ConfigBuilder
+from .config_builder import ConfigBuilder, normalize_quickstart_config_filename
 from .dspy_paraphraser import (
     QuestionParaphraser,
     create_dspy_lm_from_backend_config,
     is_dspy_available,
 )
 from .frontend.coordination_ui import CoordinationUI
-from .logger_config import _DEBUG_MODE, logger, save_execution_metadata, setup_logging
+from .logger_config import is_debug_mode as _is_debug_mode
+from .logger_config import logger, save_execution_metadata, setup_logging
 from .orchestrator import Orchestrator
 from .path_handling import AtPathCompleter
 from .utils import get_backend_type_from_model
@@ -112,13 +108,13 @@ def load_env_file():
 load_env_file()
 
 
-def _quickstart_config_uses_skills(config_path: Optional[str]) -> bool:
+def _quickstart_config_uses_skills(config_path: str | None) -> bool:
     """Return True when a config enables coordination skills."""
     if not config_path:
         return False
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
     except Exception as e:
         logger.debug(f"[Quickstart] Failed to read config for skill check ({config_path}): {e}")
@@ -139,7 +135,7 @@ def _quickstart_config_uses_skills(config_path: Optional[str]) -> bool:
 
 
 def _ensure_quickstart_skills_ready(
-    config_path: Optional[str],
+    config_path: str | None,
     install_requested: bool = True,
 ) -> bool:
     """Install quickstart skill packages when generated config enables skills."""
@@ -157,6 +153,18 @@ def _ensure_quickstart_skills_ready(
     except Exception as e:
         logger.warning(f"[Quickstart] Skill setup failed: {e}")
         return False
+
+
+def _quickstart_filename_from_config_arg(config_path_arg: str | None) -> str | None:
+    """Extract quickstart filename override from --config when --quickstart is used."""
+    if not config_path_arg:
+        return None
+
+    value = config_path_arg.strip()
+    if not value:
+        return None
+
+    return normalize_quickstart_config_filename(value)
 
 
 def _setup_logfire_observability() -> bool:
@@ -205,7 +213,7 @@ def _automation_print(msg: str) -> None:
     print(msg, file=sys.stderr if _stream_events_active else sys.stdout)
 
 
-def _has_evolving_skills_enabled(agents: Optional[Dict[str, Any]]) -> bool:
+def _has_evolving_skills_enabled(agents: dict[str, Any] | None) -> bool:
     """Return True when any active agent has evolving skills enabled."""
     if not agents:
         return False
@@ -222,9 +230,9 @@ def _has_evolving_skills_enabled(agents: Optional[Dict[str, Any]]) -> bool:
 
 
 def _should_use_conversation_history_for_turn(
-    conversation_history: List[Dict[str, Any]],
+    conversation_history: list[dict[str, Any]],
     mode_state: Any,
-    agents: Optional[Dict[str, Any]],
+    agents: dict[str, Any] | None,
 ) -> bool:
     """Determine whether prior conversation history should be injected this turn."""
     if not conversation_history:
@@ -236,6 +244,120 @@ def _should_use_conversation_history_for_turn(
     # Execute turns normally run from task artifacts only. Keep history only when
     # evolving skills are enabled so iterative workflow refinement can use prior context.
     return _has_evolving_skills_enabled(agents)
+
+
+def _apply_orchestrator_runtime_params(
+    orchestrator_config: AgentConfig,
+    orchestrator_cfg: dict[str, Any] | None,
+) -> None:
+    """Apply orchestrator-level runtime params from config onto an AgentConfig."""
+    if not orchestrator_cfg:
+        return
+
+    direct_fields = (
+        "voting_sensitivity",
+        "voting_threshold",
+        "max_new_answers_per_agent",
+        "max_new_answers_global",
+        "answer_novelty_requirement",
+        "fairness_enabled",
+        "fairness_lead_cap_answers",
+        "max_midstream_injections_per_round",
+        "defer_peer_updates_until_restart",
+        "allow_midstream_peer_updates_before_checklist_submit",
+        "defer_voting_until_all_answered",
+        "coordination_mode",
+        "presenter_agent",
+    )
+    for field_name in direct_fields:
+        if field_name in orchestrator_cfg:
+            setattr(orchestrator_config, field_name, orchestrator_cfg[field_name])
+
+    if "checklist_require_gap_report" in orchestrator_cfg:
+        orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
+    if "gap_report_mode" in orchestrator_cfg:
+        orchestrator_config.gap_report_mode = orchestrator_cfg["gap_report_mode"]
+    elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
+        orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
+
+    if orchestrator_cfg.get("skip_coordination_rounds", False):
+        orchestrator_config.skip_coordination_rounds = True
+    if orchestrator_cfg.get("debug_final_answer"):
+        orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
+    if orchestrator_cfg.get("skip_final_presentation", False):
+        orchestrator_config.skip_final_presentation = True
+    if orchestrator_cfg.get("skip_voting", False):
+        orchestrator_config.skip_voting = True
+    if orchestrator_cfg.get("disable_injection", False):
+        orchestrator_config.disable_injection = True
+
+
+def _is_planning_turn(
+    mode_state: Any | None,
+    cli_plan_enabled: bool = False,
+) -> bool:
+    """Return True when the current turn is a planning turn."""
+    if mode_state and getattr(mode_state, "plan_mode", None) in {"plan", "plan_and_execute"}:
+        return True
+    return bool(cli_plan_enabled)
+
+
+def _disable_evaluation_criteria_generation_for_planning(
+    coordination_config: Any | None,
+) -> bool:
+    """Disable dynamic evaluation criteria generation for planning turns.
+
+    Returns True when a config value was changed.
+    """
+    if coordination_config is None:
+        return False
+
+    # YAML/dict config path
+    if isinstance(coordination_config, dict):
+        ec_cfg = coordination_config.get("evaluation_criteria_generator")
+        if not isinstance(ec_cfg, dict):
+            return False
+        if not ec_cfg.get("enabled", False):
+            return False
+        ec_cfg["enabled"] = False
+        return True
+
+    # Dataclass/object config path
+    ec_cfg = getattr(coordination_config, "evaluation_criteria_generator", None)
+    if ec_cfg is None:
+        return False
+    if not getattr(ec_cfg, "enabled", False):
+        return False
+    ec_cfg.enabled = False
+    return True
+
+
+def _set_planning_checklist_criteria_defaults(
+    coordination_config: Any | None,
+) -> bool:
+    """Set planning-specific checklist preset when no explicit criteria source exists.
+
+    Returns True when checklist_criteria_preset was set to "planning".
+    """
+    if coordination_config is None:
+        return False
+
+    # YAML/dict config path
+    if isinstance(coordination_config, dict):
+        inline = coordination_config.get("checklist_criteria_inline")
+        preset = coordination_config.get("checklist_criteria_preset")
+        if inline or preset:
+            return False
+        coordination_config["checklist_criteria_preset"] = "planning"
+        return True
+
+    # Dataclass/object config path
+    inline = getattr(coordination_config, "checklist_criteria_inline", None)
+    preset = getattr(coordination_config, "checklist_criteria_preset", None)
+    if inline or preset:
+        return False
+    setattr(coordination_config, "checklist_criteria_preset", "planning")
+    return True
 
 
 def _setup_event_streaming() -> None:
@@ -338,7 +460,7 @@ MASSGEN_QUESTIONARY_STYLE = Style(
 )
 
 
-def _is_single_agent_config(config: Dict[str, Any]) -> bool:
+def _is_single_agent_config(config: dict[str, Any]) -> bool:
     """Return True when config defines exactly one agent."""
     if "agent" in config:
         return True
@@ -346,7 +468,7 @@ def _is_single_agent_config(config: Dict[str, Any]) -> bool:
     return isinstance(agents, list) and len(agents) == 1
 
 
-def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path_label: Optional[str]) -> None:
+def _run_cloud_job(args: argparse.Namespace, config: dict[str, Any], config_path_label: str | None) -> None:
     """Launch a MassGen run in Modal cloud and materialize results locally."""
     if not args.question:
         raise ConfigurationError("--cloud requires a question argument")
@@ -391,7 +513,7 @@ def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path
     result = launcher.launch(request)
 
     final_answer = result.final_answer
-    output_path: Optional[Path] = None
+    output_path: Path | None = None
     if args.output_file:
         output_path = Path(args.output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -414,7 +536,7 @@ def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path
         print(final_answer)
 
 
-def _build_coordination_ui(ui_config: Dict[str, Any]) -> CoordinationUI:
+def _build_coordination_ui(ui_config: dict[str, Any]) -> CoordinationUI:
     """Create a CoordinationUI with display_kwargs passthrough (incl. theme)."""
     display_kwargs = dict(ui_config.get("display_kwargs", {}) or {})
     theme = ui_config.get("theme")
@@ -459,12 +581,26 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
+def _format_chunk_target_line(target_chunks: int | None) -> str:
+    """Return chunk guidance text for planning/spec prompts."""
+    if target_chunks == 1 or target_chunks is None:
+        return "- Target chunks: exactly 1"
+    if target_chunks > 1:
+        return f"- Target chunks: around {target_chunks}"
+    return "- Target chunks: exactly 1"
+
+
+def should_include_quick_edit_hint(planning_turn_mode: str | None) -> bool:
+    """Show quick-edit hint only for explicit single-turn refinement mode."""
+    return planning_turn_mode == "single"
+
+
 def get_task_planning_prompt_prefix(
     plan_depth: str = "dynamic",
-    target_steps: Optional[int] = None,
-    target_chunks: Optional[int] = None,
+    target_steps: int | None = None,
+    target_chunks: int | None = None,
     enable_subagents: bool = False,
-    broadcast_mode: Union[Literal["human", "agents"], bool] = "human",
+    broadcast_mode: Literal["human", "agents"] | bool = False,
 ) -> str:
     """Generate the user prompt prefix for task planning mode.
 
@@ -497,10 +633,7 @@ def get_task_planning_prompt_prefix(
     else:
         task_target_line = f"- Target tasks: {cfg['target']}"
 
-    if target_chunks is not None and target_chunks > 0:
-        chunk_target_line = f"- Target chunks: around {target_chunks}"
-    else:
-        chunk_target_line = "- Target chunks: around 1 (single-run default unless dependencies require splitting)"
+    chunk_target_line = _format_chunk_target_line(target_chunks)
 
     # Subagent research section (only if enabled)
     subagent_section = ""
@@ -840,6 +973,213 @@ USER'S REQUEST:
 """
 
 
+def get_spec_creation_prompt_prefix(
+    broadcast_mode: "Literal['human', 'agents'] | bool" = False,
+    target_chunks: int | None = None,
+) -> str:
+    """Generate the user prompt prefix for spec creation mode.
+
+    This prefix is prepended to the user's question when --spec mode is active.
+    It instructs agents to create a structured requirements specification using
+    EARS notation (Easy Approach to Requirements Syntax).
+
+    Args:
+        broadcast_mode: One of "human", "agents", or False.
+            Controls whether ask_others() is available for scope confirmation.
+        target_chunks: Optional target number of execution chunks.
+
+    Returns:
+        The prompt prefix string to prepend to the user's question.
+    """
+    chunk_target_line = _format_chunk_target_line(target_chunks)
+
+    # Scope section reuses the same human vs autonomous pattern as plan mode
+    if broadcast_mode == "human":
+        scope_section = """\
+### 1. Scope Confirmation (REQUIRED FIRST)
+
+Before any deep research, analyze the request and verify scope with the user.
+
+**Categorize the request** into:
+1. **Explicitly Stated** - What the user directly mentioned
+2. **Critical Assumptions** - High-level decisions needing human verification \
+(intent, architecture, compliance, scope boundaries)
+3. **Technical Assumptions** - Lower-level choices for agent consensus \
+(frameworks, patterns, practices)
+
+**Ask the human** only about critical assumptions where you cannot make a \
+good decision without input. Offer recommendations with reasoning.
+
+**After critical verification, proceed to research.**"""
+    else:
+        scope_section = """\
+### 1. Scope Analysis (REQUIRED FIRST)
+
+Before any deep research, analyze the request and make decisions \
+through agent consensus.
+
+**Categorize the request** into:
+1. **Explicitly Stated** - What the user directly mentioned
+2. **Critical Assumptions** - High-level decisions (intent, architecture, \
+compliance, scope boundaries)
+3. **Technical Assumptions** - Lower-level choices (frameworks, patterns, \
+practices)
+
+**Make opinionated recommendations** for ALL assumptions with reasoning. \
+Other agents will challenge, refine, and vote on consensus.
+
+**After consensus is reached, proceed to research.**"""
+
+    return f"""\
+# SPEC CREATION MODE
+
+You are in spec creation mode. Your goal is to **interactively** create \
+a structured requirements specification.
+
+## CRITICAL: SPEC ONLY - DO NOT BUILD THE DELIVERABLE
+
+**YOU ARE A SPEC WRITER, NOT AN EXECUTOR.**
+
+- **DO NOT** create the actual deliverable (no final code, no implementations)
+- **DO NOT** execute the user's task - only specify it
+- **DO** create `project_spec.json` with requirements that a FUTURE agent \
+will implement
+- **DO** research and explore to understand the task scope
+
+**Allowed files:**
+1. `project_spec.json` - the requirements specification (REQUIRED)
+2. Supporting docs - design decisions, technical context, user stories
+3. Scratch/research files - scripts to parse data, analyze structure, \
+gather info FOR SPEC WRITING
+
+**NOT allowed:**
+- The actual deliverable the user requested (code, website, app, etc.)
+- Implementation code that would be the end product
+
+If you find yourself building what the user asked for - STOP. \
+You're only specifying it. A different agent will implement this spec later.
+
+## Spec Process
+
+Follow this process in order:
+
+{scope_section}
+
+### 2. Research & Exploration
+Once scope is confirmed:
+- Explore the codebase to understand existing structure
+- Investigate integration points
+- Identify potential technical challenges
+
+### 3. Clarifying Questions
+As you research, ask follow-up questions about:
+- Edge cases and error handling expectations
+- Performance or security requirements
+- User experience preferences
+- Anything ambiguous you discovered
+
+### 4. Spec Creation
+Only after scope confirmation and sufficient research:
+- Create the requirements specification
+- Use EARS notation for each requirement
+- Group requirements into execution chunks
+- Include verification criteria for each requirement
+
+## Output Requirements
+
+1. **Primary artifact**: `project_spec.json` - Write this file using \
+file write tools:
+   - If `deliverable/` folder exists in your workspace, put it there: \
+`deliverable/project_spec.json`
+   - Otherwise, put it in your workspace root: `project_spec.json`
+2. **Supporting docs**: Create additional markdown docs as needed \
+(same location as project_spec.json):
+   - Design decisions and rationale
+   - Technical context and constraints
+   - User stories or acceptance criteria
+
+**IMPORTANT**: Write `project_spec.json` directly as a file. Do NOT use \
+MCP planning tools (create_task_plan, update_task_status, etc.) to create \
+this deliverable.
+
+## EARS Notation
+
+Use the **Easy Approach to Requirements Syntax** (EARS) for each \
+requirement's `ears` field:
+- **Event-driven**: WHEN <trigger> THE SYSTEM SHALL <response>
+- **State-driven**: WHILE <state> THE SYSTEM SHALL <behavior>
+- **Unwanted behavior**: IF <condition> THEN THE SYSTEM SHALL <response>
+- **Optional**: WHERE <feature> THE SYSTEM SHALL <behavior>
+
+Examples:
+- WHEN user submits login form THE SYSTEM SHALL validate credentials \
+and return a session token
+- WHILE server load exceeds 80% THE SYSTEM SHALL reject new connections \
+with 503 status
+- IF database connection fails THEN THE SYSTEM SHALL retry with \
+exponential backoff up to 3 times
+
+## Spec Format
+Write `project_spec.json` with this structure:
+```json
+{{{{
+  "feature": "Feature Name",
+  "overview": "2-3 sentence description of what this feature accomplishes",
+  "requirements": [
+    {{{{
+      "id": "REQ-001",
+      "chunk": "C01_core",
+      "title": "Short descriptive title",
+      "priority": "P0|P1|P2",
+      "type": "functional|non-functional",
+      "ears": "WHEN <trigger> THE SYSTEM SHALL <response>",
+      "rationale": "Why this requirement exists",
+      "verification": "How to verify this requirement is met",
+      "depends_on": ["REQ-000"]
+    }}}}
+  ]
+}}}}
+```
+
+### Required Chunking Rules
+- Every requirement **MUST** include a non-empty `chunk` string.
+- Use ordered chunk labels (for example: `C01_core`, `C02_api`, \
+`C03_frontend`).
+- Dependencies must not point to future chunks.
+- Keep chunk order deterministic by using consistent, increasing labels.
+- Respect the chunk target guidance below while preserving a valid \
+dependency DAG.
+
+### Field Descriptions
+- **id**: Unique requirement identifier (REQ-001, REQ-002, etc.)
+- **chunk**: Execution phase grouping (C01_core, C02_api, etc.)
+- **title**: Short descriptive title for the requirement
+- **priority**: P0 (critical), P1 (important), P2 (nice-to-have)
+- **type**: "functional" (what it does) or "non-functional" \
+(how well it does it)
+- **ears**: EARS-formatted requirement statement
+- **rationale**: Why this requirement exists - the "why" behind the "what"
+- **verification**: Testable criteria to verify the requirement is met
+- **depends_on**: List of requirement IDs this depends on
+
+## Spec Size Controls
+{chunk_target_line}
+- Requirements should be specific enough to implement and verify
+
+## Quality Criteria
+- Each requirement should be independently verifiable
+- Dependencies (depends_on) should form a valid DAG (no cycles)
+- EARS statements should be unambiguous and testable
+- Scope should be confirmed with user before detailed spec writing
+- Verification criteria should be specific and measurable
+- Rationale should explain the business or technical reason
+
+---
+
+USER'S REQUEST:
+"""
+
+
 def build_plan_review_refinement_appendix(
     *,
     question: str,
@@ -851,7 +1191,7 @@ def build_plan_review_refinement_appendix(
     Avoids duplicating feedback blocks when the current question already embeds
     plan-review feedback text (common when users include it directly).
     """
-    sections: List[str] = []
+    sections: list[str] = []
 
     feedback = (planning_feedback or "").strip()
     normalized_question = " ".join((question or "").lower().split())
@@ -887,7 +1227,7 @@ def _load_skill_creator_reference() -> str:
         return "---\nname: descriptive-skill-name\n" "description: Clear explanation of what this workflow does\n---\n" "# Skill Name\n\n## Purpose\n## Workflow\n"
 
 
-def _get_log_session_original_query(log_dir: Optional[str]) -> Optional[str]:
+def _get_log_session_original_query(log_dir: str | None) -> str | None:
     """Extract the original user query from a log session's status.json.
 
     Args:
@@ -913,8 +1253,8 @@ def _get_log_session_original_query(log_dir: Optional[str]) -> Optional[str]:
 
 
 def get_log_analysis_prompt_prefix(
-    log_dir: Optional[str],
-    turn: Optional[int],
+    log_dir: str | None,
+    turn: int | None,
     profile: str = "dev",
     skill_lifecycle_mode: str = "create_or_update",
 ) -> str:
@@ -1103,7 +1443,7 @@ USER'S ORGANIZATION REQUEST:
 
 
 # Global PromptSession instance (reused across prompts for better terminal handling)
-_prompt_session: Optional[PromptSession] = None
+_prompt_session: PromptSession | None = None
 
 
 def _get_prompt_session() -> PromptSession:
@@ -1144,7 +1484,7 @@ async def read_multiline_input_async(
     except (EOFError, KeyboardInterrupt):
         raise
     except Exception as e:
-        if _DEBUG_MODE:
+        if _is_debug_mode():
             logger.debug(f"prompt_toolkit async failed; falling back to input(): {e}")
         # Fallback to basic input - run in executor to not block
         loop = asyncio.get_running_loop()
@@ -1271,7 +1611,7 @@ class ConfigurationError(Exception):
     """Configuration error for CLI."""
 
 
-def _substitute_variables(obj: Any, variables: Dict[str, str]) -> Any:
+def _substitute_variables(obj: Any, variables: dict[str, str]) -> Any:
     """Recursively substitute ${var} references in config with actual values.
 
     Args:
@@ -1295,7 +1635,7 @@ def _substitute_variables(obj: Any, variables: Dict[str, str]) -> Any:
         return obj
 
 
-def resolve_config_path(config_arg: Optional[str]) -> Optional[Path]:
+def resolve_config_path(config_arg: str | None) -> Path | None:
     """Resolve config file with flexible syntax.
 
     Priority order:
@@ -1386,7 +1726,7 @@ def resolve_config_path(config_arg: Optional[str]) -> Optional[Path]:
     )
 
 
-def load_config_file(config_path: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
+def load_config_file(config_path: str) -> tuple[dict[str, Any], dict[str, Any]]:
     """Load configuration from YAML or JSON file.
 
     Search order:
@@ -1429,7 +1769,7 @@ def load_config_file(config_path: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
             )
 
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             if path.suffix.lower() in [".yaml", ".yml"]:
                 raw_config = yaml.safe_load(f)
             elif path.suffix.lower() == ".json":
@@ -1473,7 +1813,7 @@ def _expand_env_vars(config: Any) -> Any:
 def _api_key_error_message(
     provider_name: str,
     env_var: str,
-    config_path: Optional[str] = None,
+    config_path: str | None = None,
 ) -> str:
     """Generate standard API key error message."""
     msg = (
@@ -1499,6 +1839,7 @@ def create_backend(backend_type: str, **kwargs) -> Any:
     - claude: Anthropic Claude (requires ANTHROPIC_API_KEY)
     - gemini: Google Gemini (requires GOOGLE_API_KEY or GEMINI_API_KEY)
     - chatcompletion: OpenAI-compatible providers (auto-detects API key based on base_url)
+    - nvidia_nim: Nvidia NIM (requires NGC_API_KEY)
 
     Supported backend with external dependencies:
     - ag2/autogen: AG2 (AutoGen) framework agents
@@ -1510,6 +1851,7 @@ def create_backend(backend_type: str, **kwargs) -> Any:
     - Groq (groq.com) -> GROQ_API_KEY
     - Nebius AI Studio (studio.nebius.ai) -> NEBIUS_API_KEY
     - OpenRouter (openrouter.ai) -> OPENROUTER_API_KEY
+    - Nvidia NIM (nvidia.com) -> NGC_API_KEY
     - POE (poe.com) -> POE_API_KEY
     - Qwen (dashscope.aliyuncs.com) -> QWEN_API_KEY
 
@@ -1560,6 +1902,10 @@ def create_backend(backend_type: str, **kwargs) -> Any:
                 _api_key_error_message("Gemini", "GOOGLE_API_KEY", config_path),
             )
         return GeminiBackend(api_key=api_key, **kwargs)
+
+    elif backend_type == "copilot":
+        # Copilot uses local auth via SDK, no API key required here
+        return CopilotBackend(api_key="copilot-local", **kwargs)
 
     elif backend_type == "chatcompletion":
         api_key = kwargs.get("api_key")
@@ -1629,6 +1975,15 @@ def create_backend(backend_type: str, **kwargs) -> Any:
                 if not api_key:
                     raise ConfigurationError(
                         "Kimi/Moonshot API key not found. Set MOONSHOT_API_KEY or KIMI_API_KEY environment variable.\n"
+                        "You can add it to a .env file in:\n"
+                        "  - Current directory: .env\n"
+                        "  - Global config: ~/.massgen/.env",
+                    )
+            elif base_url and "nvidia.com" in base_url:
+                api_key = os.getenv("NGC_API_KEY")
+                if not api_key:
+                    raise ConfigurationError(
+                        "Nvidia NIM API key not found. Set NGC_API_KEY environment variable.\n"
                         "You can add it to a .env file in:\n"
                         "  - Current directory: .env\n"
                         "  - Global config: ~/.massgen/.env",
@@ -1728,6 +2083,17 @@ def create_backend(backend_type: str, **kwargs) -> Any:
             kwargs["base_url"] = "https://api.moonshot.cn/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
 
+    elif backend_type == "nvidia_nim":
+        # Nvidia NIM uses OpenAI-compatible Chat Completions API
+        api_key = kwargs.get("api_key") or os.getenv("NGC_API_KEY")
+        if not api_key:
+            raise ConfigurationError(
+                _api_key_error_message("Nvidia NIM", "NGC_API_KEY", config_path),
+            )
+        if "base_url" not in kwargs:
+            kwargs["base_url"] = "https://integrate.api.nvidia.com/v1"
+        return ChatCompletionsBackend(api_key=api_key, **kwargs)
+
     elif backend_type == "nebius":
         # Nebius AI Studio uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("NEBIUS_API_KEY")
@@ -1819,16 +2185,16 @@ def create_backend(backend_type: str, **kwargs) -> Any:
 
 
 def create_agents_from_config(
-    config: Dict[str, Any],
-    orchestrator_config: Optional[Dict[str, Any]] = None,
+    config: dict[str, Any],
+    orchestrator_config: dict[str, Any] | None = None,
     enable_rate_limit: bool = False,
-    config_path: Optional[str] = None,
-    memory_session_id: Optional[str] = None,
+    config_path: str | None = None,
+    memory_session_id: str | None = None,
     debug: bool = False,
-    filesystem_session_id: Optional[str] = None,
-    session_storage_base: Optional[str] = None,
-    progress_callback: Optional[Callable[[str, str], None]] = None,
-) -> Dict[str, ConfigurableAgent]:
+    filesystem_session_id: str | None = None,
+    session_storage_base: str | None = None,
+    progress_callback: Callable[[str, str], None] | None = None,
+) -> dict[str, ConfigurableAgent]:
     """Create agents from configuration.
 
     TIMING: This function is instrumented for performance analysis.
@@ -1965,7 +2331,9 @@ def create_agents_from_config(
         # Add orchestrator context for filesystem setup if available
         if orchestrator_config:
             if "agent_temporary_workspace" in orchestrator_config:
-                backend_config["agent_temporary_workspace"] = orchestrator_config["agent_temporary_workspace"]
+                backend_config["agent_temporary_workspace"] = _scope_agent_temporary_workspace(
+                    orchestrator_config["agent_temporary_workspace"],
+                )
             # Add orchestrator-level context_paths to all agents
             if "context_paths" in orchestrator_config:
                 # Merge orchestrator context_paths with agent-specific ones
@@ -2045,6 +2413,7 @@ def create_agents_from_config(
             "groq",
             "openrouter",
             "moonshot",
+            "nvidia_nim",
             "nebius",
             "poe",
             "qwen",
@@ -2058,12 +2427,17 @@ def create_agents_from_config(
             agent_config = AgentConfig.create_sglang_config(**backend_params)
         elif backend_type_lower == "claude_code":
             agent_config = AgentConfig.create_claude_code_config(**backend_params)
+        elif backend_type_lower == "copilot":
+            # Copilot maps to standard Config with minimal params?
+            # Or dedicated config if needed. For now standard.
+            agent_config = AgentConfig(backend_params=backend_params)
         elif backend_type_lower == "azure_openai":
             agent_config = AgentConfig.create_azure_openai_config(**backend_params)
         else:
             agent_config = AgentConfig(backend_params=backend_params)
 
         agent_config.agent_id = agent_id
+        agent_config.subagent_agents = copy.deepcopy(agent_data.get("subagent_agents", []))
 
         # System message handling: all backends use system_message at agent level
         system_msg = agent_data.get("system_message")
@@ -2325,10 +2699,10 @@ def create_agents_from_config(
 
 
 def create_dspy_paraphraser_from_config(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     *,
-    config_path: Optional[str] = None,
-) -> Optional[QuestionParaphraser]:
+    config_path: str | None = None,
+) -> QuestionParaphraser | None:
     """Instantiate DSPy paraphraser from orchestrator configuration.
 
     Returns:
@@ -2360,7 +2734,7 @@ def create_dspy_paraphraser_from_config(
         )
         return None
 
-    paraphraser_kwargs: Dict[str, Any] = {}
+    paraphraser_kwargs: dict[str, Any] = {}
 
     # Simple pass-through configuration values
     for key in [
@@ -2406,13 +2780,68 @@ def create_dspy_paraphraser_from_config(
     return paraphraser
 
 
+def _scope_snapshot_storage(base: str | None) -> str | None:
+    """Scope ``snapshot_storage`` by the current log session root name.
+
+    Two concurrent CLI processes using the same config would otherwise write
+    to the same ``.massgen/snapshots/agent_a/`` directory.  Appending the
+    microsecond-timestamped session root name keeps them isolated.
+
+    Args:
+        base: Raw ``snapshot_storage`` value from YAML config, or None.
+
+    Returns:
+        Scoped path string (e.g., ``.massgen/snapshots/log_20260301_XXX``),
+        or None if *base* is None.
+    """
+    if base is None:
+        return None
+    from pathlib import Path as _Path
+
+    from .logger_config import get_log_session_root as _get_root
+
+    try:
+        session_root_name = _get_root().name
+        return str(_Path(base) / session_root_name)
+    except Exception:
+        return base  # Fallback: return unchanged if session root unavailable
+
+
+def _scope_agent_temporary_workspace(base: str | None) -> str | None:
+    """Scope ``agent_temporary_workspace`` by the current log session root name.
+
+    Two concurrent CLI processes using the same config would otherwise share
+    the same temp workspace parent.  Appending the microsecond-timestamped
+    session root name keeps them isolated -- process B's
+    ``clear_temp_workspace()`` only removes its own scoped subdirectory.
+
+    Args:
+        base: Raw ``agent_temporary_workspace`` value from YAML config,
+            or None.
+
+    Returns:
+        Scoped path string, or None if *base* is None.
+    """
+    if base is None:
+        return None
+    from pathlib import Path as _Path
+
+    from .logger_config import get_log_session_root as _get_root
+
+    try:
+        session_root_name = _get_root().name
+        return str(_Path(base) / session_root_name)
+    except Exception:
+        return base  # Fallback: return unchanged if session root unavailable
+
+
 def create_simple_config(
     backend_type: str,
     model: str,
-    system_message: Optional[str] = None,
-    base_url: Optional[str] = None,
-    ui_config: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    system_message: str | None = None,
+    base_url: str | None = None,
+    ui_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Create a simple single-agent configuration."""
     backend_config = {"type": backend_type, "model": model}
     if base_url:
@@ -2447,8 +2876,8 @@ def create_simple_config(
 
 
 def apply_cli_cwd_context_path(
-    config: Dict[str, Any],
-    cwd_context_mode: Optional[str],
+    config: dict[str, Any],
+    cwd_context_mode: str | None,
 ) -> None:
     """Apply --cwd-context flag by injecting CWD into orchestrator context paths.
 
@@ -2509,7 +2938,7 @@ def apply_cli_cwd_context_path(
     )
 
 
-def validate_context_paths(config: Dict[str, Any]) -> None:
+def validate_context_paths(config: dict[str, Any]) -> None:
     """Validate that all context paths in the config exist.
 
     Context paths can be either files or directories.
@@ -2541,13 +2970,194 @@ def validate_context_paths(config: Dict[str, Any]) -> None:
         raise ConfigurationError("\n".join(errors))
 
 
-def _parse_coordination_config(coord_cfg: Dict[str, Any]) -> "CoordinationConfig":
+def add_mode_flags_to_parser(parser: argparse.ArgumentParser) -> None:
+    """Add mode bar toggle flags to an argparse parser.
+
+    These flags mirror the TUI mode bar toggles, allowing CLI control
+    of agent mode, coordination mode, refinement, and persona generation.
+    """
+    mode_group = parser.add_argument_group(
+        "mode settings",
+        "Override execution mode (mirrors TUI mode bar toggles)",
+    )
+    mode_group.add_argument(
+        "--single-agent",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="AGENT_ID",
+        help="Single-agent mode. Optionally specify agent ID (default: first agent). " "Overrides multi-agent config to use only one agent.",
+    )
+    mode_group.add_argument(
+        "--coordination-mode",
+        choices=["parallel", "decomposition"],
+        default=None,
+        help="Coordination mode: parallel (voting) or decomposition (subtask-based). " "Overrides coordination_mode from config file.",
+    )
+    mode_group.add_argument(
+        "--quick",
+        action="store_true",
+        help="Quick mode: disable refinement. Agents produce one answer with no " "voting loop. Equivalent to TUI 'Refine OFF' toggle.",
+    )
+    mode_group.add_argument(
+        "--personas",
+        choices=["off", "perspective", "implementation", "methodology"],
+        default=None,
+        help="Enable parallel persona generation with specified diversity mode. " "'off' disables persona generation. Requires parallel coordination mode.",
+    )
+
+
+def validate_mode_flag_combinations(args: argparse.Namespace) -> list[str]:
+    """Validate that CLI mode flag combinations are compatible.
+
+    Returns a list of error messages (empty if valid).
+    """
+    errors: list[str] = []
+
+    if getattr(args, "single_agent", None) is not None and getattr(args, "coordination_mode", None) == "decomposition":
+        errors.append(
+            "--single-agent and --coordination-mode decomposition are incompatible. " "Decomposition requires multiple agents.",
+        )
+
+    personas = getattr(args, "personas", None)
+    if personas is not None and personas != "off" and getattr(args, "coordination_mode", None) == "decomposition":
+        errors.append(
+            "--personas requires parallel coordination mode, not decomposition.",
+        )
+
+    return errors
+
+
+def apply_mode_flags_to_config(
+    config: dict[str, Any],
+    args: argparse.Namespace,
+) -> None:
+    """Apply CLI mode flags to the config dict.
+
+    Mirrors the logic in TuiModeState.get_orchestrator_overrides() from
+    tui_modes.py, but applies overrides to the raw config dict before
+    the orchestrator is constructed.
+    """
+    coordination_mode = getattr(args, "coordination_mode", None)
+    quick = getattr(args, "quick", False)
+    personas = getattr(args, "personas", None)
+    single_agent = getattr(args, "single_agent", None)
+
+    # Nothing to do if no mode flags set
+    if coordination_mode is None and not quick and personas is None:
+        return
+
+    if "orchestrator" not in config:
+        config["orchestrator"] = {}
+    orch = config["orchestrator"]
+
+    # Coordination mode
+    if coordination_mode is not None:
+        orch["coordination_mode"] = "decomposition" if coordination_mode == "decomposition" else "voting"
+
+    # Quick mode (refinement OFF)
+    if quick:
+        orch["max_new_answers_per_agent"] = 1
+        orch["skip_final_presentation"] = True
+
+        if single_agent is not None:
+            # Single agent + quick = skip voting too
+            orch["skip_voting"] = True
+        else:
+            # Multi-agent + quick = independent work, deferred single vote
+            orch["disable_injection"] = True
+            orch["defer_voting_until_all_answered"] = True
+            orch["final_answer_strategy"] = "synthesize"
+
+    # Personas
+    if personas is not None:
+        if "coordination" not in orch:
+            orch["coordination"] = {}
+        if personas == "off":
+            if "persona_generator" in orch["coordination"]:
+                orch["coordination"]["persona_generator"]["enabled"] = False
+        else:
+            orch["coordination"]["persona_generator"] = {
+                "enabled": True,
+                "diversity_mode": personas,
+            }
+
+
+def filter_agents_for_single_mode(
+    agents: dict[str, Any],
+    single_agent_arg: Any,
+) -> dict[str, Any]:
+    """Filter agents dict for --single-agent mode.
+
+    Args:
+        agents: Dict mapping agent IDs to agent objects.
+        single_agent_arg: The parsed --single-agent value.
+            None = no filtering, True = pick first, str = pick by ID.
+
+    Returns:
+        Filtered agents dict (single entry or unchanged).
+
+    Raises:
+        ValueError: If specified agent ID not found.
+    """
+    if single_agent_arg is None:
+        return agents
+
+    if single_agent_arg is True:
+        # Pick first agent
+        first_id = next(iter(agents.keys()))
+        return {first_id: agents[first_id]}
+
+    # Pick by ID
+    agent_id = str(single_agent_arg)
+    if agent_id not in agents:
+        available = ", ".join(agents.keys())
+        raise ValueError(
+            f"Agent '{agent_id}' not found in config. " f"Available agents: {available}",
+        )
+    return {agent_id: agents[agent_id]}
+
+
+def build_cli_mode_defaults(args: argparse.Namespace) -> dict[str, Any]:
+    """Build a dict of CLI mode defaults for passing to the TUI.
+
+    Returns an empty dict if no mode flags were set.
+    """
+    defaults: dict[str, Any] = {}
+
+    single_agent = getattr(args, "single_agent", None)
+    if single_agent is not None:
+        defaults["agent_mode"] = "single"
+        if single_agent is not True:
+            defaults["selected_agent"] = str(single_agent)
+
+    coordination_mode = getattr(args, "coordination_mode", None)
+    if coordination_mode is not None:
+        defaults["coordination_mode"] = coordination_mode
+
+    personas = getattr(args, "personas", None)
+    if personas is not None:
+        defaults["personas"] = personas
+
+    if getattr(args, "quick", False):
+        defaults["refinement_enabled"] = False
+
+    if getattr(args, "plan", False):
+        defaults["plan_mode"] = "plan"
+    elif getattr(args, "spec", False):
+        defaults["plan_mode"] = "spec"
+
+    return defaults
+
+
+def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig":
     """Parse a coordination config dict into a CoordinationConfig object.
 
     Centralizes the parsing logic used by run_question_with_history,
     run_single_question, and run_textual_interactive_mode.
     """
     from .agent_config import CoordinationConfig
+    from .evaluation_criteria_generator import EvaluationCriteriaGeneratorConfig
     from .persona_generator import PersonaGeneratorConfig
     from .subagent.models import SubagentOrchestratorConfig
     from .task_decomposer import TaskDecomposerConfig
@@ -2561,6 +3171,18 @@ def _parse_coordination_config(coord_cfg: Dict[str, Any]) -> "CoordinationConfig
             diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
             persona_guidelines=pg_cfg.get("persona_guidelines"),
             persist_across_turns=pg_cfg.get("persist_across_turns", False),
+            after_first_answer=pg_cfg.get("after_first_answer", "drop"),
+        )
+
+    # Parse evaluation_criteria_generator config if present
+    eval_criteria_config = EvaluationCriteriaGeneratorConfig()
+    if "evaluation_criteria_generator" in coord_cfg:
+        ec_cfg = coord_cfg["evaluation_criteria_generator"]
+        eval_criteria_config = EvaluationCriteriaGeneratorConfig(
+            enabled=ec_cfg.get("enabled", False),
+            persist_across_turns=ec_cfg.get("persist_across_turns", False),
+            min_criteria=ec_cfg.get("min_criteria", 4),
+            max_criteria=ec_cfg.get("max_criteria", 10),
         )
 
     # Parse task_decomposer config if present
@@ -2596,39 +3218,62 @@ def _parse_coordination_config(coord_cfg: Dict[str, Any]) -> "CoordinationConfig
         max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
         task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
         enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+        learning_capture_mode=coord_cfg.get("learning_capture_mode", "round"),
+        disable_final_only_round_capture_fallback=coord_cfg.get(
+            "disable_final_only_round_capture_fallback",
+            False,
+        ),
         compression_target_ratio=coord_cfg.get("compression_target_ratio", 0.20),
         use_skills=coord_cfg.get("use_skills", False),
         massgen_skills=coord_cfg.get("massgen_skills", []),
         skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
         load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
         persona_generator=persona_generator_config,
+        evaluation_criteria_generator=eval_criteria_config,
+        pre_collab_voting_threshold=coord_cfg.get("pre_collab_voting_threshold"),
         enable_subagents=coord_cfg.get("enable_subagents", False),
         subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
         subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
         subagent_round_timeouts=coord_cfg.get("subagent_round_timeouts"),
+        subagent_runtime_mode=coord_cfg.get("subagent_runtime_mode", "isolated"),
+        subagent_runtime_fallback_mode=coord_cfg.get("subagent_runtime_fallback_mode"),
+        subagent_host_launch_prefix=coord_cfg.get("subagent_host_launch_prefix"),
         subagent_orchestrator=subagent_orchestrator_config,
+        background_subagents=coord_cfg.get("background_subagents"),
         use_two_tier_workspace=coord_cfg.get("use_two_tier_workspace", False),
         task_decomposer=task_decomposer_config,
         write_mode=coord_cfg.get("write_mode"),
         drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
         enable_changedoc=coord_cfg.get("enable_changedoc", True),
+        subagent_types=coord_cfg.get("subagent_types"),
+        round_evaluator_before_checklist=coord_cfg.get("round_evaluator_before_checklist", False),
+        orchestrator_managed_round_evaluator=coord_cfg.get("orchestrator_managed_round_evaluator", False),
+        enable_quality_rethink_on_iteration=coord_cfg.get("enable_quality_rethink_on_iteration", False),
+        enable_novelty_on_iteration=coord_cfg.get("enable_novelty_on_iteration", False),
+        novelty_injection=coord_cfg.get("novelty_injection", "none"),
+        improvements=coord_cfg.get("improvements", {}) or {},
+        checklist_criteria_preset=coord_cfg.get("checklist_criteria_preset"),
+        checklist_criteria_inline=coord_cfg.get("checklist_criteria_inline"),
+        resume_from_log=coord_cfg.get("resume_from_log"),
     )
 
 
 def inject_prompt_context_paths(
     prompt: str,
-    config: Dict[str, Any],
-) -> Tuple[str, Dict[str, Any]]:
+    config: dict[str, Any],
+    parse_at_references: bool = True,
+) -> tuple[str, dict[str, Any]]:
     """Parse @references from prompt and inject into config.
 
     Extracts @path and @path:w references from the prompt, validates that
     the paths exist, and injects them into config["orchestrator"]["context_paths"].
 
-    This always displays extracted paths to the user for transparency.
+    This displays extracted paths to the user for transparency when parsing is enabled.
 
     Args:
         prompt: User's raw prompt potentially containing @references.
         config: MassGen configuration dict (modified in-place).
+        parse_at_references: Whether to parse @path references from prompt text.
 
     Returns:
         Tuple of (cleaned_prompt, modified_config).
@@ -2636,6 +3281,9 @@ def inject_prompt_context_paths(
     Raises:
         ConfigurationError: If any referenced paths don't exist.
     """
+    if not parse_at_references:
+        return prompt, config
+
     from .path_handling import PromptParserError, parse_prompt_for_context
 
     try:
@@ -2680,7 +3328,7 @@ def inject_prompt_context_paths(
     return parsed.cleaned_prompt, config
 
 
-def relocate_filesystem_paths(config: Dict[str, Any]) -> None:
+def relocate_filesystem_paths(config: dict[str, Any]) -> None:
     """Relocate filesystem paths (orchestrator paths and agent workspaces) to be under .massgen/ directory.
 
     Modifies the config in-place to ensure all MassGen state is organized
@@ -2723,12 +3371,12 @@ def relocate_filesystem_paths(config: Dict[str, Any]) -> None:
 async def handle_session_persistence(
     orchestrator,
     question: str,
-    session_info: Dict[str, Any],
-    config_path: Optional[str] = None,
-    model: Optional[str] = None,
-    log_directory: Optional[str] = None,
-    models_dict: Optional[Dict[str, str]] = None,
-) -> tuple[Optional[str], int, Optional[str]]:
+    session_info: dict[str, Any],
+    config_path: str | None = None,
+    model: str | None = None,
+    log_directory: str | None = None,
+    models_dict: dict[str, str] | None = None,
+) -> tuple[str | None, int, str | None]:
     """
     Handle session persistence after orchestrator completes.
 
@@ -2854,12 +3502,12 @@ async def handle_session_persistence(
 
 async def run_question_with_history(
     question: str,
-    agents: Dict[str, SingleAgent],
-    ui_config: Dict[str, Any],
-    history: List[Dict[str, Any]],
-    session_info: Dict[str, Any],
+    agents: dict[str, SingleAgent],
+    ui_config: dict[str, Any],
+    history: list[dict[str, Any]],
+    session_info: dict[str, Any],
     **kwargs,
-) -> tuple[str, Optional[str], int, bool]:
+) -> tuple[str, str | None, int, bool]:
     """Run MassGen with a question and conversation history.
 
     Returns:
@@ -2892,56 +3540,13 @@ async def run_question_with_history(
             "[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)",
         )
 
-    # Apply voting sensitivity if specified
-    if "voting_sensitivity" in orchestrator_cfg:
-        orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
-    if "voting_threshold" in orchestrator_cfg:
-        orchestrator_config.voting_threshold = orchestrator_cfg["voting_threshold"]
-
-    # Apply answer count limit if specified
-    if "max_new_answers_per_agent" in orchestrator_cfg:
-        orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
-    if "max_new_answers_global" in orchestrator_cfg:
-        orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
-    if "checklist_require_gap_report" in orchestrator_cfg:
-        orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
-
-    # Apply answer novelty requirement if specified
-    if "answer_novelty_requirement" in orchestrator_cfg:
-        orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
-    if "fairness_enabled" in orchestrator_cfg:
-        orchestrator_config.fairness_enabled = orchestrator_cfg["fairness_enabled"]
-    if "fairness_lead_cap_answers" in orchestrator_cfg:
-        orchestrator_config.fairness_lead_cap_answers = orchestrator_cfg["fairness_lead_cap_answers"]
-    if "max_midstream_injections_per_round" in orchestrator_cfg:
-        orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
+    _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
 
     # Get context sharing parameters
-    snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-    agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
-
-    # Get debug/test parameters
-    if orchestrator_cfg.get("skip_coordination_rounds", False):
-        orchestrator_config.skip_coordination_rounds = True
-
-    if orchestrator_cfg.get("debug_final_answer"):
-        orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
-
-    # Apply subagent/TUI orchestrator flags
-    if orchestrator_cfg.get("skip_final_presentation", False):
-        orchestrator_config.skip_final_presentation = True
-    if orchestrator_cfg.get("skip_voting", False):
-        orchestrator_config.skip_voting = True
-    if orchestrator_cfg.get("disable_injection", False):
-        orchestrator_config.disable_injection = True
-    if "defer_voting_until_all_answered" in orchestrator_cfg:
-        orchestrator_config.defer_voting_until_all_answered = orchestrator_cfg["defer_voting_until_all_answered"]
-
-    # Parse decomposition mode parameters
-    if "coordination_mode" in orchestrator_cfg:
-        orchestrator_config.coordination_mode = orchestrator_cfg["coordination_mode"]
-    if "presenter_agent" in orchestrator_cfg:
-        orchestrator_config.presenter_agent = orchestrator_cfg["presenter_agent"]
+    snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+    agent_temporary_workspace = _scope_agent_temporary_workspace(
+        orchestrator_cfg.get("agent_temporary_workspace"),
+    )
 
     # Parse coordination config if present
     if "coordination" in orchestrator_cfg:
@@ -2983,6 +3588,22 @@ async def run_question_with_history(
         if generated_personas:
             logger.info("[CLI] Reusing persisted personas from previous turn")
 
+    # Get generated evaluation criteria from session info if persist_across_turns is enabled
+    generated_evaluation_criteria = None
+    if (
+        hasattr(orchestrator_config, "coordination_config")
+        and orchestrator_config.coordination_config
+        and hasattr(orchestrator_config.coordination_config, "evaluation_criteria_generator")
+        and orchestrator_config.coordination_config.evaluation_criteria_generator
+        and orchestrator_config.coordination_config.evaluation_criteria_generator.persist_across_turns
+    ):
+        raw_criteria = session_info.get("generated_evaluation_criteria")
+        if raw_criteria:
+            from .evaluation_criteria_generator import GeneratedCriterion
+
+            generated_evaluation_criteria = [GeneratedCriterion(id=c["id"], text=c["text"], category=c["category"]) for c in raw_criteria]
+            logger.info("[CLI] Reusing persisted evaluation criteria from previous turn")
+
     orchestrator = Orchestrator(
         agents=agents,
         config=orchestrator_config,
@@ -2996,7 +3617,13 @@ async def run_question_with_history(
         enable_nlip=orchestrator_enable_nlip,
         nlip_config=orchestrator_nlip_config,
         generated_personas=generated_personas,  # Only if persist_across_turns=True
+        generated_evaluation_criteria=generated_evaluation_criteria,
     )
+
+    # Apply pre-populated workspaces from incomplete turns (passed from interactive mode)
+    pre_populated_workspaces = kwargs.pop("pre_populated_workspaces", None)
+    if pre_populated_workspaces:
+        orchestrator._pre_populated_workspaces = pre_populated_workspaces
 
     # Parse per-agent subtask assignments for decomposition mode
     if orchestrator_config.coordination_mode == "decomposition":
@@ -3022,103 +3649,7 @@ async def run_question_with_history(
         orchestrator_kwargs = kwargs.get("orchestrator", {})
         coordination_settings = orchestrator_kwargs.get("coordination", {})
         if coordination_settings:
-            from .agent_config import CoordinationConfig
-            from .persona_generator import PersonaGeneratorConfig
-            from .subagent.models import SubagentOrchestratorConfig
-
-            # Parse persona_generator config if present
-            persona_generator_config = PersonaGeneratorConfig()
-            if "persona_generator" in coordination_settings:
-                pg_cfg = coordination_settings["persona_generator"]
-                persona_generator_config = PersonaGeneratorConfig(
-                    enabled=pg_cfg.get("enabled", False),
-                    diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
-                    persona_guidelines=pg_cfg.get("persona_guidelines"),
-                    persist_across_turns=pg_cfg.get("persist_across_turns", False),
-                )
-
-            # Parse subagent_orchestrator config if present
-            subagent_orchestrator_config = None
-            if "subagent_orchestrator" in coordination_settings:
-                so_cfg = coordination_settings["subagent_orchestrator"]
-                subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(
-                    so_cfg,
-                )
-
-            orchestrator_config.coordination_config = CoordinationConfig(
-                enable_planning_mode=coordination_settings.get(
-                    "enable_planning_mode",
-                    False,
-                ),
-                planning_mode_instruction=coordination_settings.get(
-                    "planning_mode_instruction",
-                    """During coordination, describe what you would do. Only provide concrete implementation details and execute read-only actions.
-                    DO NOT execute any actions that have side effects (e.g., sending messages, modifying data)""",
-                ),
-                enable_agent_task_planning=coordination_settings.get(
-                    "enable_agent_task_planning",
-                    False,
-                ),
-                max_tasks_per_plan=coordination_settings.get("max_tasks_per_plan", 10),
-                broadcast=coordination_settings.get("broadcast", False),
-                broadcast_sensitivity=coordination_settings.get(
-                    "broadcast_sensitivity",
-                    "medium",
-                ),
-                response_depth=coordination_settings.get("response_depth", "medium"),
-                broadcast_timeout=coordination_settings.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coordination_settings.get(
-                    "broadcast_wait_by_default",
-                    True,
-                ),
-                max_broadcasts_per_agent=coordination_settings.get(
-                    "max_broadcasts_per_agent",
-                    10,
-                ),
-                task_planning_filesystem_mode=coordination_settings.get(
-                    "task_planning_filesystem_mode",
-                    False,
-                ),
-                enable_memory_filesystem_mode=coordination_settings.get(
-                    "enable_memory_filesystem_mode",
-                    False,
-                ),
-                compression_target_ratio=coordination_settings.get(
-                    "compression_target_ratio",
-                    0.20,
-                ),
-                use_skills=coordination_settings.get("use_skills", False),
-                massgen_skills=coordination_settings.get("massgen_skills", []),
-                skills_directory=coordination_settings.get(
-                    "skills_directory",
-                    ".agent/skills",
-                ),
-                load_previous_session_skills=coordination_settings.get(
-                    "load_previous_session_skills",
-                    False,
-                ),
-                persona_generator=persona_generator_config,
-                enable_subagents=coordination_settings.get("enable_subagents", False),
-                subagent_default_timeout=coordination_settings.get(
-                    "subagent_default_timeout",
-                    300,
-                ),
-                subagent_max_concurrent=coordination_settings.get(
-                    "subagent_max_concurrent",
-                    3,
-                ),
-                subagent_round_timeouts=coordination_settings.get(
-                    "subagent_round_timeouts",
-                ),
-                subagent_orchestrator=subagent_orchestrator_config,
-                use_two_tier_workspace=coordination_settings.get(
-                    "use_two_tier_workspace",
-                    False,
-                ),
-                write_mode=coordination_settings.get("write_mode"),
-                drift_conflict_policy=coordination_settings.get("drift_conflict_policy", "skip"),
-                enable_changedoc=coordination_settings.get("enable_changedoc", True),
-            )
+            orchestrator_config.coordination_config = _parse_coordination_config(coordination_settings)
 
     print(f"\n🤖 {BRIGHT_CYAN}{mode_text}{RESET}", flush=True)
     print(f"Agents: {', '.join(agents.keys())}", flush=True)
@@ -3342,6 +3873,10 @@ async def run_question_with_history(
     if orchestrator.get_generated_personas():
         session_info["generated_personas"] = orchestrator.get_generated_personas()
 
+    # Store generated evaluation criteria in session_info for persistence across turns
+    if orchestrator.get_generated_evaluation_criteria():
+        session_info["generated_evaluation_criteria"] = [{"id": c.id, "text": c.text, "category": c.category} for c in orchestrator.get_generated_evaluation_criteria()]
+
     # Return normalized response so conversation history has correct paths
     return (
         normalized_response or response_content,
@@ -3353,9 +3888,9 @@ async def run_question_with_history(
 
 async def run_single_question(
     question: str,
-    agents: Dict[str, SingleAgent],
-    ui_config: Dict[str, Any],
-    session_id: Optional[str] = None,
+    agents: dict[str, SingleAgent],
+    ui_config: dict[str, Any],
+    session_id: str | None = None,
     restore_session_if_exists: bool = False,
     return_metadata: bool = False,
     **kwargs,
@@ -3480,103 +4015,7 @@ async def run_single_question(
         orchestrator_kwargs = kwargs.get("orchestrator", {})
         coordination_settings = orchestrator_kwargs.get("coordination", {})
         if coordination_settings:
-            from .agent_config import CoordinationConfig
-            from .persona_generator import PersonaGeneratorConfig
-            from .subagent.models import SubagentOrchestratorConfig
-
-            # Parse persona_generator config if present
-            persona_generator_config = PersonaGeneratorConfig()
-            if "persona_generator" in coordination_settings:
-                pg_cfg = coordination_settings["persona_generator"]
-                persona_generator_config = PersonaGeneratorConfig(
-                    enabled=pg_cfg.get("enabled", False),
-                    diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
-                    persona_guidelines=pg_cfg.get("persona_guidelines"),
-                    persist_across_turns=pg_cfg.get("persist_across_turns", False),
-                )
-
-            # Parse subagent_orchestrator config if present
-            subagent_orchestrator_config = None
-            if "subagent_orchestrator" in coordination_settings:
-                so_cfg = coordination_settings["subagent_orchestrator"]
-                subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(
-                    so_cfg,
-                )
-
-            orchestrator_config.coordination_config = CoordinationConfig(
-                enable_planning_mode=coordination_settings.get(
-                    "enable_planning_mode",
-                    False,
-                ),
-                planning_mode_instruction=coordination_settings.get(
-                    "planning_mode_instruction",
-                    """During coordination, describe what you would do. Only provide concrete implementation details and execute read-only actions.
-                    DO NOT execute any actions that have side effects (e.g., sending messages, modifying data)""",
-                ),
-                enable_agent_task_planning=coordination_settings.get(
-                    "enable_agent_task_planning",
-                    False,
-                ),
-                max_tasks_per_plan=coordination_settings.get("max_tasks_per_plan", 10),
-                broadcast=coordination_settings.get("broadcast", False),
-                broadcast_sensitivity=coordination_settings.get(
-                    "broadcast_sensitivity",
-                    "medium",
-                ),
-                response_depth=coordination_settings.get("response_depth", "medium"),
-                broadcast_timeout=coordination_settings.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coordination_settings.get(
-                    "broadcast_wait_by_default",
-                    True,
-                ),
-                max_broadcasts_per_agent=coordination_settings.get(
-                    "max_broadcasts_per_agent",
-                    10,
-                ),
-                task_planning_filesystem_mode=coordination_settings.get(
-                    "task_planning_filesystem_mode",
-                    False,
-                ),
-                enable_memory_filesystem_mode=coordination_settings.get(
-                    "enable_memory_filesystem_mode",
-                    False,
-                ),
-                compression_target_ratio=coordination_settings.get(
-                    "compression_target_ratio",
-                    0.20,
-                ),
-                use_skills=coordination_settings.get("use_skills", False),
-                massgen_skills=coordination_settings.get("massgen_skills", []),
-                skills_directory=coordination_settings.get(
-                    "skills_directory",
-                    ".agent/skills",
-                ),
-                load_previous_session_skills=coordination_settings.get(
-                    "load_previous_session_skills",
-                    False,
-                ),
-                persona_generator=persona_generator_config,
-                enable_subagents=coordination_settings.get("enable_subagents", False),
-                subagent_default_timeout=coordination_settings.get(
-                    "subagent_default_timeout",
-                    300,
-                ),
-                subagent_max_concurrent=coordination_settings.get(
-                    "subagent_max_concurrent",
-                    3,
-                ),
-                subagent_round_timeouts=coordination_settings.get(
-                    "subagent_round_timeouts",
-                ),
-                subagent_orchestrator=subagent_orchestrator_config,
-                use_two_tier_workspace=coordination_settings.get(
-                    "use_two_tier_workspace",
-                    False,
-                ),
-                write_mode=coordination_settings.get("write_mode"),
-                drift_conflict_policy=coordination_settings.get("drift_conflict_policy", "skip"),
-                enable_changedoc=coordination_settings.get("enable_changedoc", True),
-            )
+            orchestrator_config.coordination_config = _parse_coordination_config(coordination_settings)
 
         # Get orchestrator parameters from config
         orchestrator_cfg = kwargs.get("orchestrator", {})
@@ -3590,56 +4029,13 @@ async def run_single_question(
                 "[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)",
             )
 
-        # Apply voting sensitivity if specified
-        if "voting_sensitivity" in orchestrator_cfg:
-            orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
-        if "voting_threshold" in orchestrator_cfg:
-            orchestrator_config.voting_threshold = orchestrator_cfg["voting_threshold"]
-
-        # Apply answer count limit if specified
-        if "max_new_answers_per_agent" in orchestrator_cfg:
-            orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
-        if "max_new_answers_global" in orchestrator_cfg:
-            orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
-        if "checklist_require_gap_report" in orchestrator_cfg:
-            orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
-
-        # Apply answer novelty requirement if specified
-        if "answer_novelty_requirement" in orchestrator_cfg:
-            orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
-        if "fairness_enabled" in orchestrator_cfg:
-            orchestrator_config.fairness_enabled = orchestrator_cfg["fairness_enabled"]
-        if "fairness_lead_cap_answers" in orchestrator_cfg:
-            orchestrator_config.fairness_lead_cap_answers = orchestrator_cfg["fairness_lead_cap_answers"]
-        if "max_midstream_injections_per_round" in orchestrator_cfg:
-            orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
+        _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
 
         # Get context sharing parameters
-        snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-        agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
-
-        # Get debug/test parameters
-        if orchestrator_cfg.get("skip_coordination_rounds", False):
-            orchestrator_config.skip_coordination_rounds = True
-
-        if orchestrator_cfg.get("debug_final_answer"):
-            orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
-
-        # Apply subagent/TUI orchestrator flags
-        if orchestrator_cfg.get("skip_final_presentation", False):
-            orchestrator_config.skip_final_presentation = True
-        if orchestrator_cfg.get("skip_voting", False):
-            orchestrator_config.skip_voting = True
-        if orchestrator_cfg.get("disable_injection", False):
-            orchestrator_config.disable_injection = True
-        if "defer_voting_until_all_answered" in orchestrator_cfg:
-            orchestrator_config.defer_voting_until_all_answered = orchestrator_cfg["defer_voting_until_all_answered"]
-
-        # Parse decomposition mode parameters
-        if "coordination_mode" in orchestrator_cfg:
-            orchestrator_config.coordination_mode = orchestrator_cfg["coordination_mode"]
-        if "presenter_agent" in orchestrator_cfg:
-            orchestrator_config.presenter_agent = orchestrator_cfg["presenter_agent"]
+        snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+        agent_temporary_workspace = _scope_agent_temporary_workspace(
+            orchestrator_cfg.get("agent_temporary_workspace"),
+        )
 
         # Parse coordination config if present
         if "coordination" in orchestrator_cfg:
@@ -3833,8 +4229,8 @@ async def run_single_question(
 
 
 def prompt_for_context_paths(
-    original_config: Dict[str, Any],
-    orchestrator_cfg: Dict[str, Any],
+    original_config: dict[str, Any],
+    orchestrator_cfg: dict[str, Any],
 ) -> bool:
     """Prompt user to add context paths in interactive mode.
 
@@ -4123,7 +4519,7 @@ def print_example_config(name: str):
         # Try to resolve the config
         resolved = resolve_config_path(f"@examples/{name}")
         if resolved:
-            with open(resolved, "r") as f:
+            with open(resolved) as f:
                 print(f.read())
         else:
             print(f"Error: Could not find example '{name}'", file=sys.stderr)
@@ -4138,7 +4534,7 @@ def print_example_config(name: str):
         sys.exit(1)
 
 
-def discover_available_configs() -> Dict[str, List[Tuple[str, Path]]]:
+def discover_available_configs() -> dict[str, list[tuple[str, Path]]]:
     """Discover all available configuration files.
 
     Returns:
@@ -4215,7 +4611,7 @@ def discover_available_configs() -> Dict[str, List[Tuple[str, Path]]]:
     return configs
 
 
-def interactive_config_selector() -> Optional[str]:
+def interactive_config_selector() -> str | None:
     """Interactively select a configuration file.
 
     Shows user/project/current directory configs directly in a flat list.
@@ -4367,9 +4763,9 @@ def interactive_config_selector() -> Optional[str]:
 
 
 def _select_package_example(
-    examples: List[Tuple[str, Path]],
+    examples: list[tuple[str, Path]],
     console: Console,
-) -> Optional[str]:
+) -> str | None:
     """Show hierarchical navigation for package examples.
 
     Args:
@@ -5101,7 +5497,7 @@ CMD ["/start.sh"]
             pass
 
 
-def show_example_prompts() -> Optional[str]:
+def show_example_prompts() -> str | None:
     """Show example prompts that work with default quickstart config.
 
     These prompts work out-of-the-box with code execution, multimodal tools,
@@ -5174,7 +5570,7 @@ def should_run_builder() -> bool:
 
 
 def _list_all_turns(
-    session_id: Optional[str],
+    session_id: str | None,
     current_turn: int,
     console: Console,
 ) -> None:
@@ -5215,7 +5611,7 @@ def _list_all_turns(
     console.print("\n[dim]Use /inspect <turn_number> to view details[/dim]")
 
 
-def _find_log_dir_for_session(session_id: str, turn_number: int) -> Optional[Path]:
+def _find_log_dir_for_session(session_id: str, turn_number: int) -> Path | None:
     """Find the log directory for a given session and turn.
 
     Searches through log directories to find one that matches the session_id
@@ -5257,7 +5653,7 @@ def _find_log_dir_for_session(session_id: str, turn_number: int) -> Optional[Pat
 def _show_turn_inspection(
     session_id: str,
     turn_number: int,
-    agents: Dict[str, Any],
+    agents: dict[str, Any],
 ) -> None:
     """Show inspection menu for a specific turn's outputs.
 
@@ -5590,13 +5986,13 @@ def print_help_messages():
 
 
 async def run_textual_interactive_mode(
-    agents: Dict[str, SingleAgent],
-    ui_config: Dict[str, Any],
-    original_config: Dict[str, Any] = None,
-    orchestrator_cfg: Dict[str, Any] = None,
-    config_path: Optional[str] = None,
-    memory_session_id: Optional[str] = None,
-    initial_question: Optional[str] = None,
+    agents: dict[str, SingleAgent],
+    ui_config: dict[str, Any],
+    original_config: dict[str, Any] = None,
+    orchestrator_cfg: dict[str, Any] = None,
+    config_path: str | None = None,
+    memory_session_id: str | None = None,
+    initial_question: str | None = None,
     restore_session_if_exists: bool = False,
     debug: bool = False,
     **kwargs,
@@ -5627,6 +6023,8 @@ async def run_textual_interactive_mode(
         TurnResult,
     )
     from massgen.orchestrator import Orchestrator
+
+    parse_at_references = kwargs.get("parse_at_references", True)
 
     if not TEXTUAL_AVAILABLE:
         print("⚠️ Textual library not available. Install with: pip install textual")
@@ -5736,6 +6134,27 @@ async def run_textual_interactive_mode(
     display_kwargs["default_skill_lifecycle_mode"] = str(
         coordination_settings.get("skill_lifecycle_mode", "create_or_update"),
     )
+
+    # Apply CLI mode defaults (override config-derived defaults)
+    cli_mode_defaults = kwargs.pop("cli_mode_defaults", {})
+    if cli_mode_defaults.get("agent_mode") == "single":
+        display_kwargs["default_agent_mode"] = "single"
+        if "selected_agent" in cli_mode_defaults:
+            display_kwargs["default_selected_agent"] = cli_mode_defaults["selected_agent"]
+    if "coordination_mode" in cli_mode_defaults:
+        display_kwargs["default_coordination_mode"] = cli_mode_defaults["coordination_mode"]
+    if "plan_mode" in cli_mode_defaults:
+        display_kwargs["default_plan_mode"] = cli_mode_defaults["plan_mode"]
+    if "refinement_enabled" in cli_mode_defaults:
+        display_kwargs["default_refinement_enabled"] = cli_mode_defaults["refinement_enabled"]
+    if "personas" in cli_mode_defaults:
+        p = cli_mode_defaults["personas"]
+        if p == "off":
+            display_kwargs["default_personas_enabled"] = False
+        else:
+            display_kwargs["default_personas_enabled"] = True
+            display_kwargs["default_persona_diversity_mode"] = p
+
     display = TextualTerminalDisplay(agent_ids, **display_kwargs)
 
     # Start background MCP registry cache warmup (non-blocking)
@@ -5777,8 +6196,8 @@ async def run_textual_interactive_mode(
     # Define turn runner that uses CoordinationUI
     async def run_turn(
         question: str,
-        agents: Dict[str, Any],
-        ui_config: Dict[str, Any],
+        agents: dict[str, Any],
+        ui_config: dict[str, Any],
         conversation_history: list,
         session_info: dict,
         **turn_kwargs,
@@ -5791,7 +6210,7 @@ async def run_textual_interactive_mode(
             sess_id = session_info.get("session_id")
             mode_state = display.get_mode_state()
 
-            def _merge_readonly_context_path(config_dict: Dict[str, Any], path_str: str, description: str) -> bool:
+            def _merge_readonly_context_path(config_dict: dict[str, Any], path_str: str, description: str) -> bool:
                 """Add a read-only orchestrator context path if missing."""
                 if not path_str:
                     return False
@@ -5826,7 +6245,7 @@ async def run_textual_interactive_mode(
                 orchestrator_section["context_paths"] = existing
                 return True
 
-            def _agents_have_context_path(current_agents: Optional[Dict[str, Any]], path_str: str) -> bool:
+            def _agents_have_context_path(current_agents: dict[str, Any] | None, path_str: str) -> bool:
                 """Check whether all active agents already have a specific context path."""
                 if not current_agents:
                     return False
@@ -5855,7 +6274,7 @@ async def run_textual_interactive_mode(
                         return False
                 return True
 
-            analysis_context_path: Optional[str] = None
+            analysis_context_path: str | None = None
             if mode_state and mode_state.plan_mode == "analysis" and getattr(mode_state.analysis_config, "target", "log") == "log":
                 selected_log_dir = getattr(mode_state.analysis_config, "selected_log_dir", None)
                 if selected_log_dir:
@@ -5884,9 +6303,6 @@ async def run_textual_interactive_mode(
                 logger.info("[Textual] Creating agents on first prompt...")
                 adapter.update_loading_status("🚀 Creating agents...")
 
-                # Parse @references from question and inject into config
-                from .path_handling import PromptParserError, parse_prompt_for_context
-
                 modified_config = original_config.copy()
                 if analysis_context_path:
                     _merge_readonly_context_path(
@@ -5894,18 +6310,25 @@ async def run_textual_interactive_mode(
                         analysis_context_path,
                         "Analysis target log session",
                     )
-                try:
-                    parsed = parse_prompt_for_context(question)
-                    if parsed.context_paths:
-                        # Inject context paths into orchestrator config
-                        orch_cfg = modified_config.get("orchestrator", {})
-                        existing_paths = orch_cfg.get("context_paths", [])
-                        orch_cfg["context_paths"] = existing_paths + parsed.context_paths
-                        modified_config["orchestrator"] = orch_cfg
-                        # Update the question to remove @references
-                        question = parsed.cleaned_prompt
-                except PromptParserError as e:
-                    logger.warning(f"[Textual] Path parsing error: {e}")
+                if parse_at_references:
+                    # Parse @references from question and inject into config
+                    from .path_handling import (
+                        PromptParserError,
+                        parse_prompt_for_context,
+                    )
+
+                    try:
+                        parsed = parse_prompt_for_context(question)
+                        if parsed.context_paths:
+                            # Inject context paths into orchestrator config
+                            orch_cfg = modified_config.get("orchestrator", {})
+                            existing_paths = orch_cfg.get("context_paths", [])
+                            orch_cfg["context_paths"] = existing_paths + parsed.context_paths
+                            modified_config["orchestrator"] = orch_cfg
+                            # Update the question to remove @references
+                            question = parsed.cleaned_prompt
+                    except PromptParserError as e:
+                        logger.warning(f"[Textual] Path parsing error: {e}")
 
                 # Get orchestrator config for agent creation
                 orch_cfg = modified_config.get("orchestrator", {})
@@ -5914,13 +6337,29 @@ async def run_textual_interactive_mode(
                 # This injects plan execution guidance into agent system messages
                 mode_state = display.get_mode_state()
                 if mode_state and mode_state.plan_mode == "execute" and mode_state.plan_session:
-                    from .plan_execution import prepare_plan_execution_config
+                    # Check artifact type to route to plan or spec execution
+                    try:
+                        _exec_metadata = mode_state.plan_session.load_metadata()
+                        _artifact_type = getattr(_exec_metadata, "artifact_type", "plan")
+                    except Exception:
+                        _artifact_type = "plan"
 
-                    logger.info("[Textual] Execute mode - applying plan execution config")
-                    modified_config = prepare_plan_execution_config(
-                        modified_config,
-                        mode_state.plan_session,
-                    )
+                    if _artifact_type == "spec":
+                        from .plan_execution import prepare_spec_execution_config
+
+                        logger.info("[Textual] Execute mode - applying spec execution config")
+                        modified_config = prepare_spec_execution_config(
+                            modified_config,
+                            mode_state.plan_session,
+                        )
+                    else:
+                        from .plan_execution import prepare_plan_execution_config
+
+                        logger.info("[Textual] Execute mode - applying plan execution config")
+                        modified_config = prepare_plan_execution_config(
+                            modified_config,
+                            mode_state.plan_session,
+                        )
                     # Update orchestrator_cfg reference for later use
                     orch_cfg = modified_config.get("orchestrator", {})
 
@@ -5992,6 +6431,9 @@ async def run_textual_interactive_mode(
                     f"[Textual] Recreated {len(agents)} agent(s) with analysis log context path",
                 )
 
+            # Track workspaces from incomplete turns (applied to orchestrator after creation)
+            pending_pre_populated_workspaces = {}
+
             # Inject previous turn workspace as read-only context (same as Rich mode)
             if current_turn_num > 0 and original_config and orchestrator_cfg:
                 session_dir = Path(SESSION_STORAGE) / sess_id
@@ -6003,18 +6445,12 @@ async def run_textual_interactive_mode(
                 incomplete_ws = getattr(context, "incomplete_turn_workspaces", {})
 
                 if incomplete_ws:
-                    # Incomplete turn - add all agent workspaces
-                    for ws_agent_id, ws_path in incomplete_ws.items():
-                        if ws_path and Path(ws_path).exists():
-                            context_workspaces_to_add.append(
-                                {
-                                    "path": str(Path(ws_path).resolve()),
-                                    "permission": "read",
-                                    "description": f"Incomplete turn {current_turn_num} - {ws_agent_id}'s workspace",
-                                },
-                            )
+                    # Incomplete turn — store for orchestrator per-agent
+                    # writable copy (not read-only context). Applied after
+                    # orchestrator is created below.
+                    pending_pre_populated_workspaces = {ws_agent_id: Path(ws_path).resolve() for ws_agent_id, ws_path in incomplete_ws.items() if ws_path and Path(ws_path).exists()}
                     logger.info(
-                        f"[Textual] Adding {len(context_workspaces_to_add)} workspace(s) from incomplete turn",
+                        f"[Textual] Prepared {len(pending_pre_populated_workspaces)} " f"per-agent workspace(s) from incomplete turn for writable copy",
                     )
                     # Clear after first use
                     context.incomplete_turn_workspaces = {}
@@ -6124,54 +6560,18 @@ async def run_textual_interactive_mode(
             # Build orchestrator config (matching Rich terminal path setup)
             orchestrator_config = AgentConfig()
             # Get context sharing parameters (must be extracted before orchestrator creation)
-            snapshot_storage = orchestrator_cfg.get("snapshot_storage") if orchestrator_cfg else None
-            agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace") if orchestrator_cfg else None
+            snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage") if orchestrator_cfg else None)
+            agent_temporary_workspace = _scope_agent_temporary_workspace(
+                orchestrator_cfg.get("agent_temporary_workspace") if orchestrator_cfg else None,
+            )
             # Get NLIP config (matching Rich terminal path)
             orchestrator_enable_nlip = orchestrator_cfg.get("enable_nlip", False) if orchestrator_cfg else False
             orchestrator_nlip_config = orchestrator_cfg.get("nlip_config", {}) if orchestrator_cfg else {}
             if orchestrator_enable_nlip:
                 logger.info("[Textual] NLIP enabled for orchestrator")
             if orchestrator_cfg:
-                if "voting_sensitivity" in orchestrator_cfg:
-                    orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
-                if "voting_threshold" in orchestrator_cfg:
-                    orchestrator_config.voting_threshold = orchestrator_cfg["voting_threshold"]
-                if "max_new_answers_per_agent" in orchestrator_cfg:
-                    orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
-                if "max_new_answers_global" in orchestrator_cfg:
-                    orchestrator_config.max_new_answers_global = orchestrator_cfg["max_new_answers_global"]
-                if "checklist_require_gap_report" in orchestrator_cfg:
-                    orchestrator_config.checklist_require_gap_report = orchestrator_cfg["checklist_require_gap_report"]
-                if "answer_novelty_requirement" in orchestrator_cfg:
-                    orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
-                if "fairness_enabled" in orchestrator_cfg:
-                    orchestrator_config.fairness_enabled = orchestrator_cfg["fairness_enabled"]
-                if "fairness_lead_cap_answers" in orchestrator_cfg:
-                    orchestrator_config.fairness_lead_cap_answers = orchestrator_cfg["fairness_lead_cap_answers"]
-                if "max_midstream_injections_per_round" in orchestrator_cfg:
-                    orchestrator_config.max_midstream_injections_per_round = orchestrator_cfg["max_midstream_injections_per_round"]
-                if orchestrator_cfg.get("skip_coordination_rounds", False):
-                    orchestrator_config.skip_coordination_rounds = True
-                if orchestrator_cfg.get("debug_final_answer"):
-                    orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
+                _apply_orchestrator_runtime_params(orchestrator_config, orchestrator_cfg)
 
-                # Apply subagent/TUI orchestrator flags
-                if orchestrator_cfg.get("skip_final_presentation", False):
-                    orchestrator_config.skip_final_presentation = True
-                if orchestrator_cfg.get("skip_voting", False):
-                    orchestrator_config.skip_voting = True
-                if orchestrator_cfg.get("disable_injection", False):
-                    orchestrator_config.disable_injection = True
-                if "defer_voting_until_all_answered" in orchestrator_cfg:
-                    orchestrator_config.defer_voting_until_all_answered = orchestrator_cfg["defer_voting_until_all_answered"]
-
-                # Parse decomposition mode parameters
-                if "coordination_mode" in orchestrator_cfg:
-                    orchestrator_config.coordination_mode = orchestrator_cfg["coordination_mode"]
-                if "presenter_agent" in orchestrator_cfg:
-                    orchestrator_config.presenter_agent = orchestrator_cfg["presenter_agent"]
-
-                # Parse coordination config if present
                 if "coordination" in orchestrator_cfg:
                     coord_cfg = orchestrator_cfg["coordination"]
                     orchestrator_config.coordination_config = _parse_coordination_config(coord_cfg)
@@ -6263,7 +6663,13 @@ async def run_textual_interactive_mode(
                         if hasattr(orchestrator_config.coordination_config, key):
                             setattr(orchestrator_config.coordination_config, key, value)
 
-                planning_turn_mode: Optional[str] = None
+                if _is_planning_turn(mode_state):
+                    if _disable_evaluation_criteria_generation_for_planning(orchestrator_config.coordination_config):
+                        logger.info("[Textual] Plan mode: disabled evaluation criteria generation for planning turn")
+                    if _set_planning_checklist_criteria_defaults(orchestrator_config.coordination_config):
+                        logger.info("[Textual] Plan mode: defaulted checklist_criteria_preset=planning")
+
+                planning_turn_mode: str | None = None
                 if mode_state.plan_mode == "plan" and mode_state.pending_planning_mode in {"multi", "single"}:
                     planning_turn_mode = mode_state.pending_planning_mode
                     # One-shot override set by planning review modal.
@@ -6349,7 +6755,7 @@ async def run_textual_interactive_mode(
                     planning_refinement_appendix = build_plan_review_refinement_appendix(
                         question=question,
                         planning_feedback=planning_feedback,
-                        include_quick_edit_hint=effective_planning_mode == "single",
+                        include_quick_edit_hint=should_include_quick_edit_hint(planning_turn_mode),
                     )
                     if planning_refinement_appendix:
                         question += "\n\n" + planning_refinement_appendix
@@ -6367,6 +6773,38 @@ async def run_textual_interactive_mode(
                         if mode_state.planning_context_paths:
                             logger.info(
                                 f"[Textual] Plan mode: Captured {len(mode_state.planning_context_paths)} context paths for execution",
+                            )
+                elif mode_state.plan_mode == "spec":
+                    spec_prefix = get_spec_creation_prompt_prefix(
+                        broadcast_mode=mode_state.spec_config.broadcast,
+                    )
+
+                    planning_feedback = (mode_state.pending_planning_feedback or "").strip()
+                    mode_state.pending_planning_feedback = None
+                    effective_planning_mode = planning_turn_mode or ("single" if len(agents) == 1 else "multi")
+                    mode_state.last_planning_mode = effective_planning_mode
+
+                    question = spec_prefix + question
+                    planning_refinement_appendix = build_plan_review_refinement_appendix(
+                        question=question,
+                        planning_feedback=planning_feedback,
+                        include_quick_edit_hint=should_include_quick_edit_hint(planning_turn_mode),
+                    )
+                    if planning_refinement_appendix:
+                        question += "\n\n" + planning_refinement_appendix
+                    logger.info(
+                        "[Textual] Spec mode: Prepended spec creation instructions " "(broadcast=%s, planning_turn_mode=%s)",
+                        mode_state.spec_config.broadcast,
+                        effective_planning_mode,
+                    )
+
+                    # Capture context paths for use during execution
+                    if orchestrator_cfg:
+                        mode_state.planning_context_paths = orchestrator_cfg.get("context_paths", [])
+                        if mode_state.planning_context_paths:
+                            logger.info(
+                                "[Textual] Spec mode: Captured %d context paths for execution",
+                                len(mode_state.planning_context_paths),
                             )
                 elif mode_state.plan_mode == "analysis":
                     analysis_target = getattr(mode_state.analysis_config, "target", "log")
@@ -6407,6 +6845,22 @@ async def run_textual_interactive_mode(
                 if generated_personas:
                     logger.info("[Textual] Reusing persisted personas from previous turn")
 
+            # Get generated evaluation criteria from session info if persist_across_turns is enabled
+            generated_evaluation_criteria = None
+            if (
+                hasattr(orchestrator_config, "coordination_config")
+                and orchestrator_config.coordination_config
+                and hasattr(orchestrator_config.coordination_config, "evaluation_criteria_generator")
+                and orchestrator_config.coordination_config.evaluation_criteria_generator
+                and orchestrator_config.coordination_config.evaluation_criteria_generator.persist_across_turns
+            ):
+                raw_criteria = session_info.get("generated_evaluation_criteria")
+                if raw_criteria:
+                    from .evaluation_criteria_generator import GeneratedCriterion
+
+                    generated_evaluation_criteria = [GeneratedCriterion(id=c["id"], text=c["text"], category=c["category"]) for c in raw_criteria]
+                    logger.info("[Textual] Reusing persisted evaluation criteria from previous turn")
+
             # Create orchestrator with multi-turn state
             adapter.update_loading_status("🔧 Setting up workspace...")
 
@@ -6430,6 +6884,7 @@ async def run_textual_interactive_mode(
                 enable_nlip=orchestrator_enable_nlip,
                 nlip_config=orchestrator_nlip_config,
                 generated_personas=generated_personas,
+                generated_evaluation_criteria=generated_evaluation_criteria,
                 plan_session_id=plan_session_id,
             )
 
@@ -6455,6 +6910,11 @@ async def run_textual_interactive_mode(
                         if aid in agents and subtask:
                             orchestrator._agent_subtasks[aid] = subtask
 
+            # Apply deferred pre-populated workspaces from incomplete turns
+            if pending_pre_populated_workspaces:
+                orchestrator._pre_populated_workspaces = pending_pre_populated_workspaces
+                pending_pre_populated_workspaces = {}
+
             adapter.update_loading_status("🔌 Connecting to tools...")
 
             # Create coordination UI with preserve_display and interactive_mode
@@ -6472,7 +6932,7 @@ async def run_textual_interactive_mode(
             display.begin_turn(turn_num, question)
 
             # Reconfigure logging for the turn (same as Rich mode)
-            setup_logging(debug=_DEBUG_MODE, turn=turn_num)
+            setup_logging(debug=_is_debug_mode(), turn=turn_num)
 
             # Save execution metadata for this turn (same as Rich mode)
             save_execution_metadata(
@@ -6615,6 +7075,12 @@ async def run_textual_interactive_mode(
             except Exception as persist_err:
                 logger.warning(f"[Textual] Failed to persist session: {persist_err}")
 
+            # Store generated personas and evaluation criteria for multi-turn persistence
+            if orchestrator.get_generated_personas():
+                session_info["generated_personas"] = orchestrator.get_generated_personas()
+            if orchestrator.get_generated_evaluation_criteria():
+                session_info["generated_evaluation_criteria"] = [{"id": c.id, "text": c.text, "category": c.category} for c in orchestrator.get_generated_evaluation_criteria()]
+
             # End turn
             display.end_turn(turn_num, answer=answer)
 
@@ -6745,19 +7211,19 @@ async def run_textual_interactive_mode(
 
 
 async def run_interactive_mode(
-    agents: Optional[Dict[str, SingleAgent]],
-    ui_config: Dict[str, Any],
-    original_config: Dict[str, Any] = None,
-    orchestrator_cfg: Dict[str, Any] = None,
-    config_path: Optional[str] = None,
-    memory_session_id: Optional[str] = None,
-    initial_question: Optional[str] = None,
+    agents: dict[str, SingleAgent] | None,
+    ui_config: dict[str, Any],
+    original_config: dict[str, Any] = None,
+    orchestrator_cfg: dict[str, Any] = None,
+    config_path: str | None = None,
+    memory_session_id: str | None = None,
+    initial_question: str | None = None,
     restore_session_if_exists: bool = False,
     debug: bool = False,
-    raw_config_for_metadata: Dict[str, Any] = None,
+    raw_config_for_metadata: dict[str, Any] = None,
     # Parameters for deferred agent creation
     enable_rate_limit: bool = True,
-    session_storage_base: Optional[str] = None,
+    session_storage_base: str | None = None,
     **kwargs,
 ):
     """Run MassGen in interactive mode with conversation history.
@@ -6774,6 +7240,7 @@ async def run_interactive_mode(
     # Textual-first mode: Launch TUI immediately without Rich terminal output
     # The TUI will handle ASCII art, session config, input, and multi-turn loop
     display_type = ui_config.get("display_type", "textual_terminal")
+    parse_at_references = kwargs.get("parse_at_references", True)
     if display_type == "textual_terminal":
         return await run_textual_interactive_mode(
             agents=agents,
@@ -6974,18 +7441,14 @@ async def run_interactive_mode(
                     context_workspaces_to_add = []
 
                     if incomplete_turn_workspaces:
-                        # Incomplete turn - add all agent workspaces
-                        for ws_agent_id, ws_path in incomplete_turn_workspaces.items():
-                            if ws_path and Path(ws_path).exists():
-                                context_workspaces_to_add.append(
-                                    {
-                                        "path": str(Path(ws_path).resolve()),
-                                        "permission": "read",
-                                        "description": f"Incomplete turn {current_turn} - {ws_agent_id}'s workspace",
-                                    },
-                                )
+                        # Incomplete turn — store for orchestrator per-agent
+                        # writable copy (not read-only context). Passed via
+                        # kwargs to run_question_with_history which applies
+                        # them after orchestrator creation.
+                        pre_pop = {ws_agent_id: Path(ws_path).resolve() for ws_agent_id, ws_path in incomplete_turn_workspaces.items() if ws_path and Path(ws_path).exists()}
+                        kwargs["pre_populated_workspaces"] = pre_pop
                         logger.info(
-                            f"[CLI] Adding {len(context_workspaces_to_add)} workspace(s) from incomplete turn as context",
+                            f"[CLI] Prepared {len(pre_pop)} " f"per-agent workspace(s) from incomplete turn for writable copy",
                         )
                         # Clear after use (only needed for first turn after resume)
                         incomplete_turn_workspaces = {}
@@ -7066,7 +7529,7 @@ async def run_interactive_mode(
                                 def cleanup_agent_fs(
                                     agent_id: str,
                                     agent,
-                                ) -> tuple[str, Optional[Exception]]:
+                                ) -> tuple[str, Exception | None]:
                                     """Cleanup a single agent's filesystem manager (Docker container)."""
                                     try:
                                         agent.backend.filesystem_manager.cleanup()
@@ -7395,108 +7858,114 @@ async def run_interactive_mode(
                     )
                     continue
 
-                # Parse @references from question and inject as context paths
-                from .path_handling import PromptParserError, parse_prompt_for_context
-
                 new_paths = []  # Track new paths for later use
-                try:
-                    parsed = parse_prompt_for_context(question)
-                    if parsed.context_paths:
-                        # Display extracted paths
-                        print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
-                        for ctx in parsed.context_paths:
-                            perm_icon = "📝" if ctx["permission"] == "write" else "📖"
-                            print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
-                        for suggestion in parsed.suggestions:
-                            print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
+                parsed_context_paths: list[dict[str, str]] = []
+                if parse_at_references:
+                    # Parse @references from question and inject as context paths
+                    from .path_handling import (
+                        PromptParserError,
+                        parse_prompt_for_context,
+                    )
 
-                        # Use cleaned question
-                        question = parsed.cleaned_prompt
+                    try:
+                        parsed = parse_prompt_for_context(question)
+                        parsed_context_paths = parsed.context_paths
+                        if parsed_context_paths:
+                            # Display extracted paths
+                            print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
+                            for ctx in parsed_context_paths:
+                                perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+                                print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+                            for suggestion in parsed.suggestions:
+                                print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
 
-                        # Check for new paths that need agent recreation
-                        existing_paths = set()
-                        if orchestrator_cfg:
-                            for p in orchestrator_cfg.get("context_paths", []):
-                                if isinstance(p, dict):
-                                    existing_paths.add(p.get("path"))
-                                else:
-                                    existing_paths.add(p)
+                            # Use cleaned question
+                            question = parsed.cleaned_prompt
 
-                        new_paths = [ctx for ctx in parsed.context_paths if ctx["path"] not in existing_paths]
+                            # Check for new paths that need agent recreation
+                            existing_paths = set()
+                            if orchestrator_cfg:
+                                for p in orchestrator_cfg.get("context_paths", []):
+                                    if isinstance(p, dict):
+                                        existing_paths.add(p.get("path"))
+                                    else:
+                                        existing_paths.add(p)
 
-                        if new_paths:
-                            # Update original_config with new paths
-                            if "orchestrator" not in original_config:
-                                original_config["orchestrator"] = {}
-                            if "context_paths" not in original_config["orchestrator"]:
-                                original_config["orchestrator"]["context_paths"] = []
+                            new_paths = [ctx for ctx in parsed_context_paths if ctx["path"] not in existing_paths]
 
-                            for ctx in new_paths:
-                                original_config["orchestrator"]["context_paths"].append(
-                                    ctx,
-                                )
-                                existing_paths.add(ctx["path"])
+                            if new_paths:
+                                # Update original_config with new paths
+                                if "orchestrator" not in original_config:
+                                    original_config["orchestrator"] = {}
+                                if "context_paths" not in original_config["orchestrator"]:
+                                    original_config["orchestrator"]["context_paths"] = []
 
-                            # Update orchestrator_cfg reference
-                            orchestrator_cfg = original_config.get("orchestrator", {})
+                                for ctx in new_paths:
+                                    original_config["orchestrator"]["context_paths"].append(
+                                        ctx,
+                                    )
+                                    existing_paths.add(ctx["path"])
 
-                    # If agents haven't been created yet (deferred creation), create them now
-                    if agents is None:
-                        print(f"{BRIGHT_YELLOW}🚀 Creating agents...{RESET}")
-                        agents = create_agents_from_config(
-                            original_config,
-                            orchestrator_cfg,
-                            enable_rate_limit=enable_rate_limit,
-                            config_path=config_path,
-                            memory_session_id=memory_session_id,
-                            debug=debug,
-                            filesystem_session_id=memory_session_id,
-                            session_storage_base=session_storage_base or SESSION_STORAGE,
-                        )
-                        if not agents:
-                            print(
-                                f"{BRIGHT_RED}❌ Failed to create agents{RESET}",
-                                flush=True,
-                            )
-                            continue
-                        print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
-                    elif new_paths:
-                        # Agents exist but we have new paths - need to recreate
+                                # Update orchestrator_cfg reference
+                                orchestrator_cfg = original_config.get("orchestrator", {})
+                    except PromptParserError as e:
+                        print(f"\n{BRIGHT_RED}❌ {e}{RESET}", flush=True)
+                        continue
+
+                # If agents haven't been created yet (deferred creation), create them now
+                if agents is None:
+                    print(f"{BRIGHT_YELLOW}🚀 Creating agents...{RESET}")
+                    agents = create_agents_from_config(
+                        original_config,
+                        orchestrator_cfg,
+                        enable_rate_limit=enable_rate_limit,
+                        config_path=config_path,
+                        memory_session_id=memory_session_id,
+                        debug=debug,
+                        filesystem_session_id=memory_session_id,
+                        session_storage_base=session_storage_base or SESSION_STORAGE,
+                    )
+                    if not agents:
                         print(
-                            f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}",
+                            f"{BRIGHT_RED}❌ Failed to create agents{RESET}",
+                            flush=True,
                         )
+                        continue
+                    print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
+                elif new_paths:
+                    # Agents exist but we have new paths - need to recreate
+                    print(
+                        f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}",
+                    )
 
-                        # Clean up existing agents before recreating to avoid resource leaks
-                        for agent_id, agent in agents.items():
-                            if hasattr(agent, "backend"):
-                                if hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
-                                    try:
-                                        agent.backend.filesystem_manager.cleanup()
-                                    except Exception as e:
-                                        logger.warning(
-                                            f"[CLI] Cleanup failed for agent {agent_id}: {e}",
-                                        )
-                                if hasattr(agent.backend, "__aexit__"):
-                                    await agent.backend.__aexit__(None, None, None)
+                    # Clean up existing agents before recreating to avoid resource leaks
+                    for agent_id, agent in agents.items():
+                        if hasattr(agent, "backend"):
+                            if hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
+                                try:
+                                    agent.backend.filesystem_manager.cleanup()
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                    )
+                            if hasattr(agent.backend, "__aexit__"):
+                                await agent.backend.__aexit__(None, None, None)
 
-                        agents = create_agents_from_config(
-                            original_config,
-                            orchestrator_cfg,
-                            enable_rate_limit=enable_rate_limit,
-                            config_path=config_path,
-                            memory_session_id=memory_session_id,
-                            debug=debug,
-                            filesystem_session_id=memory_session_id,
-                            session_storage_base=session_storage_base or SESSION_STORAGE,
-                        )
-                        print(
-                            f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}",
-                        )
-                    if parsed.context_paths:
-                        print()  # Add spacing after context path info
-                except PromptParserError as e:
-                    print(f"\n{BRIGHT_RED}❌ {e}{RESET}", flush=True)
-                    continue
+                    agents = create_agents_from_config(
+                        original_config,
+                        orchestrator_cfg,
+                        enable_rate_limit=enable_rate_limit,
+                        config_path=config_path,
+                        memory_session_id=memory_session_id,
+                        debug=debug,
+                        filesystem_session_id=memory_session_id,
+                        session_storage_base=session_storage_base or SESSION_STORAGE,
+                    )
+                    print(
+                        f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}",
+                    )
+                if parsed_context_paths:
+                    print()  # Add spacing after context path info
 
                 print(f"\n🔄 {BRIGHT_YELLOW}Processing...{RESET}", flush=True)
 
@@ -7508,7 +7977,7 @@ async def run_interactive_mode(
                     session_id = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
                 # Reconfigure logging for the turn we're about to process
-                setup_logging(debug=_DEBUG_MODE, turn=next_turn)
+                setup_logging(debug=_is_debug_mode(), turn=next_turn)
                 logger.info(f"Starting turn {next_turn}")
 
                 # Save execution metadata for this turn (use raw config to avoid logging secrets)
@@ -7669,11 +8138,11 @@ def resolve_plan_path(plan_path: str) -> "PlanSession":
 
 
 async def _execute_plan_phase(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     plan_session: "PlanSession",
     question: str,
     automation: bool = False,
-) -> Tuple[str, Dict[str, Any]]:
+) -> tuple[str, dict[str, Any]]:
     """
     Internal: Execute a plan (Phase 2) and collect results (Phase 3).
 
@@ -7696,13 +8165,16 @@ async def _execute_plan_phase(
     from .logger_config import get_log_session_root
     from .plan_execution import (
         PlanValidationError,
+        _get_artifact_items,
         build_execution_prompt,
+        build_spec_execution_prompt,
         evaluate_chunk_progress,
         get_next_pending_chunk,
         initialize_chunk_execution_state,
         load_frozen_plan,
         mark_session_resumable,
         prepare_plan_execution_config,
+        prepare_spec_execution_config,
         record_chunk_checkpoint,
         setup_agent_workspaces_for_execution,
         validate_chunked_plan,
@@ -7710,17 +8182,27 @@ async def _execute_plan_phase(
 
     console = Console()
 
+    # Detect artifact type (spec vs plan) from session metadata
+    metadata = plan_session.load_metadata()
+    _artifact_type = getattr(metadata, "artifact_type", None)
+    is_spec = _artifact_type == "spec"
+    items_key = "requirements" if is_spec else "tasks"
+    items_label = "requirements" if is_spec else "tasks"
+    artifact_word = "spec" if is_spec else "plan"
+
     console.print("\n[bold blue]═══ EXECUTION ═══[/bold blue]")
-    console.print("Executing plan with agents...")
+    console.print(f"Executing {artifact_word} with agents...")
 
     # Update metadata
-    metadata = plan_session.load_metadata()
     metadata.status = "executing"
     plan_session.save_metadata(metadata)
     plan_session.log_event("execution_started", {"question": question})
 
     # Use shared helper to prepare config (adds context paths, enables planning tools, injects guidance)
-    exec_config = prepare_plan_execution_config(config, plan_session)
+    if is_spec:
+        exec_config = prepare_spec_execution_config(config, plan_session)
+    else:
+        exec_config = prepare_plan_execution_config(config, plan_session)
     orchestrator_cfg = exec_config.get("orchestrator", {})
 
     # Create agents with plan context
@@ -7737,19 +8219,20 @@ async def _execute_plan_phase(
         chunk_order, _ = validate_chunked_plan(frozen_plan_data)
     except (FileNotFoundError, PlanValidationError) as e:
         console.print(f"[bold red]Error: {e}[/bold red]")
-        console.print("[red]Cannot execute plan without valid chunk metadata on every task.[/red]")
+        console.print(f"[red]Cannot execute {artifact_word} without valid chunk metadata.[/red]")
         raise SystemExit(1)
 
-    total_tasks = len(frozen_plan_data.get("tasks", []))
-    if total_tasks == 0:
-        console.print("[bold red]Error: Frozen plan has no tasks[/bold red]")
+    _, all_items = _get_artifact_items(frozen_plan_data)
+    total_items = len(all_items)
+    if total_items == 0:
+        console.print(f"[bold red]Error: Frozen {artifact_word} has no {items_label}[/bold red]")
         raise SystemExit(1)
     if not chunk_order:
-        console.print("[bold red]Error: Frozen plan has no chunk order[/bold red]")
+        console.print(f"[bold red]Error: Frozen {artifact_word} has no chunk order[/bold red]")
         raise SystemExit(1)
 
     console.print(
-        f"[dim]Loaded {total_tasks} tasks across {len(chunk_order)} chunks from frozen plan[/dim]",
+        f"[dim]Loaded {total_items} {items_label} across {len(chunk_order)} chunks from frozen {artifact_word}[/dim]",
     )
     if chunk_metadata.status == "resumable" and chunk_metadata.current_chunk:
         console.print(
@@ -7757,24 +8240,35 @@ async def _execute_plan_phase(
         )
 
     # Build UI config
+    requested_display_type = None
+    if isinstance(config, dict):
+        requested_display_type = (config.get("ui") or {}).get("display_type")
+    execution_display_type = "silent" if automation else (requested_display_type or "rich_terminal")
     ui_config = {
-        "display_type": "silent" if automation else "rich_terminal",
+        "display_type": execution_display_type,
         "logging_enabled": True,
         "automation_mode": automation,
     }
 
-    # Maintain a full-plan projection that gets updated chunk by chunk.
+    # Maintain a full-artifact projection that gets updated chunk by chunk.
     working_plan_data = _copy.deepcopy(frozen_plan_data)
     plan_session.workspace_dir.mkdir(parents=True, exist_ok=True)
-    working_plan_file = plan_session.workspace_dir / "plan.json"
+    artifact_filename = "spec.json" if is_spec else "plan.json"
+    working_plan_file = plan_session.workspace_dir / artifact_filename
     working_plan_file.write_text(json.dumps(working_plan_data, indent=2))
 
-    def _read_chunk_plan_from_agent(agent_obj: Any) -> Optional[Dict[str, Any]]:
-        """Read the operational tasks/plan.json produced by an execution turn."""
+    def _read_chunk_plan_from_agent(agent_obj: Any) -> dict[str, Any] | None:
+        """Read the operational artifact produced by an execution turn."""
         if not (hasattr(agent_obj.backend, "filesystem_manager") and agent_obj.backend.filesystem_manager):
             return None
         workspace = Path(agent_obj.backend.filesystem_manager.cwd)
-        candidate_files = [workspace / "tasks" / "plan.json", workspace / "plan.json"]
+        # Check for both plan.json and spec.json in tasks/ and workspace root
+        candidate_files = [
+            workspace / "tasks" / artifact_filename,
+            workspace / artifact_filename,
+            workspace / "tasks" / "plan.json",
+            workspace / "plan.json",
+        ]
         for candidate in candidate_files:
             if not candidate.exists():
                 continue
@@ -7782,23 +8276,23 @@ async def _execute_plan_phase(
                 payload = json.loads(candidate.read_text())
             except json.JSONDecodeError:
                 continue
-            if isinstance(payload, dict) and isinstance(payload.get("tasks"), list):
+            if isinstance(payload, dict) and (isinstance(payload.get("tasks"), list) or isinstance(payload.get("requirements"), list)):
                 return payload
         return None
 
-    def _merge_chunk_updates(full_plan: Dict[str, Any], chunk_tasks: List[Dict[str, Any]]) -> None:
-        """Merge chunk task updates into the full working plan by task id."""
-        by_id = {str(task.get("id", "")).strip(): task for task in full_plan.get("tasks", []) if isinstance(task, dict)}
-        for updated_task in chunk_tasks:
-            if not isinstance(updated_task, dict):
+    def _merge_chunk_updates(full_plan: dict[str, Any], chunk_items: list[dict[str, Any]]) -> None:
+        """Merge chunk item updates into the full working artifact by id."""
+        by_id = {str(item.get("id", "")).strip(): item for item in full_plan.get(items_key, []) if isinstance(item, dict)}
+        for updated_item in chunk_items:
+            if not isinstance(updated_item, dict):
                 continue
-            task_id = str(updated_task.get("id", "")).strip()
-            if not task_id or task_id not in by_id:
+            item_id = str(updated_item.get("id", "")).strip()
+            if not item_id or item_id not in by_id:
                 continue
-            by_id[task_id].update(updated_task)
+            by_id[item_id].update(updated_item)
 
     retry_budget_per_chunk = 2
-    retry_counts: Dict[str, int] = {}
+    retry_counts: dict[str, int] = {}
     if isinstance(chunk_metadata.resumable_state, dict):
         saved_retry_counts = chunk_metadata.resumable_state.get("retry_counts", {})
         if isinstance(saved_retry_counts, dict):
@@ -7809,7 +8303,7 @@ async def _execute_plan_phase(
                     continue
 
     final_answer = ""
-    coordination_result: Dict[str, Any] = {}
+    coordination_result: dict[str, Any] = {}
 
     try:
         while True:
@@ -7843,18 +8337,26 @@ async def _execute_plan_phase(
             )
             if task_count == 0:
                 raise RuntimeError(
-                    f"No executable tasks found for chunk '{active_chunk}'",
+                    f"No executable {items_label} found for chunk '{active_chunk}'",
                 )
 
             console.print(
-                f"[bold cyan]Chunk {active_chunk}[/bold cyan] " f"[dim](attempt {attempt}, {task_count} tasks)[/dim]",
+                f"[bold cyan]Chunk {active_chunk}[/bold cyan] " f"[dim](attempt {attempt}, {task_count} {items_label})[/dim]",
             )
 
-            execution_prompt = build_execution_prompt(
-                question,
-                active_chunk=active_chunk,
-                chunk_order=chunk_order,
-            )
+            if is_spec:
+                execution_prompt = build_spec_execution_prompt(
+                    question,
+                    plan_session=plan_session,
+                    active_chunk=active_chunk,
+                    chunk_order=chunk_order,
+                )
+            else:
+                execution_prompt = build_execution_prompt(
+                    question,
+                    active_chunk=active_chunk,
+                    chunk_order=chunk_order,
+                )
 
             result = await run_single_question(
                 execution_prompt,
@@ -7869,7 +8371,7 @@ async def _execute_plan_phase(
             coordination_result = result.get("coordination_result", {}) or {}
 
             winner_id = coordination_result.get("selected_agent")
-            chunk_plan_data: Optional[Dict[str, Any]] = None
+            chunk_plan_data: dict[str, Any] | None = None
             if winner_id and winner_id in agents:
                 chunk_plan_data = _read_chunk_plan_from_agent(agents[winner_id])
             if chunk_plan_data is None:
@@ -7879,10 +8381,10 @@ async def _execute_plan_phase(
                     if chunk_plan_data:
                         break
 
-            chunk_tasks = chunk_plan_data.get("tasks", []) if chunk_plan_data else []
-            progress = evaluate_chunk_progress(chunk_tasks)
-            if chunk_tasks:
-                _merge_chunk_updates(working_plan_data, chunk_tasks)
+            chunk_items = chunk_plan_data.get(items_key, []) or chunk_plan_data.get("tasks", []) if chunk_plan_data else []
+            progress = evaluate_chunk_progress(chunk_items)
+            if chunk_items:
+                _merge_chunk_updates(working_plan_data, chunk_items)
                 working_plan_file.write_text(json.dumps(working_plan_data, indent=2))
 
             if bool(coordination_result.get("is_orchestrator_timeout")):
@@ -8025,11 +8527,11 @@ async def _execute_plan_phase(
 
 
 async def run_execute_plan(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     plan_path: str,
-    question: Optional[str] = None,
+    question: str | None = None,
     automation: bool = False,
-) -> Tuple[str, Any]:
+) -> tuple[str, Any]:
     """
     Execute an existing plan (skips planning phase).
 
@@ -8055,22 +8557,28 @@ async def run_execute_plan(
     console.print(f"Created: {metadata.created_at}")
     console.print(f"Status: {metadata.status}")
 
-    # Read frozen plan to get task count - fail fast if missing or unreadable
+    # Read frozen plan/spec to get task count - fail fast if missing or unreadable
     frozen_plan_file = plan_session.frozen_dir / "plan.json"
-    if not frozen_plan_file.exists():
-        console.print(f"[bold red]Error: Frozen plan not found at {frozen_plan_file}[/bold red]")
-        console.print("[red]Cannot execute plan without a valid frozen plan.json[/red]")
+    frozen_spec_file = plan_session.frozen_dir / "spec.json"
+    if frozen_plan_file.exists():
+        artifact_file = frozen_plan_file
+    elif frozen_spec_file.exists():
+        artifact_file = frozen_spec_file
+    else:
+        console.print(f"[bold red]Error: Frozen plan/spec not found at {plan_session.frozen_dir}[/bold red]")
+        console.print("[red]Cannot execute without a valid plan.json or spec.json[/red]")
         raise SystemExit(1)
 
     try:
-        plan_data = json.loads(frozen_plan_file.read_text())
+        plan_data = json.loads(artifact_file.read_text())
     except json.JSONDecodeError as e:
-        console.print(f"[bold red]Error: Failed to parse frozen plan: {e}[/bold red]")
-        console.print(f"[red]File: {frozen_plan_file}[/red]")
+        console.print(f"[bold red]Error: Failed to parse frozen artifact: {e}[/bold red]")
+        console.print(f"[red]File: {artifact_file}[/red]")
         raise SystemExit(1)
 
-    task_count = len(plan_data.get("tasks", []))
-    console.print(f"Tasks: {task_count}")
+    items = plan_data.get("tasks", []) or plan_data.get("requirements", [])
+    items_label = "Requirements" if "requirements" in plan_data else "Tasks"
+    console.print(f"{items_label}: {len(items)}")
 
     # Build question if not provided
     if question is None:
@@ -8087,17 +8595,80 @@ async def run_execute_plan(
     return final_answer, plan_session
 
 
+async def run_execute_spec(
+    config: dict[str, Any],
+    spec_path: str,
+    question: str | None = None,
+    automation: bool = False,
+) -> tuple[str, Any]:
+    """
+    Execute against an existing spec (skips spec creation phase).
+
+    Args:
+        config: Full config dict
+        spec_path: Path to spec directory, spec/plan ID, or "latest"
+        question: Optional task description override
+        automation: Whether in automation mode
+
+    Returns:
+        Tuple of (final_answer, plan_session)
+    """
+    from rich.console import Console
+
+    console = Console()
+
+    # Resolve spec path to session (reuses plan path resolution)
+    plan_session = resolve_plan_path(spec_path)
+
+    # Load metadata
+    metadata = plan_session.load_metadata()
+    console.print(f"\n[bold cyan]Executing spec: {plan_session.plan_id}[/bold cyan]")
+    console.print(f"Created: {metadata.created_at}")
+    console.print(f"Status: {metadata.status}")
+
+    # Read frozen spec to get requirement count - fail fast if missing
+    frozen_spec_file = plan_session.frozen_dir / "spec.json"
+    if not frozen_spec_file.exists():
+        console.print(f"[bold red]Error: Frozen spec not found at {frozen_spec_file}[/bold red]")
+        console.print("[red]Cannot execute spec without a valid frozen spec.json[/red]")
+        raise SystemExit(1)
+
+    try:
+        spec_data = json.loads(frozen_spec_file.read_text())
+    except json.JSONDecodeError as e:
+        console.print(f"[bold red]Error: Failed to parse frozen spec: {e}[/bold red]")
+        console.print(f"[red]File: {frozen_spec_file}[/red]")
+        raise SystemExit(1)
+
+    req_count = len(spec_data.get("requirements", []))
+    console.print(f"Requirements: {req_count}")
+
+    # Build question if not provided
+    if question is None:
+        question = "Execute the spec in tasks/spec.json. Implement all requirements."
+
+    # Run execution phase
+    final_answer, _ = await _execute_plan_phase(
+        config=config,
+        plan_session=plan_session,
+        question=question,
+        automation=automation,
+    )
+
+    return final_answer, plan_session
+
+
 async def run_plan_and_execute(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     question: str,
     plan_depth: str = "dynamic",
-    plan_target_steps: Optional[int] = None,
-    plan_target_chunks: Optional[int] = None,
-    broadcast_mode: str = "human",
+    plan_target_steps: int | None = None,
+    plan_target_chunks: int | None = None,
+    broadcast_mode: str | bool = "false",
     automation: bool = False,
     debug: bool = False,
-    config_path: Optional[str] = None,
-) -> Tuple[str, Any]:
+    config_path: str | None = None,
+) -> tuple[str, Any]:
     """
     Run full plan-and-execute workflow:
     1. Phase 1: Run planning subprocess to create task plan
@@ -8117,6 +8688,7 @@ async def run_plan_and_execute(
     Returns:
         Tuple of (final_answer, plan_session)
     """
+    import os
     import subprocess
     import tempfile
 
@@ -8139,15 +8711,25 @@ async def run_plan_and_execute(
     # Create plan storage
     storage = PlanStorage()
 
+    # Normalize broadcast mode to a CLI-safe string.
+    normalized_broadcast_mode = "false" if broadcast_mode is False else str(broadcast_mode)
+    if normalized_broadcast_mode not in {"human", "agents", "false"}:
+        normalized_broadcast_mode = "false"
+
     # Handle broadcast mode for automation
     # In automation mode, "human" broadcast doesn't work (no human to respond)
     # Auto-switch to "false" for fully autonomous planning
-    effective_broadcast_mode = broadcast_mode
-    if automation and broadcast_mode == "human":
+    effective_broadcast_mode = normalized_broadcast_mode
+    if automation and normalized_broadcast_mode == "human":
         console.print(
             "[yellow]Note: Switching broadcast mode from 'human' to 'false' for automation mode[/yellow]",
         )
         effective_broadcast_mode = "false"
+
+    # For non-automation runs, enable full Textual planning when the config explicitly asks for it.
+    ui_cfg = config.get("ui", {}) if isinstance(config, dict) else {}
+    planning_display_type = ui_cfg.get("display_type")
+    use_interactive_planning_subprocess = not automation and planning_display_type == "textual_terminal"
 
     # Build planning subprocess command
     # Write config to temp file if not provided
@@ -8162,15 +8744,22 @@ async def run_plan_and_execute(
         "uv",
         "run",
         "massgen",
-        "--automation",
-        "--plan",
-        "--plan-depth",
-        plan_depth,
-        "--broadcast",
-        effective_broadcast_mode,
-        "--config",
-        config_path,
     ]
+    if use_interactive_planning_subprocess:
+        cmd.extend(["--display", "textual"])
+    else:
+        cmd.append("--automation")
+    cmd.extend(
+        [
+            "--plan",
+            "--plan-depth",
+            plan_depth,
+            "--broadcast",
+            effective_broadcast_mode,
+            "--config",
+            config_path,
+        ],
+    )
     if plan_target_steps is not None:
         cmd.extend(["--plan-steps", str(plan_target_steps)])
     cmd.extend(["--plan-chunks", str(effective_plan_target_chunks)])
@@ -8185,39 +8774,74 @@ async def run_plan_and_execute(
     logger.info(f"[PlanAndExecute] Starting planning subprocess: {' '.join(cmd)}")
 
     try:
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,  # Merge stderr into stdout to avoid deadlock
-            text=True,
-            bufsize=1,  # Line buffered
-        )
-
-        # Parse LOG_DIR, STATUS, and FINAL_DIR from stdout
         log_dir = None
         final_dir = None
 
-        stdout_lines = []
-        for line in process.stdout:
-            stdout_lines.append(line)
-            if line.startswith("LOG_DIR:"):
-                log_dir = line.split(":", 1)[1].strip()
-            elif line.startswith("FINAL_DIR:"):
-                final_dir = Path(line.split(":", 1)[1].strip())
-            # Print output in non-automation mode for visibility
-            if not automation:
-                print(line, end="")
+        if use_interactive_planning_subprocess:
+            # Interactive planning (Textual) needs direct terminal ownership.
+            log_base_dir = Path(os.getenv("MASSGEN_LOG_BASE_DIR", ".massgen/massgen_logs"))
+            existing_log_dirs = {p.name for p in log_base_dir.glob("log_*")} if log_base_dir.exists() else set()
 
-        # Wait for process to complete
-        process.wait()
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                raise RuntimeError(f"Planning subprocess failed with exit code {result.returncode}")
 
-        if process.returncode != 0:
-            # stderr is merged into stdout, so show captured output
-            output = "".join(stdout_lines)
-            raise RuntimeError(f"Planning subprocess failed:\n{output}")
+            if not log_base_dir.exists():
+                raise RuntimeError("Planning completed but no log directory base was found")
 
-        if not log_dir:
-            raise RuntimeError("Planning subprocess did not provide LOG_DIR")
+            created_logs = [p for p in log_base_dir.glob("log_*") if p.name not in existing_log_dirs]
+            if created_logs:
+                log_root = max(created_logs, key=lambda p: p.stat().st_mtime)
+            else:
+                all_logs = list(log_base_dir.glob("log_*"))
+                if not all_logs:
+                    raise RuntimeError("Planning completed but no log session directory was found")
+                log_root = max(all_logs, key=lambda p: p.stat().st_mtime)
+
+            log_dir = str(log_root)
+
+            final_candidates = [
+                log_root / "turn_1" / "final",
+                log_root / "final",
+            ]
+            if not any(path.exists() for path in final_candidates):
+                turn_dirs = sorted(log_root.glob("turn_*"))
+                final_candidates.extend(turn_dir / "final" for turn_dir in turn_dirs)
+            for candidate in final_candidates:
+                if candidate.exists():
+                    final_dir = candidate
+                    break
+        else:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,  # Merge stderr into stdout to avoid deadlock
+                text=True,
+                bufsize=1,  # Line buffered
+            )
+
+            # Parse LOG_DIR, STATUS, and FINAL_DIR from stdout
+            stdout_lines = []
+            for line in process.stdout:
+                stdout_lines.append(line)
+                if line.startswith("LOG_DIR:"):
+                    log_dir = line.split(":", 1)[1].strip()
+                elif line.startswith("FINAL_DIR:"):
+                    final_dir = Path(line.split(":", 1)[1].strip())
+                # Print output in non-automation mode for visibility
+                if not automation:
+                    print(line, end="")
+
+            # Wait for process to complete
+            process.wait()
+
+            if process.returncode != 0:
+                # stderr is merged into stdout, so show captured output
+                output = "".join(stdout_lines)
+                raise RuntimeError(f"Planning subprocess failed:\n{output}")
+
+            if not log_dir:
+                raise RuntimeError("Planning subprocess did not provide LOG_DIR")
 
         logger.info(f"[PlanAndExecute] Planning complete. Log dir: {log_dir}")
 
@@ -8271,11 +8895,12 @@ async def run_plan_and_execute(
         context_paths = orchestrator_cfg.get("context_paths", [])
         storage.finalize_planning_phase(plan_session, workspace_source, context_paths=context_paths)
 
-        # Verify a valid plan was created - if not, clean up and fail
+        # Verify a valid artifact was created - if not, clean up and fail
         frozen_plan = plan_session.frozen_dir / "plan.json"
-        if not frozen_plan.exists():
-            console.print("[bold red]Error: Planning phase did not produce a valid plan.json[/bold red]")
-            console.print("[red]The planning agent may have ended early or failed to create a task plan.[/red]")
+        frozen_spec = plan_session.frozen_dir / "spec.json"
+        if not frozen_plan.exists() and not frozen_spec.exists():
+            console.print("[bold red]Error: Planning phase did not produce a valid plan.json or spec.json[/bold red]")
+            console.print("[red]The planning agent may have ended early or failed to create an artifact.[/red]")
             # Clean up the empty plan session directory
             if plan_session.plan_dir.exists():
                 shutil.rmtree(plan_session.plan_dir)
@@ -8333,6 +8958,37 @@ async def main(args):
 
         set_save_streaming_buffers(True)
 
+    _metadata_saved_for_failure = False
+
+    def _save_prompt_metadata_failure_fallback(
+        failure_stage: str,
+        failure_error: Exception | None = None,
+    ) -> None:
+        """Persist prompt metadata even when execution stops early."""
+        nonlocal _metadata_saved_for_failure
+
+        if _metadata_saved_for_failure:
+            return
+
+        if not getattr(args, "question", None):
+            return
+
+        try:
+            cli_args = vars(args).copy()
+            cli_args["failure_stage"] = failure_stage
+            if failure_error is not None:
+                cli_args["failure_error"] = str(failure_error)
+
+            save_execution_metadata(
+                query=args.question,
+                config_path=str(resolved_path) if "resolved_path" in locals() and resolved_path else None,
+                config_content=raw_config_for_metadata if "raw_config_for_metadata" in locals() else None,
+                cli_args=cli_args,
+            )
+            _metadata_saved_for_failure = True
+        except Exception as exc:  # pragma: no cover - best-effort metadata write
+            logger.debug(f"Failed to save fallback execution metadata: {exc}")
+
     # Check if bare `massgen` with no args - use default config if it exists
     if not args.backend and not args.model and not args.config:
         # Use resolve_config_path to check project-level then global config
@@ -8354,6 +9010,7 @@ async def main(args):
                     file=sys.stderr,
                     flush=True,
                 )
+                _save_prompt_metadata_failure_fallback("missing_default_config")
                 sys.exit(EXIT_CONFIG_ERROR)
             # No question and no config - wizard will be triggered in cli_main()
             return
@@ -8382,6 +9039,7 @@ async def main(args):
                 file=sys.stderr,
                 flush=True,
             )
+            _save_prompt_metadata_failure_fallback("missing_execution_source")
             sys.exit(EXIT_CONFIG_ERROR)
 
     # Track config path for error messages
@@ -8399,6 +9057,10 @@ async def main(args):
             if args.debug:
                 logger.debug(f"Resolved config path: {resolved_path}")
                 logger.debug(f"Config content: {json.dumps(config, indent=2)}")
+
+            # Capture prompt from config as early as possible for metadata capture on early failures
+            if not args.question and "prompt" in config:
+                args.question = config["prompt"]
 
             # Check if this is a computer use docker example - setup required
             config_filename = resolved_path.name if resolved_path else ""
@@ -8554,6 +9216,10 @@ async def main(args):
             # Override to textual_terminal
             ui_config["display_type"] = "textual_terminal"
 
+        # Persist UI overrides onto config so downstream helpers (for example
+        # plan-and-execute phases) see the same resolved display settings.
+        config["ui"] = ui_config
+
         if args.no_logs:
             ui_config["logging_enabled"] = False
         if args.debug:
@@ -8582,14 +9248,14 @@ async def main(args):
             if "coordination" not in orchestrator_cfg_plan:
                 orchestrator_cfg_plan["coordination"] = {}
 
-            # Broadcast mode: CLI flag wins; otherwise default to "human"
+            # Broadcast mode: CLI flag wins; otherwise default to autonomous ("false")
             broadcast_arg = getattr(args, "broadcast", None)
             if broadcast_arg == "false":
                 orchestrator_cfg_plan["coordination"]["broadcast"] = False
             elif broadcast_arg is not None:
                 orchestrator_cfg_plan["coordination"]["broadcast"] = broadcast_arg
             else:
-                orchestrator_cfg_plan["coordination"].setdefault("broadcast", "human")
+                orchestrator_cfg_plan["coordination"].setdefault("broadcast", False)
 
             # Set plan_depth
             orchestrator_cfg_plan["coordination"]["plan_depth"] = getattr(
@@ -8615,6 +9281,11 @@ async def main(args):
                     resolved_plan_target_chunks = 1
             orchestrator_cfg_plan["coordination"]["plan_target_chunks"] = resolved_plan_target_chunks
 
+            if _disable_evaluation_criteria_generation_for_planning(orchestrator_cfg_plan["coordination"]):
+                logger.info("[Plan Mode] Disabled evaluation criteria generation for planning turn")
+            if _set_planning_checklist_criteria_defaults(orchestrator_cfg_plan["coordination"]):
+                logger.info("[Plan Mode] Defaulted checklist_criteria_preset=planning")
+
             logger.info(
                 "[Plan Mode] Enabled with depth=%s, target_steps=%s, target_chunks=%s, broadcast=%s",
                 args.plan_depth,
@@ -8622,6 +9293,9 @@ async def main(args):
                 resolved_plan_target_chunks,
                 orchestrator_cfg_plan["coordination"].get("broadcast"),
             )
+
+        # Apply CLI mode flags (--quick, --coordination-mode, --personas, --single-agent)
+        apply_mode_flags_to_config(config, args)
 
         # Check for prompt in config if not provided via CLI
         if not args.question and "prompt" in config:
@@ -8702,6 +9376,13 @@ async def main(args):
             mode = "single-question" if args.question else "interactive"
             logger.info(f"📝 Created session for {mode} mode: {memory_session_id}")
 
+            # Write session_id sentinel for parent process discovery.
+            # Subprocess cwd is the workspace (set via cwd= in manager.py),
+            # so this writes to {workspace}/.massgen/.session_id.
+            _sentinel_dir = Path(".massgen")
+            _sentinel_dir.mkdir(parents=True, exist_ok=True)
+            (Path(".massgen") / ".session_id").write_text(memory_session_id)
+
             # Register new session immediately (before first turn runs)
             # Get log directory for session metadata
             from massgen.logger_config import get_log_session_dir, get_log_session_root
@@ -8742,12 +9423,20 @@ async def main(args):
         # Parse @references from prompt BEFORE creating agents
         # This allows context_paths to be set up before FilesystemManager initialization
         if args.question:
-            args.question, config = inject_prompt_context_paths(args.question, config)
+            args.question, config = inject_prompt_context_paths(
+                args.question,
+                config,
+                parse_at_references=getattr(args, "parse_at_references", True),
+            )
             # Update orchestrator_cfg with any new context_paths
             orchestrator_cfg = config.get("orchestrator", {})
 
+        # Textual mode handles plan/spec prompt prefixes from mode state at turn time.
+        # For non-textual displays, keep CLI-side prefixing behavior.
+        is_textual_display = ui_config.get("display_type") == "textual_terminal"
+
         # Prepend task planning instructions if --plan mode is active
-        if args.question and getattr(args, "plan", False):
+        if args.question and getattr(args, "plan", False) and not is_textual_display:
             plan_depth = getattr(args, "plan_depth", "dynamic")
             plan_target_steps = getattr(args, "plan_steps", None)
             plan_target_chunks = getattr(args, "plan_chunks", None)
@@ -8765,14 +9454,14 @@ async def main(args):
             if plan_target_chunks is None:
                 plan_target_chunks = 1
 
-            # Broadcast mode priority: CLI arg > config > default "human"
+            # Broadcast mode priority: CLI arg > config > default false
             cli_broadcast = getattr(args, "broadcast", None)
             if cli_broadcast == "false":
                 broadcast_mode = False
             elif cli_broadcast is not None:
                 broadcast_mode = cli_broadcast
             else:
-                broadcast_mode = coordination_cfg.get("broadcast", "human")
+                broadcast_mode = coordination_cfg.get("broadcast", False)
 
             planning_prefix = get_task_planning_prompt_prefix(
                 plan_depth,
@@ -8785,6 +9474,35 @@ async def main(args):
             logger.info(
                 f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, target_steps={plan_target_steps}, "
                 f"target_chunks={plan_target_chunks}, subagents={enable_subagents}, broadcast={broadcast_mode})",
+            )
+
+        # Prepend spec creation instructions if --spec mode is active
+        if args.question and getattr(args, "spec", False) and not getattr(args, "plan", False) and not is_textual_display:
+            coordination_cfg = config.get("orchestrator", {}).get("coordination", {})
+            plan_target_chunks = getattr(args, "plan_chunks", None)
+            if plan_target_chunks is None:
+                cfg_chunks = coordination_cfg.get("plan_target_chunks")
+                if isinstance(cfg_chunks, int) and cfg_chunks > 0:
+                    plan_target_chunks = cfg_chunks
+            if plan_target_chunks is None:
+                plan_target_chunks = 1
+
+            # Broadcast mode priority: CLI arg > config > default false
+            cli_broadcast = getattr(args, "broadcast", None)
+            if cli_broadcast == "false":
+                broadcast_mode = False
+            elif cli_broadcast is not None:
+                broadcast_mode = cli_broadcast
+            else:
+                broadcast_mode = coordination_cfg.get("broadcast", False)
+
+            spec_prefix = get_spec_creation_prompt_prefix(
+                broadcast_mode=broadcast_mode,
+                target_chunks=plan_target_chunks,
+            )
+            args.question = spec_prefix + args.question
+            logger.info(
+                f"[Spec Mode] Prepended spec creation instructions " f"(target_chunks={plan_target_chunks}, broadcast={broadcast_mode})",
             )
 
         # Cloud execution path (Modal MVP)
@@ -8829,6 +9547,15 @@ async def main(args):
             if not agents:
                 raise ConfigurationError("No agents configured")
 
+            # Apply --single-agent filtering
+            if getattr(args, "single_agent", None) is not None:
+                try:
+                    agents = filter_agents_for_single_mode(agents, args.single_agent)
+                    logger.info(f"[CLI] Single-agent mode: using agent '{next(iter(agents.keys()))}'")
+                except ValueError as e:
+                    print(f"❌ {e}")
+                    sys.exit(EXIT_CONFIG_ERROR)
+
         if args.debug and agents:
             logger.debug(f"Created {len(agents)} agent(s): {list(agents.keys())}")
 
@@ -8854,6 +9581,7 @@ async def main(args):
 
         # Add rate limit flag to kwargs for interactive mode
         kwargs["enable_rate_limit"] = enable_rate_limit
+        kwargs["parse_at_references"] = getattr(args, "parse_at_references", True)
 
         # Add output file if specified
         if args.output_file:
@@ -8862,6 +9590,11 @@ async def main(args):
         # Seed Textual Ctrl+P CWD mode when explicitly requested via CLI.
         if args.cwd_context:
             kwargs["cwd_context_mode"] = args.cwd_context
+
+        # Pass CLI mode defaults to TUI for initial mode bar state
+        cli_mode_defaults = build_cli_mode_defaults(args)
+        if cli_mode_defaults:
+            kwargs["cli_mode_defaults"] = cli_mode_defaults
 
         # Optionally enable DSPy paraphrasing
         dspy_paraphraser = create_dspy_paraphraser_from_config(
@@ -8973,6 +9706,42 @@ async def main(args):
                 print(f"❌ {e}")
                 sys.exit(1)
 
+        # Handle --execute-spec mode (execute existing spec without spec creation phase)
+        if getattr(args, "execute_spec", None):
+            from rich.console import Console
+            from rich.panel import Panel
+
+            try:
+                final_answer, plan_session = await run_execute_spec(
+                    config=config,
+                    spec_path=args.execute_spec,
+                    question=args.question,  # Optional override
+                    automation=args.automation,
+                )
+
+                # Print results
+                if not args.automation:
+                    console = Console()
+                    console.print(Panel(final_answer, title="Final Answer", border_style="green"))
+
+                # Write output file if specified
+                if args.output_file:
+                    output_path = Path(args.output_file)
+                    output_path.parent.mkdir(parents=True, exist_ok=True)
+                    output_path.write_text(final_answer)
+                    _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
+
+                # Print spec location for automation mode
+                if args.automation:
+                    _automation_print(f"SPEC_DIR: {plan_session.plan_dir}")
+                    _automation_print(f"SPEC_ID: {plan_session.plan_id}")
+
+                sys.exit(0)
+
+            except FileNotFoundError as e:
+                print(f"❌ {e}")
+                sys.exit(1)
+
         # Run mode based on whether question was provided
         try:
             # Check if using textual display - textual always uses interactive mode
@@ -9056,7 +9825,7 @@ async def main(args):
                     def cleanup_agent(
                         agent_id: str,
                         agent,
-                    ) -> tuple[str, Optional[Exception]]:
+                    ) -> tuple[str, Exception | None]:
                         """Cleanup a single agent's Docker container."""
                         try:
                             agent.backend.filesystem_manager.cleanup()
@@ -9103,8 +9872,17 @@ async def main(args):
                                         f"[CLI] Cleanup failed for agent {agent_id}: {e}",
                                     )
 
+    except SystemExit as e:
+        exit_code = getattr(e, "code", EXIT_EXECUTION_ERROR)
+        if exit_code not in (None, 0):
+            _save_prompt_metadata_failure_fallback(
+                "system_exit",
+                failure_error=SystemExit(exit_code),
+            )
+        raise
     except ConfigurationError as e:
         print(f"❌ Configuration error: {e}", file=sys.stderr, flush=True)
+        _save_prompt_metadata_failure_fallback("configuration_error", failure_error=e)
         sys.exit(EXIT_CONFIG_ERROR)
     except KeyboardInterrupt:
         # Show spinner while cleaning up
@@ -9132,7 +9910,7 @@ async def main(args):
                 def cleanup_agent(
                     agent_id: str,
                     agent,
-                ) -> tuple[str, Optional[Exception]]:
+                ) -> tuple[str, Exception | None]:
                     try:
                         agent.backend.filesystem_manager.cleanup()
                         return (agent_id, None)
@@ -9157,9 +9935,11 @@ async def main(args):
                         pass
 
         rich_console.print("[green]👋 Goodbye![/green]")
+        _save_prompt_metadata_failure_fallback("keyboard_interrupt")
         sys.exit(EXIT_INTERRUPTED)
     except TimeoutError as e:
         print(f"❌ Timeout error: {e}", flush=True)
+        _save_prompt_metadata_failure_fallback("timeout_error", failure_error=e)
         sys.exit(EXIT_TIMEOUT)
     except Exception as e:
         # Keep cloud-specific timeout mapping distinct from generic execution failures.
@@ -9169,6 +9949,7 @@ async def main(args):
             print(f"❌ Timeout error: {e}", flush=True)
             sys.exit(EXIT_TIMEOUT)
         print(f"❌ Error: {e}", flush=True)
+        _save_prompt_metadata_failure_fallback("execution_error", failure_error=e)
         sys.exit(EXIT_EXECUTION_ERROR)
 
 
@@ -9528,7 +10309,7 @@ Environment Variables:
     config_group.add_argument(
         "--config",
         type=str,
-        help="Path to YAML/JSON configuration file or @examples/NAME",
+        help="Path to YAML/JSON configuration file or @examples/NAME. With --quickstart, this is used as the output filename under .massgen/",
     )
     config_group.add_argument(
         "--select",
@@ -9545,6 +10326,7 @@ Environment Variables:
             "grok",
             "openai",
             "azure_openai",
+            "copilot",
             "claude_code",
             "zai",
             "lmstudio",
@@ -9690,7 +10472,7 @@ Environment Variables:
         choices=["human", "agents", "false"],
         default=None,
         help="Broadcast mode for --plan mode: 'human' (agents ask critical questions), 'agents' (agents debate), 'false' (fully autonomous). "
-        "If not specified, uses config file value or defaults to 'human'.",
+        "If not specified, uses config file value or defaults to 'false'.",
     )
     parser.add_argument(
         "--plan-and-execute",
@@ -9707,9 +10489,28 @@ Environment Variables:
         "Skips planning phase and runs execution directly from the frozen plan.",
     )
     parser.add_argument(
+        "--spec",
+        action="store_true",
+        help="Spec creation mode. Agents produce a requirements specification (EARS notation) instead of a task plan. "
+        "Output is project_spec.json with requirements, verification criteria, and chunked execution phases.",
+    )
+    parser.add_argument(
+        "--execute-spec",
+        type=str,
+        metavar="SPEC_PATH",
+        help="Execute against an existing spec. Provide the spec directory path, spec ID, or 'latest' for most recent spec session. "
+        "Skips spec creation phase and runs execution directly from the frozen spec.",
+    )
+    parser.add_argument(
         "--no-session-registry",
         action="store_true",
         help="Don't register this session in the global session registry. Used for internal subagent runs.",
+    )
+    parser.add_argument(
+        "--no-parse-at-references",
+        action="store_false",
+        dest="parse_at_references",
+        help="Treat @tokens in prompt text as plain text instead of extracting @path/@path:w context references.",
     )
     parser.add_argument(
         "--output-file",
@@ -9772,7 +10573,7 @@ Environment Variables:
     parser.add_argument(
         "--setup-skills",
         action="store_true",
-        help="Install skills (openskills CLI, Anthropic/OpenAI/Vercel collections, Agent Browser skill, Crawl4AI)",
+        help="Install skills (openskills CLI, Anthropic/OpenAI/Vercel collections, Agent Browser skill, Remotion, Crawl4AI)",
     )
     parser.add_argument(
         "--setup-docker",
@@ -9878,6 +10679,9 @@ Environment Variables:
         help="Enable rate limiting (uses limits from rate_limits.yaml config)",
     )
 
+    # Mode settings (mirror TUI mode bar toggles)
+    add_mode_flags_to_parser(parser)
+
     args = parser.parse_args()
 
     if args.plan_steps is not None and args.plan_steps <= 0:
@@ -9888,6 +10692,13 @@ Environment Variables:
         sys.exit(2)
     if args.cloud_timeout <= 0:
         print("❌ --cloud-timeout must be a positive integer")
+        sys.exit(2)
+
+    # Validate mode flag combinations
+    mode_errors = validate_mode_flag_combinations(args)
+    if mode_errors:
+        for err in mode_errors:
+            print(f"❌ {err}")
         sys.exit(2)
 
     # Handle --continue flag BEFORE setup_logging so we can reuse log directory
@@ -9998,7 +10809,9 @@ Environment Variables:
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
 
-    def _run_quickstart_wizard_tui():
+    quickstart_config_filename = _quickstart_filename_from_config_arg(args.config) if args.quickstart else None
+
+    def _run_quickstart_wizard_tui(config_filename: str | None = None):
         """Launch quickstart wizard TUI. Returns result dict or None."""
         try:
             from textual.app import App as _QApp
@@ -10011,15 +10824,17 @@ Environment Variables:
 
             class _QuickstartWizardApp(_QApp):
                 CSS_PATH = Path(__file__).parent / "frontend" / "displays" / "textual_themes" / "dark.tcss"
-                SCREENS = {"wizard": QuickstartWizard}
                 BINDINGS = [("ctrl+c", "quit", "Quit")]
 
-                def __init__(self):
+                def __init__(self, quickstart_config_filename: str | None = None):
                     super().__init__(css_path=str(self.CSS_PATH))
                     self._wizard_result = None
+                    self._quickstart_config_filename = quickstart_config_filename
 
                 def on_mount(self):
-                    self.push_screen("wizard")
+                    self.push_screen(
+                        QuickstartWizard(config_filename=self._quickstart_config_filename),
+                    )
 
                 def on_wizard_completed(self, message: WizardCompleted) -> None:
                     self._wizard_result = message.result
@@ -10035,7 +10850,9 @@ Environment Variables:
                     if event.key == "escape" and len(self.screen_stack) <= 1:
                         self.exit(None)
 
-            app = _QuickstartWizardApp()
+            app = _QuickstartWizardApp(
+                quickstart_config_filename=config_filename,
+            )
             return app.run()
         except ImportError as e:
             logger.warning(f"TUI not available for quickstart wizard: {e}")
@@ -10368,7 +11185,7 @@ Environment Variables:
     if args.quickstart and not args.web:
         # Launch TUI Quickstart Wizard
         try:
-            result = _run_quickstart_wizard_tui()
+            result = _run_quickstart_wizard_tui(quickstart_config_filename)
             if _handle_quickstart_result(result):
                 return
             # Terminal launch - fall through to normal flow
@@ -10377,7 +11194,9 @@ Environment Variables:
             logger.warning(f"TUI not available, falling back to CLI quickstart: {e}")
             # Fallback to CLI-based quickstart
             builder = ConfigBuilder()
-            result = builder.run_quickstart()
+            result = builder.run_quickstart(
+                quickstart_config_filename=quickstart_config_filename,
+            )
 
             if result and len(result) >= 2:
                 filepath = result[0]
@@ -10565,7 +11384,9 @@ Environment Variables:
                     print(f"{BRIGHT_GREEN}✅ API keys detected{RESET}\n")
 
                 print()
-                result = builder.run_quickstart()
+                result = builder.run_quickstart(
+                    quickstart_config_filename=quickstart_config_filename,
+                )
 
                 if result and len(result) >= 2:
                     filepath = result[0]

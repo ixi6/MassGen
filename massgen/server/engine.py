@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MassGen HTTP Server Engine
 
@@ -6,10 +5,11 @@ This module provides the engine that powers the OpenAI-compatible HTTP server.
 It uses massgen.run() to ensure full feature parity with CLI, WebUI, and LiteLLM modes,
 including proper logging, metrics, and session management.
 """
+
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
 from .openai.model_router import ResolvedModel
 from .openai.schema import ChatCompletionRequest
@@ -24,7 +24,7 @@ class Engine(Protocol):
         resolved: ResolvedModel,
         *,
         request_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute a chat completion request and return OpenAI-compatible response."""
         ...
 
@@ -43,11 +43,11 @@ class MassGenEngine:
     def __init__(
         self,
         *,
-        default_config: Optional[str] = None,
+        default_config: str | None = None,
     ):
         self._default_config = default_config
 
-    def _extract_query(self, messages: List[Dict[str, Any]]) -> str:
+    def _extract_query(self, messages: list[dict[str, Any]]) -> str:
         """Extract query from messages list (last user message)."""
         for msg in reversed(messages):
             if msg.get("role") == "user":
@@ -61,7 +61,7 @@ class MassGenEngine:
                 return content
         return ""
 
-    def _extract_conversation_history(self, messages: List[Dict[str, Any]]) -> Optional[List[Dict[str, str]]]:
+    def _extract_conversation_history(self, messages: list[dict[str, Any]]) -> list[dict[str, str]] | None:
         """Extract conversation history from messages (excluding last user message)."""
         if len(messages) <= 1:
             return None
@@ -90,7 +90,7 @@ class MassGenEngine:
         resolved: ResolvedModel,
         *,
         request_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Execute a chat completion using massgen.run().
 
@@ -133,10 +133,10 @@ class MassGenEngine:
 
     def _build_openai_response(
         self,
-        result: Dict[str, Any],
+        result: dict[str, Any],
         model: str,
         request_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build an OpenAI-compatible chat completion response."""
         response_id = f"chatcmpl-{request_id}"
 

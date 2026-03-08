@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Computer use tool for automating browser and computer interactions using OpenAI's computer-use-preview model.
 
@@ -11,7 +10,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -98,7 +97,7 @@ def get_screenshot_docker(container: Any, display: str = ":99") -> bytes:
     return screenshot_bytes
 
 
-def execute_browser_action(page: Any, action: Dict[str, Any]) -> None:
+def execute_browser_action(page: Any, action: dict[str, Any]) -> None:
     """
     Execute a computer action on Playwright browser page.
 
@@ -174,7 +173,7 @@ def execute_browser_action(page: Any, action: Dict[str, Any]) -> None:
         raise ActionExecutionError(f"Failed to execute action {action_type}: {str(e)}")
 
 
-def execute_docker_action(container: Any, action: Dict[str, Any], display: str = ":99") -> None:
+def execute_docker_action(container: Any, action: dict[str, Any], display: str = ":99") -> None:
     """
     Execute a computer action on Docker container using xdotool.
 
@@ -281,9 +280,9 @@ def run_computer_use_loop(
     display_width: int,
     display_height: int,
     max_iterations: int = 50,
-    environment_config: Optional[Dict[str, Any]] = None,
+    environment_config: dict[str, Any] | None = None,
     model: str = "computer-use-preview",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Run the computer use loop that executes actions and sends screenshots back to the model.
 
@@ -469,9 +468,9 @@ async def computer_use(
     display_height: int = 1080,
     max_iterations: int = 50,
     include_reasoning: bool = True,
-    initial_screenshot_path: Optional[str] = None,
-    environment_config: Optional[Dict[str, Any]] = None,
-    agent_cwd: Optional[str] = None,
+    initial_screenshot_path: str | None = None,
+    environment_config: dict[str, Any] | None = None,
+    agent_cwd: str | None = None,
     model: str = "computer-use-preview",
 ) -> ExecutionResult:
     """

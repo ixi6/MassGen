@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Execution Trace Writer.
 
 Formats streaming buffer content as a structured, searchable markdown file
@@ -17,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class EntryType(Enum):
@@ -39,7 +38,7 @@ class TraceEntry:
 
     entry_type: EntryType
     timestamp: datetime
-    content: Dict[str, Any]
+    content: dict[str, Any]
 
 
 @dataclass
@@ -59,14 +58,14 @@ class ExecutionTraceWriter:
     agent_id: str
     model: str
     start_time: datetime = field(default_factory=datetime.now)
-    entries: List[TraceEntry] = field(default_factory=list)
-    errors: List[TraceEntry] = field(default_factory=list)
+    entries: list[TraceEntry] = field(default_factory=list)
+    errors: list[TraceEntry] = field(default_factory=list)
     current_round: int = 0
     current_answer_label: str = ""
     # Track active reasoning entry to accumulate streaming tokens
-    _active_reasoning_entry: Optional[TraceEntry] = field(default=None, repr=False)
+    _active_reasoning_entry: TraceEntry | None = field(default=None, repr=False)
     # Track active content entry to accumulate streaming tokens
-    _active_content_entry: Optional[TraceEntry] = field(default=None, repr=False)
+    _active_content_entry: TraceEntry | None = field(default=None, repr=False)
 
     def start_round(self, round_num: int, answer_label: str) -> None:
         """Mark the start of a new round/answer.
@@ -87,7 +86,7 @@ class ExecutionTraceWriter:
             ),
         )
 
-    def add_tool_call(self, name: str, args: Dict[str, Any]) -> None:
+    def add_tool_call(self, name: str, args: dict[str, Any]) -> None:
         """Record a tool call (before execution).
 
         Args:
@@ -210,9 +209,9 @@ class ExecutionTraceWriter:
     def add_vote(
         self,
         voted_for_agent: str,
-        voted_for_label: Optional[str],
+        voted_for_label: str | None,
         reason: str,
-        available_options: Optional[List[str]] = None,
+        available_options: list[str] | None = None,
     ) -> None:
         """Record a vote submission during enforcement phase.
 

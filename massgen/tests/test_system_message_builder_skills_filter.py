@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for runtime skill filtering in SystemMessageBuilder."""
 
 from massgen.system_message_builder import SystemMessageBuilder

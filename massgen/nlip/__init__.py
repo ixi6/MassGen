@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 NLIP (Natural Language Interaction Protocol) Integration for MassGen.
 

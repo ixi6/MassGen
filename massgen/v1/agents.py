@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MassAgent implementations that wrap the existing agent backends.
 
@@ -6,7 +5,7 @@ This module provides MassAgent-compatible wrappers for the existing
 OpenAI, Gemini, and Grok agent implementations.
 """
 
-from typing import Callable, Dict, List, Optional
+from collections.abc import Callable
 
 from dotenv import load_dotenv
 
@@ -23,8 +22,8 @@ class OpenAIMassAgent(MassAgent):
         self,
         agent_id: int,
         orchestrator=None,
-        model_config: Optional[ModelConfig] = None,
-        stream_callback: Optional[Callable] = None,
+        model_config: ModelConfig | None = None,
+        stream_callback: Callable | None = None,
         **kwargs,
     ):
         # Pass all configuration to parent, including agent_type
@@ -44,8 +43,8 @@ class GrokMassAgent(OpenAIMassAgent):
         self,
         agent_id: int,
         orchestrator=None,
-        model_config: Optional[ModelConfig] = None,
-        stream_callback: Optional[Callable] = None,
+        model_config: ModelConfig | None = None,
+        stream_callback: Callable | None = None,
         **kwargs,
     ):
         # Pass all configuration to parent, including agent_type
@@ -65,8 +64,8 @@ class GeminiMassAgent(OpenAIMassAgent):
         self,
         agent_id: int,
         orchestrator=None,
-        model_config: Optional[ModelConfig] = None,
-        stream_callback: Optional[Callable] = None,
+        model_config: ModelConfig | None = None,
+        stream_callback: Callable | None = None,
         **kwargs,
     ):
         # Pass all configuration to parent, including agent_type
@@ -112,7 +111,7 @@ class GeminiMassAgent(OpenAIMassAgent):
             function_call_enabled,
         )
 
-    def work_on_task(self, task: TaskInput) -> List[Dict[str, str]]:
+    def work_on_task(self, task: TaskInput) -> list[dict[str, str]]:
         """
         Work on the task using the Gemini backend with conversation continuation.
 
@@ -262,7 +261,7 @@ def create_agent(
     agent_type: str,
     agent_id: int,
     orchestrator=None,
-    model_config: Optional[ModelConfig] = None,
+    model_config: ModelConfig | None = None,
     **kwargs,
 ) -> MassAgent:
     """

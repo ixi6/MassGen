@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Provider-specific context length error detection.
 
 This module provides utilities to detect when an LLM API returns a context
@@ -22,7 +21,6 @@ Verified error patterns from official documentation (2024-2025):
 
 import re
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -30,12 +28,12 @@ class ContextErrorInfo:
     """Detailed information extracted from a context length error."""
 
     provider: str
-    input_tokens: Optional[int] = None
-    max_tokens: Optional[int] = None
-    context_limit: Optional[int] = None
-    http_status: Optional[int] = None
-    error_code: Optional[str] = None
-    raw_message: Optional[str] = None
+    input_tokens: int | None = None
+    max_tokens: int | None = None
+    context_limit: int | None = None
+    http_status: int | None = None
+    error_code: str | None = None
+    raw_message: str | None = None
 
 
 class ContextLengthExceededError(Exception):
@@ -48,7 +46,7 @@ class ContextLengthExceededError(Exception):
         self,
         original_error: Exception,
         provider: str = "unknown",
-        info: Optional[ContextErrorInfo] = None,
+        info: ContextErrorInfo | None = None,
     ):
         self.original_error = original_error
         self.provider = provider
@@ -56,7 +54,7 @@ class ContextLengthExceededError(Exception):
         super().__init__(f"Context length exceeded ({provider}): {original_error}")
 
 
-def _get_http_status(error: Exception) -> Optional[int]:
+def _get_http_status(error: Exception) -> int | None:
     """Extract HTTP status code from an exception if available."""
     # Check common attribute names for status code
     for attr in ("status_code", "status", "code"):
@@ -77,7 +75,7 @@ def _get_http_status(error: Exception) -> Optional[int]:
     return None
 
 
-def _check_exception_type(error: Exception) -> Optional[str]:
+def _check_exception_type(error: Exception) -> str | None:
     """Check if error is a known context length exception type.
 
     Returns the provider name if matched, None otherwise.
@@ -242,7 +240,7 @@ def is_context_length_error(error: Exception) -> bool:
     return False
 
 
-def get_provider_from_error(error: Exception) -> Optional[str]:
+def get_provider_from_error(error: Exception) -> str | None:
     """Attempt to determine the provider from an error.
 
     Args:
@@ -300,7 +298,7 @@ def get_provider_from_error(error: Exception) -> Optional[str]:
     return None
 
 
-def parse_context_error_info(error: Exception) -> Optional[ContextErrorInfo]:
+def parse_context_error_info(error: Exception) -> ContextErrorInfo | None:
     """Extract detailed information from a context length error.
 
     Parses provider-specific error messages to extract token counts

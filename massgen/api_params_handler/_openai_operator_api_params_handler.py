@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 OpenAI Operator API parameters handler.
 Extends Response API handler with computer use tool support.
@@ -6,7 +5,7 @@ Extends Response API handler with computer use tool support.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from ._response_api_params_handler import ResponseAPIParamsHandler
 
@@ -14,7 +13,7 @@ from ._response_api_params_handler import ResponseAPIParamsHandler
 class OpenAIOperatorAPIParamsHandler(ResponseAPIParamsHandler):
     """Handler for OpenAI Operator API parameters with computer use support."""
 
-    def get_excluded_params(self) -> Set[str]:
+    def get_excluded_params(self) -> set[str]:
         """Get parameters to exclude from Operator API calls."""
         return (
             super()
@@ -31,10 +30,10 @@ class OpenAIOperatorAPIParamsHandler(ResponseAPIParamsHandler):
 
     async def build_api_params(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        all_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        all_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build Operator API parameters with computer-use-preview specific requirements."""
         api_params = await super().build_api_params(messages, tools, all_params)
 
@@ -44,7 +43,7 @@ class OpenAIOperatorAPIParamsHandler(ResponseAPIParamsHandler):
 
         return api_params
 
-    def get_provider_tools(self, all_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_provider_tools(self, all_params: dict[str, Any]) -> list[dict[str, Any]]:
         """Get provider tools for Operator API format.
 
         Note: The hosted computer_use_preview tool is only added when explicitly

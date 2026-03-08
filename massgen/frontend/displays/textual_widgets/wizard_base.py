@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base Wizard Framework for MassGen TUI.
 
@@ -10,8 +9,9 @@ Provides reusable infrastructure for multi-step wizards including:
 This framework is used by both the Setup Wizard and Quickstart Wizard.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Set, Type
+from typing import Any
 
 from textual import events
 from textual.app import ComposeResult
@@ -23,19 +23,9 @@ from textual.widgets import Button, Label, ProgressBar
 
 def _wizard_log(msg: str) -> None:
     """Log to TUI debug file."""
-    try:
-        import logging
+    from massgen.frontend.displays.shared.tui_debug import tui_log
 
-        log = logging.getLogger("massgen.tui.debug")
-        if not log.handlers:
-            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-            handler.setFormatter(logging.Formatter("%(asctime)s [WIZARD] %(message)s", datefmt="%H:%M:%S"))
-            log.addHandler(handler)
-            log.setLevel(logging.DEBUG)
-            log.propagate = False
-        log.debug(msg)
-    except Exception:
-        pass
+    tui_log(f"[WIZARD] {msg}")
 
 
 @dataclass
@@ -54,9 +44,9 @@ class WizardStep:
     id: str
     title: str
     description: str
-    component_class: Type["StepComponent"]
+    component_class: type["StepComponent"]
     is_optional: bool = False
-    skip_condition: Optional[Callable[[Dict[str, Any]], bool]] = None
+    skip_condition: Callable[[dict[str, Any]], bool] | None = None
 
 
 @dataclass
@@ -71,9 +61,9 @@ class WizardState:
     """
 
     current_step_idx: int = 0
-    step_data: Dict[str, Any] = field(default_factory=dict)
-    visited_steps: Set[str] = field(default_factory=set)
-    validation_errors: Dict[str, str] = field(default_factory=dict)
+    step_data: dict[str, Any] = field(default_factory=dict)
+    visited_steps: set[str] = field(default_factory=set)
+    validation_errors: dict[str, str] = field(default_factory=dict)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Get a value from step_data with a default."""
@@ -120,8 +110,8 @@ class StepComponent(Container):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the step component.
 
@@ -151,7 +141,7 @@ class StepComponent(Container):
             value: The previously collected value from this step.
         """
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         """Validate the current step's input.
 
         Returns:
@@ -265,17 +255,17 @@ class WizardModal(ModalScreen):
     def __init__(
         self,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the wizard modal."""
         super().__init__(id=id, classes=classes)
         self.state = WizardState()
-        self._steps: List[WizardStep] = []
-        self._current_component: Optional[StepComponent] = None
+        self._steps: list[WizardStep] = []
+        self._current_component: StepComponent | None = None
         self._initialized = False
 
-    def get_steps(self) -> List[WizardStep]:
+    def get_steps(self) -> list[WizardStep]:
         """Return the list of wizard steps.
 
         Override this method to define the steps for your wizard.

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Content Normalizer for MassGen TUI.
 
@@ -13,7 +12,7 @@ Design Philosophy:
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional, Tuple
+from typing import Any, Literal
 
 # Content types recognized by the display system
 ContentType = Literal[
@@ -181,11 +180,11 @@ class ToolMetadata:
     tool_name: str
     tool_type: str = "unknown"  # mcp, custom, etc.
     event: str = "unknown"  # start, complete, failed
-    args: Optional[Dict[str, Any]] = None
-    result: Optional[str] = None
-    error: Optional[str] = None
-    tool_count: Optional[int] = None  # For "Registered X tools" messages
-    tool_call_id: Optional[str] = None  # Unique ID for this tool call  # For "Registered X tools" messages
+    args: dict[str, Any] | None = None
+    result: str | None = None
+    error: str | None = None
+    tool_count: int | None = None  # For "Registered X tools" messages
+    tool_call_id: str | None = None  # Unique ID for this tool call  # For "Registered X tools" messages
 
 
 @dataclass
@@ -195,11 +194,11 @@ class NormalizedContent:
     content_type: ContentType
     cleaned_content: str
     original: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    tool_metadata: Optional[ToolMetadata] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    tool_metadata: ToolMetadata | None = None
     should_display: bool = True  # Set to False to filter out
     is_coordination: bool = False  # Flag for coordination content (for grouping)
-    tool_call_id: Optional[str] = None  # Unique ID for this tool call  # Flag for coordination content (for grouping)
+    tool_call_id: str | None = None  # Unique ID for this tool call  # Flag for coordination content (for grouping)
 
 
 class ContentNormalizer:
@@ -315,7 +314,7 @@ class ContentNormalizer:
         return len(text_before) < 20  # Allow small prefixes like "Here:" but not full sentences
 
     @staticmethod
-    def extract_workspace_json(content: str) -> Optional[Tuple[str, str, str]]:
+    def extract_workspace_json(content: str) -> tuple[str, str, str] | None:
         """Extract workspace JSON from content, handling various formats.
 
         Handles:
@@ -502,7 +501,7 @@ class ContentNormalizer:
         return "text"
 
     @classmethod
-    def normalize(cls, content: str, raw_type: str = "", tool_call_id: Optional[str] = None) -> NormalizedContent:
+    def normalize(cls, content: str, raw_type: str = "", tool_call_id: str | None = None) -> NormalizedContent:
         """Normalize content for display.
 
         This is the main entry point. It:

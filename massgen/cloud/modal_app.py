@@ -65,7 +65,6 @@ def run_massgen_job(payload_b64: str) -> dict:
 
     prompt = str(payload["prompt"])
     config_yaml = str(payload["config_yaml"])
-    int(payload.get("timeout_seconds", 1800))
     output_filename = str(payload.get("output_filename", "final_answer.txt"))
     forwarded_env = payload.get("env", {}) or {}
 

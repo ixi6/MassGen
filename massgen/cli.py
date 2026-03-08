@@ -8500,21 +8500,6 @@ async def main(args):
         # Validate that all context paths exist before proceeding
         validate_context_paths(config)
 
-        # Cloud execution path (Modal MVP)
-        if getattr(args, "cloud", False):
-            if not args.automation:
-                logger.info("Cloud mode requires automation output; enabling --automation")
-                args.automation = True
-            _run_cloud_job(
-                args=args,
-                config=config,
-                config_path_label=str(resolved_path) if resolved_path else None,
-            )
-            return
-
-        # Relocate all filesystem paths to .massgen/ directory
-        relocate_filesystem_paths(config)
-
         # Generate unique instance ID for parallel execution safety
         # This prevents Docker container naming conflicts when running multiple instances
         import uuid
@@ -8794,6 +8779,21 @@ async def main(args):
                 f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, target_steps={plan_target_steps}, "
                 f"target_chunks={plan_target_chunks}, subagents={enable_subagents}, broadcast={broadcast_mode})",
             )
+
+        # Cloud execution path (Modal MVP)
+        if getattr(args, "cloud", False):
+            if not args.automation:
+                logger.info("Cloud mode requires automation output; enabling --automation")
+                args.automation = True
+            _run_cloud_job(
+                args=args,
+                config=config,
+                config_path_label=str(resolved_path) if resolved_path else None,
+            )
+            return
+
+        # Relocate all filesystem paths to .massgen/ directory
+        relocate_filesystem_paths(config)
 
         # For interactive mode without initial question, defer agent creation until first prompt
         # This allows @path references in the first prompt to be included in Docker mounts

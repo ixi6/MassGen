@@ -374,6 +374,13 @@ def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path
             orchestrator_cfg["context_paths"] = rewritten_paths
             config_copy["orchestrator"] = orchestrator_cfg
 
+    # Cloud validation compatibility for PyPI version
+    # The PyPI version of massgen on Modal fails if display_type is "silent".
+    # Since modal_app.py passes `--automation`, it will be re-set to "silent"
+    # internally *after* validation in the cloud. We remove it here just for validation.
+    if "ui" in config_copy and config_copy["ui"].get("display_type") == "silent":
+        config_copy.pop("ui", None)
+
     launcher = ModalCloudJobLauncher()
     request = CloudJobRequest(
         prompt=args.question,

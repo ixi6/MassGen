@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for content_handlers helper functions."""
 
 from massgen.frontend.displays.content_handlers import (

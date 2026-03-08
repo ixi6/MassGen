@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
 """Coordination-related modals: Vote results, Orchestrator events, Coordination table, Agent selector."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     from textual.app import ComposeResult
@@ -21,8 +20,8 @@ class VoteResultsModal(BaseModal):
     def __init__(
         self,
         results_text: str,
-        vote_counts: Optional[Dict[str, int]] = None,
-        votes: Optional[List[Dict[str, Any]]] = None,
+        vote_counts: dict[str, int] | None = None,
+        votes: list[dict[str, Any]] | None = None,
     ):
         super().__init__()
         self.results_text = results_text
@@ -97,7 +96,7 @@ class VoteResultsModal(BaseModal):
 class OrchestratorEventsModal(BaseModal):
     """Modal to display orchestrator events log."""
 
-    def __init__(self, events: List[str]):
+    def __init__(self, events: list[str]):
         super().__init__()
         self.events = events
 
@@ -126,11 +125,11 @@ class CoordinationTableModal(BaseModal):
 class AgentSelectorModal(BaseModal):
     """Modal for selecting an agent from a list."""
 
-    def __init__(self, agent_ids: List[str], current_agent_id: Optional[str] = None):
+    def __init__(self, agent_ids: list[str], current_agent_id: str | None = None):
         super().__init__()
         self.agent_ids = agent_ids
         self.current_agent_id = current_agent_id
-        self.selected_agent: Optional[str] = None
+        self.selected_agent: str | None = None
 
     def compose(self) -> ComposeResult:
         with Container(id="agent_selector_container"):

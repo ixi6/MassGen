@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 MassGen Interactive Configuration Builder
 
@@ -14,7 +13,7 @@ Usage:
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import questionary
 import yaml
@@ -33,7 +32,7 @@ from massgen.backend.capabilities import (
 from massgen.utils.model_matcher import get_all_models_for_provider
 
 
-def _get_provider_capabilities(provider_id: str) -> Dict[str, bool]:
+def _get_provider_capabilities(provider_id: str) -> dict[str, bool]:
     """Get capability flags for a provider for quickstart UI.
 
     Args:
@@ -49,6 +48,82 @@ def _get_provider_capabilities(provider_id: str) -> Dict[str, bool]:
         "web_search": "web_search" in caps.supported_capabilities,
         "code_execution": "code_execution" in caps.supported_capabilities,
     }
+
+
+DEFAULT_QUICKSTART_CONFIG_FILENAME = "config.yaml"
+QUICKSTART_PROVIDER_PRIORITY = (
+    "claude_code",
+    "codex",
+    "gemini",
+)
+
+
+def sort_quickstart_provider_ids(provider_ids: list[str]) -> list[str]:
+    """Return provider IDs with quickstart defaults prioritized.
+
+    Priority order is:
+    1. claude_code
+    2. codex
+    3. gemini
+
+    Any remaining providers keep their original relative order.
+    """
+    ordered: list[str] = []
+    seen: set[str] = set()
+
+    for provider_id in QUICKSTART_PROVIDER_PRIORITY:
+        if provider_id in provider_ids and provider_id not in seen:
+            ordered.append(provider_id)
+            seen.add(provider_id)
+
+    for provider_id in provider_ids:
+        if provider_id not in seen:
+            ordered.append(provider_id)
+            seen.add(provider_id)
+
+    return ordered
+
+
+def normalize_quickstart_config_filename(
+    filename: str | None,
+    default: str = DEFAULT_QUICKSTART_CONFIG_FILENAME,
+) -> str:
+    """Normalize a quickstart config filename.
+
+    - Keeps only the basename so quickstart controls the target directory.
+    - Falls back to ``default`` when value is empty/invalid.
+    - Appends ``.yaml`` when no extension is provided.
+    """
+    fallback = Path((default or DEFAULT_QUICKSTART_CONFIG_FILENAME).strip() or DEFAULT_QUICKSTART_CONFIG_FILENAME).name
+    if fallback in {"", ".", ".."}:
+        fallback = DEFAULT_QUICKSTART_CONFIG_FILENAME
+
+    candidate = Path((filename or "").strip()).name
+    if candidate in {"", ".", ".."}:
+        candidate = fallback
+
+    if not Path(candidate).suffix:
+        candidate = f"{candidate}.yaml"
+
+    return candidate
+
+
+def build_quickstart_config_path(
+    *,
+    location: str = "project",
+    filename: str | None = None,
+    cwd: Path | None = None,
+    home_dir: Path | None = None,
+) -> Path:
+    """Build a quickstart config output path from location + filename."""
+    normalized_filename = normalize_quickstart_config_filename(filename)
+
+    if location == "global":
+        base_dir = (home_dir or Path.home()) / ".config" / "massgen"
+    else:
+        base_dir = (cwd or Path.cwd()) / ".massgen"
+
+    return base_dir / normalized_filename
 
 
 # Load environment variables
@@ -73,17 +148,57 @@ class ConfigBuilder:
 
     @staticmethod
     def get_quickstart_reasoning_profile(
-        backend_type: Optional[str],
-        model: Optional[str],
-    ) -> Optional[Dict[str, Any]]:
-        """Return quickstart reasoning options for GPT-5x models.
+        backend_type: str | None,
+        model: str | None,
+    ) -> dict[str, Any] | None:
+        """Return quickstart reasoning options for supported models.
 
         Returns None when no quickstart reasoning selector should be shown.
         """
         normalized_backend = (backend_type or "").strip().lower()
         normalized_model = (model or "").strip().lower()
 
-        if not normalized_model or "gpt-5" not in normalized_model:
+        def mark_recommended(label: str, effort: str, default_effort: str) -> str:
+            if effort != default_effort:
+                return label
+            if "(" in label and label.endswith(")"):
+                return f"{label[:-1]}, recommended)"
+            return f"{label} (recommended)"
+
+        def with_recommended(
+            base_choices: list[tuple[str, str]],
+            default_effort: str,
+        ) -> list[tuple[str, str]]:
+            return [(mark_recommended(label, effort, default_effort), effort) for label, effort in base_choices]
+
+        if not normalized_model:
+            return None
+
+        # Claude Code supports effort controls for Opus/Sonnet 4.6.
+        # "max" is only supported on Opus 4.6.
+        if normalized_backend == "claude_code":
+            supports_max = normalized_model.startswith("claude-opus-4-6")
+            supports_standard = supports_max or normalized_model.startswith("claude-sonnet-4-6")
+            if not supports_standard:
+                return None
+
+            default_effort = "high" if supports_max else "medium"
+            choices = [
+                ("Low (faster)", "low"),
+                ("Medium", "medium"),
+                ("High (deeper reasoning)", "high"),
+            ]
+            if supports_max:
+                choices.append(("Max (deepest reasoning)", "max"))
+            choices = with_recommended(choices, default_effort)
+
+            return {
+                "choices": choices,
+                "default_effort": default_effort,
+                "description": "This Claude Code model supports configurable reasoning effort.",
+            }
+
+        if "gpt-5" not in normalized_model:
             return None
 
         supports_xhigh = normalized_backend == "codex" or "codex" in normalized_model
@@ -92,30 +207,40 @@ class ConfigBuilder:
             return None
 
         default_effort = "low" if "nano" in normalized_model else "medium"
+        if supports_xhigh and (normalized_model == "gpt-5.4" or normalized_model.startswith("gpt-5.4-") or "gpt-5.3" in normalized_model):
+            default_effort = "xhigh"
         if supports_xhigh:
-            return {
-                "choices": [
+            choices = with_recommended(
+                [
                     ("Low (faster)", "low"),
-                    ("Medium (recommended)", "medium"),
+                    ("Medium", "medium"),
                     ("High (deeper reasoning)", "high"),
                     ("XHigh (maximum depth)", "xhigh"),
                 ],
+                default_effort,
+            )
+            return {
+                "choices": choices,
                 "default_effort": default_effort,
                 "description": "This GPT-5 Codex model supports extended reasoning.",
             }
 
-        return {
-            "choices": [
+        choices = with_recommended(
+            [
                 ("Low (faster)", "low"),
-                ("Medium (recommended)", "medium"),
+                ("Medium", "medium"),
                 ("High (deeper reasoning)", "high"),
             ],
+            default_effort,
+        )
+        return {
+            "choices": choices,
             "default_effort": default_effort,
             "description": "This GPT-5 model supports extended reasoning.",
         }
 
     @property
-    def PROVIDERS(self) -> Dict[str, Dict]:
+    def PROVIDERS(self) -> dict[str, dict]:
         """Generate provider configurations from the capabilities registry (single source of truth).
 
         This dynamically builds the PROVIDERS dict from massgen/backend/capabilities.py,
@@ -306,10 +431,10 @@ class ConfigBuilder:
     def select_model_smart(
         self,
         backend_type: str,
-        models: List[str],
-        current_model: Optional[str] = None,
+        models: list[str],
+        current_model: str | None = None,
         prompt: str = "Select model:",
-    ) -> Optional[str]:
+    ) -> str | None:
         """Smart model selection with autocomplete for providers with many models.
 
         For providers with custom/many models (OpenRouter, Nebius, POE), offers text input with fuzzy matching.
@@ -341,6 +466,7 @@ class ConfigBuilder:
             "nebius",
             "fireworks",
             "moonshot",
+            "nvidia_nim",
             "qwen",
         ]
 
@@ -354,7 +480,7 @@ class ConfigBuilder:
 
         if use_text_input:
             console.print(
-                "\n[dim]Type to search models (e.g., 'gpt-5.2', 'gpt-5-mini', 'gpt-5-nano')[/dim]",
+                "\n[dim]Type to search models (e.g., 'gpt-5.4', 'gpt-5-mini', 'gpt-5-nano')[/dim]",
             )
             console.print(
                 f"[dim]Searching through {len(fuzzy_match_models)} models...[/dim]",
@@ -502,7 +628,7 @@ class ConfigBuilder:
             # Re-raise to be handled by caller
             raise
 
-    def detect_api_keys(self) -> Dict[str, bool]:
+    def detect_api_keys(self) -> dict[str, bool]:
         """Detect available API keys from environment with error handling."""
         api_keys = {}
         try:
@@ -529,7 +655,7 @@ class ConfigBuilder:
             # Return empty dict to allow continue with manual input
             return {provider_id: False for provider_id in self.PROVIDERS.keys()}
 
-    def interactive_api_key_setup(self) -> Dict[str, bool]:
+    def interactive_api_key_setup(self) -> dict[str, bool]:
         """Interactive API key setup wizard.
 
         Prompts user to enter API keys for providers and saves them to .env file.
@@ -569,6 +695,7 @@ class ConfigBuilder:
                 ("openrouter", "OpenRouter", "OPENROUTER_API_KEY"),
                 ("zai", "ZAI (Zhipu.ai)", "ZAI_API_KEY"),
                 ("moonshot", "Kimi/Moonshot AI", "MOONSHOT_API_KEY"),
+                ("nvidia_nim", "Nvidia NIM", "NGC_API_KEY"),
                 ("poe", "POE", "POE_API_KEY"),
                 ("qwen", "Qwen (Alibaba)", "QWEN_API_KEY"),
             ]
@@ -716,7 +843,7 @@ class ConfigBuilder:
 
                 # Parse existing .env file
                 try:
-                    with open(env_path, "r") as f:
+                    with open(env_path) as f:
                         for line in f:
                             line = line.strip()
                             if line and not line.startswith("#") and "=" in line:
@@ -791,7 +918,7 @@ class ConfigBuilder:
 
     def show_available_providers(
         self,
-        api_keys: Dict[str, bool],
+        api_keys: dict[str, bool],
     ) -> None:
         """Display providers in a clean Rich table."""
         try:
@@ -1036,7 +1163,7 @@ class ConfigBuilder:
             console.print("[info]Defaulting to 'qa' use case[/info]\n")
             return "qa"  # Safe default
 
-    def add_custom_mcp_server(self) -> Optional[Dict]:
+    def add_custom_mcp_server(self) -> dict | None:
         """Interactive flow to configure a custom MCP server.
 
         Returns:
@@ -1144,7 +1271,7 @@ class ConfigBuilder:
         count: int,
         provider_id: str,
         start_index: int = 0,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Create multiple agents with the same provider.
 
         Args:
@@ -1184,10 +1311,10 @@ class ConfigBuilder:
 
     def clone_agent(
         self,
-        source_agent: Dict,
+        source_agent: dict,
         new_id: str,
         target_backend_type: str = None,
-    ) -> Dict:
+    ) -> dict:
         """Clone an agent's configuration with a new ID, optionally preserving target backend.
 
         Args:
@@ -1311,7 +1438,7 @@ class ConfigBuilder:
 
         return cloned
 
-    def modify_cloned_agent(self, agent: Dict, agent_num: int) -> Dict:
+    def modify_cloned_agent(self, agent: dict, agent_num: int) -> dict:
         """Allow selective modification of a cloned agent.
 
         Args:
@@ -1539,10 +1666,10 @@ class ConfigBuilder:
 
     def apply_preset_to_agent(
         self,
-        agent: Dict,
+        agent: dict,
         use_case: str,
         agent_index: int = 1,
-    ) -> Dict:
+    ) -> dict:
         """Auto-apply preset configuration to an agent.
 
         Args:
@@ -1614,11 +1741,11 @@ class ConfigBuilder:
 
     def customize_agent(
         self,
-        agent: Dict,
+        agent: dict,
         agent_num: int,
         total_agents: int,
-        use_case: Optional[str] = None,
-    ) -> Dict:
+        use_case: str | None = None,
+    ) -> dict:
         """Customize a single agent with Panel UI.
 
         Args:
@@ -1715,6 +1842,7 @@ class ConfigBuilder:
 
                     # Auto-add reasoning params for GPT-5 and o-series models
                     if selected_model in [
+                        "gpt-5.4",
                         "gpt-5",
                         "gpt-5-mini",
                         "gpt-5-nano",
@@ -1735,7 +1863,7 @@ class ConfigBuilder:
                         )
 
                         # Determine default based on model
-                        if selected_model in ["gpt-5", "o4"]:
+                        if selected_model in ["gpt-5.4", "gpt-5", "o4"]:
                             default_effort = "medium"  # Changed from high to medium
                         elif selected_model in ["gpt-5-mini", "o4-mini"]:
                             default_effort = "medium"
@@ -2055,18 +2183,13 @@ class ConfigBuilder:
                             checked=True,
                         ),
                         questionary.Choice(
-                            "text_to_image_generation - Generate images from text prompts",
-                            value="text_to_image_generation",
+                            "generate_media - Unified image/video/audio generation",
+                            value="generate_media",
                             checked=True,
                         ),
                         questionary.Choice(
                             "image_to_image_generation - Transform existing images",
                             value="image_to_image_generation",
-                            checked=True,
-                        ),
-                        questionary.Choice(
-                            "text_to_video_generation - Generate videos from text prompts",
-                            value="text_to_video_generation",
                             checked=True,
                         ),
                         questionary.Choice(
@@ -2099,18 +2222,13 @@ class ConfigBuilder:
                             checked=True,
                         ),
                         questionary.Choice(
-                            "text_to_image_generation - Generate images from text prompts",
-                            value="text_to_image_generation",
+                            "generate_media - Unified image/video/audio generation",
+                            value="generate_media",
                             checked=False,
                         ),
                         questionary.Choice(
                             "image_to_image_generation - Transform existing images",
                             value="image_to_image_generation",
-                            checked=False,
-                        ),
-                        questionary.Choice(
-                            "text_to_video_generation - Generate videos from text prompts",
-                            value="text_to_video_generation",
                             checked=False,
                         ),
                         questionary.Choice(
@@ -2143,18 +2261,13 @@ class ConfigBuilder:
                             checked=False,
                         ),
                         questionary.Choice(
-                            "text_to_image_generation - Generate images from text prompts",
-                            value="text_to_image_generation",
+                            "generate_media - Unified image/video/audio generation",
+                            value="generate_media",
                             checked=False,
                         ),
                         questionary.Choice(
                             "image_to_image_generation - Transform existing images",
                             value="image_to_image_generation",
-                            checked=False,
-                        ),
-                        questionary.Choice(
-                            "text_to_video_generation - Generate videos from text prompts",
-                            value="text_to_video_generation",
                             checked=False,
                         ),
                         questionary.Choice(
@@ -2182,13 +2295,29 @@ class ConfigBuilder:
                     if "custom_tools" not in agent["backend"]:
                         agent["backend"]["custom_tools"] = []
 
+                    # Tools not located directly under massgen/tool/_multimodal_tools/
+                    # need explicit entry-point mapping.
+                    multimodal_tool_entry_points = {
+                        "generate_media": {
+                            "path": "massgen/tool/_multimodal_tools/generation/generate_media.py",
+                            "function": "generate_media",
+                        },
+                    }
+
                     # Add selected tools
                     for tool_name in selected_mm_tools:
+                        entry_point = multimodal_tool_entry_points.get(
+                            tool_name,
+                            {
+                                "path": f"massgen/tool/_multimodal_tools/{tool_name}.py",
+                                "function": tool_name,
+                            },
+                        )
                         tool_config = {
                             "name": [tool_name],
                             "category": "multimodal",
-                            "path": f"massgen/tool/_multimodal_tools/{tool_name}.py",
-                            "function": [tool_name],
+                            "path": entry_point["path"],
+                            "function": [entry_point["function"]],
                         }
                         agent["backend"]["custom_tools"].append(tool_config)
 
@@ -2236,7 +2365,7 @@ class ConfigBuilder:
             console.print(f"[error]❌ Error customizing agent: {e}[/error]")
             return agent
 
-    def configure_agents(self, use_case: str, api_keys: Dict[str, bool]) -> List[Dict]:
+    def configure_agents(self, use_case: str, api_keys: dict[str, bool]) -> list[dict]:
         """Configure agents with batch creation and individual customization."""
         try:
             # Step header
@@ -2634,6 +2763,7 @@ class ConfigBuilder:
 
                                 # Auto-add reasoning params for GPT-5 and o-series models
                                 if selected_model in [
+                                    "gpt-5.4",
                                     "gpt-5",
                                     "gpt-5-mini",
                                     "gpt-5-nano",
@@ -2654,7 +2784,7 @@ class ConfigBuilder:
                                     )
 
                                     # Determine default based on model
-                                    if selected_model in ["gpt-5", "o4"]:
+                                    if selected_model in ["gpt-5.4", "gpt-5", "o4"]:
                                         default_effort = "medium"  # Changed from high to medium
                                     elif selected_model in ["gpt-5-mini", "o4-mini"]:
                                         default_effort = "medium"
@@ -3094,8 +3224,8 @@ class ConfigBuilder:
     def configure_tools(
         self,
         use_case: str,
-        agents: List[Dict],
-    ) -> Tuple[List[Dict], Dict]:
+        agents: list[dict],
+    ) -> tuple[list[dict], dict]:
         """Configure orchestrator-level settings (tools are configured per-agent)."""
         try:
             # Step header
@@ -3498,9 +3628,9 @@ class ConfigBuilder:
 
     def review_and_save(
         self,
-        agents: List[Dict],
-        orchestrator_config: Dict,
-    ) -> Optional[str]:
+        agents: list[dict],
+        orchestrator_config: dict,
+    ) -> str | None:
         """Review configuration and save to file with error handling."""
         try:
             # Review header
@@ -3697,7 +3827,7 @@ class ConfigBuilder:
             console.print(f"[error]❌ Error in review and save: {e}[/error]")
             return None
 
-    def run(self) -> Optional[tuple]:
+    def run(self) -> tuple | None:
         """Run the interactive configuration builder with comprehensive error handling."""
         try:
             self.show_banner()
@@ -3884,7 +4014,7 @@ class ConfigBuilder:
         backend_type: str = None,
         model: str = None,
         use_docker: bool = False,
-        context_path: Optional[str] = None,
+        context_path: str | None = None,
     ) -> bool:
         """Generate config file programmatically without user interaction.
 
@@ -3956,7 +4086,7 @@ class ConfigBuilder:
 
         return True
 
-    def run_quickstart(self) -> Optional[tuple]:
+    def run_quickstart(self, quickstart_config_filename: str | None = None) -> tuple | None:
         """Run simplified quickstart flow - just agents count and backend/model for each.
 
         This creates a full-featured config with code-based tools, Docker execution,
@@ -3987,9 +4117,9 @@ class ConfigBuilder:
             console.print("[dim]You just need to specify your models.[/dim]\n")
 
             # Initialize tracking for per-agent settings
-            agent_tools: Dict[str, Dict] = {}
-            agent_system_messages: Dict[str, str] = {}
-            coordination_settings: Dict[str, Any] = {}
+            agent_tools: dict[str, dict] = {}
+            agent_system_messages: dict[str, str] = {}
+            coordination_settings: dict[str, Any] = {}
 
             # Step 1: How many agents?
             num_choices = [
@@ -4023,7 +4153,9 @@ class ConfigBuilder:
             # Get available providers (exclude generic backends)
             api_keys = self.detect_api_keys()
             excluded_generic_backends = ["chatcompletion", "inference"]
-            available_providers = [p for p, has_key in api_keys.items() if has_key and p not in excluded_generic_backends]
+            available_providers = sort_quickstart_provider_ids(
+                [p for p, has_key in api_keys.items() if has_key and p not in excluded_generic_backends],
+            )
 
             if not available_providers:
                 console.print("\n[error]❌ No providers with API keys found.[/error]")
@@ -4172,7 +4304,7 @@ class ConfigBuilder:
                     raise KeyboardInterrupt
 
                 # Collect system messages based on mode
-                per_agent_system_msgs: Dict[str, str] = {}
+                per_agent_system_msgs: dict[str, str] = {}
 
                 if sys_msg_mode == "same":
                     system_msg = questionary.text(
@@ -4384,7 +4516,7 @@ class ConfigBuilder:
                     "[dim]Install quickstart skill packages now?[/dim]",
                 )
                 console.print(
-                    "[dim]Includes openskills + Anthropic/OpenAI/Vercel collections, Agent Browser skill, and Crawl4AI.[/dim]\n",
+                    "[dim]Includes openskills + Anthropic/OpenAI/Vercel collections, Agent Browser skill, Remotion, and Crawl4AI.[/dim]\n",
                 )
                 install_skills_now = questionary.confirm(
                     "Install missing quickstart skill packages now?",
@@ -4559,15 +4691,26 @@ class ConfigBuilder:
                         "Subagent model:",
                         choices=[
                             questionary.Choice("Same as parent agents", value="inherit"),
+                            questionary.Choice("Inherit spawning parent agent exactly (single-agent)", value="inherit_spawning_parent"),
                             questionary.Choice("Choose different model(s)", value="custom"),
                         ],
+                        default="inherit",
                         style=questionary.Style([("question", "fg:cyan bold")]),
                     ).ask()
 
                     if subagent_model_choice is None:
                         raise KeyboardInterrupt
 
-                    if subagent_model_choice == "custom":
+                    if subagent_model_choice == "inherit_spawning_parent":
+                        coordination_settings["subagent_orchestrator"] = {
+                            "enabled": True,
+                            "inherit_spawning_agent_backend": True,
+                        }
+                        console.print(
+                            "\n  [dim]Subagents will inherit the exact backend/model from the spawning parent agent.[/dim]",
+                        )
+
+                    elif subagent_model_choice == "custom":
                         # Support multiple subagent backends
                         subagent_agents = []
 
@@ -4859,10 +5002,18 @@ class ConfigBuilder:
             )
 
             # Step 4: Save the config
-            # Save to default config location so users can run `massgen` without flags
-            config_dir = Path.home() / ".config" / "massgen"
-            config_dir.mkdir(parents=True, exist_ok=True)
-            filepath = config_dir / "config.yaml"
+            # When a quickstart filename is provided via CLI, save under .massgen/.
+            if quickstart_config_filename:
+                filepath = build_quickstart_config_path(
+                    location="project",
+                    filename=quickstart_config_filename,
+                )
+            else:
+                filepath = build_quickstart_config_path(
+                    location="global",
+                    filename=DEFAULT_QUICKSTART_CONFIG_FILENAME,
+                )
+            filepath.parent.mkdir(parents=True, exist_ok=True)
 
             with open(filepath, "w") as f:
                 yaml.dump(
@@ -4925,14 +5076,14 @@ class ConfigBuilder:
 
     def _generate_quickstart_config(
         self,
-        agents_config: List[Dict],
-        context_path: Optional[str] = None,
-        context_paths: Optional[List[Dict]] = None,
+        agents_config: list[dict],
+        context_path: str | None = None,
+        context_paths: list[dict] | None = None,
         use_docker: bool = True,
-        agent_tools: Optional[Dict[str, Dict]] = None,
-        agent_system_messages: Optional[Dict[str, str]] = None,
-        coordination_settings: Optional[Dict] = None,
-    ) -> Dict:
+        agent_tools: dict[str, dict] | None = None,
+        agent_system_messages: dict[str, str] | None = None,
+        coordination_settings: dict | None = None,
+    ) -> dict:
         """Generate a full-featured config from the quickstart agent specifications.
 
         Args:
@@ -4963,9 +5114,9 @@ class ConfigBuilder:
         def create_agent_backend(
             agent_type: str,
             model: str,
-            reasoning_effort: Optional[str] = None,
-            tools: Optional[Dict] = None,
-        ) -> Dict:
+            reasoning_effort: str | None = None,
+            tools: dict | None = None,
+        ) -> dict:
             tools = tools or {}
             if use_docker:
                 # Full Docker mode with code-based tools, command execution, skills
@@ -5068,6 +5219,8 @@ class ConfigBuilder:
             orchestrator_config = {
                 "snapshot_storage": "snapshots",
                 "agent_temporary_workspace": "temp_workspaces",
+                "voting_sensitivity": "checklist_gated",
+                "voting_threshold": 3,
                 "max_new_answers_per_agent": 5,
                 # Fairness defaults (enabled across all coordination modes)
                 "fairness_enabled": True,
@@ -5081,6 +5234,7 @@ class ConfigBuilder:
                 "audio_generation_backend": "openai",  # OpenAI TTS
                 "coordination": {
                     "max_orchestration_restarts": 0,  # Disabled pending MAS-268 fix
+                    "learning_capture_mode": "verification_and_final_only",
                     "use_skills": True,
                     "skills_directory": ".agent/skills",
                     "enable_agent_task_planning": True,
@@ -5094,6 +5248,8 @@ class ConfigBuilder:
             orchestrator_config = {
                 "snapshot_storage": "snapshots",
                 "agent_temporary_workspace": "temp_workspaces",
+                "voting_sensitivity": "checklist_gated",
+                "voting_threshold": 3,
                 "max_new_answers_per_agent": 5,
                 # Fairness defaults (enabled across all coordination modes)
                 "fairness_enabled": True,
@@ -5107,6 +5263,7 @@ class ConfigBuilder:
                 "audio_generation_backend": "openai",  # OpenAI TTS
                 "coordination": {
                     "max_orchestration_restarts": 0,  # Disabled pending MAS-268 fix
+                    "learning_capture_mode": "verification_and_final_only",
                     "enable_agent_task_planning": True,
                     "task_planning_filesystem_mode": True,
                     "enable_memory_filesystem_mode": True,
@@ -5147,6 +5304,8 @@ class ConfigBuilder:
 
         if coordination_settings.get("voting_sensitivity"):
             orchestrator_config["voting_sensitivity"] = coordination_settings["voting_sensitivity"]
+        if coordination_settings.get("voting_threshold") is not None:
+            orchestrator_config["voting_threshold"] = coordination_settings["voting_threshold"]
         if coordination_settings.get("answer_novelty_requirement"):
             orchestrator_config["answer_novelty_requirement"] = coordination_settings["answer_novelty_requirement"]
         if coordination_settings.get("max_new_answers_per_agent"):
@@ -5159,6 +5318,8 @@ class ConfigBuilder:
             orchestrator_config["fairness_lead_cap_answers"] = coordination_settings["fairness_lead_cap_answers"]
         if coordination_settings.get("max_midstream_injections_per_round") is not None:
             orchestrator_config["max_midstream_injections_per_round"] = coordination_settings["max_midstream_injections_per_round"]
+        if coordination_settings.get("learning_capture_mode"):
+            orchestrator_config["coordination"]["learning_capture_mode"] = coordination_settings["learning_capture_mode"]
         if coordination_settings.get("enable_subagents"):
             orchestrator_config["coordination"]["enable_subagents"] = True
             orchestrator_config["coordination"]["subagent_default_timeout"] = 300  # 5 minutes

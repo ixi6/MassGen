@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Injection Sub-Card Widget for MassGen TUI.
 
@@ -8,7 +7,6 @@ and other hook-injected content.
 """
 
 from datetime import datetime
-from typing import Optional
 
 from rich.text import Text
 from textual.message import Message
@@ -38,11 +36,11 @@ class InjectionSubCard(Static, can_focus=True):
         hook_name: str,
         hook_type: str,  # "pre" or "post"
         content: str,
-        preview: Optional[str] = None,
-        execution_time_ms: Optional[float] = None,
+        preview: str | None = None,
+        execution_time_ms: float | None = None,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the injection sub-card.
 

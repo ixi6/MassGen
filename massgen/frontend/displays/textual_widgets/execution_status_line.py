@@ -1,12 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Execution Status Line Widget
 
 Phase 13.2: Multi-agent status line showing activity across all agents.
 Displays a compact, centered view with pulsing dots for working agents.
 """
-
-from typing import Dict, List, Optional
 
 from rich.text import Text
 from textual.reactive import reactive
@@ -45,9 +42,9 @@ class ExecutionStatusLine(Widget):
 
     def __init__(
         self,
-        agent_ids: List[str],
+        agent_ids: list[str],
         focused_agent: str = "",
-        id: Optional[str] = None,
+        id: str | None = None,
     ) -> None:
         """Initialize the execution status line.
 
@@ -59,7 +56,7 @@ class ExecutionStatusLine(Widget):
         super().__init__(id=id)
         self._agent_ids = agent_ids
         self._focused_agent = focused_agent
-        self._agent_states: Dict[str, str] = {aid: "idle" for aid in agent_ids}
+        self._agent_states: dict[str, str] = {aid: "idle" for aid in agent_ids}
         self._pulse_timer = None
 
     def on_mount(self) -> None:

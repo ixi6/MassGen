@@ -10,6 +10,7 @@ MassGen allows you to give agents access to your own custom Python functions as 
    1. Write a Python function that returns ``ExecutionResult``
    2. Reference it in your YAML config under ``custom_tools``
    3. Run MassGen - agents can now use your function
+   4. For long-running calls, use the background lifecycle in :doc:`background_tools`
 
 Quick Start: Try It Now
 -----------------------
@@ -989,6 +990,7 @@ Next Steps
 * **Related Guides:**
 
   * :doc:`mcp_integration` - External tools via MCP
+  * :doc:`background_tools` - Non-blocking lifecycle for long-running tool calls
   * :doc:`index` - Tools and capabilities overview
   * :doc:`../backends` - Backend capabilities
   * :doc:`../../reference/yaml_schema` - Complete YAML reference

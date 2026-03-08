@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Pre-commit hook to ensure package name is 'massgen' in pyproject.toml."""
 
 import re

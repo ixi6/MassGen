@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Path Suggestion Dropdown Widget for MassGen TUI.
 
@@ -9,7 +8,6 @@ Supports directory browsing, file selection, and :w suffix for write mode.
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
 
 from rich.text import Text
 from textual import events
@@ -184,7 +182,7 @@ class PathSuggestionDropdown(Widget):
 
     def __init__(
         self,
-        base_path: Optional[Path] = None,
+        base_path: Path | None = None,
         **kwargs,
     ) -> None:
         """Initialize the dropdown.
@@ -197,8 +195,8 @@ class PathSuggestionDropdown(Widget):
             self.base_path = base_path or Path.cwd()
         except OSError:
             self.base_path = Path.home()
-        self._suggestions: List[PathSuggestion] = []
-        self._suggestion_widgets: List[SuggestionRow] = []
+        self._suggestions: list[PathSuggestion] = []
+        self._suggestion_widgets: list[SuggestionRow] = []
 
     def compose(self) -> ComposeResult:
         """Compose the dropdown layout."""
@@ -219,7 +217,7 @@ class PathSuggestionDropdown(Widget):
         # Show/hide based on suggestions
         self.visible = len(self._suggestions) > 0
 
-    def _get_suggestions(self, prefix: str, max_results: int = 15) -> List[PathSuggestion]:
+    def _get_suggestions(self, prefix: str, max_results: int = 15) -> list[PathSuggestion]:
         """Get path suggestions for the given prefix.
 
         Args:

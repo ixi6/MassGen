@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """TUI debug logging utilities.
 
 Single source of truth for TUI debug logging. Previously located in:
@@ -10,6 +9,7 @@ useful for debugging TUI issues without affecting the main display.
 
 import logging
 import os
+import tempfile
 
 _DEBUG_ENV = "MASSGEN_TUI_DEBUG"
 
@@ -37,7 +37,7 @@ def get_tui_debug_logger() -> logging.Logger:
 
     if not logger.handlers:
         # Create file handler
-        handler = logging.FileHandler("/tmp/tui_debug.log", mode="a")
+        handler = logging.FileHandler(os.path.join(tempfile.gettempdir(), "tui_debug.log"), mode="a")
         handler.setFormatter(logging.Formatter("[%(asctime)s] [%(name)s] %(message)s"))
         logger.addHandler(handler)
         logger.setLevel(logging.DEBUG)

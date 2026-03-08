@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Subagent Card Widget for MassGen TUI.
 
@@ -12,9 +11,10 @@ from __future__ import annotations
 import json
 import time
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -29,16 +29,16 @@ from massgen.subagent.models import SubagentDisplayData, SubagentResult
 
 @dataclass
 class _ToolCache:
-    path: Optional[Path]
+    path: Path | None
     size: int
-    tools: List[str]
+    tools: list[str]
 
 
 @dataclass
 class _PlanCache:
-    path: Optional[Path]
+    path: Path | None
     mtime: float
-    summary: Optional[str]
+    summary: str | None
 
 
 class SubagentColumn(Vertical, can_focus=True):
@@ -50,11 +50,12 @@ class SubagentColumn(Vertical, can_focus=True):
     def __init__(
         self,
         subagent: SubagentDisplayData,
-        all_subagents: List[SubagentDisplayData],
+        all_subagents: list[SubagentDisplayData],
         summary: str,
-        tools: List[str],
-        open_callback: Callable[[SubagentDisplayData, List[SubagentDisplayData]], None],
-        id: Optional[str] = None,
+        tools: list[str],
+        open_callback: Callable[[SubagentDisplayData, list[SubagentDisplayData], int], None],
+        index: int = 0,
+        id: str | None = None,
     ) -> None:
         super().__init__(id=id)
         self._subagent = subagent
@@ -62,6 +63,7 @@ class SubagentColumn(Vertical, can_focus=True):
         self._summary = summary
         self._tools = tools
         self._open_callback = open_callback
+        self._index = index
         self._pulse_frame = 0
 
     def compose(self) -> ComposeResult:
@@ -76,10 +78,14 @@ class SubagentColumn(Vertical, can_focus=True):
     def on_mount(self) -> None:
         self._update_display()
 
-    def on_click(self) -> None:
-        self._open_callback(self._subagent, self._all_subagents)
+    def on_resize(self) -> None:
+        # Reflow progress bars to use the current column width.
+        self._update_display()
 
-    def update_content(self, subagent: SubagentDisplayData, summary: str, tools: List[str]) -> None:
+    def on_click(self) -> None:
+        self._open_callback(self._subagent, self._all_subagents, self._index)
+
+    def update_content(self, subagent: SubagentDisplayData, summary: str, tools: list[str]) -> None:
         self._subagent = subagent
         self._summary = summary
         self._tools = tools
@@ -94,27 +100,38 @@ class SubagentColumn(Vertical, can_focus=True):
 
         try:
             self.query_one("#agent_header", Static).update(header)
-            self.query_one("#task_desc", Static).update(task_desc)
+            self._set_line("#task_desc", task_desc)
             self.query_one("#progress_bar", Static).update(progress)
-            self.query_one("#summary_line", Static).update(summary)
-            self.query_one("#tool_current", Static).update(current_tool)
-            self.query_one("#tool_recent_1", Static).update(recent_tools[0] if recent_tools else "")
-            self.query_one("#tool_recent_2", Static).update(recent_tools[1] if len(recent_tools) > 1 else "")
+            self._set_line("#summary_line", summary)
+            self._set_line("#tool_current", current_tool)
+            self._set_line("#tool_recent_1", recent_tools[0] if recent_tools else "")
+            self._set_line("#tool_recent_2", recent_tools[1] if len(recent_tools) > 1 else "")
         except Exception:
             pass
 
+    def _set_line(self, selector: str, content: str | Text) -> None:
+        widget = self.query_one(selector, Static)
+        widget.update(content)
+        plain = content.plain if isinstance(content, Text) else str(content)
+        if plain.strip():
+            widget.remove_class("is-empty")
+        else:
+            widget.add_class("is-empty")
+
     def advance_pulse(self) -> None:
         """Advance pulse animation frame (called by parent card)."""
-        if self._subagent.status == "running":
+        status = SubagentCard.normalize_status(self._subagent.status)
+        if status == "running":
             self._pulse_frame = (self._pulse_frame + 1) % 3
 
     def _build_header(self) -> Text:
         """Build header: status icon + name + elapsed time + click arrow."""
         text = Text()
-        icon, style = SubagentCard.status_icon_and_style(self._subagent.status)
+        status = SubagentCard.normalize_status(self._subagent.status)
+        icon, style = SubagentCard.status_icon_and_style(status)
 
         # Pulsing icon for running state
-        if self._subagent.status == "running":
+        if status == "running":
             pulse_icons = ["●", "◉", "○"]
             icon = pulse_icons[self._pulse_frame]
 
@@ -124,6 +141,8 @@ class SubagentColumn(Vertical, can_focus=True):
 
         # Right-align elapsed time + click arrow
         elapsed = int(self._subagent.elapsed_seconds)
+        subagent_type = str(getattr(self._subagent, "subagent_type", "") or "").strip().lower()
+        type_label = f"[{subagent_type}]" if subagent_type else ""
         suffix_parts = []
         if elapsed > 0:
             if elapsed >= 60:
@@ -132,25 +151,50 @@ class SubagentColumn(Vertical, can_focus=True):
                 suffix_parts.append(f"{elapsed}s")
 
         suffix = " ".join(suffix_parts)
+        combined_suffix = " ".join(part for part in [type_label, suffix] if part)
         arrow = " ▸"
         name_len = len(label) + 2  # icon + space + label
-        total_suffix = len(suffix) + len(arrow)
-        padding = max(1, 28 - name_len - total_suffix)
+        total_suffix = len(combined_suffix) + len(arrow)
+        header_width = self._measure_header_width()
+        padding = max(1, header_width - name_len - total_suffix)
         text.append(" " * padding)
+        if type_label:
+            text.append(type_label, style="bold #58a6ff")
+            if suffix:
+                text.append(" ")
         if suffix:
             text.append(suffix, style="#8b949e")
         text.append(arrow, style="dim #6e7681")
 
         return text
 
+    def _measure_header_width(self) -> int:
+        """Measure available header width for right-aligned suffix content."""
+        candidate_widths: list[int] = []
+
+        try:
+            header_widget = self.query_one("#agent_header", Static)
+            if header_widget.size.width > 0:
+                candidate_widths.append(header_widget.size.width)
+        except Exception:
+            pass
+
+        if self.size.width > 0:
+            candidate_widths.append(max(0, self.size.width - 2))
+
+        if candidate_widths:
+            return max(candidate_widths)
+        return 28
+
     def _build_task_description(self) -> Text:
         """Build task description row (truncated)."""
+        status = SubagentCard.normalize_status(self._subagent.status)
         task = self._subagent.task or ""
         if not task:
             return Text("")
 
         # On completion, show answer preview instead
-        if self._subagent.status == "completed" and self._subagent.answer_preview:
+        if status == "completed" and self._subagent.answer_preview:
             preview = self._subagent.answer_preview.strip()
             if len(preview) > 300:
                 preview = preview[:297] + "..."
@@ -166,29 +210,48 @@ class SubagentColumn(Vertical, can_focus=True):
         """Build progress bar with thin lines and color transitions."""
         elapsed = self._subagent.elapsed_seconds
         timeout = self._subagent.timeout_seconds
-        status = self._subagent.status
-        bar_width = 20
+        status = SubagentCard.normalize_status(self._subagent.status)
+
+        if status in ("running", "pending") and elapsed == 0.0:
+            # Activation/setup phase: subagent not yet producing events
+            bar_width = self._measure_progress_bar_width()
+            pulse_labels = ["setting up·", "setting up··", "setting up···"]
+            label = pulse_labels[self._pulse_frame % len(pulse_labels)]
+            dashes = max(0, bar_width - len(label) - 1)
+            text = Text()
+            if dashes > 0:
+                text.append("─" * dashes + " ", style="dim #30363d")
+            text.append(label, style="dim #6e7681")
+            return text
 
         if status == "completed":
             text = Text()
+            bar_width = self._measure_progress_bar_width()
             text.append("━" * bar_width, style="bold #7ee787")
-            text.append(" ✓ Done", style="bold #7ee787")
             return text
         elif status in ("error", "failed"):
             text = Text()
+            bar_width = self._measure_progress_bar_width()
             text.append("━" * bar_width, style="bold #f85149")
-            text.append(" ✗ Error", style="bold #f85149")
             return text
         elif status == "timeout":
             text = Text()
+            bar_width = self._measure_progress_bar_width()
             text.append("━" * bar_width, style="bold #d29922")
-            text.append(" ⏱ Timeout", style="bold #d29922")
+            return text
+        elif status == "canceled":
+            text = Text()
+            bar_width = self._measure_progress_bar_width()
+            text.append("━" * bar_width, style="bold #d29922")
             return text
 
         if timeout <= 0:
             return Text("")
 
-        ratio = min(elapsed / timeout, 1.0)
+        # Keep running state below 100% until terminal status is confirmed.
+        ratio = min(max(elapsed / timeout, 0.0), 0.99)
+        percent_text = f" {int(ratio * 100)}%"
+        bar_width = self._measure_progress_bar_width(len(percent_text))
         filled = int(ratio * bar_width)
         empty = bar_width - filled
 
@@ -203,10 +266,31 @@ class SubagentColumn(Vertical, can_focus=True):
         text = Text()
         text.append("━" * filled, style=fill_style)
         text.append("─" * empty, style="dim #30363d")
-        text.append(f" {int(ratio * 100)}%", style="dim #8b949e")
+        text.append(percent_text, style="dim #8b949e")
         return text
 
-    def _split_tools(self, tools: List[str]) -> Tuple[str, List[str]]:
+    def _measure_progress_bar_width(self, suffix_width: int = 0) -> int:
+        """Measure available characters for the bar body, excluding optional suffix text."""
+        candidate_widths: list[int] = []
+
+        try:
+            progress_widget = self.query_one("#progress_bar", Static)
+            if progress_widget.size.width > 0:
+                candidate_widths.append(progress_widget.size.width)
+        except Exception:
+            pass
+
+        if self.size.width > 0:
+            candidate_widths.append(max(0, self.size.width - 2))
+
+        if candidate_widths:
+            available = max(candidate_widths)
+        else:
+            available = 20 + suffix_width
+
+        return max(8, available - max(0, suffix_width))
+
+    def _split_tools(self, tools: list[str]) -> tuple[str, list[str]]:
         if not tools:
             return "", []
         current = f"› {tools[0]}"
@@ -234,9 +318,17 @@ class SubagentCard(Vertical, can_focus=True):
     class OpenModal(Message):
         """Message posted when user clicks to open subagent view."""
 
-        def __init__(self, subagent: SubagentDisplayData, all_subagents: List[SubagentDisplayData]) -> None:
+        def __init__(
+            self,
+            subagent: SubagentDisplayData,
+            all_subagents: list[SubagentDisplayData],
+            card: SubagentCard | None = None,
+            subagent_index: int | None = None,
+        ) -> None:
             self.subagent = subagent
             self.all_subagents = all_subagents
+            self.card = card
+            self.subagent_index = subagent_index
             super().__init__()
 
     # CSS moved to base.tcss for theme support
@@ -249,6 +341,7 @@ class SubagentCard(Vertical, can_focus=True):
         "error": "✗",
         "timeout": "⏱",
         "failed": "✗",
+        "canceled": "⊘",
     }
 
     STATUS_STYLES = {
@@ -258,6 +351,7 @@ class SubagentCard(Vertical, can_focus=True):
         "error": "#f85149",
         "timeout": "#d29922",
         "failed": "#f85149",
+        "canceled": "#d29922",
     }
 
     POLL_INTERVAL = 0.5
@@ -269,48 +363,58 @@ class SubagentCard(Vertical, can_focus=True):
 
     def __init__(
         self,
-        subagents: Optional[List[SubagentDisplayData]] = None,
-        tool_call_id: Optional[str] = None,
-        status_callback: Optional[Callable[[str], Optional[SubagentDisplayData]]] = None,
-        id: Optional[str] = None,
+        subagents: list[SubagentDisplayData] | None = None,
+        tool_call_id: str | None = None,
+        status_callback: Callable[[str], SubagentDisplayData | None] | None = None,
+        id: str | None = None,
     ) -> None:
         super().__init__(id=id)
         self._subagents = subagents or []
         self._tool_call_id = tool_call_id
         self._status_callback = status_callback
-        self._poll_timer: Optional[Timer] = None
-        self._tool_cache: Dict[str, _ToolCache] = {}
-        self._plan_cache: Dict[str, _PlanCache] = {}
-        self._columns: Dict[str, SubagentColumn] = {}
+        self._poll_timer: Timer | None = None
+        self._tool_cache: dict[str, _ToolCache] = {}
+        self._plan_cache: dict[str, _PlanCache] = {}
+        self._columns: dict[str, SubagentColumn] = {}
         self._selected_index = 0
         # Track start times for elapsed computation
-        self._start_times: Dict[str, float] = {}
+        self._start_times: dict[str, float] = {}
+        # Track which subagents have activated (started producing events)
+        self._activated: set[str] = set()
         now = time.monotonic()
         for sa in self._subagents:
-            if sa.status in ("running", "pending"):
+            if sa.elapsed_seconds > 0:
+                # Pre-activate subagents already in progress (resumed/continued)
+                self._activated.add(sa.id)
                 self._start_times[sa.id] = now - sa.elapsed_seconds
             else:
-                self._start_times[sa.id] = now - sa.elapsed_seconds
+                self._start_times[sa.id] = now
 
     def compose(self) -> ComposeResult:
         yield Static(self._build_card_header(), id="subagent-card-title")
         with ScrollableContainer(id="subagent-scroll"):
             with Horizontal(id="subagent-columns"):
-                for sa in self._subagents:
+                # Use index suffix to avoid duplicate widget IDs when multiple
+                # subagents share the same sa.id (e.g., different parent agents
+                # each spawning a "bio_research" subagent).
+                for idx, sa in enumerate(self._subagents):
                     summary = self._get_summary_line(sa)
                     tools = self._get_tool_lines(sa)
+                    col_key = f"{sa.id}_{idx}"
                     column = SubagentColumn(
                         subagent=sa,
                         all_subagents=self._subagents,
                         summary=summary,
                         tools=tools,
                         open_callback=self._request_open,
-                        id=f"subagent_col_{sa.id}",
+                        index=idx,
+                        id=f"subagent_col_{col_key}",
                     )
-                    self._columns[sa.id] = column
+                    self._columns[col_key] = column
                     yield column
 
     def on_mount(self) -> None:
+        self.add_class("variant-a")
         self._start_polling_if_needed()
         # Entrance animation
         self.add_class("appearing")
@@ -321,16 +425,27 @@ class SubagentCard(Vertical, can_focus=True):
         self.add_class("appeared")
 
     def _build_card_header(self) -> Text:
-        """Build clean header: icon + title, checkmark only when all complete."""
+        """Build compact status summary header with aggregate counts."""
+        running = sum(1 for sa in self._subagents if self.normalize_status(sa.status) in {"running", "pending"})
+        completed = sum(1 for sa in self._subagents if self.normalize_status(sa.status) == "completed")
+        canceled = sum(1 for sa in self._subagents if self.normalize_status(sa.status) == "canceled")
+        failed = sum(1 for sa in self._subagents if self.normalize_status(sa.status) in {"failed", "error", "timeout"})
         text = Text()
-        all_done = self._subagents and all(sa.status == "completed" for sa in self._subagents)
-        if all_done:
-            text.append("⬡ ", style="bold #7ee787")
-            text.append("Subagents", style="dim #e6edf3")
+        text.append("⬡ ", style="bold #7c3aed")
+        text.append("Subagents", style="bold #e6edf3")
+
+        if running:
+            text.append(f"  {running} active", style="bold #a371f7")
+        if completed:
+            text.append(f"  {completed} done", style="bold #7ee787")
+        if canceled:
+            text.append(f"  {canceled} canceled", style="bold #d29922")
+        if failed:
+            text.append(f"  {failed} issues", style="bold #f85149")
+
+        all_done = self._subagents and running == 0
+        if all_done and failed == 0 and canceled == 0:
             text.append("  ✓", style="bold #7ee787")
-        else:
-            text.append("⬡ ", style="bold #7c3aed")
-            text.append("Subagents", style="dim #e6edf3")
         return text
 
     def on_unmount(self) -> None:
@@ -338,12 +453,22 @@ class SubagentCard(Vertical, can_focus=True):
             self._poll_timer.stop()
             self._poll_timer = None
 
-    def _request_open(self, subagent: SubagentDisplayData, all_subagents: List[SubagentDisplayData]) -> None:
+    def _request_open(self, subagent: SubagentDisplayData, all_subagents: list[SubagentDisplayData], index: int = 0) -> None:
         try:
             self._selected_index = self._subagents.index(subagent)
         except ValueError:
             pass
-        self.post_message(self.OpenModal(subagent, all_subagents))
+        self.post_message(self.OpenModal(subagent, all_subagents, card=self, subagent_index=index))
+
+    def _should_activate(self, sa: SubagentDisplayData) -> bool:
+        """Return True if this subagent has started producing events (setup complete)."""
+        events_path = self._resolve_events_path(sa)
+        if not events_path:
+            return False
+        try:
+            return events_path.exists() and events_path.stat().st_size > 0
+        except OSError:
+            return False
 
     def _start_polling_if_needed(self) -> None:
         if self._poll_timer is not None:
@@ -353,11 +478,11 @@ class SubagentCard(Vertical, can_focus=True):
 
     def _poll_status(self) -> None:
         updated = False
-        new_subagents: List[SubagentDisplayData] = []
+        new_subagents: list[SubagentDisplayData] = []
 
         if self._status_callback:
             for sa in self._subagents:
-                if sa.status in ("running", "pending"):
+                if self.normalize_status(sa.status) in ("running", "pending"):
                     new_data = self._status_callback(sa.id)
                     if new_data:
                         new_subagents.append(new_data)
@@ -369,15 +494,26 @@ class SubagentCard(Vertical, can_focus=True):
             if updated:
                 self._subagents = new_subagents
 
-        # Update elapsed_seconds from wall clock for running subagents
+        # Update elapsed_seconds from wall clock for running subagents.
+        # Only start counting once the subagent has activated (events file exists),
+        # so setup time doesn't consume visible progress bar.
         now = time.monotonic()
         for sa in self._subagents:
-            if sa.status in ("running", "pending") and sa.id in self._start_times:
-                sa.elapsed_seconds = now - self._start_times[sa.id]
+            if self.normalize_status(sa.status) in ("running", "pending"):
+                if sa.id not in self._activated:
+                    if self._should_activate(sa):
+                        self._activated.add(sa.id)
+                        self._start_times[sa.id] = now  # Start timer from activation
+                    else:
+                        sa.elapsed_seconds = 0.0
+                        self._start_times[sa.id] = now  # Keep resetting until activated
+                        continue
+                if sa.id in self._start_times:
+                    sa.elapsed_seconds = now - self._start_times[sa.id]
 
         # Advance pulse frames for running columns
-        for sa in self._subagents:
-            col = self._columns.get(sa.id)
+        for idx, sa in enumerate(self._subagents):
+            col = self._columns.get(f"{sa.id}_{idx}")
             if col:
                 col.advance_pulse()
 
@@ -388,7 +524,7 @@ class SubagentCard(Vertical, can_focus=True):
             pass
 
         # Always refresh tool lines for running subagents
-        if any(sa.status in ("running", "pending") for sa in self._subagents):
+        if any(self.normalize_status(sa.status) in ("running", "pending") for sa in self._subagents):
             self._refresh_columns()
         else:
             # All subagents finished — apply completed styling
@@ -404,26 +540,27 @@ class SubagentCard(Vertical, can_focus=True):
         except Exception:
             return
 
-        if len(self._columns) != len(self._subagents) or any(sa.id not in self._columns for sa in self._subagents):
+        if len(self._columns) != len(self._subagents) or any(f"{sa.id}_{idx}" not in self._columns for idx, sa in enumerate(self._subagents)):
             columns_container.remove_children()
             self._columns = {}
-            for sa in self._subagents:
+            for idx, sa in enumerate(self._subagents):
                 summary = self._get_summary_line(sa)
                 tools = self._get_tool_lines(sa)
+                col_key = f"{sa.id}_{idx}"
                 column = SubagentColumn(
                     subagent=sa,
                     all_subagents=self._subagents,
                     summary=summary,
                     tools=tools,
                     open_callback=self._request_open,
-                    id=f"subagent_col_{sa.id}",
+                    id=f"subagent_col_{col_key}",
                 )
-                self._columns[sa.id] = column
+                self._columns[col_key] = column
                 columns_container.mount(column)
             return
 
-        for sa in self._subagents:
-            column = self._columns.get(sa.id)
+        for idx, sa in enumerate(self._subagents):
+            column = self._columns.get(f"{sa.id}_{idx}")
             if column:
                 summary = self._get_summary_line(sa)
                 tools = self._get_tool_lines(sa)
@@ -434,17 +571,19 @@ class SubagentCard(Vertical, can_focus=True):
         if plan_summary:
             return plan_summary
 
-        status_label = sa.status
+        status_label = self.normalize_status(sa.status)
         if status_label == "completed":
             status_label = "done"
         elif status_label == "failed":
             status_label = "failed"
         elif status_label == "timeout":
             status_label = "timeout"
+        elif status_label == "canceled":
+            status_label = "canceled"
 
         return status_label
 
-    def _get_plan_summary(self, sa: SubagentDisplayData) -> Optional[str]:
+    def _get_plan_summary(self, sa: SubagentDisplayData) -> str | None:
         if not sa.workspace_path:
             return None
         workspace = Path(sa.workspace_path)
@@ -454,7 +593,7 @@ class SubagentCard(Vertical, can_focus=True):
 
         try:
             mtime = plan_path.stat().st_mtime
-        except (OSError, IOError):
+        except OSError:
             return None
 
         cached = self._plan_cache.get(sa.id)
@@ -469,20 +608,20 @@ class SubagentCard(Vertical, can_focus=True):
             if total > 0:
                 completed = sum(1 for t in tasks if t.get("status") in ("completed", "verified"))
                 summary = f"{completed}/{total} done"
-        except (OSError, IOError, json.JSONDecodeError, TypeError):
+        except (OSError, json.JSONDecodeError, TypeError):
             summary = None
 
         self._plan_cache[sa.id] = _PlanCache(path=plan_path, mtime=mtime, summary=summary)
         return summary
 
-    def _get_tool_lines(self, sa: SubagentDisplayData) -> List[str]:
+    def _get_tool_lines(self, sa: SubagentDisplayData) -> list[str]:
         events_path = self._resolve_events_path(sa)
         if not events_path or not events_path.exists():
             return []
 
         try:
             size = events_path.stat().st_size
-        except (OSError, IOError):
+        except OSError:
             return []
 
         cached = self._tool_cache.get(sa.id)
@@ -493,7 +632,7 @@ class SubagentCard(Vertical, can_focus=True):
         self._tool_cache[sa.id] = _ToolCache(path=events_path, size=size, tools=tools)
         return tools
 
-    def _resolve_events_path(self, sa: SubagentDisplayData) -> Optional[Path]:
+    def _resolve_events_path(self, sa: SubagentDisplayData) -> Path | None:
         if not sa.log_path:
             return None
         log_path = Path(sa.log_path)
@@ -504,17 +643,17 @@ class SubagentCard(Vertical, can_focus=True):
             return Path(resolved) if resolved else None
         return log_path
 
-    def _extract_tools_from_events(self, path: Path, max_tools: int = 3) -> List[str]:
+    def _extract_tools_from_events(self, path: Path, max_tools: int = 3) -> list[str]:
         try:
             tail_lines: deque[str] = deque(maxlen=200)
-            with open(path, "r", encoding="utf-8", errors="replace") as f:
+            with open(path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     if line.strip():
                         tail_lines.append(line)
-        except (OSError, IOError):
+        except OSError:
             return []
 
-        tools: List[str] = []
+        tools: list[str] = []
         seen: set[str] = set()
 
         for line in reversed(tail_lines):
@@ -545,10 +684,18 @@ class SubagentCard(Vertical, can_focus=True):
         return tools
 
     @staticmethod
-    def status_icon_and_style(status: str) -> Tuple[str, str]:
-        icon = SubagentCard.STATUS_ICONS.get(status, "○")
-        style = SubagentCard.STATUS_STYLES.get(status, "#6e7681")
+    def status_icon_and_style(status: str) -> tuple[str, str]:
+        normalized = SubagentCard.normalize_status(status)
+        icon = SubagentCard.STATUS_ICONS.get(normalized, "○")
+        style = SubagentCard.STATUS_STYLES.get(normalized, "#6e7681")
         return icon, style
+
+    @staticmethod
+    def normalize_status(status: str) -> str:
+        normalized = str(status or "").lower().strip()
+        if normalized in {"cancelled", "canceled", "stopped"}:
+            return "canceled"
+        return normalized or "pending"
 
     @staticmethod
     def _truncate(text: str, max_len: int) -> str:
@@ -557,10 +704,15 @@ class SubagentCard(Vertical, can_focus=True):
         return text[: max_len - 3] + "..."
 
     @property
-    def subagents(self) -> List[SubagentDisplayData]:
+    def subagents(self) -> list[SubagentDisplayData]:
         return self._subagents
 
-    def update_subagents(self, subagents: List[SubagentDisplayData]) -> None:
+    @property
+    def tool_call_id(self) -> str | None:
+        """Tool call identifier used to correlate start/complete lifecycle updates."""
+        return self._tool_call_id
+
+    def update_subagents(self, subagents: list[SubagentDisplayData]) -> None:
         self._subagents = subagents
         self._refresh_columns()
         self._start_polling_if_needed()
@@ -572,7 +724,7 @@ class SubagentCard(Vertical, can_focus=True):
                 break
         self._refresh_columns()
 
-    def set_status_callback(self, callback: Callable[[str], Optional[SubagentDisplayData]]) -> None:
+    def set_status_callback(self, callback: Callable[[str], SubagentDisplayData | None]) -> None:
         self._status_callback = callback
         self._start_polling_if_needed()
 
@@ -597,7 +749,7 @@ class SubagentCard(Vertical, can_focus=True):
     def _focus_column(self, index: int) -> None:
         try:
             sa = self._subagents[index]
-            column = self._columns.get(sa.id)
+            column = self._columns.get(f"{sa.id}_{index}")
             if column:
                 column.focus()
         except (IndexError, KeyError):
@@ -606,10 +758,10 @@ class SubagentCard(Vertical, can_focus=True):
     @classmethod
     def from_spawn_result(
         cls,
-        result: Dict[str, Any],
-        tool_call_id: Optional[str] = None,
-        status_callback: Optional[Callable[[str], Optional[SubagentDisplayData]]] = None,
-    ) -> "SubagentCard":
+        result: dict[str, Any],
+        tool_call_id: str | None = None,
+        status_callback: Callable[[str], SubagentDisplayData | None] | None = None,
+    ) -> SubagentCard:
         subagents = []
         spawned = result.get("results", result.get("spawned_subagents", result.get("subagents", [])))
         for sa_data in spawned:
@@ -627,6 +779,7 @@ class SubagentCard(Vertical, can_focus=True):
                     error=sa_data.get("error"),
                     answer_preview=(sa_data.get("answer", "") or "")[:200] or None,
                     log_path=sa_data.get("log_path"),
+                    subagent_type=sa_data.get("subagent_type"),
                 ),
             )
         return cls(subagents=subagents, tool_call_id=tool_call_id, status_callback=status_callback)

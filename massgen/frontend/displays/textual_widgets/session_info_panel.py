@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Session Info Panel Widget for MassGen TUI.
 
@@ -7,7 +6,6 @@ Displays aggregated session statistics in the header area.
 
 import logging
 import time
-from typing import Dict, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -61,14 +59,14 @@ class SessionInfoPanel(Widget):
     def __init__(
         self,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(id=id, classes=classes)
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
         self._timer_handle = None
-        self._agent_tokens: Dict[str, int] = {}
-        self._agent_costs: Dict[str, float] = {}
+        self._agent_tokens: dict[str, int] = {}
+        self._agent_costs: dict[str, float] = {}
         self.border_title = "Session"
 
     def compose(self) -> ComposeResult:

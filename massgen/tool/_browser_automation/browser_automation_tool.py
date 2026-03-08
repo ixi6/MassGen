@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Simple browser automation tool that works with any LLM model.
 
@@ -9,7 +8,6 @@ It works with gpt-4.1, gpt-4o, Gemini, and other models.
 import base64
 import json
 from pathlib import Path
-from typing import Optional
 
 from massgen.logger_config import logger
 from massgen.tool._result import ExecutionResult, TextContent
@@ -24,14 +22,14 @@ except ImportError:
 
 async def browser_automation(
     task: str,
-    url: Optional[str] = None,
+    url: str | None = None,
     action: str = "navigate",
-    selector: Optional[str] = None,
-    text: Optional[str] = None,
+    selector: str | None = None,
+    text: str | None = None,
     headless: bool = False,
     screenshot: bool = True,
-    output_filename: Optional[str] = None,
-    agent_cwd: Optional[str] = None,
+    output_filename: str | None = None,
+    agent_cwd: str | None = None,
     **kwargs,
 ) -> ExecutionResult:
     """

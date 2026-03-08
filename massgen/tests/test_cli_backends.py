@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Test script for CLI backends - Claude Code CLI and Gemini CLI integration.
 
@@ -99,7 +98,7 @@ def test_configuration_files():
     for config_file in config_files:
         if Path(config_file).exists():
             try:
-                with open(config_file, "r") as f:
+                with open(config_file) as f:
                     config = yaml.safe_load(f)
                 assert config is not None, f"Config {config_file} should not be empty"
                 print(f"✅ {config_file} is valid")

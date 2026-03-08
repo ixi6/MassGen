@@ -1,14 +1,9 @@
+# uv run massgen --config @examples/features/test_subagent_orchestrator_code_mode.yaml "Use subagents to research Bob Dylan"
 agents:
 - id: agent_a
   backend:
-    # type: openai
-    # model: gpt-5.2
-    # type: gemini
-    # model: gemini-3-flash-preview
-    # type: grok
-    # model: grok-4-1-fast-reasoning
     type: claude_code
-    model: claude-sonnet-4-5
+    model: claude-sonnet-4-6
     cwd: workspace1
     enable_code_based_tools: true
     exclude_file_operation_mcps: true
@@ -55,13 +50,13 @@ orchestrator:
     subagent_orchestrator:
       enabled: true
       # enable_web_search: true
+      # agents here are the shared common subagent agents for every parent agent.
+      # Parent agents can add top-level subagent_agents, and inherit_spawning_agent_backend
+      # can synthesize one from the spawning parent's backend when local config is absent.
       agents:
       - backend:
-          type: openai
-          model: gpt-5-mini
-      - backend:
-          type: grok
-          model: grok-4-1-fast-reasoning
+          type: openrouter
+          model: z-ai/glm-5
   context_paths: []
 ui:
   type: rich_terminal

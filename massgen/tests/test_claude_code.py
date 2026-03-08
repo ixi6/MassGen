@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Real test of ClaudeCodeBackend with actual Claude Code API calls.
 This test outputs the actual stream chunks to verify functionality.

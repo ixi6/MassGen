@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Configuration validation for MassGen YAML/JSON configs.
 
@@ -25,7 +24,7 @@ Usage:
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 
@@ -43,7 +42,7 @@ class ValidationIssue:
 
     message: str
     location: str
-    suggestion: Optional[str] = None
+    suggestion: str | None = None
     severity: str = "error"  # "error" or "warning"
 
     def __str__(self) -> str:
@@ -59,14 +58,14 @@ class ValidationIssue:
 class ValidationResult:
     """Aggregates all validation errors and warnings."""
 
-    errors: List[ValidationIssue] = field(default_factory=list)
-    warnings: List[ValidationIssue] = field(default_factory=list)
+    errors: list[ValidationIssue] = field(default_factory=list)
+    warnings: list[ValidationIssue] = field(default_factory=list)
 
-    def add_error(self, message: str, location: str, suggestion: Optional[str] = None) -> None:
+    def add_error(self, message: str, location: str, suggestion: str | None = None) -> None:
         """Add a validation error."""
         self.errors.append(ValidationIssue(message, location, suggestion, "error"))
 
-    def add_warning(self, message: str, location: str, suggestion: Optional[str] = None) -> None:
+    def add_warning(self, message: str, location: str, suggestion: str | None = None) -> None:
         """Add a validation warning."""
         self.warnings.append(ValidationIssue(message, location, suggestion, "warning"))
 
@@ -107,7 +106,7 @@ class ValidationResult:
             parts.append(self.format_warnings())
         return "\n".join(parts) if parts else "✅ Configuration is valid!"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON output."""
         return {
             "valid": self.is_valid(),
@@ -163,6 +162,18 @@ class ConfigValidator:
     # Valid write modes for isolated write contexts
     VALID_WRITE_MODES = {"auto", "worktree", "isolated", "legacy"}
     VALID_DRIFT_CONFLICT_POLICIES = {"skip", "prefer_presenter", "fail"}
+    VALID_NOVELTY_INJECTION = {"none", "gentle", "moderate", "aggressive"}
+    VALID_SUBAGENT_RUNTIME_MODES = {"isolated", "inherited"}
+    VALID_SUBAGENT_RUNTIME_FALLBACK_MODES = {"inherited"}
+    VALID_FINAL_ANSWER_STRATEGIES = {"winner_reuse", "winner_present", "synthesize"}
+    VALID_LEARNING_CAPTURE_MODES = {
+        "round",
+        "verification_and_final_only",
+        "final_only",
+    }
+
+    # Valid gap report modes
+    VALID_GAP_REPORT_MODES = {"changedoc", "separate", "none"}
 
     def __init__(self):
         """Initialize the validator."""
@@ -187,7 +198,7 @@ class ConfigValidator:
 
         # Load config file
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 if path.suffix in [".yaml", ".yml"]:
                     config = yaml.safe_load(f)
                 elif path.suffix == ".json":
@@ -208,7 +219,7 @@ class ConfigValidator:
         # Validate the loaded config
         return self.validate_config(config)
 
-    def validate_config(self, config: Dict[str, Any]) -> ValidationResult:
+    def validate_config(self, config: dict[str, Any]) -> ValidationResult:
         """
         Validate a configuration dictionary.
 
@@ -238,7 +249,7 @@ class ConfigValidator:
 
         # Validate orchestrator (if present)
         if "orchestrator" in config:
-            self._validate_orchestrator(config["orchestrator"], result)
+            self._validate_orchestrator(config["orchestrator"], result, config=config)
 
         # Validate UI (if present)
         if "ui" in config:
@@ -253,7 +264,7 @@ class ConfigValidator:
 
         return result
 
-    def _check_v1_keywords(self, config: Dict[str, Any], result: ValidationResult) -> None:
+    def _check_v1_keywords(self, config: dict[str, Any], result: ValidationResult) -> None:
         """Check for V1 config keywords and reject them."""
         found_v1_keywords = []
         for keyword in self.V1_KEYWORDS:
@@ -267,7 +278,7 @@ class ConfigValidator:
                 "Migrate to V2 config format. See docs/source/reference/yaml_schema.rst for the current schema.",
             )
 
-    def _validate_top_level(self, config: Dict[str, Any], result: ValidationResult) -> None:
+    def _validate_top_level(self, config: dict[str, Any], result: ValidationResult) -> None:
         """Validate top-level config structure (Level 1)."""
         # Require either 'agents' (list) or 'agent' (single)
         has_agents = "agents" in config
@@ -309,7 +320,7 @@ class ConfigValidator:
         if "hooks" in config:
             self._validate_hooks(config["hooks"], "hooks", result)
 
-    def _validate_agents(self, config: Dict[str, Any], result: ValidationResult) -> None:
+    def _validate_agents(self, config: dict[str, Any], result: ValidationResult) -> None:
         """Validate agent configurations (Level 2)."""
         # Get agents list (normalize single agent to list)
         if "agents" in config:
@@ -320,7 +331,7 @@ class ConfigValidator:
             agents = [config["agent"]]
 
         # Track agent IDs for duplicate detection
-        agent_ids: List[str] = []
+        agent_ids: list[str] = []
 
         for i, agent_config in enumerate(agents):
             agent_location = f"agents[{i}]" if "agents" in config else "agent"
@@ -395,7 +406,57 @@ class ConfigValidator:
                         "Use a string describing the agent's subtask",
                     )
 
-    def _validate_backend(self, backend_config: Dict[str, Any], location: str, result: ValidationResult) -> None:
+            if "subagent_agents" in agent_config:
+                subagent_agents = agent_config["subagent_agents"]
+                if not isinstance(subagent_agents, list):
+                    result.add_error(
+                        "'subagent_agents' must be a list",
+                        f"{agent_location}.subagent_agents",
+                        "Use a list of agent-like entries with 'backend' and optional 'id'",
+                    )
+                else:
+                    subagent_ids: list[str] = []
+                    for j, subagent_cfg in enumerate(subagent_agents):
+                        subagent_location = f"{agent_location}.subagent_agents[{j}]"
+                        if not isinstance(subagent_cfg, dict):
+                            result.add_error(
+                                f"Subagent agent must be a dictionary, got {type(subagent_cfg).__name__}",
+                                subagent_location,
+                                "Use 'id' and 'backend' fields",
+                            )
+                            continue
+
+                        if "id" in subagent_cfg:
+                            subagent_id = subagent_cfg["id"]
+                            if not isinstance(subagent_id, str):
+                                result.add_error(
+                                    f"Subagent agent 'id' must be a string, got {type(subagent_id).__name__}",
+                                    f"{subagent_location}.id",
+                                    "Use a string identifier like 'id: \"local_eval\"'",
+                                )
+                            elif subagent_id in subagent_ids:
+                                result.add_error(
+                                    f"Duplicate subagent agent ID: '{subagent_id}'",
+                                    f"{subagent_location}.id",
+                                    "Each subagent agent ID must be unique within the list",
+                                )
+                            else:
+                                subagent_ids.append(subagent_id)
+
+                        if "backend" not in subagent_cfg:
+                            result.add_error(
+                                "Subagent agent missing required field 'backend'",
+                                subagent_location,
+                                "Add 'backend: {type: ..., model: ...}'",
+                            )
+                        else:
+                            self._validate_backend(
+                                subagent_cfg["backend"],
+                                f"{subagent_location}.backend",
+                                result,
+                            )
+
+    def _validate_backend(self, backend_config: dict[str, Any], location: str, result: ValidationResult) -> None:
         """Validate backend configuration (Level 3)."""
         if not isinstance(backend_config, dict):
             result.add_error(
@@ -555,7 +616,7 @@ class ConfigValidator:
 
     def _validate_tool_filtering(
         self,
-        backend_config: Dict[str, Any],
+        backend_config: dict[str, Any],
         location: str,
         result: ValidationResult,
     ) -> None:
@@ -616,7 +677,7 @@ class ConfigValidator:
 
     def _validate_hooks(
         self,
-        hooks_config: Dict[str, Any],
+        hooks_config: dict[str, Any],
         location: str,
         result: ValidationResult,
     ) -> None:
@@ -678,7 +739,7 @@ class ConfigValidator:
 
     def _validate_single_hook(
         self,
-        hook_config: Dict[str, Any],
+        hook_config: dict[str, Any],
         location: str,
         result: ValidationResult,
     ) -> None:
@@ -754,7 +815,7 @@ class ConfigValidator:
                     "Use true or false",
                 )
 
-    def _validate_orchestrator(self, orchestrator_config: Dict[str, Any], result: ValidationResult) -> None:
+    def _validate_orchestrator(self, orchestrator_config: dict[str, Any], result: ValidationResult, config: dict[str, Any] | None = None) -> None:
         """Validate orchestrator configuration (Level 5)."""
         location = "orchestrator"
 
@@ -785,6 +846,17 @@ class ConfigValidator:
                     f"'presenter_agent' must be a string, got {type(presenter).__name__}",
                     f"{location}.presenter_agent",
                     "Use an agent ID string like 'integrator'",
+                )
+
+        # Validate final_answer_strategy if present
+        if "final_answer_strategy" in orchestrator_config:
+            strategy = orchestrator_config["final_answer_strategy"]
+            valid_strategies = sorted(self.VALID_FINAL_ANSWER_STRATEGIES)
+            if strategy is not None and strategy not in self.VALID_FINAL_ANSWER_STRATEGIES:
+                result.add_error(
+                    f"Invalid final_answer_strategy: '{strategy}'",
+                    f"{location}.final_answer_strategy",
+                    f"Use one of: {', '.join(valid_strategies)}",
                 )
 
         # Validate context_paths if present
@@ -835,7 +907,13 @@ class ConfigValidator:
                 )
             else:
                 # Validate boolean fields
-                boolean_fields = ["enable_planning_mode", "use_two_tier_workspace", "enable_changedoc"]
+                boolean_fields = [
+                    "enable_planning_mode",
+                    "use_two_tier_workspace",
+                    "enable_changedoc",
+                    "round_evaluator_before_checklist",
+                    "orchestrator_managed_round_evaluator",
+                ]
                 for field_name in boolean_fields:
                     if field_name in coordination:
                         value = coordination[field_name]
@@ -870,34 +948,42 @@ class ConfigValidator:
                             "Use a value like 0, 1, 2, etc.",
                         )
 
-                # Validate async_subagents if present
+                # Hard-break rename: async_subagents -> background_subagents
                 if "async_subagents" in coordination:
-                    async_config = coordination["async_subagents"]
-                    if not isinstance(async_config, dict):
+                    result.add_error(
+                        "'async_subagents' has been removed. Use 'background_subagents' instead.",
+                        f"{location}.coordination.async_subagents",
+                        "Replace with background_subagents: {enabled: true, injection_strategy: 'tool_result'}",
+                    )
+
+                # Validate background_subagents if present
+                if "background_subagents" in coordination:
+                    background_config = coordination["background_subagents"]
+                    if not isinstance(background_config, dict):
                         result.add_error(
-                            f"'async_subagents' must be a dictionary, got {type(async_config).__name__}",
-                            f"{location}.coordination.async_subagents",
-                            "Use async_subagents: {enabled: true, injection_strategy: 'tool_result'}",
+                            f"'background_subagents' must be a dictionary, got {type(background_config).__name__}",
+                            f"{location}.coordination.background_subagents",
+                            "Use background_subagents: {enabled: true, injection_strategy: 'tool_result'}",
                         )
                     else:
                         # Validate enabled field
-                        if "enabled" in async_config:
-                            enabled = async_config["enabled"]
+                        if "enabled" in background_config:
+                            enabled = background_config["enabled"]
                             if not isinstance(enabled, bool):
                                 result.add_error(
-                                    f"'async_subagents.enabled' must be a boolean, got {type(enabled).__name__}",
-                                    f"{location}.coordination.async_subagents.enabled",
+                                    f"'background_subagents.enabled' must be a boolean, got {type(enabled).__name__}",
+                                    f"{location}.coordination.background_subagents.enabled",
                                     "Use 'true' or 'false'",
                                 )
 
                         # Validate injection_strategy field
-                        if "injection_strategy" in async_config:
-                            strategy = async_config["injection_strategy"]
+                        if "injection_strategy" in background_config:
+                            strategy = background_config["injection_strategy"]
                             valid_strategies = ["tool_result", "user_message"]
                             if strategy not in valid_strategies:
                                 result.add_error(
-                                    f"Invalid async_subagents.injection_strategy: '{strategy}'",
-                                    f"{location}.coordination.async_subagents.injection_strategy",
+                                    f"Invalid background_subagents.injection_strategy: '{strategy}'",
+                                    f"{location}.coordination.background_subagents.injection_strategy",
                                     f"Use one of: {', '.join(valid_strategies)}",
                                 )
                 # Validate plan_depth if present
@@ -928,6 +1014,15 @@ class ConfigValidator:
                             "'plan_target_chunks' must be a positive integer or null",
                             f"{location}.coordination.plan_target_chunks",
                             "Use values like 3, 5, 8, or omit/null for dynamic sizing.",
+                        )
+
+                if "pre_collab_voting_threshold" in coordination:
+                    value = coordination["pre_collab_voting_threshold"]
+                    if value is not None and (isinstance(value, bool) or not isinstance(value, int) or value <= 0):
+                        result.add_error(
+                            "'pre_collab_voting_threshold' must be a positive integer or null",
+                            f"{location}.coordination.pre_collab_voting_threshold",
+                            "Use a positive integer like 5, 10, 15, or omit/null to inherit orchestrator.voting_threshold",
                         )
 
                 # Validate subagent_round_timeouts if present
@@ -963,6 +1058,50 @@ class ConfigValidator:
                                             "Use a value like 300 (seconds)",
                                         )
 
+                # Validate subagent runtime isolation settings
+                runtime_mode = coordination.get("subagent_runtime_mode", "isolated")
+                if "subagent_runtime_mode" in coordination and runtime_mode not in self.VALID_SUBAGENT_RUNTIME_MODES:
+                    valid_values = ", ".join(sorted(self.VALID_SUBAGENT_RUNTIME_MODES))
+                    result.add_error(
+                        f"Invalid subagent_runtime_mode: '{runtime_mode}'",
+                        f"{location}.coordination.subagent_runtime_mode",
+                        f"Use one of: {valid_values}",
+                    )
+
+                if "subagent_runtime_fallback_mode" in coordination:
+                    fallback_mode = coordination["subagent_runtime_fallback_mode"]
+                    if fallback_mode is not None and fallback_mode not in self.VALID_SUBAGENT_RUNTIME_FALLBACK_MODES:
+                        valid_values = ", ".join(sorted(self.VALID_SUBAGENT_RUNTIME_FALLBACK_MODES))
+                        result.add_error(
+                            f"Invalid subagent_runtime_fallback_mode: '{fallback_mode}'",
+                            f"{location}.coordination.subagent_runtime_fallback_mode",
+                            f"Use one of: null, {valid_values}",
+                        )
+                    elif fallback_mode is not None and runtime_mode != "isolated":
+                        result.add_error(
+                            "subagent_runtime_fallback_mode can only be set when subagent_runtime_mode is 'isolated'",
+                            f"{location}.coordination.subagent_runtime_fallback_mode",
+                            "Set subagent_runtime_mode: isolated or remove subagent_runtime_fallback_mode",
+                        )
+
+                if "subagent_host_launch_prefix" in coordination:
+                    host_launch_prefix = coordination["subagent_host_launch_prefix"]
+                    if host_launch_prefix is not None:
+                        if not isinstance(host_launch_prefix, list):
+                            result.add_error(
+                                f"'subagent_host_launch_prefix' must be a list or null, got {type(host_launch_prefix).__name__}",
+                                f"{location}.coordination.subagent_host_launch_prefix",
+                                "Use a list of command tokens, for example ['host-launch', '--exec']",
+                            )
+                        else:
+                            for i, token in enumerate(host_launch_prefix):
+                                if not isinstance(token, str) or not token.strip():
+                                    result.add_error(
+                                        "'subagent_host_launch_prefix' entries must be non-empty strings",
+                                        f"{location}.coordination.subagent_host_launch_prefix[{i}]",
+                                        "Use command token strings only",
+                                    )
+
                 # Validate write_mode if present
                 if "write_mode" in coordination:
                     write_mode = coordination["write_mode"]
@@ -982,6 +1121,235 @@ class ConfigValidator:
                             f"{location}.coordination.drift_conflict_policy",
                             f"Use one of: {valid_values}",
                         )
+                if "novelty_injection" in coordination:
+                    novelty = coordination["novelty_injection"]
+                    if novelty not in self.VALID_NOVELTY_INJECTION:
+                        valid_values = ", ".join(sorted(self.VALID_NOVELTY_INJECTION))
+                        result.add_error(
+                            f"Invalid novelty_injection: '{novelty}'",
+                            f"{location}.coordination.novelty_injection",
+                            f"Use one of: {valid_values}",
+                        )
+                if "enable_novelty_on_iteration" in coordination and not isinstance(
+                    coordination["enable_novelty_on_iteration"],
+                    bool,
+                ):
+                    result.add_error(
+                        "'enable_novelty_on_iteration' must be a boolean",
+                        f"{location}.coordination.enable_novelty_on_iteration",
+                        "Use true or false",
+                    )
+                if "enable_quality_rethink_on_iteration" in coordination and not isinstance(
+                    coordination["enable_quality_rethink_on_iteration"],
+                    bool,
+                ):
+                    result.add_error(
+                        "'enable_quality_rethink_on_iteration' must be a boolean",
+                        f"{location}.coordination.enable_quality_rethink_on_iteration",
+                        "Use true or false",
+                    )
+                if "improvements" in coordination:
+                    improvements = coordination["improvements"]
+                    improvements_location = f"{location}.coordination.improvements"
+                    if not isinstance(improvements, dict):
+                        result.add_error(
+                            "'improvements' must be a dictionary",
+                            improvements_location,
+                            "Use keys like min_transformative, min_structural, min_non_incremental",
+                        )
+                    else:
+                        for key in ("min_transformative", "min_structural", "min_non_incremental"):
+                            if key not in improvements:
+                                continue
+                            value = improvements[key]
+                            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                                result.add_error(
+                                    f"'{key}' must be a non-negative integer",
+                                    f"{improvements_location}.{key}",
+                                    "Use values like 0, 1, 2",
+                                )
+                if "learning_capture_mode" in coordination:
+                    learning_capture_mode = coordination["learning_capture_mode"]
+                    if learning_capture_mode not in self.VALID_LEARNING_CAPTURE_MODES:
+                        valid_values = ", ".join(
+                            sorted(self.VALID_LEARNING_CAPTURE_MODES),
+                        )
+                        result.add_error(
+                            f"Invalid learning_capture_mode: '{learning_capture_mode}'",
+                            f"{location}.coordination.learning_capture_mode",
+                            f"Use one of: {valid_values}",
+                        )
+                if "disable_final_only_round_capture_fallback" in coordination and not isinstance(
+                    coordination["disable_final_only_round_capture_fallback"],
+                    bool,
+                ):
+                    result.add_error(
+                        "'disable_final_only_round_capture_fallback' must be a boolean",
+                        f"{location}.coordination.disable_final_only_round_capture_fallback",
+                        "Use true or false",
+                    )
+
+                if "subagent_orchestrator" in coordination:
+                    subagent_orchestrator = coordination["subagent_orchestrator"]
+                    if subagent_orchestrator is not None:
+                        if not isinstance(subagent_orchestrator, dict):
+                            result.add_error(
+                                f"'subagent_orchestrator' must be a dictionary or null, got {type(subagent_orchestrator).__name__}",
+                                f"{location}.coordination.subagent_orchestrator",
+                                "Use a dict like {enabled: true, agents: [...]}",
+                            )
+                        else:
+                            inherit_spawning_backend = subagent_orchestrator.get("inherit_spawning_agent_backend")
+                            if inherit_spawning_backend is not None and not isinstance(inherit_spawning_backend, bool):
+                                result.add_error(
+                                    "'inherit_spawning_agent_backend' must be a boolean",
+                                    f"{location}.coordination.subagent_orchestrator.inherit_spawning_agent_backend",
+                                    "Use true or false",
+                                )
+                            child_final_answer_strategy = subagent_orchestrator.get("final_answer_strategy")
+                            if child_final_answer_strategy is not None and child_final_answer_strategy not in self.VALID_FINAL_ANSWER_STRATEGIES:
+                                valid_values = ", ".join(sorted(self.VALID_FINAL_ANSWER_STRATEGIES))
+                                result.add_error(
+                                    f"Invalid final_answer_strategy: '{child_final_answer_strategy}'",
+                                    f"{location}.coordination.subagent_orchestrator.final_answer_strategy",
+                                    f"Use one of: {valid_values}",
+                                )
+
+                if "subagent_types" in coordination:
+                    st = coordination["subagent_types"]
+                    if st is not None:
+                        if not isinstance(st, list):
+                            result.add_error(
+                                f"'subagent_types' must be a list of strings or null, got {type(st).__name__}",
+                                f"{location}.coordination.subagent_types",
+                                "Use a list like: [evaluator, explorer, novelty]",
+                            )
+                        else:
+                            for i, t in enumerate(st):
+                                if not isinstance(t, str) or not t.strip():
+                                    result.add_error(
+                                        "'subagent_types' entries must be non-empty strings",
+                                        f"{location}.coordination.subagent_types[{i}]",
+                                        "Use type name strings like 'evaluator', 'explorer', 'novelty'",
+                                    )
+
+                if "checklist_criteria_preset" in coordination:
+                    preset = coordination["checklist_criteria_preset"]
+                    if preset is not None:
+                        from .evaluation_criteria_generator import (
+                            VALID_CRITERIA_PRESETS,
+                        )
+
+                        if preset not in VALID_CRITERIA_PRESETS:
+                            valid_values = ", ".join(sorted(VALID_CRITERIA_PRESETS))
+                            result.add_error(
+                                f"Invalid checklist_criteria_preset: '{preset}'",
+                                f"{location}.coordination.checklist_criteria_preset",
+                                f"Use one of: {valid_values}",
+                            )
+
+                if "checklist_criteria_inline" in coordination:
+                    inline = coordination["checklist_criteria_inline"]
+                    if inline is not None:
+                        valid_categories = {"must", "should", "could"}
+                        if not isinstance(inline, list):
+                            result.add_error(
+                                "checklist_criteria_inline must be a list",
+                                f"{location}.coordination.checklist_criteria_inline",
+                                "Provide a list of {{text, category}} dicts",
+                            )
+                        else:
+                            for i, item in enumerate(inline):
+                                if not isinstance(item, dict):
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] must be a dict",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        "Each item needs 'text' and 'category' keys",
+                                    )
+                                    continue
+                                if "text" not in item or not item.get("text"):
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] missing 'text'",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        "Each criterion needs a 'text' field",
+                                    )
+                                if "category" not in item:
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] missing 'category'",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        "Each criterion needs a 'category' (must/should/could)",
+                                    )
+                                elif item["category"] not in valid_categories:
+                                    result.add_error(
+                                        f"checklist_criteria_inline[{i}] invalid category: '{item['category']}'",
+                                        f"{location}.coordination.checklist_criteria_inline[{i}]",
+                                        f"Use one of: {', '.join(sorted(valid_categories))}",
+                                    )
+
+                        # Warn if both inline and eval generator are enabled
+                        eval_gen = coordination.get("evaluation_criteria_generator", {})
+                        if inline and eval_gen.get("enabled", False):
+                            result.add_warning(
+                                "checklist_criteria_inline is set alongside evaluation_criteria_generator.enabled; " "inline criteria will take priority and generated criteria will be ignored",
+                                f"{location}.coordination.checklist_criteria_inline",
+                            )
+
+                if "resume_from_log" in coordination:
+                    resume = coordination["resume_from_log"]
+                    if resume is not None:
+                        if not isinstance(resume, dict):
+                            result.add_error(
+                                "resume_from_log must be a dict with 'log_path' and 'round'",
+                                f"{location}.coordination.resume_from_log",
+                                "Example: {{log_path: '.massgen/massgen_logs/...', round: 1}}",
+                            )
+                        else:
+                            log_path = resume.get("log_path")
+                            resume_round = resume.get("round")
+
+                            if not log_path:
+                                result.add_error(
+                                    "resume_from_log missing 'log_path'",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Provide the path to a previous log's turn/attempt directory",
+                                )
+                            elif not Path(log_path).is_dir():
+                                result.add_error(
+                                    f"resume_from_log log_path does not exist: {log_path}",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Provide a valid path to a previous log directory",
+                                )
+                            else:
+                                # Validate agent IDs match
+                                metadata_path = Path(log_path) / "execution_metadata.yaml"
+                                if metadata_path.exists():
+                                    try:
+                                        import yaml
+
+                                        metadata = yaml.safe_load(metadata_path.read_text())
+                                        log_agent_ids = sorted(a["id"] for a in metadata.get("config", {}).get("agents", []))
+                                        config_agent_ids = sorted(a.get("id", "") for a in (config or {}).get("agents", []))
+                                        if log_agent_ids != config_agent_ids:
+                                            result.add_error(
+                                                f"resume_from_log agent IDs don't match: " f"log has {log_agent_ids}, config has {config_agent_ids}",
+                                                f"{location}.coordination.resume_from_log",
+                                                "Resume requires the same agent IDs as the original run",
+                                            )
+                                    except Exception:
+                                        pass  # Non-fatal: skip agent ID check if metadata unreadable
+
+                            if resume_round is None:
+                                result.add_error(
+                                    "resume_from_log missing 'round'",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Specify which round to resume after (e.g., round: 1)",
+                                )
+                            elif not isinstance(resume_round, int) or resume_round < 0:
+                                result.add_error(
+                                    f"resume_from_log 'round' must be a non-negative integer, got: {resume_round}",
+                                    f"{location}.coordination.resume_from_log",
+                                    "Specify the round number to resume after (0-based)",
+                                )
 
         # Validate voting_sensitivity if present
         if "voting_sensitivity" in orchestrator_config:
@@ -1028,6 +1396,16 @@ class ConfigValidator:
                     "Use true or false",
                 )
 
+        if "gap_report_mode" in orchestrator_config:
+            gap_mode = orchestrator_config["gap_report_mode"]
+            if gap_mode not in self.VALID_GAP_REPORT_MODES:
+                valid_values = ", ".join(sorted(self.VALID_GAP_REPORT_MODES))
+                result.add_error(
+                    f"Invalid gap_report_mode: '{gap_mode}'",
+                    f"{location}.gap_report_mode",
+                    f"Use one of: {valid_values}",
+                )
+
         # Validate fairness controls if present
         if "fairness_enabled" in orchestrator_config:
             fairness_enabled = orchestrator_config["fairness_enabled"]
@@ -1054,6 +1432,42 @@ class ConfigValidator:
                     f"'max_midstream_injections_per_round' must be a positive integer, got {type(injection_cap).__name__}",
                     f"{location}.max_midstream_injections_per_round",
                     "Use a positive integer like 1 or 2",
+                )
+
+        if "defer_peer_updates_until_restart" in orchestrator_config:
+            defer_peer_updates = orchestrator_config["defer_peer_updates_until_restart"]
+            if not isinstance(defer_peer_updates, bool):
+                result.add_error(
+                    f"'defer_peer_updates_until_restart' must be a boolean, got {type(defer_peer_updates).__name__}",
+                    f"{location}.defer_peer_updates_until_restart",
+                    "Use true or false",
+                )
+
+        if "allow_midstream_peer_updates_before_checklist_submit" in orchestrator_config:
+            allow_midstream = orchestrator_config["allow_midstream_peer_updates_before_checklist_submit"]
+            if allow_midstream is not None and not isinstance(allow_midstream, bool):
+                result.add_error(
+                    ("'allow_midstream_peer_updates_before_checklist_submit' must be " f"a boolean or null, got {type(allow_midstream).__name__}"),
+                    f"{location}.allow_midstream_peer_updates_before_checklist_submit",
+                    "Use true, false, or null",
+                )
+
+        if "max_checklist_calls_per_round" in orchestrator_config:
+            checklist_cap = orchestrator_config["max_checklist_calls_per_round"]
+            if isinstance(checklist_cap, bool) or not isinstance(checklist_cap, int) or checklist_cap < 1:
+                result.add_error(
+                    f"'max_checklist_calls_per_round' must be a positive integer >= 1, got {type(checklist_cap).__name__}",
+                    f"{location}.max_checklist_calls_per_round",
+                    "Use a positive integer like 1 or 2 (default: 1)",
+                )
+
+        if "checklist_first_answer" in orchestrator_config:
+            cfa = orchestrator_config["checklist_first_answer"]
+            if not isinstance(cfa, bool):
+                result.add_error(
+                    f"'checklist_first_answer' must be a boolean, got {type(cfa).__name__}",
+                    f"{location}.checklist_first_answer",
+                    "Use true or false (default: false)",
                 )
 
         # Validate timeout if present
@@ -1095,7 +1509,7 @@ class ConfigValidator:
                             "Use 'true' or 'false'",
                         )
 
-    def _validate_ui(self, ui_config: Dict[str, Any], result: ValidationResult) -> None:
+    def _validate_ui(self, ui_config: dict[str, Any], result: ValidationResult) -> None:
         """Validate UI configuration (Level 6)."""
         location = "ui"
 
@@ -1128,7 +1542,7 @@ class ConfigValidator:
                     "Use 'true' or 'false'",
                 )
 
-    def _validate_memory(self, memory_config: Dict[str, Any], result: ValidationResult) -> None:
+    def _validate_memory(self, memory_config: dict[str, Any], result: ValidationResult) -> None:
         """Validate memory configuration."""
         location = "memory"
 
@@ -1329,7 +1743,7 @@ class ConfigValidator:
                             "Use 'true' or 'false'",
                         )
 
-    def _check_warnings(self, config: Dict[str, Any], result: ValidationResult) -> None:
+    def _check_warnings(self, config: dict[str, Any], result: ValidationResult) -> None:
         """Check for warnings (best practices, deprecations, etc.)."""
         # Get agents list (normalize single agent to list)
         if "agents" in config:
@@ -1363,8 +1777,62 @@ class ConfigValidator:
             # Warning: Check for deprecated fields (add as needed)
             # This is a placeholder for future deprecations
 
-        # Cross-validation: decomposition mode
+        # Cross-validation: checklist_gated + changedoc
         orchestrator_cfg = config.get("orchestrator", {})
+        if isinstance(orchestrator_cfg, dict):
+            voting_sens = orchestrator_cfg.get("voting_sensitivity", "")
+            coordination = orchestrator_cfg.get("coordination", {})
+            if isinstance(coordination, dict):
+                changedoc_enabled = coordination.get("enable_changedoc", True)
+                if voting_sens == "checklist_gated" and changedoc_enabled is False:
+                    result.add_warning(
+                        "checklist_gated voting works best with changedoc enabled for integrated quality assessment",
+                        "orchestrator.voting_sensitivity",
+                        "Set coordination.enable_changedoc: true or use gap_report_mode: 'separate'",
+                    )
+                round_eval_before_checklist = coordination.get("round_evaluator_before_checklist", False)
+                orchestrator_managed_round_evaluator = coordination.get("orchestrator_managed_round_evaluator", False)
+                if orchestrator_managed_round_evaluator and not round_eval_before_checklist:
+                    result.add_error(
+                        "orchestrator_managed_round_evaluator requires round_evaluator_before_checklist: true",
+                        "orchestrator.coordination.orchestrator_managed_round_evaluator",
+                        "Enable round_evaluator_before_checklist or remove orchestrator_managed_round_evaluator",
+                    )
+                if round_eval_before_checklist:
+                    if voting_sens != "checklist_gated":
+                        result.add_error(
+                            "round_evaluator_before_checklist requires orchestrator.voting_sensitivity: checklist_gated",
+                            "orchestrator.coordination.round_evaluator_before_checklist",
+                            "Set orchestrator.voting_sensitivity: checklist_gated",
+                        )
+                    if len(agents) != 1:
+                        result.add_error(
+                            "round_evaluator_before_checklist is currently supported only for single-parent top-level runs",
+                            "orchestrator.coordination.round_evaluator_before_checklist",
+                            "Use exactly one top-level agent for this v1 mode",
+                        )
+                    if coordination.get("enable_subagents") is not True:
+                        result.add_error(
+                            "round_evaluator_before_checklist requires enable_subagents: true",
+                            "orchestrator.coordination.enable_subagents",
+                            "Enable subagents so the parent can spawn the round_evaluator child run",
+                        )
+                    subagent_orchestrator = coordination.get("subagent_orchestrator")
+                    if not isinstance(subagent_orchestrator, dict) or subagent_orchestrator.get("enabled") is not True:
+                        result.add_error(
+                            "round_evaluator_before_checklist requires subagent_orchestrator.enabled: true",
+                            "orchestrator.coordination.subagent_orchestrator",
+                            "Provide an enabled child subagent orchestrator for the evaluator team",
+                        )
+                    subagent_types = coordination.get("subagent_types")
+                    if not isinstance(subagent_types, list) or "round_evaluator" not in subagent_types:
+                        result.add_error(
+                            "round_evaluator_before_checklist requires subagent_types to include 'round_evaluator'",
+                            "orchestrator.coordination.subagent_types",
+                            "Set coordination.subagent_types to a list containing 'round_evaluator'",
+                        )
+
+        # Cross-validation: decomposition mode
         if isinstance(orchestrator_cfg, dict):
             coordination_mode = orchestrator_cfg.get("coordination_mode")
             if coordination_mode == "decomposition":

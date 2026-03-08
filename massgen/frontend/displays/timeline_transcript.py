@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """Utilities for dumping timeline output for comparison/debugging."""
 
 from __future__ import annotations
 
 import os
 import threading
-from typing import Iterable, List, Optional
+from collections.abc import Iterable
 
 _TRANSCRIPT_ENV = "MASSGEN_TUI_TIMELINE_TRANSCRIPT"
 _EMIT_EVENTS_ENV = "MASSGEN_TUI_TIMELINE_EVENTS"
@@ -13,7 +12,7 @@ _MAX_LINE_LEN = 200
 _LOCK = threading.Lock()
 
 
-def _get_path() -> Optional[str]:
+def _get_path() -> str | None:
     return os.environ.get(_TRANSCRIPT_ENV)
 
 
@@ -59,8 +58,8 @@ def format_tool(
     tool_data,
     round_number: int,
     action: str,
-    batch_id: Optional[str] = None,
-    server_name: Optional[str] = None,
+    batch_id: str | None = None,
+    server_name: str | None = None,
 ) -> str:
     name = getattr(tool_data, "display_name", None) or getattr(tool_data, "tool_name", "tool")
     status = getattr(tool_data, "status", "unknown")
@@ -107,8 +106,8 @@ def record_tool(
     tool_data,
     round_number: int,
     action: str,
-    batch_id: Optional[str] = None,
-    server_name: Optional[str] = None,
+    batch_id: str | None = None,
+    server_name: str | None = None,
 ) -> None:
     _write_line(format_tool(tool_data, round_number, action, batch_id=batch_id, server_name=server_name))
 
@@ -121,9 +120,9 @@ def record_batch_tool(tool_data, round_number: int, batch_id: str, action: str) 
     _write_line(format_batch_tool(tool_data, round_number, batch_id, action))
 
 
-def render_output(output) -> List[str]:
+def render_output(output) -> list[str]:
     """Render ContentOutput-like object into transcript lines."""
-    lines: List[str] = []
+    lines: list[str] = []
     round_number = getattr(output, "round_number", None) or 1
     output_type = getattr(output, "output_type", "")
 
@@ -153,8 +152,8 @@ def render_output(output) -> List[str]:
     return lines
 
 
-def render_outputs(outputs: Iterable) -> List[str]:
-    lines: List[str] = []
+def render_outputs(outputs: Iterable) -> list[str]:
+    lines: list[str] = []
     for output in outputs:
         if output is None:
             continue

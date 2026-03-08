@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 import ast
 import json
 import math
 import operator
 import subprocess
 import sys
-from typing import Any, Dict, Optional
+from typing import Any
 
 # Global tool registry
 register_tool = {}
@@ -13,7 +12,7 @@ register_tool = {}
 # Mock functions removed - actual functionality is implemented in agent classes
 
 
-def python_interpreter(code: str, timeout: Optional[int] = 10) -> Dict[str, Any]:
+def python_interpreter(code: str, timeout: int | None = 10) -> dict[str, Any]:
     """
     Execute Python code in an isolated subprocess and return its output.
 

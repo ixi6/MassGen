@@ -1,7 +1,6 @@
-# -*- coding: utf-8 -*-
 """Status-related modals: System, MCP, Cost, and Metrics."""
 
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 try:
     from textual.app import ComposeResult
@@ -37,7 +36,7 @@ class SystemStatusModal(BaseModal):
 class MCPStatusModal(BaseModal):
     """Modal showing MCP server connection status and available tools."""
 
-    def __init__(self, mcp_status: Dict[str, Any]):
+    def __init__(self, mcp_status: dict[str, Any]):
         super().__init__()
         self.mcp_status = mcp_status
 
@@ -188,7 +187,7 @@ class MetricsModal(BaseModal):
 
         return "\n".join(lines)
 
-    def _collect_tool_metrics(self, orchestrator) -> Dict[str, Dict[str, Any]]:
+    def _collect_tool_metrics(self, orchestrator) -> dict[str, dict[str, Any]]:
         """Collect tool metrics from the orchestrator or agents."""
         metrics = {}
 

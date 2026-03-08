@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for Docker skills directory write access during final presentation.
 
 Covers:
@@ -52,6 +51,7 @@ def docker_manager(mock_docker_client):
             manager.mount_npm_config = False
             manager.mount_pypi_config = False
             manager.mount_codex_config = False
+            manager.mount_claude_config = False
             manager.additional_mounts = {}
             manager.env_file_path = None
             manager.pass_env_vars = []
@@ -137,6 +137,22 @@ def test_create_container_skills_writable_creates_missing_dir(docker_manager, tm
     assert skills_dir.exists()
 
 
+def test_create_container_sets_node_path_for_global_npm_modules(docker_manager, tmp_path):
+    """Container env should expose global npm module paths for Node require() resolution."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    docker_manager.create_container(
+        agent_id="agent_env",
+        workspace_path=workspace,
+    )
+
+    call_kwargs = docker_manager.client.containers.run.call_args
+    environment = call_kwargs.kwargs.get("environment") or call_kwargs[1].get("environment")
+    assert environment is not None
+    assert environment.get("NODE_PATH") == "/usr/lib/node_modules:/usr/local/lib/node_modules"
+
+
 # ---------------------------------------------------------------------------
 # create_container: default (skills_writable=False) unchanged
 # ---------------------------------------------------------------------------
@@ -220,3 +236,37 @@ def test_recreate_for_write_access_passes_skills_writable(tmp_path):
     assert call_kwargs.kwargs.get("skills_writable") is True or (
         len(call_kwargs.args) > 0 and "skills_writable" in str(call_kwargs)
     ), f"Expected skills_writable=True in create_container call, got: {call_kwargs}"
+
+
+def test_build_credential_mounts_supports_claude_config(docker_manager, tmp_path, monkeypatch):
+    """claude_config mount should map ~/.claude into /home/massgen/.claude."""
+    fake_home = tmp_path / "home"
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True)
+    docker_manager.mount_claude_config = True
+
+    monkeypatch.setattr("massgen.filesystem_manager._docker_manager.Path.home", lambda: fake_home)
+
+    mounts = docker_manager._build_credential_mounts()
+    host_path = str(claude_dir.resolve())
+
+    assert host_path in mounts
+    assert mounts[host_path]["bind"] == "/home/massgen/.claude"
+    assert mounts[host_path]["mode"] == "ro"
+
+
+def test_build_credential_mounts_supports_codex_config(docker_manager, tmp_path, monkeypatch):
+    """codex_config mount should map ~/.codex into /home/massgen/.codex."""
+    fake_home = tmp_path / "home"
+    codex_dir = fake_home / ".codex"
+    codex_dir.mkdir(parents=True)
+    docker_manager.mount_codex_config = True
+
+    monkeypatch.setattr("massgen.filesystem_manager._docker_manager.Path.home", lambda: fake_home)
+
+    mounts = docker_manager._build_credential_mounts()
+    host_path = str(codex_dir.resolve())
+
+    assert host_path in mounts
+    assert mounts[host_path]["bind"] == "/home/massgen/.codex"
+    assert mounts[host_path]["mode"] == "ro"

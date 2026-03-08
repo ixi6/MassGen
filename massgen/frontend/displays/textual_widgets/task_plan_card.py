@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Task Plan Card Widget for MassGen TUI.
 
@@ -6,7 +5,7 @@ Visual todo list display for Planning MCP integration.
 Shows tasks from create_task_plan, update_task_status, etc.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from rich.text import Text
 from textual.message import Message
@@ -38,7 +37,7 @@ class TaskPlanCard(Static):
     class OpenModal(Message):
         """Message posted when user clicks to open the task plan modal."""
 
-        def __init__(self, tasks: List[Dict[str, Any]], focused_task_id: Optional[str] = None) -> None:
+        def __init__(self, tasks: list[dict[str, Any]], focused_task_id: str | None = None) -> None:
             self.tasks = tasks
             self.focused_task_id = focused_task_id
             super().__init__()
@@ -58,15 +57,15 @@ class TaskPlanCard(Static):
     DEFAULT_MAX_VISIBLE = 5
 
     # Reactive properties
-    tasks: reactive[List[Dict[str, Any]]] = reactive(list, always_update=True)
-    focused_task_id: reactive[Optional[str]] = reactive(None)
+    tasks: reactive[list[dict[str, Any]]] = reactive(list, always_update=True)
+    focused_task_id: reactive[str | None] = reactive(None)
 
     def __init__(
         self,
-        tasks: Optional[List[Dict[str, Any]]] = None,
-        focused_task_id: Optional[str] = None,
+        tasks: list[dict[str, Any]] | None = None,
+        focused_task_id: str | None = None,
         operation: str = "create",
-        id: Optional[str] = None,
+        id: str | None = None,
     ) -> None:
         """Initialize the task plan card.
 
@@ -80,7 +79,7 @@ class TaskPlanCard(Static):
         self._tasks = tasks or []
         self._focused_task_id = focused_task_id
         self._operation = operation
-        self._reminder: Optional[str] = None
+        self._reminder: str | None = None
         self._changed_task_ids: set = set()  # Track recently changed tasks for highlighting
 
     def render(self) -> Text:
@@ -206,7 +205,7 @@ class TaskPlanCard(Static):
 
         return text
 
-    def _get_visible_tasks(self) -> tuple[List[Dict[str, Any]], int]:
+    def _get_visible_tasks(self) -> tuple[list[dict[str, Any]], int]:
         """Get the visible subset of tasks (click card to see all in modal).
 
         Returns:
@@ -245,7 +244,7 @@ class TaskPlanCard(Static):
 
         return self._tasks[start:end], start
 
-    def update_tasks(self, tasks: List[Dict[str, Any]], focused_task_id: Optional[str] = None, operation: str = "update") -> None:
+    def update_tasks(self, tasks: list[dict[str, Any]], focused_task_id: str | None = None, operation: str = "update") -> None:
         """Update the displayed tasks.
 
         Args:
@@ -278,7 +277,7 @@ class TaskPlanCard(Static):
             self.app.set_timer(0.8, self._clear_highlights)
 
     @classmethod
-    def from_mcp_result(cls, result: Dict[str, Any], operation: str = "create") -> "TaskPlanCard":
+    def from_mcp_result(cls, result: dict[str, Any], operation: str = "create") -> "TaskPlanCard":
         """Create a TaskPlanCard from MCP tool result.
 
         Args:

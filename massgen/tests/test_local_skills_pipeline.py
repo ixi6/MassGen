@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for local skills pipeline wiring and previous-session support."""
 
 from pathlib import Path

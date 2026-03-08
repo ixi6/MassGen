@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Claude backend implementation using Anthropic's Messages API.
 Production-ready implementation with full multi-tool support.
@@ -19,6 +18,7 @@ Multi-Tool Capabilities:
 - Parallel and sequential tool execution supported
 - Perfect integration with MassGen StreamChunk pattern
 """
+
 from __future__ import annotations
 
 import base64
@@ -26,8 +26,9 @@ import binascii
 import json
 import mimetypes
 import os
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import anthropic
 import httpx
@@ -50,14 +51,14 @@ from .base_with_custom_tool_and_mcp import (
 class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     """Claude backend using Anthropic's Messages API with full multi-tool support."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         super().__init__(api_key, **kwargs)
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         self.search_count = 0  # Track web search usage for pricing
         self.code_session_hours = 0.0  # Track code execution usage
         self.formatter = ClaudeFormatter()
         self.api_params_handler = ClaudeAPIParamsHandler(self)
-        self._uploaded_file_ids: List[str] = []
+        self._uploaded_file_ids: list[str] = []
 
     def supports_upload_files(self) -> bool:
         """Claude Vision supports inline images; Files API handles PDFs and text docs."""
@@ -66,10 +67,10 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def stream_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Override to ensure Files API cleanup happens after streaming completes."""
         self._clear_streaming_buffer(**kwargs)
         if self._nlip_enabled:
@@ -87,9 +88,9 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _process_upload_files(
         self,
-        messages: List[Dict[str, Any]],
-        all_params: Dict[str, Any],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        all_params: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         """Convert upload_files entries into Claude-compatible multimodal content."""
 
         processed_messages = await super()._process_upload_files(messages, all_params)
@@ -109,7 +110,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if not isinstance(content, list):
                 continue
 
-            converted_items: List[Dict[str, Any]] = []
+            converted_items: list[dict[str, Any]] = []
             for item in content:
                 if not isinstance(item, dict):
                     converted_items.append(item)
@@ -198,10 +199,10 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _upload_files_via_files_api(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         client,
-        agent_id: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        agent_id: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Upload files via Claude Files API and replace pending markers with document blocks.
 
         Claude Files API only supports PDF and TXT files. Unsupported files are gracefully
@@ -216,7 +217,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         }
 
         # Find all file_pending_upload markers
-        file_locations: List[Tuple[int, int]] = []
+        file_locations: list[tuple[int, int]] = []
         for msg_idx, message in enumerate(messages):
             content = message.get("content")
             if not isinstance(content, list):
@@ -233,9 +234,9 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             httpx_client = httpx.AsyncClient()
 
             # Track uploaded file IDs, skipped files, failed uploads, and their corresponding locations
-            uploaded_files: List[Tuple[int, int, str]] = []  # (msg_idx, item_idx, file_id)
-            skipped_files: List[Tuple[int, int, str, str]] = []  # (msg_idx, item_idx, filename, reason)
-            failed_uploads: List[Tuple[int, int, str, str]] = []  # (msg_idx, item_idx, filename, reason)
+            uploaded_files: list[tuple[int, int, str]] = []  # (msg_idx, item_idx, file_id)
+            skipped_files: list[tuple[int, int, str, str]] = []  # (msg_idx, item_idx, filename, reason)
+            failed_uploads: list[tuple[int, int, str, str]] = []  # (msg_idx, item_idx, filename, reason)
 
             for msg_idx, item_idx in file_locations:
                 marker = messages[msg_idx]["content"][item_idx]
@@ -468,7 +469,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if client and hasattr(client, "aclose"):
                 await client.aclose()  # type: ignore[attr-defined]
 
-    def _ensure_no_pending_upload_markers(self, messages: List[Dict[str, Any]]) -> None:
+    def _ensure_no_pending_upload_markers(self, messages: list[dict[str, Any]]) -> None:
         """Raise UploadFileError if any file_pending_upload markers remain."""
         if not messages:
             return
@@ -486,11 +487,11 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _stream_without_custom_and_mcp_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Override to integrate Files API uploads into non-MCP streaming."""
         # Extract internal flags before merging kwargs (prevents API errors from unknown params)
         kwargs.pop("_compression_retry", None)
@@ -621,10 +622,83 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         async for chunk in self._process_stream(stream, all_params, agent_id):
             yield chunk
 
+    def _merge_parallel_tool_results(
+        self,
+        updated_messages: list[dict[str, Any]],
+        all_per_call_messages: list[list[dict[str, Any]]],
+    ) -> None:
+        """Consolidate parallel tool results into a single user message for Claude API.
+
+        Claude API has two strict requirements (documented):
+          1. All tool_result blocks for a given assistant turn MUST be in ONE user message.
+          2. That message MUST immediately follow the assistant message — no intervening
+             messages of any kind are allowed between the assistant's tool_use blocks and
+             the user's tool_result blocks.
+
+        When tools run in parallel each tool writes to an isolated buffer, producing
+        separate per-call user messages. Post-tool hook reminders (strategy='user_message')
+        also land in those buffers as plain user messages.
+
+        This override collects all tool_result blocks first, writes them as a single
+        consolidated user message immediately after the assistant message, and only then
+        appends any deferred non-tool-result messages (e.g. hook reminders).
+        """
+        tool_result_blocks: list[dict[str, Any]] = []
+        deferred_messages: list[dict[str, Any]] = []  # Hook reminders, etc.
+
+        for msgs in all_per_call_messages:
+            for msg in msgs:
+                if msg.get("role") == "user" and isinstance(msg.get("content"), list) and msg["content"] and all(isinstance(b, dict) and b.get("type") == "tool_result" for b in msg["content"]):
+                    tool_result_blocks.extend(msg["content"])
+                else:
+                    deferred_messages.append(msg)
+
+        # Step 1: consolidated tool_result message IMMEDIATELY after the assistant.
+        if tool_result_blocks:
+            # Merge into an existing tool_result user message that already follows the
+            # last assistant message (e.g. from a prior sequential step), or create one.
+            existing_tr_idx = None
+            for i in range(len(updated_messages) - 1, -1, -1):
+                m = updated_messages[i]
+                if m.get("role") == "assistant":
+                    break
+                if m.get("role") == "user" and isinstance(m.get("content"), list) and m["content"] and isinstance(m["content"][0], dict) and m["content"][0].get("type") == "tool_result":
+                    existing_tr_idx = i
+                    break
+
+            if existing_tr_idx is not None:
+                updated_messages[existing_tr_idx]["content"].extend(tool_result_blocks)
+            else:
+                updated_messages.append({"role": "user", "content": tool_result_blocks})
+
+        # Step 2: deferred messages (hook reminders) go AFTER the tool_result message.
+        updated_messages.extend(deferred_messages)
+
+    def filter_enforcement_tool_calls(
+        self,
+        tool_calls: list[dict[str, Any]],
+        unknown_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Filter out unknown tool calls from enforcement to avoid Claude API 400 errors.
+
+        Claude requires every tool_result block to reference a tool_use block in the
+        immediately preceding assistant message. Unknown tools (not registered as workflow,
+        MCP, or custom) are silently dropped by the orchestrator and never reach the
+        assistant message history. Sending a tool_result for such a call produces:
+          "messages.N: unexpected `tool_use_id` found in `tool_result` blocks"
+
+        Use object identity (id()) to match — the same dict objects that were appended to
+        the orchestrator's tool_calls list are passed here unchanged.
+        """
+        if not unknown_tool_calls:
+            return tool_calls
+        unknown_ids = {id(tc) for tc in unknown_tool_calls}
+        return [tc for tc in tool_calls if id(tc) not in unknown_ids]
+
     def _append_tool_result_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         result: Any,
         tool_type: str,
     ) -> None:
@@ -683,8 +757,8 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _append_tool_error_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         error_msg: str,
         tool_type: str,
     ) -> None:
@@ -732,7 +806,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         tool_name = call.get("name", "unknown")
         self._append_tool_to_buffer(tool_name, error_msg, is_error=True)
 
-    async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
+    async def _execute_custom_tool(self, call: dict[str, Any]) -> AsyncGenerator[CustomToolChunk]:
         """Execute custom tool with streaming support - async generator for base class.
 
         This method is called by _execute_tool_with_logging and yields CustomToolChunk
@@ -755,11 +829,11 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _stream_with_custom_and_mcp_tools(
         self,
-        current_messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        current_messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """Recursively stream responses, executing MCP and custom tool function calls when detected."""
 
         # Build API params for this iteration
@@ -853,9 +927,9 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 raise
 
         content = ""
-        current_tool_uses: Dict[str, Dict[str, Any]] = {}
-        mcp_tool_calls: List[Dict[str, Any]] = []
-        custom_tool_calls: List[Dict[str, Any]] = []
+        current_tool_uses: dict[str, dict[str, Any]] = {}
+        mcp_tool_calls: list[dict[str, Any]] = []
+        custom_tool_calls: list[dict[str, Any]] = []
         response_completed = False
 
         # Track usage from message events (Anthropic splits input/output across events)
@@ -1029,7 +1103,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         )
                 elif event.type == "message_stop":
                     captured_calls = []
-                    tool_use_by_name: Dict[str, Dict[str, Any]] = {}
+                    tool_use_by_name: dict[str, dict[str, Any]] = {}
 
                     if current_tool_uses:
                         for tool_use in current_tool_uses.values():
@@ -1201,7 +1275,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 execution_callback=self._execute_mcp_function_with_retry,
             )
 
-            def normalize_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+            def normalize_tool_call(tool_call: dict[str, Any]) -> dict[str, Any]:
                 """Convert Claude tool call format to unified format."""
                 return {
                     "name": tool_call["function"]["name"],
@@ -1209,7 +1283,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     "call_id": tool_call["id"],  # Normalize "id" to "call_id"
                 }
 
-            processed_call_ids: Set[str] = set()
+            processed_call_ids: set[str] = set()
 
             normalized_custom_calls = [normalize_tool_call(tc) for tc in custom_tool_calls]
             normalized_mcp_calls = [normalize_tool_call(tc) for tc in mcp_tool_calls]
@@ -1219,7 +1293,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
             nlip_available = self._nlip_enabled and self._nlip_router
 
-            pending_custom_calls: List[Dict[str, Any]] = []
+            pending_custom_calls: list[dict[str, Any]] = []
             for call in normalized_custom_calls:
                 handled_via_nlip = False
                 if nlip_available:
@@ -1253,7 +1327,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     )
                     pending_custom_calls.append(call)
 
-            pending_mcp_calls: List[Dict[str, Any]] = []
+            pending_mcp_calls: list[dict[str, Any]] = []
             for call in normalized_mcp_calls:
                 handled_via_nlip = False
                 if nlip_available:
@@ -1292,7 +1366,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if remaining_calls:
                 all_params_local = {**self.config, **kwargs}
 
-                def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+                def tool_config_for_call(call: dict[str, Any]) -> ToolExecutionConfig:
                     tool_name = call.get("name", "")
                     return CUSTOM_TOOL_CONFIG if tool_name in (self._custom_tool_names or set()) else MCP_TOOL_CONFIG
 
@@ -1333,12 +1407,12 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     async def _process_stream(
         self,
         stream,
-        all_params: Dict[str, Any],
-        agent_id: Optional[str],
-    ) -> AsyncGenerator[StreamChunk, None]:
+        all_params: dict[str, Any],
+        agent_id: str | None,
+    ) -> AsyncGenerator[StreamChunk]:
         """Process stream events and yield StreamChunks."""
         content_local = ""
-        current_tool_uses_local: Dict[str, Dict[str, Any]] = {}
+        current_tool_uses_local: dict[str, dict[str, Any]] = {}
 
         # Track usage from message events (Anthropic splits input/output across events)
         _input_tokens = 0
@@ -1601,10 +1675,10 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     async def _handle_mcp_error_and_fallback(
         self,
         error: Exception,
-        api_params: Dict[str, Any],
-        provider_tools: List[Dict[str, Any]],
-        stream_func: Callable[[Dict[str, Any]], AsyncGenerator[StreamChunk, None]],
-    ) -> AsyncGenerator[StreamChunk, None]:
+        api_params: dict[str, Any],
+        provider_tools: list[dict[str, Any]],
+        stream_func: Callable[[dict[str, Any]], AsyncGenerator[StreamChunk]],
+    ) -> AsyncGenerator[StreamChunk]:
         """Handle MCP errors with user-friendly messaging and fallback to non-MCP tools."""
 
         async with self._stats_lock:
@@ -1649,7 +1723,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         function_name: str,
         arguments_json: str,
         max_retries: int = 3,
-    ) -> Tuple[str, Any]:
+    ) -> tuple[str, Any]:
         """Execute MCP function with Claude-specific formatting."""
         # Use parent class method which returns tuple
         result_str, result_obj = await super()._execute_mcp_function_with_retry(
@@ -1662,7 +1736,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             return (result_str, {"error": result_str})
         return (result_str, result_obj)
 
-    def create_tool_result_message(self, tool_call: Dict[str, Any], result_content: str) -> Dict[str, Any]:
+    def create_tool_result_message(self, tool_call: dict[str, Any], result_content: str) -> dict[str, Any]:
         """Create tool result message in Claude's expected format."""
         tool_call_id = self.extract_tool_call_id(tool_call)
         return {
@@ -1676,7 +1750,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             ],
         }
 
-    def extract_tool_result_content(self, tool_result_message: Dict[str, Any]) -> str:
+    def extract_tool_result_content(self, tool_result_message: dict[str, Any]) -> str:
         """Extract content from Claude tool result message."""
         content = tool_result_message.get("content", [])
         if isinstance(content, list) and content:
@@ -1709,7 +1783,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """Get the provider name."""
         return "Claude"
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Get list of builtin tools supported by Claude."""
         return ["web_search", "code_execution"]
 
@@ -1717,7 +1791,7 @@ class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """Claude supports filesystem through MCP servers."""
         return FilesystemSupport.MCP
 
-    def _validate_advanced_features(self, all_params: Dict[str, Any]) -> None:
+    def _validate_advanced_features(self, all_params: dict[str, Any]) -> None:
         model = all_params.get("model", "")
         compatible_patterns = [
             "claude-opus-4-5",

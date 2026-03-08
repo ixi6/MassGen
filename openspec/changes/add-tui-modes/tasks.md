@@ -56,6 +56,10 @@
 - [x] 9.8 Add `defer_voting_until_all_answered` config flag to AgentConfig
 - [x] 9.9 Implement deferred voting with `_is_waiting_for_all_answers()` helper
 - [x] 9.10 Update TuiModeState.get_orchestrator_overrides() for multi-agent refinement OFF
+- [x] 9.11 Add `final_answer_strategy` config flag to AgentConfig and config exclusion lists
+- [x] 9.12 Implement `winner_reuse`, `winner_present`, and `synthesize` branches in `_present_final_answer()`
+- [x] 9.13 Ensure synthesis presentation receives all completed agent answers in presenter context
+- [x] 9.14 Keep vote-based winner selection, but use the selected winner as synthesis presenter by default in multi-agent refinement OFF
 
 ## 10. Controller Integration
 - [ ] 10.1 Modify `_run_turn()` to get mode state from adapter
@@ -78,11 +82,12 @@
 ## 13. Context Path Write Access
 - [ ] 13.1 Add `_has_write_context_paths()` helper to orchestrator
 - [ ] 13.2 Add `_enable_context_write_access()` helper to orchestrator
-- [ ] 13.3 Refactor `skip_final_presentation` logic to handle write context paths
-- [ ] 13.4 Single agent: enable writes without LLM call when refinement OFF
-- [ ] 13.5 Multi-agent: require presentation only if write paths exist
-- [x] 13.6 Add `recreate_container_for_write_access()` to FilesystemManager
-- [x] 13.7 Call `recreate_container_for_write_access()` in orchestrator before final presentation
+- [x] 13.3 Refactor `skip_final_presentation` logic to handle write context paths
+- [x] 13.4 Single agent: enable writes without LLM call when refinement OFF
+- [x] 13.5 Multi-agent `winner_reuse`: require presentation only if write paths exist
+- [x] 13.6 Multi-agent `synthesize`: run presentation even without write paths
+- [x] 13.7 Add `recreate_container_for_write_access()` to FilesystemManager
+- [x] 13.8 Call `recreate_container_for_write_access()` in orchestrator before final presentation
 
 ## 14. Context Path Write Tracking (Snapshot-based mtime comparison)
 - [x] 14.1 Add `_context_path_snapshot: Dict[str, float]` to PathPermissionManager (path -> mtime)
@@ -98,7 +103,7 @@
 - [x] 14.11 Show summary with log path in footer for many files
 
 ## 15. Testing
-- [ ] 15.1 Test TuiModeState.get_orchestrator_overrides() logic
+- [x] 15.1 Test TuiModeState.get_orchestrator_overrides() logic
 - [ ] 15.2 Test TuiModeState.get_effective_agents() filtering
 - [ ] 15.3 Test tab bar disabled state
 - [ ] 15.4 Manual test: plan mode flow end-to-end
@@ -112,3 +117,5 @@
 - [ ] 15.12 Manual test: context path write tracking (log file for many files)
 - [ ] 15.13 Manual test: multi-agent + refinement OFF independent execution (no injection)
 - [ ] 15.14 Manual test: multi-agent + refinement OFF deferred voting (agents wait for all)
+- [x] 15.15 Add integration tests for `final_answer_strategy` branches (`winner_reuse`, `winner_present`, `synthesize`)
+- [x] 15.16 Add regression test proving multi-agent + refinement OFF defaults to `synthesize`

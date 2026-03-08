@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Example script demonstrating custom tools usage with ResponseBackend.
 """

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base TUI Layout Mixin for MassGen TUI.
 
@@ -15,7 +14,6 @@ Usage:
 """
 
 from abc import abstractmethod
-from typing import Dict, List
 
 from .content_handlers import ToolBatchTracker
 from .shared import tui_log
@@ -48,7 +46,7 @@ class BaseTUILayoutMixin:
         self._viewed_round: int = 1
 
         # Context tracking per round
-        self._context_by_round: Dict[int, List[str]] = {}
+        self._context_by_round: dict[int, list[str]] = {}
 
     # -------------------------------------------------------------------------
     # Abstract methods - subclasses must implement

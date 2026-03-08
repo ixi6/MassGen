@@ -1,6 +1,4 @@
-# -*- coding: utf-8 -*-
 """Keyboard shortcuts help modal."""
-
 
 try:
     from textual.app import ComposeResult

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Status display utilities.
 
 Single source of truth for status indicators, colors, and time formatting.

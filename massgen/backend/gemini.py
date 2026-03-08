@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Gemini backend implementation using structured output for voting and answer submission.
 
@@ -25,8 +24,9 @@ import json
 import logging
 import os
 import random
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass, field
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Set
+from typing import Any
 
 from ..api_params_handler._gemini_api_params_handler import GeminiAPIParamsHandler
 from ..configs.rate_limits import get_rate_limit_config
@@ -69,7 +69,7 @@ logging.getLogger("google_genai.types").addFilter(NoFunctionCallWarning())
 
 # Gemini API prefixes that should be stripped from tool names
 # Gemini sometimes returns tool names with prefixes like "default_api:" or other namespace qualifiers
-GEMINI_TOOL_NAME_PREFIXES = ("default_api:",)
+GEMINI_TOOL_NAME_PREFIXES = ("default_api:", "default_api__")
 
 
 def _normalize_gemini_tool_name(tool_name: str) -> str:
@@ -100,10 +100,10 @@ class BackoffConfig:
     multiplier: float = 3.0
     max_delay: float = 60.0
     jitter: float = 0.2
-    retry_statuses: Set[int] = field(default_factory=lambda: {429, 503})
+    retry_statuses: set[int] = field(default_factory=lambda: {429, 503})
 
 
-def _is_retryable_gemini_error(exc: Exception, retry_statuses: Set[int]) -> tuple:
+def _is_retryable_gemini_error(exc: Exception, retry_statuses: set[int]) -> tuple:
     """
     Check if exception is a retryable Gemini API error.
 
@@ -153,7 +153,7 @@ def _is_retryable_gemini_error(exc: Exception, retry_statuses: Set[int]) -> tupl
     return (is_retryable, status_code, str(exc))
 
 
-def _extract_retry_after(exc: Exception) -> Optional[float]:
+def _extract_retry_after(exc: Exception) -> float | None:
     """Extract Retry-After value from exception if available."""
     # Check for response headers
     if hasattr(exc, "response") and hasattr(exc.response, "headers"):
@@ -243,7 +243,7 @@ def format_tool_response_as_json(response_text: str) -> str:
 class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     """Google Gemini backend using structured output for coordination and MCP tool integration."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         # Store Gemini-specific API key before calling parent init
         gemini_api_key = api_key or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
 
@@ -275,7 +275,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         self._mcp_connection_retries = 0
 
         # Active tool result capture during manual tool execution
-        self._active_tool_result_store: Optional[Dict[str, str]] = None
+        self._active_tool_result_store: dict[str, str] | None = None
 
         # Monotonic counter for globally unique tool call IDs
         self._tool_call_counter = 0
@@ -335,6 +335,40 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             self.rate_limiter = None
             logger.info(f"[Gemini] Rate limiting disabled for '{model_name}'")
 
+    def _normalize_and_resolve_tool_name(self, tool_name: str) -> str:
+        """Normalize Gemini tool names and resolve MCP aliases.
+
+        Gemini can emit tool calls in different forms:
+        - API-prefixed names (for example, ``default_api:tool``)
+        - Canonical MCP names (``mcp__server__tool``)
+        - Bare server/tool MCP names (``server__tool``)
+
+        We normalize provider-specific prefixes first, then map bare MCP names to
+        their canonical ``mcp__...`` form when the canonical name is registered.
+        """
+        normalized_name = _normalize_gemini_tool_name(tool_name or "")
+        if not normalized_name:
+            return normalized_name
+
+        # Keep already-known names unchanged.
+        if normalized_name in self._mcp_functions:
+            return normalized_name
+        if normalized_name in self._custom_tool_names:
+            return normalized_name
+
+        # Preserve explicit namespace prefixes when present.
+        if normalized_name.startswith("mcp__"):
+            return normalized_name
+        if normalized_name.startswith("custom_tool__"):
+            return normalized_name
+
+        # Gemini may emit MCP names without the mcp__ prefix.
+        mcp_alias = f"mcp__{normalized_name}"
+        if mcp_alias in self._mcp_functions:
+            return mcp_alias
+
+        return normalized_name
+
     def _get_rate_limiter_context(self):
         """Get rate limiter context manager (or nullcontext if rate limiting is disabled)."""
         if self.rate_limiter is not None:
@@ -347,7 +381,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         make_stream_coro: Callable,
         op_name: str,
         model_name: str,
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ):
         """
         Execute generate_content_stream with exponential backoff on rate limit errors.
@@ -412,7 +446,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         if last_exc:
             raise last_exc
 
-    async def _process_stream(self, stream, all_params, agent_id: Optional[str] = None) -> AsyncGenerator[StreamChunk, None]:
+    async def _process_stream(self, stream, all_params, agent_id: str | None = None) -> AsyncGenerator[StreamChunk, None]:
         """
         Required by CustomToolAndMCPBackend abstract method.
         Not used by Gemini - Gemini SDK handles streaming directly in stream_with_tools().
@@ -440,14 +474,14 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def _stream_with_custom_and_mcp_tools(
         self,
-        current_messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        current_messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         client,
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         yield StreamChunk(type="error", error="Not implemented")
 
-    async def stream_with_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk, None]:
+    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk, None]:
         """Stream response using Gemini API with manual MCP execution pattern.
 
         Tool Execution Behavior:
@@ -767,8 +801,8 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                         for part in candidate.content.parts:
                                             # Check for function_call part
                                             if hasattr(part, "function_call") and part.function_call:
-                                                # Extract call data and normalize tool name (strip prefixes like "default_api:")
-                                                tool_name = _normalize_gemini_tool_name(part.function_call.name)
+                                                # Normalize provider prefixes and map MCP aliases.
+                                                tool_name = self._normalize_and_resolve_tool_name(part.function_call.name)
                                                 tool_args = dict(part.function_call.args) if part.function_call.args else {}
 
                                                 # Create call record with globally unique ID
@@ -1190,7 +1224,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 )
 
                 # Capture tool execution results for continuation loop
-                tool_results: Dict[str, str] = {}
+                tool_results: dict[str, str] = {}
                 self._active_tool_result_store = tool_results
 
                 try:
@@ -1209,7 +1243,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
                     nlip_available = self._nlip_enabled and self._nlip_router
 
-                    pending_custom_calls: List[Dict[str, Any]] = []
+                    pending_custom_calls: list[dict[str, Any]] = []
                     for call in custom_calls:
                         handled_via_nlip = False
                         if nlip_available:
@@ -1245,7 +1279,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                         )
                         pending_custom_calls.append(call)
 
-                    pending_mcp_calls: List[Dict[str, Any]] = []
+                    pending_mcp_calls: list[dict[str, Any]] = []
                     for call in mcp_calls:
                         handled_via_nlip = False
                         if nlip_available:
@@ -1285,7 +1319,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
                     all_calls = pending_custom_calls + pending_mcp_calls
 
-                    def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+                    def tool_config_for_call(call: dict[str, Any]) -> ToolExecutionConfig:
                         tool_name = call.get("name", "")
                         return CUSTOM_TOOL_CONFIG if tool_name in (self._custom_tool_names or set()) else MCP_TOOL_CONFIG
 
@@ -1309,7 +1343,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 executed_calls = custom_calls + mcp_calls
 
                 # Build initial conversation history using SDK Content objects
-                conversation_history: List[types.Content] = [
+                conversation_history: list[types.Content] = [
                     types.Content(parts=[types.Part(text=full_content)], role="user"),
                 ]
 
@@ -1431,8 +1465,8 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                                             if hasattr(candidate.content, "parts") and candidate.content.parts:
                                                 for part in candidate.content.parts:
                                                     if hasattr(part, "function_call") and part.function_call:
-                                                        # Normalize tool name (strip prefixes like "default_api:")
-                                                        tool_name = _normalize_gemini_tool_name(part.function_call.name)
+                                                        # Normalize provider prefixes and map MCP aliases.
+                                                        tool_name = self._normalize_and_resolve_tool_name(part.function_call.name)
                                                         tool_args = dict(part.function_call.args) if part.function_call.args else {}
                                                         call_id = f"call_{self._tool_call_counter}"
                                                         self._tool_call_counter += 1
@@ -1784,7 +1818,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                             yield StreamChunk(type="done")
                             return
 
-                    new_tool_results: Dict[str, str] = {}
+                    new_tool_results: dict[str, str] = {}
                     self._active_tool_result_store = new_tool_results
 
                     # Check circuit breaker before MCP tool execution
@@ -1803,7 +1837,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
                     try:
                         # Execute tools based on configuration (same scheduler as initial execution)
-                        def tool_config_for_call(call: Dict[str, Any]) -> ToolExecutionConfig:
+                        def tool_config_for_call(call: dict[str, Any]) -> ToolExecutionConfig:
                             tool_name = call.get("name", "")
                             return CUSTOM_TOOL_CONFIG if tool_name in (self._custom_tool_names or set()) else MCP_TOOL_CONFIG
 
@@ -1909,7 +1943,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             # ====================================================================
             final_response = last_response_with_candidates
 
-            tool_calls_detected: List[Dict[str, Any]] = []
+            tool_calls_detected: list[dict[str, Any]] = []
 
             if (is_coordination or is_post_evaluation) and full_content_text.strip():
                 content = full_content_text
@@ -1925,7 +1959,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
                     if raw_tool_calls:
                         tool_type = "post_evaluation" if is_post_evaluation else "coordination"
-                        workflow_tool_calls: List[Dict[str, Any]] = []
+                        workflow_tool_calls: list[dict[str, Any]] = []
 
                         for call in raw_tool_calls:
                             tool_name = call.get("name", "")
@@ -1985,7 +2019,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
                 if hasattr(candidate, "grounding_metadata") and candidate.grounding_metadata:
                     search_actually_used = False
-                    search_queries: List[str] = []
+                    search_queries: list[str] = []
 
                     if hasattr(candidate.grounding_metadata, "web_search_queries") and candidate.grounding_metadata.web_search_queries:
                         try:
@@ -2043,7 +2077,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 )
 
                 if enable_code_execution and hasattr(candidate, "content") and hasattr(candidate.content, "parts"):
-                    code_parts: List[str] = []
+                    code_parts: list[str] = []
 
                     for part in candidate.content.parts:
                         if hasattr(part, "executable_code") and part.executable_code:
@@ -2233,8 +2267,8 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _append_tool_result_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         result: Any,
         tool_type: str,
     ) -> None:
@@ -2277,8 +2311,8 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     def _append_tool_error_message(
         self,
-        updated_messages: List[Dict[str, Any]],
-        call: Dict[str, Any],
+        updated_messages: list[dict[str, Any]],
+        call: dict[str, Any],
         error_msg: str,
         tool_type: str,
     ) -> None:
@@ -2307,7 +2341,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         tool_name = call.get("name", "unknown")
         self._append_tool_to_buffer(tool_name, error_msg, is_error=True)
 
-    async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
+    async def _execute_custom_tool(self, call: dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
         """Execute custom tool with streaming support - async generator for base class.
 
         This method is called by _execute_tool_with_logging and yields CustomToolChunk
@@ -2336,7 +2370,7 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         """Gemini supports filesystem through MCP servers."""
         return FilesystemSupport.MCP
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Get list of builtin tools supported by Gemini."""
         return ["google_search_retrieval", "code_execution"]
 
@@ -2406,9 +2440,9 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
 
     async def __aexit__(
         self,
-        exc_type: Optional[type],
-        exc_val: Optional[BaseException],
-        exc_tb: Optional[object],
+        exc_type: type | None,
+        exc_val: BaseException | None,
+        exc_tb: object | None,
     ) -> None:
         """Async context manager exit with automatic resource cleanup."""
         # Parameters are required by context manager protocol but not used

@@ -1,13 +1,14 @@
-# -*- coding: utf-8 -*-
 """
 Azure OpenAI backend implementation.
 Uses the official Azure OpenAI client for proper Azure integration.
 """
+
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import os
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from loguru import logger
 
@@ -30,7 +31,7 @@ class AzureOpenAIBackend(LLMBackend):
         AZURE_OPENAI_API_VERSION: Azure OpenAI API version (optional, defaults to 2024-12-01-preview)
     """
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         super().__init__(api_key, **kwargs)
 
         # Get Azure configuration from parameters or environment variables
@@ -56,10 +57,10 @@ class AzureOpenAIBackend(LLMBackend):
 
     async def stream_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
-    ) -> AsyncGenerator[StreamChunk, None]:
+    ) -> AsyncGenerator[StreamChunk]:
         """
         Stream a response with tool calling support using Azure OpenAI.
 
@@ -351,9 +352,9 @@ class AzureOpenAIBackend(LLMBackend):
 
     def _prepare_messages_with_workflow_tools(
         self,
-        messages: List[Dict[str, Any]],
-        workflow_tools: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        workflow_tools: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Prepare messages with workflow tool instructions."""
         if not workflow_tools:
             return messages
@@ -384,7 +385,7 @@ class AzureOpenAIBackend(LLMBackend):
     def _build_workflow_tools_system_prompt(
         self,
         base_system: str,
-        workflow_tools: List[Dict[str, Any]],
+        workflow_tools: list[dict[str, Any]],
     ) -> str:
         """Build system prompt with workflow tool instructions."""
         system_parts = []
@@ -491,8 +492,8 @@ class AzureOpenAIBackend(LLMBackend):
 
     def _filter_tool_messages_for_azure(
         self,
-        messages: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Filter out tool messages that don't follow Azure OpenAI requirements."""
         filtered_messages = []
         last_message_had_tool_calls = False
@@ -512,7 +513,7 @@ class AzureOpenAIBackend(LLMBackend):
 
         return filtered_messages
 
-    def _extract_workflow_tool_calls(self, content: str) -> List[Dict[str, Any]]:
+    def _extract_workflow_tool_calls(self, content: str) -> list[dict[str, Any]]:
         """Extract workflow tool calls from content.
 
         Tries multiple extraction strategies in order:
@@ -777,8 +778,8 @@ class AzureOpenAIBackend(LLMBackend):
 
     def _convert_tools_format(
         self,
-        tools: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        tools: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Convert tools to Azure OpenAI format if needed."""
         # Azure OpenAI uses the same tool format as OpenAI
         return tools
@@ -817,7 +818,7 @@ class AzureOpenAIBackend(LLMBackend):
         except Exception as e:
             return StreamChunk(type="error", error=f"Error processing chunk: {str(e)}")
 
-    def extract_tool_call_id(self, tool_call: Dict[str, Any]) -> str:
+    def extract_tool_call_id(self, tool_call: dict[str, Any]) -> str:
         """Extract tool call id from Chat Completions-style tool call."""
         return tool_call.get("id", "")
 
@@ -825,6 +826,6 @@ class AzureOpenAIBackend(LLMBackend):
         """OpenAI supports filesystem through MCP servers."""
         return FilesystemSupport.MCP
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Get list of builtin tools supported by OpenAI."""
         return ["web_search", "code_interpreter"]

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Prompt parser for @filename syntax to include context paths inline.
 
 This module provides parsing functionality to extract @path references from
@@ -24,7 +23,6 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 
 class PromptParserError(Exception):
@@ -44,8 +42,8 @@ class ParsedPrompt:
 
     original_prompt: str
     cleaned_prompt: str
-    context_paths: List[Dict[str, str]] = field(default_factory=list)
-    suggestions: List[str] = field(default_factory=list)
+    context_paths: list[dict[str, str]] = field(default_factory=list)
+    suggestions: list[str] = field(default_factory=list)
 
 
 class PromptParser:
@@ -125,7 +123,7 @@ class PromptParser:
             email_positions.add(match.start())
 
         # Find all @references
-        matches: List[Tuple[str, str, int, int]] = []  # (path, suffix, start, end)
+        matches: list[tuple[str, str, int, int]] = []  # (path, suffix, start, end)
         for match in self.PATTERN.finditer(prompt):
             # Skip if this @ is part of an email address
             # Check if @ position corresponds to an email
@@ -155,8 +153,8 @@ class PromptParser:
             )
 
         # Process matches and validate paths
-        context_paths: Dict[str, Dict[str, str]] = {}  # path -> {path, permission}
-        missing_paths: List[str] = []
+        context_paths: dict[str, dict[str, str]] = {}  # path -> {path, permission}
+        missing_paths: list[str] = []
 
         for path_str, suffix, _, _ in matches:
             try:
@@ -281,8 +279,8 @@ class PromptParser:
 
     def _generate_consolidation_suggestions(
         self,
-        paths: List[Dict[str, str]],
-    ) -> List[str]:
+        paths: list[dict[str, str]],
+    ) -> list[str]:
         """Generate suggestions for consolidating sibling files.
 
         If 3 or more files are from the same directory, suggests using

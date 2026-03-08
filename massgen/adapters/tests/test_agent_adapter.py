@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for base AgentAdapter class.
 """
+
 import pytest
 
 from massgen.adapters.base import AgentAdapter

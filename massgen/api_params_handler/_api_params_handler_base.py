@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base class for API parameters handlers.
 Provides common functionality for building API parameters across different backends.
@@ -7,7 +6,7 @@ Provides common functionality for building API parameters across different backe
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Set
+from typing import Any
 
 
 class APIParamsHandlerBase(ABC):
@@ -26,10 +25,10 @@ class APIParamsHandlerBase(ABC):
     @abstractmethod
     async def build_api_params(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        all_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        all_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build API parameters for the specific backend.
 
         Args:
@@ -42,14 +41,14 @@ class APIParamsHandlerBase(ABC):
         """
 
     @abstractmethod
-    def get_excluded_params(self) -> Set[str]:
+    def get_excluded_params(self) -> set[str]:
         """Get backend-specific parameters to exclude from API calls."""
 
     @abstractmethod
-    def get_provider_tools(self, all_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_provider_tools(self, all_params: dict[str, Any]) -> list[dict[str, Any]]:
         """Get provider-specific tools based on parameters."""
 
-    def get_base_excluded_params(self) -> Set[str]:
+    def get_base_excluded_params(self) -> set[str]:
         """Get common parameters to exclude across all backends."""
         return {
             "upload_files",
@@ -110,6 +109,15 @@ class APIParamsHandlerBase(ABC):
             "use_two_tier_workspace",  # Two-tier workspace (scratch/deliverable) + git versioning
             "write_mode",  # Isolated write context mode (auto/worktree/isolated/legacy)
             "drift_conflict_policy",  # Isolated apply drift resolution policy
+            "subagent_types",  # Which subagent types to expose (handled by orchestrator)
+            "round_evaluator_before_checklist",  # Coordination-only evaluator-first loop control
+            "orchestrator_managed_round_evaluator",  # Gate for orchestrator-owned round_evaluator launch
+            "enable_quality_rethink_on_iteration",  # Coordination-only quality task injection toggle
+            "enable_novelty_on_iteration",  # Coordination-only novelty task injection toggle
+            "novelty_injection",  # Novelty pressure level (none/gentle/moderate/aggressive)
+            "improvements",  # propose_improvements gate settings (orchestrator/checklist only)
+            "learning_capture_mode",  # Learning capture timing (round/verification_and_final_only/final_only)
+            "disable_final_only_round_capture_fallback",  # Coordination-only fallback control for final_only+skip_final_presentation
             # NLIP configuration belongs to MassGen routing, never provider APIs
             "enable_nlip",
             "nlip",
@@ -132,21 +140,27 @@ class APIParamsHandlerBase(ABC):
             "voting_sensitivity",
             "voting_threshold",
             "checklist_require_gap_report",
+            "gap_report_mode",
             # Decomposition mode parameters (handled by orchestrator, not passed to API)
             "coordination_mode",
             "presenter_agent",
+            "final_answer_strategy",
             "subtask",
             # Fairness controls (handled by orchestrator, not passed to API)
             "fairness_enabled",
             "fairness_lead_cap_answers",
             "max_midstream_injections_per_round",
+            "defer_peer_updates_until_restart",
+            "allow_midstream_peer_updates_before_checklist_submit",
+            "max_checklist_calls_per_round",
+            "checklist_first_answer",
         }
 
     def build_base_api_params(
         self,
-        messages: List[Dict[str, Any]],
-        all_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        all_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build base API parameters common to most backends."""
         api_params = {"stream": True}
 
@@ -158,9 +172,48 @@ class APIParamsHandlerBase(ABC):
 
         return api_params
 
-    def get_mcp_tools(self) -> List[Dict[str, Any]]:
+    def get_mcp_tools(self) -> list[dict[str, Any]]:
         """Get MCP tools from backend if available."""
         if hasattr(self.backend, "_mcp_functions") and self.backend._mcp_functions:
             if hasattr(self.backend, "get_mcp_tools_formatted"):
                 return self.backend.get_mcp_tools_formatted()
+        return []
+
+    def get_custom_tools(self) -> list[dict[str, Any]]:
+        """Get custom tools, preferring backend-provided full schemas when available.
+
+        Backends that inherit CustomToolAndMCPBackend expose
+        `_get_custom_tools_schemas()`, which includes internal background lifecycle
+        management tools in addition to user custom tools. Falling back to
+        `custom_tool_manager.registered_tools` keeps compatibility for handlers
+        instantiated with mocked backends in tests.
+        """
+        if hasattr(self.backend, "_get_custom_tools_schemas"):
+            try:
+                custom_schemas = self.backend._get_custom_tools_schemas()
+            except Exception:  # noqa: BLE001
+                custom_schemas = []
+            if not isinstance(custom_schemas, list):
+                custom_schemas = []
+
+            if custom_schemas:
+                normalized_schemas: list[dict[str, Any]] = []
+                for schema in custom_schemas:
+                    if schema.get("type") == "function" and "function" in schema:
+                        function_block = dict(schema.get("function", {}))
+                        function_block.setdefault("description", "")
+                        normalized_schema = dict(schema)
+                        normalized_schema["function"] = function_block
+                        normalized_schemas.append(normalized_schema)
+                    else:
+                        normalized_schemas.append(schema)
+
+                if hasattr(self.formatter, "format_tools"):
+                    return self.formatter.format_tools(normalized_schemas)
+                return normalized_schemas
+
+        custom_tools = getattr(self.custom_tool_manager, "registered_tools", None)
+        if custom_tools:
+            return self.formatter.format_custom_tools(custom_tools)
+
         return []

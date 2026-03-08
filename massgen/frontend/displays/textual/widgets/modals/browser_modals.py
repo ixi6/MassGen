@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Browser-related modals: Answer browser, Timeline, Browser tabs, Workspace browser."""
 
 import os
@@ -6,7 +5,7 @@ import re
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 try:
     from textual.app import ComposeResult
@@ -116,19 +115,19 @@ class AnswerBrowserModal(BaseModal):
 
     def __init__(
         self,
-        answers: List[Dict[str, Any]],
-        votes: List[Dict[str, Any]],
-        agent_ids: List[str],
-        winner_agent_id: Optional[str] = None,
+        answers: list[dict[str, Any]],
+        votes: list[dict[str, Any]],
+        agent_ids: list[str],
+        winner_agent_id: str | None = None,
     ):
         super().__init__()
         self.answers = answers
         self.votes = votes
         self.agent_ids = agent_ids
         self.winner_agent_id = winner_agent_id
-        self._current_filter: Optional[str] = None  # None = all agents
+        self._current_filter: str | None = None  # None = all agents
         self._selected_answer_idx: int = 0  # Start with first (most recent after sorting)
-        self._filtered_answers: List[Dict[str, Any]] = []
+        self._filtered_answers: list[dict[str, Any]] = []
         self._selected_content: str = ""  # Store selected answer content for copy
         self._render_count: int = 0  # Counter for unique widget IDs to avoid DuplicateIds
 
@@ -372,11 +371,11 @@ class TimelineModal(BaseModal):
 
     def __init__(
         self,
-        answers: List[Dict[str, Any]],
-        votes: List[Dict[str, Any]],
-        agent_ids: List[str],
-        winner_agent_id: Optional[str] = None,
-        restart_history: Optional[List[Dict[str, Any]]] = None,
+        answers: list[dict[str, Any]],
+        votes: list[dict[str, Any]],
+        agent_ids: list[str],
+        winner_agent_id: str | None = None,
+        restart_history: list[dict[str, Any]] | None = None,
     ):
         super().__init__()
         self.answers = answers
@@ -570,11 +569,11 @@ class BrowserTabsModal(BaseModal):
 
     def __init__(
         self,
-        answers: List[Dict[str, Any]],
-        votes: List[Dict[str, Any]],
-        vote_counts: Dict[str, int],
-        agent_ids: List[str],
-        winner_agent_id: Optional[str] = None,
+        answers: list[dict[str, Any]],
+        votes: list[dict[str, Any]],
+        vote_counts: dict[str, int],
+        agent_ids: list[str],
+        winner_agent_id: str | None = None,
         initial_tab: str = "timeline",
     ):
         super().__init__()
@@ -847,11 +846,11 @@ class WorkspaceBrowserModal(BaseModal):
 
     def __init__(
         self,
-        answers: List[Dict[str, Any]],
-        agent_ids: List[str],
-        agent_workspace_paths: Optional[Dict[str, str]] = None,
-        agent_final_paths: Optional[Dict[str, str]] = None,
-        default_agent: Optional[str] = None,
+        answers: list[dict[str, Any]],
+        agent_ids: list[str],
+        agent_workspace_paths: dict[str, str] | None = None,
+        agent_final_paths: dict[str, str] | None = None,
+        default_agent: str | None = None,
         default_to_final: bool = False,
     ):
         super().__init__()
@@ -876,15 +875,15 @@ class WorkspaceBrowserModal(BaseModal):
         else:
             self._selected_answer_idx: int = len(answers) - 1 if answers else 0
 
-        self._current_files: List[Dict[str, Any]] = []
+        self._current_files: list[dict[str, Any]] = []
         self._selected_file_idx: int = 0
         self._load_counter: int = 0  # Counter to ensure unique widget IDs
-        self._current_workspace_path: Optional[str] = None  # Track currently displayed workspace
-        self._tree_lines: List[tuple] = []  # Store tree structure for click handling
-        self._expanded_dirs: Set[str] = set()  # Track which directories are expanded
-        self._dir_file_counts: Dict[str, int] = {}  # Track file counts per directory
+        self._current_workspace_path: str | None = None  # Track currently displayed workspace
+        self._tree_lines: list[tuple] = []  # Store tree structure for click handling
+        self._expanded_dirs: set[str] = set()  # Track which directories are expanded
+        self._dir_file_counts: dict[str, int] = {}  # Track file counts per directory
         # Default to specified agent or first agent
-        self._current_agent_filter: Optional[str] = selected_agent  # None = all agents
+        self._current_agent_filter: str | None = selected_agent  # None = all agents
         self._timing_debug = tui_debug_enabled() and os.environ.get("MASSGEN_TUI_TIMING_DEBUG", "").lower() in (
             "1",
             "true",
@@ -1064,9 +1063,9 @@ class WorkspaceBrowserModal(BaseModal):
                     "[TIMING] WorkspaceBrowserModal._load_workspace_files " f"{(time.perf_counter() - started) * 1000.0:.1f}ms " f"files={len(self._current_files)} workspace={workspace_path}",
                 )
 
-    def _scan_workspace_files(self, workspace_path: str) -> tuple[List[Dict[str, Any]], bool]:
+    def _scan_workspace_files(self, workspace_path: str) -> tuple[list[dict[str, Any]], bool]:
         """Return a bounded, filtered file listing for a workspace."""
-        files: List[Dict[str, Any]] = []
+        files: list[dict[str, Any]] = []
         truncated = False
         for root, dirs, filenames in os.walk(workspace_path, topdown=True):
             # Skip hidden/ignored directories and enforce a max traversal depth.
@@ -1110,7 +1109,7 @@ class WorkspaceBrowserModal(BaseModal):
         else:
             return f"{size // (1024 * 1024)}MB"
 
-    def _build_file_tree(self, files: List[Dict[str, Any]]) -> List[tuple]:
+    def _build_file_tree(self, files: list[dict[str, Any]]) -> list[tuple]:
         """Build tree-style display for files with collapsible directories.
 
         Returns:
@@ -1120,8 +1119,8 @@ class WorkspaceBrowserModal(BaseModal):
             - file_idx is str starting with "dir:": clickable directory toggle
         """
         # Group files by directory
-        dir_files: Dict[str, List[tuple]] = {}  # dir -> [(filename, size, file_idx), ...]
-        root_files: List[tuple] = []  # [(filename, size, file_idx), ...]
+        dir_files: dict[str, list[tuple]] = {}  # dir -> [(filename, size, file_idx), ...]
+        root_files: list[tuple] = []  # [(filename, size, file_idx), ...]
 
         for idx, f in enumerate(files):
             rel_path = f["rel_path"]

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Integration tests for the git worktree and isolation context infrastructure.
 

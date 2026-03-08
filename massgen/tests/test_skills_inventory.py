@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for skill inventory scanning."""
 
 from pathlib import Path

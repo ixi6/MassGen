@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Event loop/resource cleanup tests for multiple backends without changing code.
 These tests mock SDK async clients and assert aclose() is awaited by backends.
@@ -14,7 +13,7 @@ NOTE: Some tests may currently FAIL, revealing missing cleanup in backends.
 
 import asyncio
 from types import SimpleNamespace
-from typing import Any, List
+from typing import Any
 
 import pytest
 
@@ -71,7 +70,7 @@ class _FakeOpenAIClient(_FakeAsyncClientBase):
 async def test_response_backend_stream_closes_client(monkeypatch):
     import openai
 
-    created: List[_FakeOpenAIClient] = []
+    created: list[_FakeOpenAIClient] = []
 
     def _factory(*args: Any, **kwargs: Any) -> _FakeOpenAIClient:
         client = _FakeOpenAIClient(*args, **kwargs)
@@ -115,7 +114,7 @@ class _FakeOpenAIClientForGrok(_FakeAsyncClientBase):
 async def test_grok_backend_stream_closes_client(monkeypatch):
     import openai
 
-    created: List[_FakeOpenAIClientForGrok] = []
+    created: list[_FakeOpenAIClientForGrok] = []
 
     def _factory(*args: Any, **kwargs: Any) -> _FakeOpenAIClientForGrok:
         client = _FakeOpenAIClientForGrok(*args, **kwargs)
@@ -158,7 +157,7 @@ class _FakeAnthropicClient(_FakeAsyncClientBase):
 async def test_claude_backend_stream_closes_client(monkeypatch):
     import anthropic
 
-    created: List[_FakeAnthropicClient] = []
+    created: list[_FakeAnthropicClient] = []
 
     def _factory(*args: Any, **kwargs: Any) -> _FakeAnthropicClient:
         client = _FakeAnthropicClient(*args, **kwargs)

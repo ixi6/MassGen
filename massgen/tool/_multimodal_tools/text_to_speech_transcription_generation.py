@@ -1,12 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Convert text (transcription) directly to speech using OpenAI's TTS API with streaming response.
 
 This module is an alias for the unified generate_media tool.
 For new code, prefer using generate_media(prompt, mode="audio") directly.
 """
-
-from typing import List, Optional
 
 from massgen.tool._result import ExecutionResult
 
@@ -17,11 +14,11 @@ async def text_to_speech_transcription_generation(
     input_text: str,
     model: str = "gpt-4o-mini-tts",
     voice: str = "alloy",
-    instructions: Optional[str] = None,
-    storage_path: Optional[str] = None,
+    instructions: str | None = None,
+    storage_path: str | None = None,
     audio_format: str = "mp3",
-    allowed_paths: Optional[List[str]] = None,
-    agent_cwd: Optional[str] = None,
+    allowed_paths: list[str] | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """
     Convert text (transcription) directly to speech using OpenAI's TTS API with streaming response.

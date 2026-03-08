@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Full TUI Modal for Subagents.
 
@@ -14,7 +13,7 @@ Features:
 - Full parity with main TUI styling and widgets
 """
 
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -42,7 +41,7 @@ class SubagentFinalAnswerCard(Vertical):
     # CSS moved to base.tcss for theme support
     DEFAULT_CSS = ""
 
-    def __init__(self, content: str = "", id: Optional[str] = None) -> None:
+    def __init__(self, content: str = "", id: str | None = None) -> None:
         super().__init__(id=id)
         self._content = content
 
@@ -126,8 +125,9 @@ class SubagentTuiModal(ModalScreen[None]):
     def __init__(
         self,
         subagent: SubagentDisplayData,
-        all_subagents: Optional[List[SubagentDisplayData]] = None,
-        status_callback: Optional[Callable[[str], Optional[SubagentDisplayData]]] = None,
+        all_subagents: list[SubagentDisplayData] | None = None,
+        status_callback: Callable[[str], SubagentDisplayData | None] | None = None,
+        subagent_index: int | None = None,
     ) -> None:
         """Initialize the modal.
 
@@ -135,24 +135,28 @@ class SubagentTuiModal(ModalScreen[None]):
             subagent: The subagent to display
             all_subagents: All subagents for navigation
             status_callback: Callback to get updated status
+            subagent_index: Explicit index of the subagent in all_subagents
         """
         super().__init__()
         self._subagent = subagent
         self._all_subagents = all_subagents or [subagent]
         self._current_index = 0
-        # Find current index
-        for i, sa in enumerate(self._all_subagents):
-            if sa.id == subagent.id:
-                self._current_index = i
-                break
+        # Find current index: prefer explicit index, fall back to identity match
+        if subagent_index is not None and 0 <= subagent_index < len(self._all_subagents):
+            self._current_index = subagent_index
+        else:
+            for i, sa in enumerate(self._all_subagents):
+                if sa is subagent:
+                    self._current_index = i
+                    break
 
         self._status_callback = status_callback
-        self._poll_timer: Optional[Timer] = None
-        self._event_reader: Optional[EventReader] = None
-        self._content_processor: Optional[ContentProcessor] = None
+        self._poll_timer: Timer | None = None
+        self._event_reader: EventReader | None = None
+        self._content_processor: ContentProcessor | None = None
         self._tool_count = 0
         self._round_number = 1
-        self._final_answer: Optional[str] = None
+        self._final_answer: str | None = None
 
     def compose(self) -> ComposeResult:
         with Container():
@@ -326,7 +330,7 @@ class SubagentTuiModal(ModalScreen[None]):
         events = self._event_reader.read_all()
         self._process_events(events)
 
-    def _process_events(self, events: List[MassGenEvent]) -> None:
+    def _process_events(self, events: list[MassGenEvent]) -> None:
         """Process events and add widgets to timeline."""
         if not self._content_processor:
             return

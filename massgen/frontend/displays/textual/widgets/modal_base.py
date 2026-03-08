@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Base Modal class with shared styling and behavior for all MassGen TUI modals.
 
@@ -8,7 +7,7 @@ This module provides:
 - Shared CSS definitions for modal styling
 """
 
-from typing import TYPE_CHECKING, Any, List, Tuple
+from typing import TYPE_CHECKING, Any
 
 try:
     from textual import events
@@ -227,7 +226,7 @@ class BaseModal(ModalScreen):
 
     def make_footer(
         self,
-        buttons: List[Tuple[str, str, str]],
+        buttons: list[tuple[str, str, str]],
         alignment: str = "right",
     ) -> ComposeResult:
         """Generate standard modal footer with buttons.
@@ -284,7 +283,7 @@ class BaseDataModal(BaseModal):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._selected_index: int = 0
-        self._filtered_items: List[Any] = []
+        self._filtered_items: list[Any] = []
         self._render_count: int = 0  # For unique widget IDs
 
     def _increment_render_count(self) -> int:

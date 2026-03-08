@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Claude formatter implementation.
 Handles formatting for Anthropic Claude Messages API format.
@@ -6,7 +5,7 @@ Handles formatting for Anthropic Claude Messages API format.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 from ._formatter_base import FormatterBase
 
@@ -14,14 +13,14 @@ from ._formatter_base import FormatterBase
 class ClaudeFormatter(FormatterBase):
     """Formatter for Claude API format."""
 
-    def format_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         formatted, _ = self.format_messages_and_system(messages)
         return formatted
 
     def format_messages_and_system(
         self,
-        messages: List[Dict[str, Any]],
-    ) -> Tuple[List[Dict[str, Any]], str]:
+        messages: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], str]:
         """
         Convert messages to Claude's expected format.
 
@@ -104,7 +103,7 @@ class ClaudeFormatter(FormatterBase):
 
         return converted_messages, system_message
 
-    def _convert_multimodal_content(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_multimodal_content(self, message: dict[str, Any]) -> dict[str, Any]:
         """Normalize multimodal content blocks to Claude's nested source structure."""
 
         content = message.get("content")
@@ -112,7 +111,7 @@ class ClaudeFormatter(FormatterBase):
             return message
 
         # Formatter handles generic multimodal content; upload_files-sourced items already preprocessed in backend.
-        converted_items: List[Dict[str, Any]] = []
+        converted_items: list[dict[str, Any]] = []
 
         for item in content:
             if not isinstance(item, dict):
@@ -167,7 +166,7 @@ class ClaudeFormatter(FormatterBase):
         message["content"] = converted_items
         return message
 
-    def format_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Convert tools to Claude's expected format.
 
@@ -213,7 +212,7 @@ class ClaudeFormatter(FormatterBase):
 
         return converted_tools
 
-    def format_mcp_tools(self, mcp_functions: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def format_mcp_tools(self, mcp_functions: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert MCP tools to Claude's custom tool format."""
         if not mcp_functions:
             return []
@@ -234,7 +233,7 @@ class ClaudeFormatter(FormatterBase):
 
         return converted_tools
 
-    def format_custom_tools(self, custom_tools: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def format_custom_tools(self, custom_tools: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Convert custom tools from RegisteredToolEntry format to Claude's custom tool format.
 

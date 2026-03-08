@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MassGen Configuration System
 
@@ -7,7 +6,7 @@ supporting YAML file loading and programmatic configuration creation.
 """
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import yaml
 
@@ -25,7 +24,7 @@ class ConfigurationError(Exception):
     """Exception raised for configuration-related errors."""
 
 
-def load_config_from_yaml(config_path: Union[str, Path]) -> MassConfig:
+def load_config_from_yaml(config_path: str | Path) -> MassConfig:
     """
     Load MassGen configuration from a YAML file.
 
@@ -44,7 +43,7 @@ def load_config_from_yaml(config_path: Union[str, Path]) -> MassConfig:
         raise ConfigurationError(f"Configuration file not found: {config_path}")
 
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             yaml_data = yaml.safe_load(f)
     except yaml.YAMLError as e:
         raise ConfigurationError(f"Invalid YAML format: {e}")
@@ -58,10 +57,10 @@ def load_config_from_yaml(config_path: Union[str, Path]) -> MassConfig:
 
 
 def create_config_from_models(
-    models: List[str],
-    orchestrator_config: Optional[Dict[str, Any]] = None,
-    streaming_config: Optional[Dict[str, Any]] = None,
-    logging_config: Optional[Dict[str, Any]] = None,
+    models: list[str],
+    orchestrator_config: dict[str, Any] | None = None,
+    streaming_config: dict[str, Any] | None = None,
+    logging_config: dict[str, Any] | None = None,
 ) -> MassConfig:
     """
     Create a MassGen configuration from a list of model names.
@@ -109,7 +108,7 @@ def create_config_from_models(
     return config
 
 
-def _dict_to_config(data: Dict[str, Any]) -> MassConfig:
+def _dict_to_config(data: dict[str, Any]) -> MassConfig:
     """Convert dictionary data to MassConfig object."""
     try:
         # Parse orchestrator configuration

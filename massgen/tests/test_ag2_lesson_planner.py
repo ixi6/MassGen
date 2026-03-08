@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for the AG2 lesson planner tool wrapper."""
 
 import asyncio

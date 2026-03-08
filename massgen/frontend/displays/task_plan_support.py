@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Shared helpers for Planning MCP task plan display.
 
@@ -12,7 +11,8 @@ from __future__ import annotations
 
 import ast
 import json
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 # Planning MCP tool names -> operation label
 _PLANNING_TOOL_OPERATIONS = {
@@ -21,6 +21,7 @@ _PLANNING_TOOL_OPERATIONS = {
     "add_task": "add",
     "edit_task": "edit",
     "get_task_plan": "get",
+    "clear_task_plan": "clear",
 }
 
 # Planning tool names used for tool filtering (skip normal tool cards)
@@ -30,13 +31,14 @@ _PLANNING_TOOL_NAMES = {
     "add_task",
     "edit_task",
     "get_task_plan",
+    "clear_task_plan",
     "delete_task",
     "get_ready_tasks",
     "get_blocked_tasks",
 }
 
 
-def _safe_parse_mapping(raw: Any) -> Optional[Dict[str, Any]]:
+def _safe_parse_mapping(raw: Any) -> dict[str, Any] | None:
     """Best-effort parse for tool result payloads (JSON or Python-literal)."""
     if isinstance(raw, dict):
         return raw
@@ -61,7 +63,7 @@ def _safe_parse_mapping(raw: Any) -> Optional[Dict[str, Any]]:
     return None
 
 
-def _extract_structured_result(raw_result: Any) -> Optional[Dict[str, Any]]:
+def _extract_structured_result(raw_result: Any) -> dict[str, Any] | None:
     """Extract the structured Planning MCP payload from a tool result.
 
     Handles:
@@ -99,7 +101,7 @@ def update_task_plan_from_tool(
     host: Any,
     tool_data: Any,
     timeline: Any,
-    log: Optional[Callable[[str], None]] = None,
+    log: Callable[[str], None] | None = None,
 ) -> bool:
     """Update the pinned task plan from a Planning MCP tool result.
 
@@ -125,6 +127,23 @@ def update_task_plan_from_tool(
     if not operation:
         return False
 
+    if operation == "clear":
+        if hasattr(host, "clear"):
+            host.clear()  # type: ignore[attr-defined]
+        _log("_task_plan: cleared")
+        return True
+
+    should_accept = getattr(host, "should_accept_task_plan", None)
+    if callable(should_accept):
+        try:
+            if not bool(should_accept()):
+                if hasattr(host, "clear"):
+                    host.clear()  # type: ignore[attr-defined]
+                _log("_task_plan: suppressed (no persisted plan artifact)")
+                return True
+        except Exception:
+            pass
+
     result = tool_data.result_full
     _log(f"_task_plan: tool_name={tool_name}")
     if not result:
@@ -140,8 +159,8 @@ def update_task_plan_from_tool(
     if not isinstance(result_data, dict):
         return True
 
-    tasks: List[Dict[str, Any]] = []
-    focused_task_id: Optional[str] = None
+    tasks: list[dict[str, Any]] = []
+    focused_task_id: str | None = None
 
     if "tasks" in result_data:
         tasks = result_data["tasks"]

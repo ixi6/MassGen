@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for ExternalAgentBackend.
 """
+
 import pytest
 
 from massgen.adapters import adapter_registry

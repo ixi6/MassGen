@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Context Window Compression
 
@@ -10,7 +9,8 @@ implemented due to API limitations (providers only report token usage after
 requests complete). See docs/dev_notes/proactive_compression_design.md.
 """
 
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from ..logger_config import logger
 from ..structured_logging import log_context_compression
@@ -68,9 +68,9 @@ class ContextCompressor:
         self,
         token_calculator: TokenCostCalculator,
         conversation_memory: ConversationMemory,
-        persistent_memory: Optional[PersistentMemoryBase] = None,
-        on_compress: Optional[Callable[[CompressionStats], None]] = None,
-        agent_id: Optional[str] = None,
+        persistent_memory: PersistentMemoryBase | None = None,
+        on_compress: Callable[[CompressionStats], None] | None = None,
+        agent_id: str | None = None,
     ):
         """
         Initialize context compressor.
@@ -95,11 +95,11 @@ class ContextCompressor:
 
     async def compress_if_needed(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         current_tokens: int,
         target_tokens: int,
         should_compress: bool = None,
-    ) -> Optional[CompressionStats]:
+    ) -> CompressionStats | None:
         """
         Compress messages if needed.
 
@@ -204,9 +204,9 @@ class ContextCompressor:
 
     def _select_messages_to_keep(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         target_tokens: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Select which messages to keep in active context.
 
@@ -255,7 +255,7 @@ class ContextCompressor:
 
         return messages_to_keep
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get compression statistics."""
         return {
             "total_compressions": self.total_compressions,

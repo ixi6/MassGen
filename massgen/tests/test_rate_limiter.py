@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for rate limiter functionality (fast, no real 60s waits)."""
 
 import asyncio

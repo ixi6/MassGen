@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Skills management for MassGen.
 
@@ -10,7 +9,7 @@ import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import yaml
 
@@ -19,9 +18,9 @@ VALID_SKILL_LIFECYCLE_MODES = {"create_new", "create_or_update"}
 
 def scan_skills(
     skills_dir: Path,
-    logs_dir: Optional[Path] = None,
+    logs_dir: Path | None = None,
     include_user_skills: bool = True,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Scan for available skills from multiple sources.
 
     Discovers skills by scanning directories for SKILL.md files and parsing their
@@ -47,7 +46,7 @@ def scan_skills(
         >>> print(skills[0])
         {'name': 'pdf', 'description': 'PDF manipulation toolkit...', 'location': 'project'}
     """
-    skills: List[Dict[str, Any]] = []
+    skills: list[dict[str, Any]] = []
 
     # Scan external skills directory (.agent/skills/)
     if skills_dir.exists():
@@ -76,7 +75,7 @@ def scan_skills(
     return _dedupe_skills(skills)
 
 
-def _scan_directory(directory: Path, location: str) -> List[Dict[str, Any]]:
+def _scan_directory(directory: Path, location: str) -> list[dict[str, Any]]:
     """Scan a directory for skills.
 
     Args:
@@ -86,7 +85,7 @@ def _scan_directory(directory: Path, location: str) -> List[Dict[str, Any]]:
     Returns:
         List of skill dictionaries with metadata
     """
-    skills: List[Dict[str, Any]] = []
+    skills: list[dict[str, Any]] = []
 
     if not directory.is_dir():
         return skills
@@ -128,7 +127,7 @@ def _scan_directory(directory: Path, location: str) -> List[Dict[str, Any]]:
     return skills
 
 
-def scan_previous_session_skills(logs_dir: Path) -> List[Dict[str, Any]]:
+def scan_previous_session_skills(logs_dir: Path) -> list[dict[str, Any]]:
     """Scan massgen_logs for SKILL.md files from previous sessions.
 
     For each session/turn, finds the last attempt (highest attempt_N) and
@@ -142,7 +141,7 @@ def scan_previous_session_skills(logs_dir: Path) -> List[Dict[str, Any]]:
         List of skill dicts with keys: name, description, location, source_path.
         Location will be "previous_session".
     """
-    skills: List[Dict[str, Any]] = []
+    skills: list[dict[str, Any]] = []
 
     if not logs_dir.exists():
         return skills
@@ -201,9 +200,9 @@ def scan_previous_session_skills(logs_dir: Path) -> List[Dict[str, Any]]:
     return _dedupe_skills(skills)
 
 
-def _dedupe_skills(skills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _dedupe_skills(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Deduplicate skills by case-insensitive name, preserving first occurrence."""
-    deduped: List[Dict[str, Any]] = []
+    deduped: list[dict[str, Any]] = []
     seen: set[str] = set()
     for skill in skills:
         name = str(skill.get("name", "")).strip()
@@ -217,7 +216,7 @@ def _dedupe_skills(skills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return deduped
 
 
-def parse_frontmatter(content: str) -> Dict[str, Any]:
+def parse_frontmatter(content: str) -> dict[str, Any]:
     """Extract YAML frontmatter from skill file.
 
     Parses YAML frontmatter delimited by --- markers at the start of a file.
@@ -259,7 +258,7 @@ def parse_frontmatter(content: str) -> Dict[str, Any]:
         return _parse_simple_frontmatter(match.group(1))
 
 
-def _parse_simple_frontmatter(frontmatter: str) -> Dict[str, str]:
+def _parse_simple_frontmatter(frontmatter: str) -> dict[str, str]:
     """Simple key: value parser for frontmatter as fallback.
 
     Args:
@@ -277,7 +276,7 @@ def _parse_simple_frontmatter(frontmatter: str) -> Dict[str, str]:
     return metadata
 
 
-def normalize_skill_lifecycle_mode(mode: Optional[str]) -> str:
+def normalize_skill_lifecycle_mode(mode: str | None) -> str:
     """Normalize lifecycle mode with safe fallback."""
     normalized = str(mode or "").strip().lower()
     if normalized not in VALID_SKILL_LIFECYCLE_MODES:
@@ -285,7 +284,7 @@ def normalize_skill_lifecycle_mode(mode: Optional[str]) -> str:
     return normalized
 
 
-def _split_skill_content(content: str) -> Tuple[Dict[str, Any], str]:
+def _split_skill_content(content: str) -> tuple[dict[str, Any], str]:
     """Split SKILL.md into frontmatter metadata and body text."""
     metadata = parse_frontmatter(content)
     match = re.match(r"^---\n(.*?)\n---\n?", content, re.DOTALL)
@@ -293,7 +292,7 @@ def _split_skill_content(content: str) -> Tuple[Dict[str, Any], str]:
     return metadata, body.strip()
 
 
-def _build_skill_content(metadata: Dict[str, Any], body: str) -> str:
+def _build_skill_content(metadata: dict[str, Any], body: str) -> str:
     """Compose SKILL.md content from metadata and body."""
     dumped = yaml.safe_dump(metadata, sort_keys=False, allow_unicode=False).strip()
     normalized_body = (body or "").strip()
@@ -302,13 +301,13 @@ def _build_skill_content(metadata: Dict[str, Any], body: str) -> str:
     return f"---\n{dumped}\n---\n"
 
 
-def _parse_skill_file(skill_file: Path) -> Tuple[Dict[str, Any], str]:
+def _parse_skill_file(skill_file: Path) -> tuple[dict[str, Any], str]:
     """Load metadata + body from SKILL.md file."""
     content = skill_file.read_text(encoding="utf-8")
     return _split_skill_content(content)
 
 
-def _coerce_list(value: Any) -> List[str]:
+def _coerce_list(value: Any) -> list[str]:
     """Normalize scalar or list metadata values into list[str]."""
     if isinstance(value, list):
         return [str(v).strip() for v in value if str(v).strip()]
@@ -336,7 +335,7 @@ def _merge_skill_files(target_skill_file: Path, source_skill_file: Path) -> None
     target_meta["evolving"] = True
     target_meta["updated_at"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
-    origins: List[str] = []
+    origins: list[str] = []
     for item in (
         target_meta.get("massgen_origin"),
         source_meta.get("massgen_origin"),
@@ -371,7 +370,7 @@ def _merge_skill_files(target_skill_file: Path, source_skill_file: Path) -> None
     )
 
 
-def _ensure_evolving_metadata(skill_file: Path, fallback_origin: Optional[str] = None) -> None:
+def _ensure_evolving_metadata(skill_file: Path, fallback_origin: str | None = None) -> None:
     """Ensure minimal evolving metadata exists in skill frontmatter."""
     metadata, body = _parse_skill_file(skill_file)
     changed = False
@@ -395,8 +394,8 @@ def apply_analysis_skill_lifecycle(
     source_skill_dir: Path,
     project_skills_root: Path,
     lifecycle_mode: str = "create_or_update",
-    preexisting_skill_dirs: Optional[Set[str]] = None,
-) -> Dict[str, Any]:
+    preexisting_skill_dirs: set[str] | None = None,
+) -> dict[str, Any]:
     """Apply analysis lifecycle mode for one source skill directory."""
     mode = normalize_skill_lifecycle_mode(lifecycle_mode)
     skill_file = source_skill_dir / "SKILL.md"

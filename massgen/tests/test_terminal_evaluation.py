@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Tests for terminal evaluation feature (run_massgen_with_recording tool).
 

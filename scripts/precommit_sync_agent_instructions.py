@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Keep CLAUDE.md and AGENTS.md synchronized.
 
 Rules:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Layout regression tests for the bottom input/mode bar area."""
 
 from __future__ import annotations
@@ -12,6 +11,9 @@ from textual.geometry import Size
 from massgen.frontend.displays import textual_terminal_display as textual_display_module
 from massgen.frontend.displays.textual_terminal_display import TextualTerminalDisplay
 from massgen.frontend.displays.textual_widgets.mode_bar import ModeBar, ModeToggle
+from massgen.frontend.displays.textual_widgets.queued_input_banner import (
+    QueuedInputBanner,
+)
 
 
 def _widget_text(widget: object) -> str:
@@ -131,6 +133,200 @@ async def test_mode_bar_keeps_compact_labels_when_width_temporarily_unavailable(
         rendered = _widget_text(app.query_one("#plan_toggle"))
         assert "Plan" in rendered
         assert "Planning" not in rendered
+
+
+@pytest.mark.asyncio
+async def test_mode_bar_does_not_stack_when_initial_width_is_unavailable(monkeypatch, tmp_path: Path) -> None:
+    """Startup with unknown widths should not force the two-row compact layout."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+
+    display = TextualTerminalDisplay(
+        ["agent_a"],
+        agent_models={"agent_a": "gpt-5.3-codex"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(120, 24)) as pilot:
+        await pilot.pause()
+        assert app._mode_bar is not None
+
+        app._mode_bar.remove_class("compact-layout")
+        app._mode_bar._last_responsive_width = 0
+
+        monkeypatch.setattr(ModeBar, "size", property(lambda _self: Size(0, 0)))
+        monkeypatch.setattr(type(app), "size", property(lambda _self: Size(0, 0)))
+
+        app._mode_bar._refresh_responsive_labels()
+
+        assert not app._mode_bar.has_class("compact-layout")
+
+
+@pytest.mark.asyncio
+async def test_default_plan_mode_bootstraps_into_plan_mode(monkeypatch, tmp_path: Path) -> None:
+    """Display-level default plan mode should initialize the TUI in Plan mode."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+
+    display = TextualTerminalDisplay(
+        ["agent_a"],
+        agent_models={"agent_a": "gpt-5.3-codex"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+        default_plan_mode="plan",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(120, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        assert app._mode_state.plan_mode == "plan"
+        assert app._mode_bar is not None
+        assert app._mode_bar.get_plan_mode() == "plan"
+
+
+@pytest.mark.asyncio
+async def test_mode_bar_logs_layout_refresh_decisions(monkeypatch, tmp_path: Path) -> None:
+    """Mode bar should emit explicit debug lines for layout refresh calculations."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+
+    import massgen.frontend.displays.textual_widgets.mode_bar as mode_bar_module
+
+    layout_logs: list[str] = []
+    monkeypatch.setattr(mode_bar_module, "_mode_log", lambda msg: layout_logs.append(msg))
+
+    display = TextualTerminalDisplay(
+        ["agent_a"],
+        agent_models={"agent_a": "gpt-5.3-codex"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(120, 24)) as pilot:
+        await pilot.pause()
+        assert app._mode_bar is not None
+        app._mode_bar._refresh_responsive_labels()
+        await pilot.pause()
+
+        assert any("layout refresh:" in msg for msg in layout_logs)
+        assert any("layout decision:" in msg for msg in layout_logs)
+
+
+@pytest.mark.asyncio
+async def test_input_modes_row_logs_layout_decisions(monkeypatch, tmp_path: Path) -> None:
+    """Input row layout refresh should emit calculation details for debugging."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+
+    layout_logs: list[str] = []
+    monkeypatch.setattr(textual_display_module, "tui_log", lambda msg, level="debug": layout_logs.append(msg))
+
+    display = TextualTerminalDisplay(
+        ["agent_a"],
+        agent_models={"agent_a": "gpt-5.3-codex"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(120, 24)) as pilot:
+        await pilot.pause()
+        app._refresh_input_modes_row_layout()
+        await pilot.pause()
+
+        assert any("[INPUT_LAYOUT]" in msg for msg in layout_logs)
+
+
+@pytest.mark.asyncio
+async def test_normal_mode_compacts_labels_to_keep_input_header_single_row_at_thin_startup(monkeypatch, tmp_path: Path) -> None:
+    """Thin startup widths should prefer compact mode labels over stacking the input header row."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+    # Keep hint width deterministic across environments.
+    monkeypatch.setattr(Path, "cwd", staticmethod(lambda: Path("/home/u/project")))
+
+    display = TextualTerminalDisplay(
+        ["agent_a"],
+        agent_models={"agent_a": "gpt-5.3-codex"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(113, 24)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        input_modes_row = app.query_one("#input_modes_row")
+        assert "meta-stacked" not in input_modes_row.classes
+        assert "Norm" in _widget_text(app.query_one("#plan_toggle"))
+        assert "Multi" in _widget_text(app.query_one("#agent_toggle"))
+        assert "Par" in _widget_text(app.query_one("#coordination_toggle"))
 
 
 @pytest.mark.asyncio
@@ -1082,3 +1278,107 @@ async def test_ctrl_p_blocked_in_execute_mode(monkeypatch, tmp_path: Path) -> No
 
         assert app._cwd_context_mode == "off"
         assert "Cannot change CWD context in execute mode." in toasts[-1]
+
+
+@pytest.mark.asyncio
+async def test_inject_button_is_embedded_inside_input_bar(monkeypatch, tmp_path: Path) -> None:
+    """Inject target control should be structurally embedded in the input bar."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+
+    display = TextualTerminalDisplay(
+        ["agent_a", "agent_b"],
+        agent_models={"agent_a": "gpt-5.3-codex", "agent_b": "claude-opus-4-6"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(120, 26)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        mode_bar = app.query_one("#mode_bar")
+        question_input_row = app.query_one("#question_input_row")
+        question_input = app.query_one("#question_input")
+        inject_button = app.query_one("#inject_target_button")
+
+        assert inject_button.region.x >= question_input.region.right - 1
+        assert inject_button.region.right <= question_input_row.region.right
+        assert inject_button.region.y >= question_input_row.region.y
+        assert inject_button.region.y > mode_bar.region.y
+
+
+@pytest.mark.asyncio
+async def test_queue_action_buttons_share_row_with_queue_summary(monkeypatch, tmp_path: Path) -> None:
+    """Queue action buttons should align to the right of the queue summary row."""
+    monkeypatch.setattr(textual_display_module, "get_event_emitter", lambda: None)
+    monkeypatch.setattr(
+        textual_display_module,
+        "get_user_settings",
+        lambda: SimpleNamespace(theme="dark", vim_mode=False),
+    )
+
+    display = TextualTerminalDisplay(
+        ["agent_a", "agent_b"],
+        agent_models={"agent_a": "gpt-5.3-codex", "agent_b": "claude-opus-4-6"},
+        keyboard_interactive_mode=False,
+        output_dir=tmp_path,
+        theme="dark",
+    )
+    app = textual_display_module.TextualApp(
+        display=display,
+        question="Welcome! Type your question below...",
+        buffers=display._buffers,
+        buffer_lock=display._buffer_lock,
+        buffer_flush_interval=display.buffer_flush_interval,
+    )
+    display._app = app
+
+    async with app.run_test(headless=True, size=(130, 34)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+
+        banner = app._queued_input_banner
+        assert isinstance(banner, QueuedInputBanner)
+        banner.set_messages(
+            [
+                {
+                    "id": 11,
+                    "content": "Please include edge-case handling in your revised answer.",
+                    "target_label": "all agents",
+                    "pending_agents": ["agent_b"],
+                },
+                {
+                    "id": 12,
+                    "content": "Also add one adversarial test case for malformed input.",
+                    "target_label": "all agents",
+                    "pending_agents": ["agent_b"],
+                },
+            ],
+        )
+        banner.set_pending_counts({"agent_b": 2})
+        app._set_queued_input_region_visible(True)
+        await pilot.pause()
+
+        mode_bar = app.query_one("#mode_bar")
+        cancel_button = app.query_one("#queue_cancel_latest_button")
+        clear_button = app.query_one("#queue_clear_button")
+
+        assert cancel_button.region.y == banner.region.y
+        assert clear_button.region.y == banner.region.y
+        assert cancel_button.region.x >= banner.region.right
+        assert clear_button.region.x > cancel_button.region.x
+        assert mode_bar.region.y - clear_button.region.bottom <= 1

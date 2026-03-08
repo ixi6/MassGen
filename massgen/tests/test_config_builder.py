@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Comprehensive tests for config_builder.py - Agent cloning and preset application.
 
@@ -13,7 +12,12 @@ Run with: uv run pytest massgen/tests/test_config_builder.py -v
 
 import pytest
 
-from massgen.config_builder import ConfigBuilder
+from massgen.config_builder import (
+    ConfigBuilder,
+    build_quickstart_config_path,
+    normalize_quickstart_config_filename,
+    sort_quickstart_provider_ids,
+)
 
 
 class TestCloneAgent:
@@ -448,6 +452,8 @@ class TestQuickstartDecompositionSettings:
         orch = config["orchestrator"]
         assert orch["coordination_mode"] == "decomposition"
         assert orch["presenter_agent"] == "agent_c"
+        assert orch["voting_sensitivity"] == "checklist_gated"
+        assert orch["voting_threshold"] == 3
         assert orch["max_new_answers_per_agent"] == 2
         assert orch["max_new_answers_global"] == 9
         assert orch["answer_novelty_requirement"] == "balanced"
@@ -463,6 +469,8 @@ class TestQuickstartDecompositionSettings:
             coordination_settings={
                 "coordination_mode": "decomposition",
                 "presenter_agent": "agent_a",
+                "voting_sensitivity": "lenient",
+                "voting_threshold": 5,
                 "max_new_answers_per_agent": 3,
                 "max_new_answers_global": 12,
                 "answer_novelty_requirement": "strict",
@@ -472,6 +480,8 @@ class TestQuickstartDecompositionSettings:
         orch = config["orchestrator"]
         assert orch["coordination_mode"] == "decomposition"
         assert orch["presenter_agent"] == "agent_a"
+        assert orch["voting_sensitivity"] == "lenient"
+        assert orch["voting_threshold"] == 5
         assert orch["max_new_answers_per_agent"] == 3
         assert orch["max_new_answers_global"] == 12
         assert orch["answer_novelty_requirement"] == "strict"
@@ -484,6 +494,8 @@ class TestQuickstartDecompositionSettings:
         )
 
         orch = config["orchestrator"]
+        assert orch["voting_sensitivity"] == "checklist_gated"
+        assert orch["voting_threshold"] == 3
         assert orch["max_new_answers_per_agent"] == 5
         assert orch["fairness_enabled"] is True
         assert orch["fairness_lead_cap_answers"] == 2
@@ -502,6 +514,16 @@ class TestQuickstartDecompositionSettings:
 
         assert config["orchestrator"]["max_new_answers_global"] == 7
 
+    @pytest.mark.parametrize("use_docker", [False, True])
+    def test_quickstart_sets_verification_and_final_learning_capture_mode(self, builder, use_docker):
+        """Quickstart sets safer learning capture timing by default."""
+        config = builder._generate_quickstart_config(
+            agents_config=self._agents(),
+            use_docker=use_docker,
+        )
+
+        assert config["orchestrator"]["coordination"]["learning_capture_mode"] == "verification_and_final_only"
+
 
 class TestQuickstartReasoningSettings:
     """Test quickstart reasoning selector behavior and config output."""
@@ -511,17 +533,48 @@ class TestQuickstartReasoningSettings:
         return ConfigBuilder()
 
     def test_reasoning_profile_for_openai_gpt5(self):
-        profile = ConfigBuilder.get_quickstart_reasoning_profile("openai", "gpt-5.2")
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("openai", "gpt-5.4")
         assert profile is not None
         assert profile["default_effort"] == "medium"
         efforts = [value for _, value in profile["choices"]]
         assert efforts == ["low", "medium", "high"]
 
     def test_reasoning_profile_for_codex_includes_xhigh(self):
-        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.3-codex")
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.4")
         assert profile is not None
         efforts = [value for _, value in profile["choices"]]
         assert efforts == ["low", "medium", "high", "xhigh"]
+        labels = {value: label for label, value in profile["choices"]}
+        assert "recommended" in labels["xhigh"].lower()
+        assert "recommended" not in labels["medium"].lower()
+
+    def test_reasoning_profile_for_codex_gpt54_defaults_xhigh(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.4")
+        assert profile is not None
+        assert profile["default_effort"] == "xhigh"
+
+    def test_reasoning_profile_for_claude_code_includes_max(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("claude_code", "claude-opus-4-6")
+        assert profile is not None
+        assert profile["default_effort"] == "high"
+        efforts = [value for _, value in profile["choices"]]
+        assert efforts == ["low", "medium", "high", "max"]
+        labels = {value: label for label, value in profile["choices"]}
+        assert "recommended" in labels["high"].lower()
+        assert "recommended" not in labels["medium"].lower()
+
+    def test_reasoning_profile_for_claude_code_sonnet46_defaults_medium(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("claude_code", "claude-sonnet-4-6")
+        assert profile is not None
+        assert profile["default_effort"] == "medium"
+        efforts = [value for _, value in profile["choices"]]
+        assert efforts == ["low", "medium", "high"]
+        labels = {value: label for label, value in profile["choices"]}
+        assert "recommended" in labels["medium"].lower()
+
+    def test_reasoning_profile_for_claude_code_non_46_has_no_profile(self):
+        profile = ConfigBuilder.get_quickstart_reasoning_profile("claude_code", "claude-opus-4-5")
+        assert profile is None
 
     def test_reasoning_profile_ignored_for_non_gpt5_models(self):
         profile = ConfigBuilder.get_quickstart_reasoning_profile("openai", "gpt-4o")
@@ -533,14 +586,20 @@ class TestQuickstartReasoningSettings:
                 {
                     "id": "agent_a",
                     "type": "openai",
-                    "model": "gpt-5.2",
+                    "model": "gpt-5.4",
                     "reasoning_effort": "high",
                 },
                 {
                     "id": "agent_b",
                     "type": "codex",
-                    "model": "gpt-5.3-codex",
+                    "model": "gpt-5.4",
                     "reasoning_effort": "xhigh",
+                },
+                {
+                    "id": "agent_c",
+                    "type": "claude_code",
+                    "model": "claude-opus-4-6",
+                    "reasoning_effort": "max",
                 },
             ],
             use_docker=False,
@@ -554,6 +613,62 @@ class TestQuickstartReasoningSettings:
             "effort": "xhigh",
             "summary": "auto",
         }
+        assert config["agents"][2]["backend"]["reasoning"] == {
+            "effort": "max",
+            "summary": "auto",
+        }
+
+
+class TestQuickstartProviderOrdering:
+    """Test provider ordering for quickstart defaults."""
+
+    def test_quickstart_provider_priority_order(self):
+        providers = [
+            "openai",
+            "gemini",
+            "anthropic",
+            "codex",
+            "claude_code",
+            "grok",
+        ]
+
+        ordered = sort_quickstart_provider_ids(providers)
+
+        assert ordered == [
+            "claude_code",
+            "codex",
+            "gemini",
+            "openai",
+            "anthropic",
+            "grok",
+        ]
+
+
+class TestQuickstartConfigPathHelpers:
+    """Test quickstart output filename/path helper behavior."""
+
+    def test_normalize_quickstart_filename_adds_yaml_extension(self):
+        assert normalize_quickstart_config_filename("team-config") == "team-config.yaml"
+
+    def test_normalize_quickstart_filename_uses_basename_only(self):
+        assert normalize_quickstart_config_filename(".massgen/nested/custom.yml") == "custom.yml"
+
+    def test_build_quickstart_project_path_uses_dot_massgen(self, tmp_path):
+        path = build_quickstart_config_path(
+            location="project",
+            filename="my-team",
+            cwd=tmp_path,
+        )
+        assert path == tmp_path / ".massgen" / "my-team.yaml"
+
+    def test_build_quickstart_global_path_uses_home_config_dir(self, tmp_path):
+        fake_home = tmp_path / "home"
+        path = build_quickstart_config_path(
+            location="global",
+            filename="global-name",
+            home_dir=fake_home,
+        )
+        assert path == fake_home / ".config" / "massgen" / "global-name.yaml"
 
 
 if __name__ == "__main__":

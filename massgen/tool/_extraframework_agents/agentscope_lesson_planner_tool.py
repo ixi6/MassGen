@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 AgentScope Lesson Planner Tool
 This tool demonstrates interoperability by wrapping AgentScope's multi-agent framework as a MassGen custom tool.
@@ -6,7 +5,8 @@ Compatible with AgentScope 1.0.6+
 """
 
 import os
-from typing import Any, AsyncGenerator, Dict, List
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import agentscope
 from agentscope.agent import AgentBase
@@ -112,7 +112,7 @@ class SimpleDialogAgent(AgentBase):
 
 
 async def run_agentscope_lesson_planner_agent(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     api_key: str,
 ) -> str:
     """
@@ -254,7 +254,7 @@ Provide an improved version of the lesson plan incorporating your feedback.""",
 
 @context_params("prompt")
 async def agentscope_lesson_planner(
-    prompt: List[Dict[str, Any]],
+    prompt: list[dict[str, Any]],
 ) -> AsyncGenerator[ExecutionResult, None]:
     """
     MassGen custom tool wrapper for AgentScope lesson planner.

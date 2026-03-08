@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for ContentProcessor event handling."""
 
 from massgen.events import EventType, MassGenEvent
@@ -108,3 +107,237 @@ def test_content_between_tools_prevents_batch_conversion():
     assert first_out is not None and first_out.batch_action == "pending"
     assert thinking_out is None
     assert second_out is not None and second_out.batch_action == "pending"
+
+
+def test_server_name_stored_on_tool_display_data():
+    """server_name from event should be preserved on ToolDisplayData."""
+    processor = ContentProcessor()
+    event = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        args={"command": "ls"},
+        server_name="codex",
+    )
+
+    output = processor.process_event(event, round_number=1)
+    assert output is not None
+    assert output.tool_data.server_name == "codex"
+
+
+def test_server_name_preserved_through_tool_complete():
+    """server_name should survive from tool_start through tool_complete."""
+    processor = ContentProcessor()
+    start = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        args={"command": "ls"},
+        server_name="codex",
+    )
+    complete = MassGenEvent.create(
+        EventType.TOOL_COMPLETE,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        result="file1.txt",
+        elapsed_seconds=0.5,
+    )
+
+    processor.process_event(start, round_number=1)
+    output = processor.process_event(complete, round_number=1)
+    assert output is not None
+    assert output.tool_data.server_name == "codex"
+
+
+def test_consecutive_codex_shell_tools_batch():
+    """codex_shell tools with server_name should batch like mcp__ tools."""
+    processor = ContentProcessor()
+
+    first = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t1",
+        tool_name="codex_shell",
+        args={"command": "ls"},
+        server_name="codex",
+    )
+    second = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t2",
+        tool_name="codex_shell",
+        args={"command": "pwd"},
+        server_name="codex",
+    )
+
+    first_out = processor.process_event(first, round_number=1)
+    second_out = processor.process_event(second, round_number=1)
+
+    assert first_out is not None and first_out.batch_action == "pending"
+    assert second_out is not None and second_out.batch_action == "convert_to_batch"
+    assert second_out.pending_tool_id == "t1"
+
+
+def test_tool_complete_background_status_preserves_async_id():
+    """Background completions should render as background status with async identifier."""
+    processor = ContentProcessor()
+    start = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t-bg",
+        tool_name="custom_tool__generate_media",
+        args={"prompt": "sunset"},
+    )
+    complete = MassGenEvent.create(
+        EventType.TOOL_COMPLETE,
+        agent_id="agent_a",
+        tool_id="t-bg",
+        tool_name="custom_tool__generate_media",
+        result='{"status":"background"}',
+        elapsed_seconds=0.01,
+        status="background",
+        async_id="bgtool_123",
+    )
+
+    processor.process_event(start, round_number=1)
+    output = processor.process_event(complete, round_number=1)
+
+    assert output is not None
+    assert output.tool_data is not None
+    assert output.tool_data.status == "background"
+    assert output.tool_data.async_id == "bgtool_123"
+
+
+def test_start_background_tool_success_payload_sets_background_status():
+    """start_background_tool success payload should surface as background in TUI."""
+    processor = ContentProcessor()
+    start = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t-start-bg",
+        tool_name="custom_tool__start_background_tool",
+        args={"tool_name": "custom_tool__generate_media"},
+    )
+    complete = MassGenEvent.create(
+        EventType.TOOL_COMPLETE,
+        agent_id="agent_a",
+        tool_id="t-start-bg",
+        tool_name="custom_tool__start_background_tool",
+        result=('{"job_id":"bgtool_2694dfb86446","tool_name":"custom_tool__generate_media",' '"status":"running","success":true}'),
+        elapsed_seconds=0.02,
+        status="success",
+    )
+
+    processor.process_event(start, round_number=1)
+    output = processor.process_event(complete, round_number=1)
+
+    assert output is not None
+    assert output.tool_data is not None
+    assert output.tool_data.status == "background"
+    assert output.tool_data.async_id == "bgtool_2694dfb86446"
+
+
+def test_start_background_tool_python_repr_payload_sets_background_status():
+    """Claude Code list/dict string payloads should still infer background metadata."""
+    processor = ContentProcessor()
+    start = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t-start-bg-repr",
+        tool_name="mcp__massgen_custom_tools__custom_tool__start_background_tool",
+        args={"tool_name": "mcp__massgen_custom_tools__custom_tool__generate_media"},
+    )
+    complete = MassGenEvent.create(
+        EventType.TOOL_COMPLETE,
+        agent_id="agent_a",
+        tool_id="t-start-bg-repr",
+        tool_name="mcp__massgen_custom_tools__custom_tool__start_background_tool",
+        result=("[{'type': 'text', 'text': '{\"job_id\": \"bgtool_repr_123\", " '"tool_name": "custom_tool__generate_media", "status": "running", ' '"success": true}\'}]'),
+        elapsed_seconds=0.02,
+        status="success",
+    )
+
+    processor.process_event(start, round_number=1)
+    output = processor.process_event(complete, round_number=1)
+
+    assert output is not None
+    assert output.tool_data is not None
+    assert output.tool_data.status == "background"
+    assert output.tool_data.async_id == "bgtool_repr_123"
+
+
+def test_media_tool_background_payload_without_async_id_sets_background_status():
+    """Background payloads from direct media tool calls should show as background in TUI."""
+    processor = ContentProcessor()
+    start = MassGenEvent.create(
+        EventType.TOOL_START,
+        agent_id="agent_a",
+        tool_id="t-media-bg",
+        tool_name="mcp__massgen_custom_tools__custom_tool__read_media",
+        args={"inputs": [{"files": {"goat": "goat.png"}, "prompt": "Describe"}]},
+    )
+    complete = MassGenEvent.create(
+        EventType.TOOL_COMPLETE,
+        agent_id="agent_a",
+        tool_id="t-media-bg",
+        tool_name="mcp__massgen_custom_tools__custom_tool__read_media",
+        result=("[{'type': 'text', 'text': '{\"success\": true, \"status\": \"background\", " '"job_id": "bgtool_read_789", "tool_name": "custom_tool__read_media"}\'}]'),
+        elapsed_seconds=0.02,
+        status="success",
+    )
+
+    processor.process_event(start, round_number=1)
+    output = processor.process_event(complete, round_number=1)
+
+    assert output is not None
+    assert output.tool_data is not None
+    assert output.tool_data.status == "background"
+    assert output.tool_data.async_id == "bgtool_read_789"
+
+
+def test_hook_execution_human_input_renders_runtime_injection_status():
+    processor = ContentProcessor()
+    event = MassGenEvent.create(
+        EventType.HOOK_EXECUTION,
+        agent_id="agent_a",
+        tool_call_id="tool_1",
+        hook_info={
+            "hook_name": "human_input_hook",
+            "hook_type": "post",
+            "decision": "allow",
+            "injection_content": "\n[Human Input]: Please also research the beatles.\n",
+        },
+    )
+
+    output = processor.process_event(event, round_number=1)
+
+    assert output is not None
+    assert output.output_type == "status"
+    assert output.text_class == "status runtime-injection"
+    assert output.text_content == "Runtime Injection -> Delivered to agent_a: Please also research the beatles."
+
+
+def test_hook_execution_non_human_input_still_attaches_to_tool():
+    processor = ContentProcessor()
+    event = MassGenEvent.create(
+        EventType.HOOK_EXECUTION,
+        agent_id="agent_a",
+        tool_call_id="tool_1",
+        hook_info={
+            "hook_name": "high_priority_task_reminder",
+            "hook_type": "post",
+            "decision": "allow",
+            "injection_content": "Reminder body",
+        },
+    )
+
+    output = processor.process_event(event, round_number=1)
+
+    assert output is not None
+    assert output.output_type == "hook"
+    assert output.hook_tool_call_id == "tool_1"
+    assert output.hook_info is not None
+    assert output.hook_info["hook_name"] == "high_priority_task_reminder"

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Task Plan Modal Widget for MassGen TUI.
 
@@ -6,7 +5,7 @@ Full-screen modal overlay for viewing and interacting with the complete task pla
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -50,9 +49,9 @@ class TaskPlanModal(ModalScreen[None]):
 
     def __init__(
         self,
-        tasks: List[Dict[str, Any]],
-        focused_task_id: Optional[str] = None,
-        agent_id: Optional[str] = None,
+        tasks: list[dict[str, Any]],
+        focused_task_id: str | None = None,
+        agent_id: str | None = None,
     ) -> None:
         super().__init__()
         self.tasks = tasks or []
@@ -116,7 +115,7 @@ class TaskPlanModal(ModalScreen[None]):
 
         return text
 
-    def _build_task_widget(self, task: Dict[str, Any]) -> Static:
+    def _build_task_widget(self, task: dict[str, Any]) -> Static:
         """Build a task row widget."""
         task_id = task.get("id", "")
         is_focused = task_id == self.focused_task_id
@@ -128,7 +127,7 @@ class TaskPlanModal(ModalScreen[None]):
 
         return Static(self._build_task_content(task), classes=classes)
 
-    def _build_task_content(self, task: Dict[str, Any]) -> Text:
+    def _build_task_content(self, task: dict[str, Any]) -> Text:
         """Build rich text content for a single task."""
         text = Text()
 

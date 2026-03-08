@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Rate limit configuration loader for MassGen.
 
@@ -7,7 +6,6 @@ easy access to provider-specific limits.
 """
 
 from pathlib import Path
-from typing import Dict, Optional
 
 try:
     import yaml
@@ -28,7 +26,7 @@ class RateLimitConfig:
         # Returns: {'rpm': 9, 'tpm': 240000, 'rpd': 245}
     """
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: str | None = None):
         """
         Initialize rate limit config loader.
 
@@ -42,7 +40,7 @@ class RateLimitConfig:
             config_path = config_dir / "rate_limits.yaml"
 
         self.config_path = Path(config_path)
-        self._config: Dict = {}
+        self._config: dict = {}
         self._load_config()
 
     def _load_config(self):
@@ -64,7 +62,7 @@ class RateLimitConfig:
             return
 
         try:
-            with open(self.config_path, "r", encoding="utf-8") as f:
+            with open(self.config_path, encoding="utf-8") as f:
                 self._config = yaml.safe_load(f) or {}
 
             from ...logger_config import logger
@@ -84,7 +82,7 @@ class RateLimitConfig:
         provider: str,
         model: str,
         use_defaults: bool = True,
-    ) -> Dict[str, Optional[int]]:
+    ) -> dict[str, int | None]:
         """
         Get rate limits for a specific provider and model.
 
@@ -158,7 +156,7 @@ class RateLimitConfig:
 
 
 # Global singleton instance
-_global_config: Optional[RateLimitConfig] = None
+_global_config: RateLimitConfig | None = None
 
 
 def get_rate_limit_config(reload: bool = False) -> RateLimitConfig:

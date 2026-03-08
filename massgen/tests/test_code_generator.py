@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for MCP tool code generator.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Lightweight agent output file writer driven by structured events.
 
 Subscribes to the global EventEmitter and writes agent content to
@@ -8,7 +7,6 @@ of any display class or buffer/flush pipeline.
 
 import time
 from pathlib import Path
-from typing import Dict, Optional
 
 from massgen.events import EventType, MassGenEvent
 from massgen.logger_config import get_event_emitter, get_log_session_dir
@@ -20,7 +18,7 @@ class AgentOutputWriter:
     def __init__(self, output_dir: Path, agent_ids: list[str]):
         self._output_dir = Path(output_dir)
         self._output_dir.mkdir(parents=True, exist_ok=True)
-        self._files: Dict[str, Path] = {}
+        self._files: dict[str, Path] = {}
 
         for agent_id in agent_ids:
             file_path = self._output_dir / f"{agent_id}.txt"
@@ -40,7 +38,7 @@ class AgentOutputWriter:
 
         self._append(agent_id, content, event.event_type)
 
-    def _extract_content(self, event: MassGenEvent) -> Optional[str]:
+    def _extract_content(self, event: MassGenEvent) -> str | None:
         """Extract writable content from a structured event."""
         etype = event.event_type
         data = event.data or {}
@@ -94,8 +92,8 @@ class AgentOutputWriter:
 
 def create_agent_output_writer(
     agent_ids: list[str],
-    output_dir: Optional[Path] = None,
-) -> Optional[AgentOutputWriter]:
+    output_dir: Path | None = None,
+) -> AgentOutputWriter | None:
     """Create an AgentOutputWriter and register it on the global EventEmitter.
 
     Args:

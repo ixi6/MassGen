@@ -1,8 +1,6 @@
-# -*- coding: utf-8 -*-
 """Agent output modal: Full agent output viewing with syntax highlighting."""
 
 from datetime import datetime
-from typing import Dict, List, Optional
 
 try:
     from textual.app import ComposeResult
@@ -22,10 +20,10 @@ class AgentOutputModal(BaseModal):
     def __init__(
         self,
         agent_id: str,
-        agent_outputs: List[str],
-        model_name: Optional[str] = None,
-        all_agents: Optional[Dict[str, Dict]] = None,
-        current_prompt: Optional[str] = None,
+        agent_outputs: list[str],
+        model_name: str | None = None,
+        all_agents: dict[str, dict] | None = None,
+        current_prompt: str | None = None,
     ):
         super().__init__()
         self.current_agent_id = agent_id

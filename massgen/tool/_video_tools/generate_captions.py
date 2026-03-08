@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Generate captions/subtitles for videos using AI analysis.
 
@@ -8,12 +7,11 @@ with timestamps aligned to the video content.
 
 import json
 from pathlib import Path
-from typing import List, Optional
 
 from massgen.tool._result import ExecutionResult, TextContent
 
 
-def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None) -> None:
+def _validate_path_access(path: Path, allowed_paths: list[Path] | None = None) -> None:
     """
     Validate that a path is within allowed directories.
 
@@ -37,7 +35,7 @@ def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None
     raise ValueError(f"Path not in allowed directories: {path}")
 
 
-def _generate_srt(captions: List[dict]) -> str:
+def _generate_srt(captions: list[dict]) -> str:
     """
     Generate SRT (SubRip Subtitle) format content.
 
@@ -69,7 +67,7 @@ def _generate_srt(captions: List[dict]) -> str:
     return "".join(srt_content)
 
 
-def _generate_vtt(captions: List[dict]) -> str:
+def _generate_vtt(captions: list[dict]) -> str:
     """
     Generate VTT (WebVTT) format content.
 
@@ -105,8 +103,8 @@ async def generate_captions(
     num_captions: int = 10,
     caption_style: str = "technical",
     output_format: str = "both",
-    allowed_paths: Optional[List[str]] = None,
-    agent_cwd: Optional[str] = None,
+    allowed_paths: list[str] | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """
     Generate captions/subtitles for a video using AI analysis.

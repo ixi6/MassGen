@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Claude API parameters handler.
 Handles parameter building for Anthropic Claude Messages API format.
@@ -6,7 +5,8 @@ Handles parameter building for Anthropic Claude Messages API format.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Set, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from ..logger_config import logger
 from ._api_params_handler_base import APIParamsHandlerBase
@@ -23,11 +23,11 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
 
     def _apply_defer_loading(
         self,
-        tools: List[Dict[str, Any]],
-        overrides: Dict[str, Any],
+        tools: list[dict[str, Any]],
+        overrides: dict[str, Any],
         name_extractor: Callable[[str], str],
         tool_type: str,
-    ) -> Tuple[List[str], List[str]]:
+    ) -> tuple[list[str], list[str]]:
         """Apply defer_loading settings to tools and return deferred/visible lists."""
         deferred_tools = []
         visible_tools = []
@@ -47,7 +47,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
         return deferred_tools, visible_tools
 
     @staticmethod
-    def _patch_additional_properties(schema: Dict[str, Any]) -> None:
+    def _patch_additional_properties(schema: dict[str, Any]) -> None:
         """Recursively add additionalProperties: false to all object schemas."""
         if not isinstance(schema, dict):
             return
@@ -70,11 +70,11 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
 
     def _apply_strict_to_tools(
         self,
-        tools: List[Dict[str, Any]],
-        overrides: Dict[str, Any],
+        tools: list[dict[str, Any]],
+        overrides: dict[str, Any],
         name_extractor: Callable[[str], str],
         tool_type: str,
-    ) -> Tuple[List[str], List[str]]:
+    ) -> tuple[list[str], list[str]]:
         """Apply strict settings to tools with recursive schema patching."""
         strict_tools = []
         non_strict_tools = []
@@ -102,7 +102,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
         model_lower = model.lower()
         return "claude-sonnet-4-5" in model_lower or "claude-opus-4-1" in model_lower
 
-    def get_excluded_params(self) -> Set[str]:
+    def get_excluded_params(self) -> set[str]:
         """Get parameters to exclude from Claude API calls."""
         return self.get_base_excluded_params().union(
             {
@@ -132,7 +132,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
             },
         )
 
-    def get_provider_tools(self, all_params: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_provider_tools(self, all_params: dict[str, Any]) -> list[dict[str, Any]]:
         """Get provider tools for Claude format (server-side tools)."""
         provider_tools = []
 
@@ -166,10 +166,10 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
 
     async def build_api_params(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        all_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        all_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build Claude API parameters."""
         # Convert messages to Claude format and extract system message
         converted_messages, system_message = self.formatter.format_messages_and_system(messages)
@@ -187,7 +187,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
                             item["text"] = item.get("text", "").rstrip()
 
         # Build base parameters
-        api_params: Dict[str, Any] = {
+        api_params: dict[str, Any] = {
             "messages": converted_messages,
             "stream": True,
         }
@@ -221,7 +221,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
             api_params["betas"] = betas_list
 
         # Build defer_loading overrides for custom tools (tool search feature)
-        custom_tools_defer_overrides: Dict[str, Any] = {}
+        custom_tools_defer_overrides: dict[str, Any] = {}
         if enable_tool_search:
             custom_tools_config = all_params.get("custom_tools", [])
             for tc in custom_tools_config:
@@ -234,7 +234,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
                         custom_tools_defer_overrides[fn] = defer_val
 
         # Build defer_loading overrides for MCP servers (handle both list and dict formats)
-        mcp_defer_overrides: Dict[str, Any] = {}
+        mcp_defer_overrides: dict[str, Any] = {}
         if enable_tool_search:
             mcp_servers_config = all_params.get("mcp_servers", [])
             if isinstance(mcp_servers_config, dict):
@@ -248,7 +248,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
                         mcp_defer_overrides[server_name] = server.get("defer_loading")
 
         enable_strict = all_params.get("enable_strict_tool_use", False)
-        custom_tools_strict_overrides: Dict[str, Any] = {}
+        custom_tools_strict_overrides: dict[str, Any] = {}
         if enable_strict:
             custom_tools_config = all_params.get("custom_tools", [])
             for tc in custom_tools_config:
@@ -260,7 +260,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
                     for fn in func_names:
                         custom_tools_strict_overrides[fn] = strict_val
 
-        mcp_strict_overrides: Dict[str, Any] = {}
+        mcp_strict_overrides: dict[str, Any] = {}
         if enable_strict:
             mcp_servers_config = all_params.get("mcp_servers", [])
             if isinstance(mcp_servers_config, dict):

@@ -1,13 +1,13 @@
-# -*- coding: utf-8 -*-
 """
 OpenAI-compatible API routes for MassGen HTTP server.
 
 Provides /v1/chat/completions endpoint that uses massgen.run() for full feature parity.
 """
+
 from __future__ import annotations
 
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import JSONResponse
@@ -20,10 +20,10 @@ from .model_router import resolve_model
 from .schema import ChatCompletionRequest
 
 
-def _extract_client_tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
+def _extract_client_tool_names(tools: list[dict[str, Any]] | None) -> list[str]:
     if not tools:
         return []
-    names: List[str] = []
+    names: list[str] = []
     for t in tools:
         if not isinstance(t, dict):
             continue
@@ -34,13 +34,13 @@ def _extract_client_tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[st
     return names
 
 
-def build_router(*, engine: Optional[Engine] = None, settings: Optional[ServerSettings] = None) -> APIRouter:
+def build_router(*, engine: Engine | None = None, settings: ServerSettings | None = None) -> APIRouter:
     router = APIRouter()
     settings = settings or ServerSettings.from_env()
     engine = engine or MassGenEngine(default_config=settings.default_config)
 
     @router.get("/health")
-    async def health() -> Dict[str, Any]:
+    async def health() -> dict[str, Any]:
         import massgen
 
         return {"status": "ok", "service": "massgen-server", "version": getattr(massgen, "__version__", "unknown")}

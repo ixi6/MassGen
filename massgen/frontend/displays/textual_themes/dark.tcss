@@ -617,6 +617,17 @@ ModeToggle.state-plan:focus {
     border-bottom: tall $accent-success;
 }
 
+ModeToggle.state-spec {
+    color: $accent-success;
+    border-bottom: tall $accent-success;
+}
+
+ModeToggle.state-spec:hover,
+ModeToggle.state-spec:focus {
+    color: $accent-success;
+    border-bottom: tall $accent-success;
+}
+
 ModeToggle.state-execute {
     color: $accent-success;
     border-bottom: tall $accent-success;
@@ -5049,6 +5060,22 @@ SubagentScreen, SubagentView {
     background: $bg-base;
 }
 
+SubagentView.cancelled-state,
+SubagentView.canceled-state {
+    background: #1a0d0d;
+}
+
+SubagentView.cancelled-state SubagentPanel,
+SubagentView.canceled-state SubagentPanel {
+    border-left: thick $accent-error;
+    opacity: 0.6;
+}
+
+SubagentView.cancelled-state TimelineSection,
+SubagentView.canceled-state TimelineSection {
+    opacity: 0.7;
+}
+
 SubagentScreen #subagent-content,
 SubagentView #subagent-content {
     width: 100%;
@@ -5128,6 +5155,11 @@ SubagentStatusLine.completed {
 }
 
 SubagentStatusLine.error {
+    color: $accent-error;
+}
+
+SubagentStatusLine.canceled,
+SubagentStatusLine.cancelled {
     color: $accent-error;
 }
 

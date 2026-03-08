@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MassGen Streaming Display System
 
@@ -14,8 +13,8 @@ import sys
 import threading
 import time
 import unicodedata
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
 
 
 class MultiRegionDisplay:
@@ -24,31 +23,31 @@ class MultiRegionDisplay:
         display_enabled: bool = True,
         max_lines: int = 10,
         save_logs: bool = True,
-        answers_dir: Optional[str] = None,
+        answers_dir: str | None = None,
     ):
         self.display_enabled = display_enabled
         self.max_lines = max_lines
         self.save_logs = save_logs
         self.answers_dir = answers_dir  # Path to answers directory from logging system
-        self.agent_outputs: Dict[int, str] = {}
-        self.agent_models: Dict[int, str] = {}
-        self.agent_statuses: Dict[int, str] = {}  # Track agent statuses
-        self.system_messages: List[str] = []
+        self.agent_outputs: dict[int, str] = {}
+        self.agent_models: dict[int, str] = {}
+        self.agent_statuses: dict[int, str] = {}  # Track agent statuses
+        self.system_messages: list[str] = []
         self.start_time = time.time()
         self._lock = threading.RLock()  # Use reentrant lock to prevent deadlock
 
         # MassGen-specific state tracking
         self.current_phase = "collaboration"
-        self.vote_distribution: Dict[int, int] = {}
+        self.vote_distribution: dict[int, int] = {}
         self.consensus_reached = False
-        self.representative_agent_id: Optional[int] = None
+        self.representative_agent_id: int | None = None
         self.debate_rounds: int = 0  # Track debate rounds
 
         # Detailed agent state tracking for display
-        self._agent_vote_targets: Dict[int, Optional[int]] = {}
-        self._agent_chat_rounds: Dict[int, int] = {}
-        self._agent_update_counts: Dict[int, int] = {}  # Track update history count
-        self._agent_votes_cast: Dict[int, int] = {}  # Track number of votes cast by each agent
+        self._agent_vote_targets: dict[int, int | None] = {}
+        self._agent_chat_rounds: dict[int, int] = {}
+        self._agent_update_counts: dict[int, int] = {}  # Track update history count
+        self._agent_votes_cast: dict[int, int] = {}  # Track number of votes cast by each agent
 
         # Simplified, consistent border tracking
         self._display_cache = None  # Single cache object for all dimensions
@@ -272,7 +271,7 @@ class MultiRegionDisplay:
         else:  # left
             return text + " " * padding
 
-    def _create_bordered_line(self, content_parts: List[str], total_width: int) -> str:
+    def _create_bordered_line(self, content_parts: list[str], total_width: int) -> str:
         """
         ROBUST: Create a single bordered line with guaranteed correct width.
         """
@@ -433,12 +432,12 @@ class MultiRegionDisplay:
             phase_msg = f"Phase: {old_phase} → {new_phase}"
             self.add_system_message(phase_msg)
 
-    def update_vote_distribution(self, vote_dist: Dict[int, int]):
+    def update_vote_distribution(self, vote_dist: dict[int, int]):
         """Update vote distribution."""
         with self._lock:
             self.vote_distribution = vote_dist.copy()
 
-    def update_consensus_status(self, representative_id: int, vote_dist: Dict[int, int]):
+    def update_consensus_status(self, representative_id: int, vote_dist: dict[int, int]):
         """Update when consensus is reached."""
         with self._lock:
             self.consensus_reached = True
@@ -455,7 +454,7 @@ class MultiRegionDisplay:
             self.representative_agent_id = None
             self.vote_distribution.clear()
 
-    def update_agent_vote_target(self, agent_id: int, target_id: Optional[int]):
+    def update_agent_vote_target(self, agent_id: int, target_id: int | None):
         """Update which agent this agent voted for."""
         with self._lock:
             self._agent_vote_targets[agent_id] = target_id
@@ -979,10 +978,10 @@ class StreamingOrchestrator:
     def __init__(
         self,
         display_enabled: bool = True,
-        stream_callback: Optional[Callable] = None,
+        stream_callback: Callable | None = None,
         max_lines: int = 10,
         save_logs: bool = True,
-        answers_dir: Optional[str] = None,
+        answers_dir: str | None = None,
     ):
         self.display = MultiRegionDisplay(display_enabled, max_lines, save_logs, answers_dir)
         self.stream_callback = stream_callback
@@ -1011,12 +1010,12 @@ class StreamingOrchestrator:
         self.display.update_phase(old_phase, new_phase)
         self.display.force_update_display()
 
-    def update_vote_distribution(self, vote_dist: Dict[int, int]):
+    def update_vote_distribution(self, vote_dist: dict[int, int]):
         """Update vote distribution - immediate update for critical state changes."""
         self.display.update_vote_distribution(vote_dist)
         self.display.force_update_display()
 
-    def update_consensus_status(self, representative_id: int, vote_dist: Dict[int, int]):
+    def update_consensus_status(self, representative_id: int, vote_dist: dict[int, int]):
         """Update consensus status - immediate update for critical state changes."""
         self.display.update_consensus_status(representative_id, vote_dist)
         self.display.force_update_display()
@@ -1031,7 +1030,7 @@ class StreamingOrchestrator:
         self.display.add_system_message(message)
         self.display.force_update_display()
 
-    def update_agent_vote_target(self, agent_id: int, target_id: Optional[int]):
+    def update_agent_vote_target(self, agent_id: int, target_id: int | None):
         """Update agent vote target - immediate update for critical state changes."""
         self.display.update_agent_vote_target(agent_id, target_id)
         self.display.force_update_display()
@@ -1080,10 +1079,10 @@ class StreamingOrchestrator:
 
 def create_streaming_display(
     display_enabled: bool = True,
-    stream_callback: Optional[Callable] = None,
+    stream_callback: Callable | None = None,
     max_lines: int = 10,
     save_logs: bool = True,
-    answers_dir: Optional[str] = None,
+    answers_dir: str | None = None,
 ) -> StreamingOrchestrator:
     """Create a streaming orchestrator with display capabilities."""
     return StreamingOrchestrator(display_enabled, stream_callback, max_lines, save_logs, answers_dir)

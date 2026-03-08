@@ -1,12 +1,12 @@
-# -*- coding: utf-8 -*-
 """
 Text stream chunk implementation.
 Handles text-based content including regular text, tool calls, and reasoning.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseStreamChunk, ChunkType
 
@@ -44,27 +44,27 @@ class TextStreamChunk(BaseStreamChunk):
     """
 
     # Text content
-    content: Optional[str] = None
+    content: str | None = None
 
     # Tool-related fields
-    tool_calls: Optional[List[Dict[str, Any]]] = None
-    complete_message: Optional[Dict[str, Any]] = None
-    response: Optional[Dict[str, Any]] = None
+    tool_calls: list[dict[str, Any]] | None = None
+    complete_message: dict[str, Any] | None = None
+    response: dict[str, Any] | None = None
 
     # Status fields
-    error: Optional[str] = None
-    status: Optional[str] = None
+    error: str | None = None
+    status: str | None = None
 
     # Reasoning fields (OpenAI Response API)
-    reasoning_delta: Optional[str] = None
-    reasoning_text: Optional[str] = None
-    reasoning_summary_delta: Optional[str] = None
-    reasoning_summary_text: Optional[str] = None
-    item_id: Optional[str] = None
-    content_index: Optional[int] = None
-    summary_index: Optional[int] = None
+    reasoning_delta: str | None = None
+    reasoning_text: str | None = None
+    reasoning_summary_delta: str | None = None
+    reasoning_summary_text: str | None = None
+    item_id: str | None = None
+    content_index: int | None = None
+    summary_index: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert to dictionary, excluding None values.
 

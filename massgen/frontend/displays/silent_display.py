@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Silent Display for MassGen Coordination
 
@@ -7,7 +6,6 @@ Provides only essential information while detailed progress is available via sta
 """
 
 import time
-from typing import Optional
 
 from .base_display import BaseDisplay
 
@@ -42,7 +40,7 @@ class SilentDisplay(BaseDisplay):
         self.agent_files = {}
         self.system_status_file = None
 
-    def initialize(self, question: str, log_filename: Optional[str] = None):
+    def initialize(self, question: str, log_filename: str | None = None):
         """Initialize the display with essential information only.
 
         Prints:
@@ -98,7 +96,7 @@ class SilentDisplay(BaseDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ):
         """Update content for a specific agent (silent - no output).
 

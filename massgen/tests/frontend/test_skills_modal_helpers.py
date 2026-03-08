@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for skills modal helper behavior."""
 
 from massgen.frontend.displays.textual.widgets.modals.skills_modals import SkillsModal

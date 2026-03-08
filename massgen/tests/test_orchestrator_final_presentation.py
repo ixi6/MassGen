@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Simple tests for orchestrator's get_final_presentation method shape and imports.
 """

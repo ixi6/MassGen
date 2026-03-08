@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Context management for MassGen.
 
 This module provides utilities for loading and managing task context

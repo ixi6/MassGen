@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Generate text content using OpenAI API and save it as various file formats (TXT, MD, PDF).
 """
@@ -7,7 +6,6 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
@@ -15,7 +13,7 @@ from openai import AsyncOpenAI
 from massgen.tool._result import ExecutionResult, TextContent
 
 
-def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None) -> None:
+def _validate_path_access(path: Path, allowed_paths: list[Path] | None = None) -> None:
     """
     Validate that a path is within allowed directories.
 
@@ -223,11 +221,11 @@ def _generate_pptx(content: str, file_path: Path) -> None:
 async def text_to_file_generation(
     prompt: str,
     file_format: str = "txt",
-    filename: Optional[str] = None,
+    filename: str | None = None,
     model: str = "gpt-4o",
-    storage_path: Optional[str] = None,
-    allowed_paths: Optional[List[str]] = None,
-    agent_cwd: Optional[str] = None,
+    storage_path: str | None = None,
+    allowed_paths: list[str] | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """
     Generate text content using OpenAI API and save it as various file formats.

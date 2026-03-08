@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Shared compression utilities for all backends.
 
@@ -6,10 +5,9 @@ Provides a simple message compression function that can be used by any backend
 when context length is exceeded.
 """
 
-import asyncio
 import json
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -81,11 +79,11 @@ SUMMARIZER_REQUEST_PROMPT = """Summarize the conversation above."""
 
 
 async def compress_messages_for_recovery(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     backend: "BackendBase",
     target_ratio: float = 0.2,
-    buffer_content: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    buffer_content: str | None = None,
+) -> list[dict[str, Any]]:
     """Compress messages for context error recovery.
 
     This function is backend-agnostic and uses the provided backend
@@ -168,7 +166,7 @@ async def compress_messages_for_recovery(
         summary = await _generate_summary(backend, summary_context)
         logger.info(f"[CompressionUtils] Generated summary: {len(summary)} chars")
 
-    except (httpx.HTTPStatusError, httpx.TimeoutException, asyncio.TimeoutError) as e:
+    except (httpx.HTTPStatusError, httpx.TimeoutException, TimeoutError) as e:
         # Expected network/API errors - fallback to useful guidance
         logger.warning(
             f"[CompressionUtils] Summarization failed due to API/network error: {e}. " "Using fallback guidance.",
@@ -325,7 +323,7 @@ def _truncate_to_token_budget(text: str, max_tokens: int) -> str:
     return truncated_text + "\n\n[... truncated to fit context ...]"
 
 
-def _estimate_messages_tokens(messages: List[Dict[str, Any]]) -> int:
+def _estimate_messages_tokens(messages: list[dict[str, Any]]) -> int:
     """Estimate total tokens in a message list."""
     calc = _get_token_calculator()
     total = 0
@@ -342,9 +340,9 @@ def _estimate_messages_tokens(messages: List[Dict[str, Any]]) -> int:
 
 
 def _ensure_fits_context(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     backend: "BackendBase",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Ensure messages fit within context window by truncating if needed.
 
     If the total message tokens exceed the context window, this function
@@ -529,7 +527,7 @@ async def _generate_summary(backend: "BackendBase", conversation_text: str) -> s
     return "".join(content_parts)
 
 
-def _format_messages_for_summary(messages: List[Dict[str, Any]]) -> str:
+def _format_messages_for_summary(messages: list[dict[str, Any]]) -> str:
     """Format messages into a readable string for summarization."""
     parts = []
 
@@ -560,13 +558,13 @@ def _format_messages_for_summary(messages: List[Dict[str, Any]]) -> str:
 
 
 def _save_compression_debug(
-    original_messages: Optional[List[Dict[str, Any]]] = None,
-    messages_to_compress: Optional[List[Dict[str, Any]]] = None,
-    recent_messages: Optional[List[Dict[str, Any]]] = None,
-    buffer_content: Optional[str] = None,
-    summary_context: Optional[str] = None,
-    compressed_result: Optional[List[Dict[str, Any]]] = None,
-    summary: Optional[str] = None,
+    original_messages: list[dict[str, Any]] | None = None,
+    messages_to_compress: list[dict[str, Any]] | None = None,
+    recent_messages: list[dict[str, Any]] | None = None,
+    buffer_content: str | None = None,
+    summary_context: str | None = None,
+    compressed_result: list[dict[str, Any]] | None = None,
+    summary: str | None = None,
     suffix: str = "",
 ) -> None:
     """Save compression debug data to the log directory."""
@@ -623,9 +621,9 @@ def _save_compression_debug(
 
 
 def save_retry_input_debug(
-    compressed_messages: List[Dict[str, Any]],
-    tools: List[Any],
-    error: Optional[str] = None,
+    compressed_messages: list[dict[str, Any]],
+    tools: list[Any],
+    error: str | None = None,
 ) -> None:
     """Save the retry input after compression to the debug folder.
 

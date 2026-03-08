@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Quickstart Wizard for MassGen TUI.
 
@@ -11,7 +10,7 @@ import contextlib
 import io
 import string
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import yaml
 from textual.app import ComposeResult
@@ -29,6 +28,13 @@ from textual.widgets import (
 )
 from textual.widgets.option_list import Option
 
+from massgen.config_builder import (
+    DEFAULT_QUICKSTART_CONFIG_FILENAME,
+    build_quickstart_config_path,
+    normalize_quickstart_config_filename,
+    sort_quickstart_provider_ids,
+)
+
 from .setup_wizard import DockerSetupStep
 from .wizard_base import StepComponent, WizardModal, WizardState, WizardStep
 from .wizard_steps import LaunchOptionsStep, WelcomeStep
@@ -41,19 +47,9 @@ def _agent_letter(index: int) -> str:
 
 def _quickstart_log(msg: str) -> None:
     """Log to TUI debug file."""
-    try:
-        import logging
+    from massgen.frontend.displays.shared.tui_debug import tui_log
 
-        log = logging.getLogger("massgen.tui.debug")
-        if not log.handlers:
-            handler = logging.FileHandler("/tmp/massgen_tui_debug.log", mode="a")
-            handler.setFormatter(logging.Formatter("%(asctime)s [QUICKSTART] %(message)s", datefmt="%H:%M:%S"))
-            log.addHandler(handler)
-            log.setLevel(logging.DEBUG)
-            log.propagate = False
-        log.debug(msg)
-    except Exception:
-        pass
+    tui_log(f"[QUICKSTART] {msg}")
 
 
 class QuickstartWelcomeStep(WelcomeStep):
@@ -89,12 +85,12 @@ class AgentCountStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected_count: str = "3"
-        self._option_list: Optional[OptionList] = None
+        self._option_list: OptionList | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("How many agents should work on your tasks?", classes="text-input-label")
@@ -149,12 +145,12 @@ class SetupModeStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected_mode: str = "different"
-        self._option_list: Optional[OptionList] = None
+        self._option_list: OptionList | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("How do you want to configure your agents?", classes="text-input-label")
@@ -208,25 +204,25 @@ class ProviderModelStep(StepComponent):
         wizard_state: WizardState,
         agent_label: str = "all agents",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._agent_label = agent_label
-        self._provider_select: Optional[Select] = None
-        self._model_select: Optional[Select] = None
-        self._key_input: Optional[Input] = None
-        self._key_label: Optional[Label] = None
-        self._providers: List[Tuple[str, str]] = []  # (provider_id, display_name)
-        self._models_by_provider: Dict[str, List[str]] = {}
-        self._provider_has_key: Dict[str, bool] = {}
-        self._provider_env_var: Dict[str, str] = {}
-        self._current_provider: Optional[str] = None
-        self._current_model: Optional[str] = None
-        self._current_reasoning_effort: Optional[str] = None
-        self._reasoning_hint: Optional[Label] = None
-        self._reasoning_label: Optional[Label] = None
-        self._reasoning_select: Optional[Select] = None
+        self._provider_select: Select | None = None
+        self._model_select: Select | None = None
+        self._key_input: Input | None = None
+        self._key_label: Label | None = None
+        self._providers: list[tuple[str, str]] = []  # (provider_id, display_name)
+        self._models_by_provider: dict[str, list[str]] = {}
+        self._provider_has_key: dict[str, bool] = {}
+        self._provider_env_var: dict[str, str] = {}
+        self._current_provider: str | None = None
+        self._current_model: str | None = None
+        self._current_reasoning_effort: str | None = None
+        self._reasoning_hint: Label | None = None
+        self._reasoning_label: Label | None = None
+        self._reasoning_select: Select | None = None
 
     def _load_providers(self) -> None:
         """Load all providers from ConfigBuilder, tracking which have keys."""
@@ -235,8 +231,10 @@ class ProviderModelStep(StepComponent):
 
             builder = ConfigBuilder()
             api_keys = builder.detect_api_keys()
+            ordered_provider_ids = sort_quickstart_provider_ids(list(builder.PROVIDERS.keys()))
 
-            for provider_id, provider_info in builder.PROVIDERS.items():
+            for provider_id in ordered_provider_ids:
+                provider_info = builder.PROVIDERS.get(provider_id, {})
                 name = provider_info.get("name", provider_id)
                 models = provider_info.get("models", [])
                 has_key = api_keys.get(provider_id, False)
@@ -285,7 +283,7 @@ class ProviderModelStep(StepComponent):
             self._key_input.display = False
 
     @staticmethod
-    def _get_reasoning_profile(provider_id: Optional[str], model: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _get_reasoning_profile(provider_id: str | None, model: str | None) -> dict[str, Any] | None:
         """Return quickstart reasoning options for the current provider/model."""
         if not provider_id or not model:
             return None
@@ -314,8 +312,7 @@ class ProviderModelStep(StepComponent):
 
         choices = profile.get("choices", [])
         default_effort = profile.get("default_effort", "medium")
-        valid_efforts = {value for _, value in choices}
-        selected_effort = self._current_reasoning_effort if self._current_reasoning_effort in valid_efforts else default_effort
+        selected_effort = default_effort
 
         self._current_reasoning_effort = selected_effort
         if not self.is_mounted:
@@ -398,8 +395,8 @@ class ProviderModelStep(StepComponent):
         yield self._reasoning_label
 
         self._reasoning_select = Select(
-            [("Medium (recommended)", "medium")],
-            value="medium",
+            [("Select reasoning effort", "__placeholder__")],
+            value="__placeholder__",
             id="reasoning_select",
         )
         self._reasoning_select.display = False
@@ -436,9 +433,11 @@ class ProviderModelStep(StepComponent):
             self._current_model = str(event.value)
             self._update_reasoning_input()
         elif event.select.id == "reasoning_select" and event.value != Select.BLANK:
+            if str(event.value) == "__placeholder__":
+                return
             self._current_reasoning_effort = str(event.value)
 
-    def get_value(self) -> Dict[str, str]:
+    def get_value(self) -> dict[str, str]:
         value = {
             "provider": self._current_provider or "",
             "model": self._current_model or "",
@@ -449,17 +448,22 @@ class ProviderModelStep(StepComponent):
 
     def set_value(self, value: Any) -> None:
         if isinstance(value, dict):
+            saved_reasoning_effort = value.get("reasoning_effort")
             if "provider" in value and self._provider_select:
                 self._current_provider = value["provider"]
                 self._provider_select.value = value["provider"]
             if "model" in value and self._model_select:
                 self._current_model = value["model"]
                 self._model_select.value = value["model"]
-            if "reasoning_effort" in value:
-                self._current_reasoning_effort = value["reasoning_effort"]
             self._update_reasoning_input()
+            if saved_reasoning_effort and self._reasoning_select:
+                try:
+                    self._reasoning_select.value = saved_reasoning_effort
+                    self._current_reasoning_effort = saved_reasoning_effort
+                except Exception:
+                    pass
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if not self._current_provider:
             return "Please select a provider"
         pid = self._current_provider
@@ -486,24 +490,24 @@ class TabbedProviderModelStep(StepComponent):
         wizard_state: WizardState,
         agent_count: int = 3,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._agent_count = agent_count
-        self._providers: List[Tuple[str, str]] = []
-        self._models_by_provider: Dict[str, List[str]] = {}
-        self._provider_has_key: Dict[str, bool] = {}
-        self._provider_env_var: Dict[str, str] = {}
+        self._providers: list[tuple[str, str]] = []
+        self._models_by_provider: dict[str, list[str]] = {}
+        self._provider_has_key: dict[str, bool] = {}
+        self._provider_env_var: dict[str, str] = {}
         # Keyed by agent letter ('a', 'b', 'c', ...)
-        self._tab_selections: Dict[str, Dict[str, Optional[str]]] = {}
-        self._provider_selects: Dict[str, Select] = {}
-        self._model_selects: Dict[str, Select] = {}
-        self._key_inputs: Dict[str, Input] = {}
-        self._key_labels: Dict[str, Label] = {}
-        self._reasoning_hints: Dict[str, Label] = {}
-        self._reasoning_labels: Dict[str, Label] = {}
-        self._reasoning_selects: Dict[str, Select] = {}
+        self._tab_selections: dict[str, dict[str, str | None]] = {}
+        self._provider_selects: dict[str, Select] = {}
+        self._model_selects: dict[str, Select] = {}
+        self._key_inputs: dict[str, Input] = {}
+        self._key_labels: dict[str, Label] = {}
+        self._reasoning_hints: dict[str, Label] = {}
+        self._reasoning_labels: dict[str, Label] = {}
+        self._reasoning_selects: dict[str, Select] = {}
 
     def _load_providers(self) -> None:
         """Load all providers from ConfigBuilder, tracking which have keys."""
@@ -512,8 +516,10 @@ class TabbedProviderModelStep(StepComponent):
 
             builder = ConfigBuilder()
             api_keys = builder.detect_api_keys()
+            ordered_provider_ids = sort_quickstart_provider_ids(list(builder.PROVIDERS.keys()))
 
-            for provider_id, provider_info in builder.PROVIDERS.items():
+            for provider_id in ordered_provider_ids:
+                provider_info = builder.PROVIDERS.get(provider_id, {})
                 name = provider_info.get("name", provider_id)
                 models = provider_info.get("models", [])
                 has_key = api_keys.get(provider_id, False)
@@ -553,7 +559,7 @@ class TabbedProviderModelStep(StepComponent):
             key_input.display = False
 
     @staticmethod
-    def _get_reasoning_profile(provider_id: Optional[str], model: Optional[str]) -> Optional[Dict[str, Any]]:
+    def _get_reasoning_profile(provider_id: str | None, model: str | None) -> dict[str, Any] | None:
         if not provider_id or not model:
             return None
         try:
@@ -572,7 +578,7 @@ class TabbedProviderModelStep(StepComponent):
             if widget is not None:
                 widget.display = visible
 
-    def _update_reasoning_input(self, agent_key: str, provider_id: Optional[str], model: Optional[str]) -> None:
+    def _update_reasoning_input(self, agent_key: str, provider_id: str | None, model: str | None) -> None:
         """Show/hide and populate reasoning selector for one agent tab."""
         reasoning_select = self._reasoning_selects.get(agent_key)
         if reasoning_select is None:
@@ -586,10 +592,7 @@ class TabbedProviderModelStep(StepComponent):
 
         choices = profile.get("choices", [])
         default_effort = profile.get("default_effort", "medium")
-        valid_efforts = {value for _, value in choices}
-        selected_effort = self._tab_selections.get(agent_key, {}).get("reasoning_effort")
-        if selected_effort not in valid_efforts:
-            selected_effort = default_effort
+        selected_effort = default_effort
 
         self._tab_selections.setdefault(agent_key, {})["reasoning_effort"] = selected_effort
         if not self.is_mounted:
@@ -676,8 +679,8 @@ class TabbedProviderModelStep(StepComponent):
                         yield reasoning_label
 
                         reasoning_select = Select(
-                            [("Medium (recommended)", "medium")],
-                            value="medium",
+                            [("Select reasoning effort", "__placeholder__")],
+                            value="__placeholder__",
                             id=f"reasoning_{letter}",
                         )
                         reasoning_select.display = False
@@ -724,9 +727,11 @@ class TabbedProviderModelStep(StepComponent):
                 self._tab_selections[agent_key].get("model"),
             )
         elif kind == "reasoning":
+            if str(event.value) == "__placeholder__":
+                return
             self._tab_selections[agent_key]["reasoning_effort"] = str(event.value)
 
-    def get_value(self) -> Dict[str, Any]:
+    def get_value(self) -> dict[str, Any]:
         # Store per-agent configs in wizard state
         for agent_key, sel in self._tab_selections.items():
             agent_config = {
@@ -761,6 +766,7 @@ class TabbedProviderModelStep(StepComponent):
                 if reasoning_select and reasoning_effort:
                     try:
                         reasoning_select.value = reasoning_effort
+                        self._tab_selections[agent_key]["reasoning_effort"] = reasoning_effort
                     except Exception:
                         pass
 
@@ -813,7 +819,7 @@ class TabbedProviderModelStep(StepComponent):
                 pass
         return False
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         for i in range(self._agent_count):
             letter = _agent_letter(i)
             label = letter.upper()
@@ -848,12 +854,12 @@ class ExecutionModeStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected_mode: str = "docker"
-        self._option_list: Optional[OptionList] = None
+        self._option_list: OptionList | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("Select execution mode:", classes="text-input-label")
@@ -900,21 +906,21 @@ class SkillsInstallStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
-        self._packages_status: Optional[Dict[str, Dict[str, Any]]] = None
-        self._checkboxes: Dict[str, Checkbox] = {}
-        self._selected_packages: List[str] = []
-        self._available_package_ids: List[str] = []
-        self._install_button: Optional[Button] = None
-        self._status_label: Optional[Label] = None
+        self._packages_status: dict[str, dict[str, Any]] | None = None
+        self._checkboxes: dict[str, Checkbox] = {}
+        self._selected_packages: list[str] = []
+        self._available_package_ids: list[str] = []
+        self._install_button: Button | None = None
+        self._status_label: Label | None = None
         self._status_message: str = ""
         self._installing: bool = False
         self._install_attempted: bool = False
-        self._installed_packages: List[str] = []
-        self._failed_packages: List[str] = []
+        self._installed_packages: list[str] = []
+        self._failed_packages: list[str] = []
 
     def _load_packages_status(self) -> None:
         """Load current skill package installation status."""
@@ -941,7 +947,7 @@ class SkillsInstallStep(StepComponent):
             yield Label("Could not check skill package status.", classes="password-hint")
             return
 
-        missing_packages: List[tuple[str, Dict[str, Any]]] = []
+        missing_packages: list[tuple[str, dict[str, Any]]] = []
         for pkg_id, pkg in self._packages_status.items():
             installed = bool(pkg.get("installed"))
             status_text = "installed" if installed else "not installed"
@@ -1045,6 +1051,7 @@ class SkillsInstallStep(StepComponent):
                 install_crawl4ai_skill,
                 install_openai_skills,
                 install_openskills_cli,
+                install_remotion_skill,
                 install_vercel_skills,
             )
 
@@ -1053,6 +1060,7 @@ class SkillsInstallStep(StepComponent):
                 "openai": install_openai_skills,
                 "vercel": install_vercel_skills,
                 "agent_browser": install_agent_browser_skill,
+                "remotion": install_remotion_skill,
             }
 
             selected = list(self._selected_packages)
@@ -1122,7 +1130,7 @@ class SkillsInstallStep(StepComponent):
         # Recompose so package status reflects newly installed items.
         self.refresh(recompose=True)
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if self._installing:
             return "Please wait for skill installation to finish"
 
@@ -1134,7 +1142,7 @@ class SkillsInstallStep(StepComponent):
 
         return None
 
-    def get_value(self) -> Dict[str, Any]:
+    def get_value(self) -> dict[str, Any]:
         return {
             "packages_to_install": list(self._selected_packages),
             "install_attempted": self._install_attempted,
@@ -1158,11 +1166,11 @@ class ContextPathStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
-        self._input: Optional[Input] = None
+        self._input: Input | None = None
 
     def compose(self) -> ComposeResult:
         yield Label("Context Path (optional):", classes="text-input-label")
@@ -1183,7 +1191,7 @@ class ContextPathStep(StepComponent):
             classes="password-hint",
         )
 
-    def get_value(self) -> Optional[str]:
+    def get_value(self) -> str | None:
         if self._input and self._input.value.strip():
             return self._input.value.strip()
         return None
@@ -1213,22 +1221,22 @@ class CoordinationModeStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected_mode: str = "voting"
-        self._option_list: Optional[OptionList] = None
-        self._presenter_label: Optional[Label] = None
-        self._presenter_select: Optional[Select] = None
-        self._per_agent_label: Optional[Label] = None
-        self._per_agent_input: Optional[Input] = None
-        self._global_label: Optional[Label] = None
-        self._global_input: Optional[Input] = None
-        self._novelty_label: Optional[Label] = None
-        self._novelty_select: Optional[Select] = None
+        self._option_list: OptionList | None = None
+        self._presenter_label: Label | None = None
+        self._presenter_select: Select | None = None
+        self._per_agent_label: Label | None = None
+        self._per_agent_input: Input | None = None
+        self._global_label: Label | None = None
+        self._global_input: Input | None = None
+        self._novelty_label: Label | None = None
+        self._novelty_select: Select | None = None
 
-    def _agent_ids(self) -> List[str]:
+    def _agent_ids(self) -> list[str]:
         agent_count = self.wizard_state.get("agent_count", 3)
         return [f"agent_{_agent_letter(i)}" for i in range(agent_count)]
 
@@ -1333,11 +1341,11 @@ class CoordinationModeStep(StepComponent):
             self._selected_mode = str(event.option.id)
             self._set_decomposition_visibility(self._selected_mode == "decomposition")
 
-    def get_value(self) -> Dict[str, Any]:
+    def get_value(self) -> dict[str, Any]:
         if self._selected_mode != "decomposition":
             return {"coordination_mode": "voting"}
 
-        presenter_value: Optional[str] = None
+        presenter_value: str | None = None
         if self._presenter_select and self._presenter_select.value != Select.BLANK:
             presenter_value = str(self._presenter_select.value)
 
@@ -1399,7 +1407,7 @@ class CoordinationModeStep(StepComponent):
 
         self._set_decomposition_visibility(self._selected_mode == "decomposition")
 
-    def validate(self) -> Optional[str]:
+    def validate(self) -> str | None:
         if self._selected_mode != "decomposition":
             return None
 
@@ -1432,33 +1440,60 @@ class ConfigLocationStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
         self._selected: str = "project"
-        self._option_list: Optional[OptionList] = None
-        self._warning_label: Optional[Label] = None
-        self._project_path = Path.cwd() / ".massgen" / "config.yaml"
-        self._global_path = Path.home() / ".config" / "massgen" / "config.yaml"
+        self._filename: str = DEFAULT_QUICKSTART_CONFIG_FILENAME
+        self._option_list: OptionList | None = None
+        self._filename_input: Input | None = None
+        self._warning_label: Label | None = None
+        saved_value = self.wizard_state.get("config_location")
+        if isinstance(saved_value, dict):
+            self._selected = str(saved_value.get("location", "project"))
+            self._filename = normalize_quickstart_config_filename(
+                str(saved_value.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME)),
+            )
+        elif isinstance(saved_value, str):
+            self._selected = saved_value
 
-    def _path_for(self, location: str) -> Path:
-        return self._global_path if location == "global" else self._project_path
+    def _path_for(self, location: str, filename: str | None = None) -> Path:
+        return build_quickstart_config_path(
+            location=location,
+            filename=filename or self._filename,
+        )
 
     def _build_options(self) -> list:
         options = []
         for value, label, desc, path in [
-            ("project", "This Project (Recommended)", ".massgen/config.yaml in current directory", self._project_path),
-            ("global", "Global", "~/.config/massgen/config.yaml — available from any directory", self._global_path),
+            (
+                "project",
+                "This Project (Recommended)",
+                ".massgen/ in current directory",
+                self._path_for("project"),
+            ),
+            (
+                "global",
+                "Global",
+                "~/.config/massgen/ — available from any directory",
+                self._path_for("global"),
+            ),
         ]:
             exists_tag = "  [yellow]⚠ exists[/yellow]" if path.exists() else ""
             option_text = f"[bold]{label}{exists_tag}[/bold]\n[dim]{desc}[/dim]"
             options.append(Option(option_text, id=value))
         return options
 
+    def _current_filename(self) -> str:
+        if self._filename_input:
+            return self._filename_input.value.strip()
+        return self._filename
+
     def _update_warning(self) -> None:
         if self._warning_label:
-            path = self._path_for(self._selected)
+            filename = normalize_quickstart_config_filename(self._current_filename())
+            path = self._path_for(self._selected, filename)
             if path.exists():
                 self._warning_label.update(
                     f"[yellow]A config already exists at {path}. It will be overwritten.[/yellow]",
@@ -1478,7 +1513,20 @@ class ConfigLocationStep(StepComponent):
         yield self._option_list
 
         if self._option_list:
-            self._option_list.highlighted = 0
+            self._option_list.highlighted = 1 if self._selected == "global" else 0
+
+        yield Label("Config filename:", classes="text-input-label")
+        self._filename_input = Input(
+            value=self._filename,
+            placeholder=DEFAULT_QUICKSTART_CONFIG_FILENAME,
+            classes="text-input",
+            id="config_filename_input",
+        )
+        yield self._filename_input
+        yield Label(
+            "Only a filename is needed. Quickstart chooses the directory for you.",
+            classes="password-hint",
+        )
 
         self._warning_label = Label("", classes="password-hint")
         self._warning_label.display = False
@@ -1491,17 +1539,47 @@ class ConfigLocationStep(StepComponent):
             self._selected = str(event.option.id)
             self._update_warning()
 
-    def get_value(self) -> str:
-        return self._selected
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "config_filename_input":
+            self._filename = event.value.strip() or self._filename
+            self._update_warning()
+
+    def validate(self) -> str | None:
+        raw_filename = self._current_filename()
+        if not raw_filename:
+            return "Please enter a config filename"
+
+        if Path(raw_filename).name != raw_filename or raw_filename in {".", ".."}:
+            return "Enter a filename only (no directory path)"
+
+        return None
+
+    def get_value(self) -> dict[str, str]:
+        return {
+            "location": self._selected,
+            "filename": normalize_quickstart_config_filename(self._current_filename()),
+        }
 
     def set_value(self, value: Any) -> None:
-        if isinstance(value, str):
-            self._selected = value
-            options = [("project", 0), ("global", 1)]
-            idx = next((i for v, i in options if v == value), None)
-            if idx is not None and self._option_list:
-                self._option_list.highlighted = idx
-            self._update_warning()
+        if isinstance(value, dict):
+            location = str(value.get("location", "project"))
+            filename = str(value.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME))
+        elif isinstance(value, str):
+            location = value
+            filename = self._filename
+        else:
+            return
+
+        self._selected = location
+        self._filename = normalize_quickstart_config_filename(filename)
+
+        options = [("project", 0), ("global", 1)]
+        idx = next((i for v, i in options if v == self._selected), None)
+        if idx is not None and self._option_list:
+            self._option_list.highlighted = idx
+        if self._filename_input:
+            self._filename_input.value = self._filename
+        self._update_warning()
 
 
 class ConfigPreviewStep(StepComponent):
@@ -1511,11 +1589,11 @@ class ConfigPreviewStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
-        self._textarea: Optional[TextArea] = None
+        self._textarea: TextArea | None = None
 
     def _generate_preview(self) -> str:
         """Generate YAML config from wizard state."""
@@ -1533,7 +1611,7 @@ class ConfigPreviewStep(StepComponent):
             # Build agents config
             agents_config = []
 
-            if setup_mode == "same":
+            if setup_mode == "same" or agent_count == 1:
                 # Same provider/model for all agents
                 provider_model = self.wizard_state.get("provider_model", {})
                 provider = provider_model.get("provider", "openai")
@@ -1615,8 +1693,8 @@ class QuickstartCompleteStep(StepComponent):
         self,
         wizard_state: WizardState,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(wizard_state, id=id, classes=classes)
 
@@ -1625,8 +1703,20 @@ class QuickstartCompleteStep(StepComponent):
             yield Label("OK", classes="complete-icon")
             yield Label("Configuration Ready!", classes="complete-title")
 
-            location = self.wizard_state.get("config_location", "project")
-            default = "~/.config/massgen/config.yaml" if location == "global" else ".massgen/config.yaml"
+            location_data = self.wizard_state.get("config_location", "project")
+            if isinstance(location_data, dict):
+                location = str(location_data.get("location", "project"))
+                filename = str(location_data.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME))
+            else:
+                location = str(location_data or "project")
+                filename = DEFAULT_QUICKSTART_CONFIG_FILENAME
+
+            default = str(
+                build_quickstart_config_path(
+                    location=location,
+                    filename=filename,
+                ),
+            )
             config_path = self.wizard_state.get("config_path", default)
             yield Label(f"Saved to: {config_path}", classes="complete-message")
 
@@ -1678,15 +1768,24 @@ class QuickstartWizard(WizardModal):
 
     def __init__(
         self,
+        config_filename: str | None = None,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         super().__init__(id=id, classes=classes)
         self._dynamic_steps_added = False
-        self._config_path: Optional[str] = None
+        self._config_path: str | None = None
+        if config_filename:
+            self.state.set(
+                "config_location",
+                {
+                    "location": "project",
+                    "filename": normalize_quickstart_config_filename(config_filename),
+                },
+            )
 
-    def get_steps(self) -> List[WizardStep]:
+    def get_steps(self) -> list[WizardStep]:
         """Return the wizard steps."""
         return [
             WizardStep(
@@ -1713,7 +1812,7 @@ class QuickstartWizard(WizardModal):
                 title="Provider & Model",
                 description="Choose your AI provider and model",
                 component_class=ProviderModelStep,
-                skip_condition=lambda state: state.get("setup_mode") == "different",
+                skip_condition=lambda state: state.get("agent_count", 3) > 1 and state.get("setup_mode") == "different",
             ),
             # Dynamic per-agent steps are inserted here when setup_mode == "different"
             WizardStep(
@@ -1856,8 +1955,8 @@ class QuickstartWizard(WizardModal):
             use_docker = self.state.get("execution_mode", True)
             skills_step_data = self.state.get("install_skills_now", {})
             install_skills_now = False
-            installed_skill_packages: List[str] = []
-            failed_skill_packages: List[str] = []
+            installed_skill_packages: list[str] = []
+            failed_skill_packages: list[str] = []
             if isinstance(skills_step_data, dict):
                 installed_skill_packages = list(skills_step_data.get("installed_packages", []))
                 failed_skill_packages = list(skills_step_data.get("failed_packages", []))
@@ -1923,14 +2022,28 @@ class QuickstartWizard(WizardModal):
                 coordination_settings=coordination_settings,
             )
 
-            # Save config to chosen location
-            config_location = self.state.get("config_location", "project")
-            if config_location == "global":
-                config_dir = Path.home() / ".config" / "massgen"
+            # Save config to chosen location + filename
+            config_location_data = self.state.get("config_location", "project")
+            if isinstance(config_location_data, dict):
+                config_location = str(config_location_data.get("location", "project"))
+                config_filename = str(config_location_data.get("filename", DEFAULT_QUICKSTART_CONFIG_FILENAME))
             else:
-                config_dir = Path(".massgen")
-            config_dir.mkdir(parents=True, exist_ok=True)
-            config_path = config_dir / "config.yaml"
+                config_location = str(config_location_data or "project")
+                config_filename = DEFAULT_QUICKSTART_CONFIG_FILENAME
+
+            normalized_filename = normalize_quickstart_config_filename(config_filename)
+            self.state.set(
+                "config_location",
+                {
+                    "location": config_location,
+                    "filename": normalized_filename,
+                },
+            )
+            config_path = build_quickstart_config_path(
+                location=config_location,
+                filename=normalized_filename,
+            )
+            config_path.parent.mkdir(parents=True, exist_ok=True)
             with open(config_path, "w") as f:
                 yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 

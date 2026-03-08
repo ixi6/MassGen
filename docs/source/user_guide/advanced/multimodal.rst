@@ -12,15 +12,22 @@ MassGen supports comprehensive multimodal AI workflows, enabling agents to both 
 
    * ✅ **understand_audio**: Transcribe audio files to text (uses OpenAI's ``gpt-4o-transcribe`` by default)
    * ✅ **understand_file**: Analyze documents (PDF, DOCX, XLSX, PPTX) and text files
-   * ✅ **understand_image**: Describe and analyze images (uses OpenAI's ``gpt-4.1`` by default)
-   * ✅ **understand_video**: Extract and analyze key frames from videos (uses OpenAI's ``gpt-4.1`` by default)
+   * ✅ **understand_image**: Describe and analyze images — **routes to the agent's native backend** when supported
+   * ✅ **understand_video**: Extract and analyze key frames from videos — routes to the best available backend
+
+   **Native Backend Routing (v0.1.55+):**
+
+   * Image and video understanding now route API calls to the **agent's own backend** when it supports the capability
+   * Supported image backends: **OpenAI**, **Claude**, **Gemini**, **Grok**, **Claude Code** (SDK), **Codex** (CLI)
+   * If the agent's backend does not support image understanding, falls back to OpenAI ``gpt-5.4``
+   * This preserves model diversity and per-agent consistency — a Claude agent analyzes images via Claude, not GPT
 
    **Backend Requirements:**
 
-   * The understanding tools use OpenAI's API backend for processing multimodal content
-   * Requires ``OPENAI_API_KEY`` environment variable set in ``.env`` file
-   * These tools work with any agent backend type (openai, claude, gemini, etc.)
-   * The agent backend only needs to support custom tools; the actual understanding is done via OpenAI
+   * For native routing, the agent's backend API key must be available (e.g., ``ANTHROPIC_API_KEY`` for Claude)
+   * Fallback to OpenAI requires ``OPENAI_API_KEY`` environment variable set in ``.env`` file
+   * Claude Code requires the ``claude`` CLI installed and authenticated
+   * Codex requires the ``codex`` CLI installed and authenticated
 
    **Generation Tools:**
 
@@ -69,7 +76,9 @@ Image Understanding
 Image understanding enables agents to analyze visual content, extract information, and answer questions about images using the ``understand_image`` custom tool.
 
 .. note::
-   The ``understand_image`` tool uses OpenAI's API backend with the ``gpt-4.1`` model by default for processing images. This requires an OpenAI API key regardless of which backend your agent uses.
+   **Native backend routing (v0.1.55+):** The ``understand_image`` tool now routes to the agent's own backend when it supports ``image_understanding``. For example, a Claude agent will use Claude's vision API, a Gemini agent will use Gemini's multimodal API, etc. If the agent's backend doesn't support image understanding, it falls back to OpenAI ``gpt-5.4``.
+
+   Supported backends: OpenAI, Claude, Gemini, Grok, Claude Code (SDK), Codex (CLI).
 
 Basic Configuration
 ~~~~~~~~~~~~~~~~~~~
@@ -490,7 +499,7 @@ Video Understanding
 Analyze and extract information from video files using the ``understand_video`` custom tool.
 
 .. note::
-   The ``understand_video`` tool uses OpenAI's API backend with the ``gpt-4.1`` model by default for analyzing video frames. This requires an OpenAI API key regardless of which backend your agent uses.
+   The ``understand_video`` tool now routes to the agent's native backend when it supports ``video_understanding``. If the agent's backend doesn't support video understanding, it falls back to OpenAI ``gpt-5.4``. The OpenAI fallback requires an ``OPENAI_API_KEY``.
 
 .. code-block:: yaml
 
@@ -526,6 +535,34 @@ Analyze and extract information from video files using the ``understand_video`` 
 **Requirements:**
 
 * Requires opencv-python (``pip install opencv-python``)
+* Optional: ``pip install massgen[video]`` for scene-based frame extraction
+
+**Configurable Frame Extraction (v0.1.56+):**
+
+By default, video understanding uses scene-based frame extraction (PySceneDetect) to select the most informative frames. You can configure the extraction strategy via ``multimodal_config``:
+
+.. code-block:: yaml
+
+   agents:
+     - id: "video_analyzer"
+       backend:
+         type: "openai"
+         model: "gpt-5.4"
+         enable_multimodal_tools: true
+         multimodal_config:
+           video:
+             extraction_mode: "scene"   # "scene" (default) | "uniform"
+             max_frames: 30             # Hard cap (default: 30, absolute max: 60)
+             fps: 1.0                   # Uniform mode: frames per second
+             threshold: 0.3             # Scene mode: detection sensitivity
+             frames_per_scene: 3        # Scene mode: frames per detected scene
+
+**Extraction modes:**
+
+* **scene** (default): Detects scene boundaries using PySceneDetect's ``ContentDetector``, then samples ``frames_per_scene`` frames within each scene. Falls back to uniform when PySceneDetect is not installed or no scenes are detected.
+* **uniform**: Evenly spaced frames based on ``fps`` (default 1.0 frame/sec) or ``num_frames`` (fixed count, overrides fps). Always capped at ``max_frames``.
+
+**Cost guardrails:** The ``max_frames`` setting (default 30) prevents runaway token costs on long videos. The absolute maximum is 60 frames regardless of configuration.
 
 Video Generation
 ----------------
@@ -791,12 +828,13 @@ Supported Backends
 
 * **Supported Backends**: OpenAI, Claude, Claude Code, Gemini, Grok, Chat Completions (generic API), LM Studio, Inference (vLLM/SGLang)
 * **Not Supported**: Azure OpenAI, AG2 (these backends don't support custom tools)
-* **How It Works**: The custom tools (``understand_image``, ``understand_video``, ``understand_audio``, ``understand_file``) use OpenAI's API for processing
+* **How It Works**: Understanding tools route to the agent's native backend when supported (v0.1.55+). Image understanding supports OpenAI, Claude, Gemini, Grok, Claude Code, and Codex natively. Unsupported backends fall back to OpenAI.
 * **Requirements**:
 
   * Your agent backend must support custom tools
-  * ``OPENAI_API_KEY`` must be set in your ``.env`` file for the understanding tools to function
-  * The agent's backend type can be anything supported - only the custom tools need OpenAI API access
+  * The agent's own API key should be available for native routing (e.g., ``ANTHROPIC_API_KEY`` for Claude agents)
+  * ``OPENAI_API_KEY`` is needed as a fallback for backends without native image understanding
+  * Claude Code requires the ``claude`` CLI; Codex requires the ``codex`` CLI
 
 See :doc:`../tools/custom_tools` for complete details on custom tool support by backend, and :doc:`../backends` for all backend capabilities including web search, code execution, and MCP support.
 
@@ -901,10 +939,11 @@ Best Practices
 
 1. **API Keys and Backend Configuration**
 
-   * **IMPORTANT**: All multimodal understanding tools (``understand_image``, ``understand_video``, ``understand_audio``) require an OpenAI API key
-   * Set ``OPENAI_API_KEY`` in your ``.env`` file even if using other backends (Claude, Gemini, etc.)
-   * The tools use OpenAI's backend (gpt-4.1 for images/videos, gpt-4o-transcribe for audio) regardless of your agent's configured backend
-   * Your agent backend only needs to support custom tools; the actual multimodal processing happens via OpenAI
+   * **Native routing (v0.1.55+)**: Image and video understanding tools now route to the agent's own backend when it supports the capability
+   * Ensure your agent's API key is set (e.g., ``ANTHROPIC_API_KEY`` for Claude, ``GEMINI_API_KEY`` for Gemini, ``XAI_API_KEY`` for Grok)
+   * Set ``OPENAI_API_KEY`` as a fallback for backends without native image understanding
+   * Claude Code requires the ``claude`` CLI installed and authenticated; Codex requires the ``codex`` CLI
+   * Audio understanding still uses OpenAI's ``gpt-4o-transcribe`` by default
 
 2. **File Access and Configuration**
 

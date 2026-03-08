@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Shell command execution tool implementation."""
 
 import asyncio
@@ -36,7 +35,7 @@ async def run_shell_script(
         stderr_text = stderr_data.decode("utf-8")
         exit_code = process.returncode
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         timeout_msg = f"TimeoutError: Command execution exceeded {max_duration} seconds limit"
         exit_code = -1
         try:

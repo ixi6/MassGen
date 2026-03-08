@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Python code execution tool implementation."""
 
 import asyncio
@@ -49,7 +48,7 @@ async def run_python_script(
             stderr_text = stderr_data.decode("utf-8")
             exit_code = process.returncode
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timeout_msg = f"TimeoutError: Execution exceeded {max_duration} seconds limit"
             exit_code = -1
             try:

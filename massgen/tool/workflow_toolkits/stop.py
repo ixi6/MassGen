@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Stop toolkit for MassGen decomposition mode coordination.
 
@@ -6,7 +5,7 @@ In decomposition mode, agents call `stop` instead of `vote` to signal
 that their assigned subtask is complete.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseToolkit, ToolType
 
@@ -22,7 +21,7 @@ class StopToolkit(BaseToolkit):
 
     def __init__(
         self,
-        template_overrides: Optional[Dict[str, Any]] = None,
+        template_overrides: dict[str, Any] | None = None,
     ):
         self._template_overrides = template_overrides or {}
 
@@ -34,10 +33,10 @@ class StopToolkit(BaseToolkit):
     def toolkit_type(self) -> ToolType:
         return ToolType.WORKFLOW
 
-    def is_enabled(self, config: Dict[str, Any]) -> bool:
+    def is_enabled(self, config: dict[str, Any]) -> bool:
         return config.get("enable_workflow_tools", True)
 
-    def get_tools(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tools(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         """Get stop tool definition based on API format."""
         if "stop_tool" in self._template_overrides:
             override = self._template_overrides["stop_tool"]

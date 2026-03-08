@@ -1,4 +1,4 @@
-# MassGen v0.1.51 Release Announcement
+# MassGen v0.1.60 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,17 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.51, focused on Reviewing Coordination & Change Documents! 🚀 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
+We're excited to release MassGen v0.1.60 — Multimodal Tools, Subagent Enhancements & GPT-5.4! 🚀 Rewritten `read_media` tool with clearer schema and new `MediaCallLedgerHook` for tracking media calls. Subagents gain `inherit_spawning_agent_backend` and `final_answer_strategy` options. GPT-5.4 added as the default OpenAI flagship. Plus: decomp mode cooperates with checklist workflow, Codex prompt caching calculation fix for pricing accuracy, and checklist/prompt injection fixes.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.51
+pip install massgen==0.1.60
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.51
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.60
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -29,35 +29,41 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.51, focused on Reviewing Coordination & Change Documents! 🚀 Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
+We're excited to release MassGen v0.1.60 — Multimodal Tools, Subagent Enhancements & GPT-5.4! 🚀 Rewritten `read_media` tool with clearer schema and new `MediaCallLedgerHook` for tracking media calls. Subagents gain `inherit_spawning_agent_backend` and `final_answer_strategy` options. GPT-5.4 added as the default OpenAI flagship. Plus: decomp mode cooperates with checklist workflow, Codex prompt caching calculation fix for pricing accuracy, and checklist/prompt injection fixes.
 
-**Key Features:**
+**Key Improvements:**
 
-**Change Documents (Changedoc)** - Decision journals for coordination:
-- Agents write `tasks/changedoc.md` during coordination capturing decision provenance, rationale, and code traceability
-- Changedocs passed to other agents in `<changedoc>` tags for shared decision awareness
-- Config: `enable_changedoc: true` (default on)
+🛠️ **Multimodal Tool Improvements** - Clearer, more reliable media tools:
+- Rewritten `read_media` tool with clearer schema and better error handling
+- New `MediaCallLedgerHook` for tracking read/generate media calls via the hook framework
 
-**Changedoc-Anchored Evaluation** - Structured quality checklist:
-- 5 changedoc-specific checklist items: Decision Completeness, Rationale Quality, Traceability, Output Quality, Novel Elements
-- Mandatory gap report before verdict (`checklist_require_gap_report: true`)
+🤖 **Subagent Enhancements** - More flexible subagent configuration:
+- `inherit_spawning_agent_backend` — subagents automatically inherit the spawning agent's backend
+- `final_answer_strategy` — configurable child orchestrator final-answer policy (winner_reuse, winner_present, synthesize)
+- Per-agent `subagent_agents` override and robust orchestrator config file support
 
-**Review Modal Improvements** - Enhanced diff visualization:
-- Multi-context, multi-file diff visualization with critique capabilities
+🧠 **GPT-5.4 Support** - New default OpenAI flagship model:
+- GPT-5.4 added to the model registry for immediate use across all coordination modes
 
-**Drift Conflict Policy** - Safer change application:
-- Configurable handling of target-file drift: `skip` (default), `prefer_presenter`, or `fail`
+🔄 **Decomposition + Checklist Cooperation** - Unified quality workflow:
+- Decomp mode now cooperates with the checklist workflow for quality-gated subtask iteration
+- Improved verification round time with better verification_latest prompts
 
-**Also in this release:**
-- `--cwd-context` CLI flag for injecting CWD as context path (`ro`/`rw`)
-- `.massgen_scratch/` scratch directory in worktrees for temporary agent files
-- Mode bar responsive labels adapting to terminal width
+✅ **Fixes** - Quality and accuracy improvements:
+- Checklist & proposal injection improvements for more reliable behavior
+- System prompt refocused on evaluating entire output quality
+- Codex prompt caching calculation fix for pricing accuracy
+- Task plan refresh fix and skill prefix handling fixes
 
-**Bug Fixes:**
-- Final presentation fallback for empty presentations
-- Task execution timing fixes
+**Getting Started:**
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.51
+```bash
+pip install massgen==0.1.60
+# Choose backend 'openai' with model 'gpt-5.4' in the setup wizard to start using GPT-5.4
+uv run massgen --quickstart
+```
+
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.60
 
 Feature highlights:
 

@@ -1,12 +1,12 @@
-# -*- coding: utf-8 -*-
 """Unified Interactive Session Controller for MassGen."""
 
 import asyncio
 import logging
 import queue
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Protocol
+from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -31,14 +31,14 @@ class TurnResult:
         error: Exception if turn failed
     """
 
-    answer_text: Optional[str] = None
+    answer_text: str | None = None
     was_cancelled: bool = False
-    updated_session_id: Optional[str] = None
+    updated_session_id: str | None = None
     updated_turn: int = 0
-    selected_agent: Optional[str] = None
-    vote_results: Optional[Dict[str, Any]] = None
+    selected_agent: str | None = None
+    vote_results: dict[str, Any] | None = None
     partial_saved: bool = False
-    error: Optional[Exception] = None
+    error: Exception | None = None
 
 
 @dataclass
@@ -56,12 +56,12 @@ class CommandResult:
     """
 
     should_exit: bool = False
-    message: Optional[str] = None
+    message: str | None = None
     reset_session_state: bool = False
     reset_ui_view: bool = False
     handled: bool = True
-    ui_action: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
+    ui_action: str | None = None
+    data: dict[str, Any] | None = None
 
 
 @dataclass
@@ -81,16 +81,16 @@ class SessionContext:
         incomplete_turn_workspaces: Dict of agent_id -> workspace path for incomplete turns
     """
 
-    session_id: Optional[str] = None
+    session_id: str | None = None
     current_turn: int = 0
-    conversation_history: List[Dict[str, str]] = field(default_factory=list)
-    previous_turns: List[Dict[str, Any]] = field(default_factory=list)
-    winning_agents_history: List[Dict[str, Any]] = field(default_factory=list)
-    agents: Dict[str, Any] = field(default_factory=dict)
-    config_path: Optional[str] = None
-    original_config: Optional[Dict[str, Any]] = None
-    orchestrator_cfg: Optional[Dict[str, Any]] = None
-    incomplete_turn_workspaces: Dict[str, Any] = field(default_factory=dict)
+    conversation_history: list[dict[str, str]] = field(default_factory=list)
+    previous_turns: list[dict[str, Any]] = field(default_factory=list)
+    winning_agents_history: list[dict[str, Any]] = field(default_factory=list)
+    agents: dict[str, Any] = field(default_factory=dict)
+    config_path: str | None = None
+    original_config: dict[str, Any] | None = None
+    orchestrator_cfg: dict[str, Any] | None = None
+    incomplete_turn_workspaces: dict[str, Any] = field(default_factory=dict)
 
 
 # =============================================================================
@@ -106,7 +106,7 @@ class QuestionSource(Protocol):
     - TextualThreadQueueQuestionSource: Queue-based for Textual TUI
     """
 
-    async def get_next(self) -> Optional[str]:
+    async def get_next(self) -> str | None:
         """Get the next question/command from the source.
 
         Returns:
@@ -244,7 +244,7 @@ class RichStdinQuestionSource:
     def __init__(
         self,
         prompt: str = "\n\033[94m👤 User:\033[0m ",
-        read_input_func: Optional[Callable[..., str]] = None,
+        read_input_func: Callable[..., str] | None = None,
     ):
         """Initialize the stdin question source.
 
@@ -256,7 +256,7 @@ class RichStdinQuestionSource:
         self._closed = False
         self._read_input_func = read_input_func
 
-    async def get_next(self) -> Optional[str]:
+    async def get_next(self) -> str | None:
         """Read the next question from stdin.
 
         Returns:
@@ -311,7 +311,7 @@ class TextualThreadQueueQuestionSource:
         self._queue: queue.Queue = queue.Queue()
         self._closed = False
 
-    async def get_next(self) -> Optional[str]:
+    async def get_next(self) -> str | None:
         """Get the next question from the queue.
 
         Returns:
@@ -367,7 +367,7 @@ class RichInteractiveAdapter(UIAdapter):
     BRIGHT_BLUE = "\033[94m"
     RESET = "\033[0m"
 
-    def __init__(self, agents: Dict[str, Any], config_path: Optional[str] = None):
+    def __init__(self, agents: dict[str, Any], config_path: str | None = None):
         """Initialize the Rich adapter.
 
         Args:
@@ -500,12 +500,12 @@ class TextualInteractiveAdapter(UIAdapter):
         if self._display and self._display._app and hasattr(self._display._app, "_mode_state"):
             mode_state = self._display._app._mode_state
             logger.info(f"[TextualAdapter] plan_mode={mode_state.plan_mode}, has_answer={bool(result.answer_text)}")
-            if mode_state.plan_mode == "plan" and result.answer_text and not result.was_cancelled and not result.error:
+            if mode_state.plan_mode in ("plan", "spec") and result.answer_text and not result.was_cancelled and not result.error:
                 # Planning completed - trigger approval flow
                 logger.info("[TextualAdapter] Triggering plan approval flow")
                 self._trigger_plan_approval(result, mode_state)
                 return
-            if mode_state.plan_mode == "plan" and getattr(mode_state, "quick_edit_restore_pending", False) and (result.was_cancelled or result.error):
+            if mode_state.plan_mode in ("plan", "spec") and getattr(mode_state, "quick_edit_restore_pending", False) and (result.was_cancelled or result.error):
                 restore_mode = mode_state.quick_edit_prev_agent_mode or "multi"
                 restore_selected = mode_state.quick_edit_prev_selected_agent
                 mode_state.agent_mode = restore_mode
@@ -552,11 +552,15 @@ class TextualInteractiveAdapter(UIAdapter):
             return
 
         plan_path, plan_data = plan_result
+        # Support both plan (tasks) and spec (requirements) artifacts
         tasks = plan_data.get("tasks", [])
-        logger.info(f"[TextualAdapter] Found plan with {len(tasks)} tasks at {plan_path}")
+        requirements = plan_data.get("requirements", [])
+        items = tasks or requirements
+        logger.info(f"[TextualAdapter] Found artifact with {len(items)} items at {plan_path}")
 
-        if not tasks:
-            self.notify("Plan has no tasks", "warning")
+        if not items:
+            artifact_label = "spec" if requirements else "plan"
+            self.notify(f"{artifact_label.capitalize()} has no items", "warning")
             mode_state.reset_plan_state()
             if self._display and self._display._app and hasattr(self._display._app, "_mode_bar"):
                 self._display._call_app_method("_update_mode_bar_plan_mode", "normal")
@@ -567,16 +571,17 @@ class TextualInteractiveAdapter(UIAdapter):
         mode_state.planning_iteration_count = (getattr(mode_state, "planning_iteration_count", 0) or 0) + 1
 
         # Show modal via display
+        # For spec artifacts, pass requirements as tasks for the approval modal
         if self._display:
             logger.info("[TextualAdapter] Calling show_plan_approval_modal")
-            self._display.show_plan_approval_modal(tasks, plan_path, plan_data, mode_state)
+            self._display.show_plan_approval_modal(items, plan_path, plan_data, mode_state)
 
     def _find_plan_from_workspace(
         self,
         *,
         prefer_execution_scope: bool = False,
-    ) -> Optional[tuple]:
-        """Find and parse plan.json from agent workspace.
+    ) -> tuple | None:
+        """Find and parse plan.json or spec.json from agent workspace.
 
         Returns:
             Tuple of (plan_path, plan_data) if found, None otherwise.
@@ -598,7 +603,7 @@ class TextualInteractiveAdapter(UIAdapter):
             # Track JSON errors to report if no valid plan found
             json_errors = []
 
-            # Check agent workspaces for plan
+            # Check agent workspaces for plan or spec
             for agent_dir in final_dir.glob("agent_*/workspace"):
                 if prefer_execution_scope:
                     search_order = [
@@ -606,40 +611,48 @@ class TextualInteractiveAdapter(UIAdapter):
                         agent_dir / "plan.json",
                         agent_dir / "deliverable" / "project_plan.json",
                         agent_dir / "project_plan.json",
+                        agent_dir / "tasks" / "spec.json",
+                        agent_dir / "spec.json",
+                        agent_dir / "deliverable" / "project_spec.json",
+                        agent_dir / "project_spec.json",
                     ]
                 else:
                     search_order = [
                         agent_dir / "deliverable" / "project_plan.json",
                         agent_dir / "project_plan.json",
                         agent_dir / "tasks" / "plan.json",
+                        agent_dir / "deliverable" / "project_spec.json",
+                        agent_dir / "project_spec.json",
+                        agent_dir / "tasks" / "spec.json",
                     ]
 
                 for plan_location in search_order:
                     if plan_location.exists():
                         try:
                             plan_data = json.loads(plan_location.read_text())
-                            if "tasks" in plan_data:
-                                logger.info(f"[PlanApproval] Found plan at {plan_location}")
+                            # Accept either "tasks" (plan) or "requirements" (spec)
+                            if "tasks" in plan_data or "requirements" in plan_data:
+                                logger.info(f"[PlanApproval] Found artifact at {plan_location}")
                                 return plan_location, plan_data
                             else:
                                 logger.warning(
-                                    f"[PlanApproval] Plan file missing 'tasks' key: {plan_location}",
+                                    f"[PlanApproval] Artifact file missing 'tasks'/'requirements' key: {plan_location}",
                                 )
                         except json.JSONDecodeError as e:
                             error_msg = f"{plan_location.name}: {e}"
                             json_errors.append(error_msg)
                             logger.warning(
-                                f"[PlanApproval] Corrupted plan file at {plan_location}: {e}",
+                                f"[PlanApproval] Corrupted artifact file at {plan_location}: {e}",
                             )
                             continue
 
             # Log all JSON errors if we failed to find a valid plan
             if json_errors:
                 logger.error(
-                    f"[PlanApproval] Found plan file(s) but all had JSON errors: {json_errors}",
+                    f"[PlanApproval] Found artifact file(s) but all had JSON errors: {json_errors}",
                 )
 
-            logger.debug("[PlanApproval] No valid plan found in any agent workspace")
+            logger.debug("[PlanApproval] No valid plan/spec found in any agent workspace")
             return None
         except Exception as e:
             logger.error(f"[PlanApproval] Error finding plan: {e}")
@@ -648,7 +661,7 @@ class TextualInteractiveAdapter(UIAdapter):
     def _merge_chunk_updates_into_workspace(
         self,
         plan_session: Any,
-        chunk_tasks: List[Dict[str, Any]],
+        chunk_tasks: list[dict[str, Any]],
     ) -> None:
         """Merge chunk task updates into workspace/plan.json for checkpoint persistence."""
         import json
@@ -701,7 +714,7 @@ class TextualInteractiveAdapter(UIAdapter):
         progress = evaluate_chunk_progress(chunk_tasks)
         self._merge_chunk_updates_into_workspace(plan_session, chunk_tasks)
 
-        retry_counts: Dict[str, int] = {}
+        retry_counts: dict[str, int] = {}
         if isinstance(metadata.resumable_state, dict):
             saved = metadata.resumable_state.get("retry_counts", {})
             if isinstance(saved, dict):
@@ -879,7 +892,7 @@ class SlashCommandDispatcher:
         self,
         context: SessionContext,
         adapter: UIAdapter,
-        on_agents_reload: Optional[Callable[[], None]] = None,
+        on_agents_reload: Callable[[], None] | None = None,
     ):
         """Initialize the command dispatcher.
 
@@ -1245,7 +1258,7 @@ class InteractiveSessionController:
         adapter: UIAdapter,
         context: SessionContext,
         turn_runner: Callable[..., TurnResult],
-        ui_config: Optional[Dict[str, Any]] = None,
+        ui_config: dict[str, Any] | None = None,
         debug: bool = False,
     ):
         """Initialize the controller.
@@ -1275,7 +1288,7 @@ class InteractiveSessionController:
         self._running = False
 
     @property
-    def session_id(self) -> Optional[str]:
+    def session_id(self) -> str | None:
         """Get the current session ID."""
         return self._context.session_id
 
@@ -1285,7 +1298,7 @@ class InteractiveSessionController:
         return self._context.current_turn
 
     @property
-    def conversation_history(self) -> List[Dict[str, str]]:
+    def conversation_history(self) -> list[dict[str, str]]:
         """Get the conversation history."""
         return self._context.conversation_history
 
@@ -1463,6 +1476,12 @@ class InteractiveSessionController:
                 )
                 self._context.conversation_history.append(
                     {"role": "assistant", "content": result.answer_text},
+                )
+            elif result.was_cancelled:
+                # Preserve the submitted prompt so queued/fallback input survives
+                # into future turns even when this turn is cancelled.
+                self._context.conversation_history.append(
+                    {"role": "user", "content": question},
                 )
 
             self._adapter.on_turn_end(self._context.current_turn, result)

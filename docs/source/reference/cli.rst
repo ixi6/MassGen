@@ -50,7 +50,9 @@ CLI Parameters
    * - Parameter
      - Description
    * - ``--config PATH``
-     - Path to YAML configuration file with agent definitions, model parameters, backend parameters and UI settings
+     - Path to YAML configuration file with agent definitions, model parameters, backend parameters and UI settings.
+       With ``--quickstart``, this value is treated as the output filename under ``.massgen/`` (for example,
+       ``--quickstart --config team-config`` saves ``.massgen/team-config.yaml``)
    * - ``--select``
      - Interactively select from available configurations (user configs, project configs, current directory, package examples). Uses hierarchical navigation: category → config
    * - ``--backend TYPE``
@@ -99,6 +101,26 @@ CLI Parameters
      - Enable Logfire observability for structured tracing of LLM calls, tool executions, and orchestration. Requires Logfire token (via ``logfire auth login`` or ``LOGFIRE_TOKEN`` env var). See :doc:`../user_guide/logging` for setup details
    * - ``"<your question>"``
      - Optional single-question input. If omitted, MassGen enters interactive chat mode
+
+Mode Settings
+~~~~~~~~~~~~~
+
+These flags mirror the TUI mode bar toggles, allowing CLI control of execution modes.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Parameter
+     - Description
+   * - ``--single-agent [AGENT_ID]``
+     - Single-agent mode. Uses only one agent from the config. Optionally specify an agent ID; defaults to the first agent if omitted
+   * - ``--coordination-mode {parallel,decomposition}``
+     - Coordination mode: ``parallel`` (voting-based, default) or ``decomposition`` (subtask-based). Overrides ``coordination_mode`` from config
+   * - ``--quick``
+     - Quick mode: disable refinement. Agents produce one answer with no voting loop. Equivalent to TUI "Refine OFF" toggle
+   * - ``--personas {off,perspective,implementation,methodology}``
+     - Enable parallel persona generation with specified diversity mode. ``off`` disables persona generation. Requires parallel coordination mode
 
 Examples
 --------
@@ -190,6 +212,29 @@ Quick CWD Context Access
 
    In the Textual TUI, ``--cwd-context`` initializes the same CWD context state as the ``Ctrl+P`` toggle.
    In Execute mode, ``Ctrl+P`` is intentionally blocked to avoid changing context scope mid-execution.
+
+Mode Settings
+~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # Quick mode: one answer per agent, no refinement loop
+   massgen --quick --config my_config.yaml "Summarize this paper"
+
+   # Single agent from a multi-agent config
+   massgen --single-agent --config my_config.yaml "Quick question"
+
+   # Single agent by ID
+   massgen --single-agent agent_b --config my_config.yaml "Quick question"
+
+   # Fastest: single agent + quick mode
+   massgen --single-agent --quick --config my_config.yaml "What is 2+2?"
+
+   # Persona-diverse parallel execution
+   massgen --personas perspective --config my_config.yaml "Design a logo"
+
+   # Decomposition mode (subtask-based)
+   massgen --coordination-mode decomposition --config my_config.yaml "Build a web app"
 
 Debug Mode
 ~~~~~~~~~~

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for StreamingBufferMixin and its integration with all backends.
 

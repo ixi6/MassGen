@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Persistent memory implementation for MassGen using mem0.
 
@@ -7,7 +6,7 @@ enabling agents to remember and recall information across multiple sessions.
 """
 
 from importlib import metadata
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 from pydantic import field_validator
 
@@ -97,17 +96,17 @@ class PersistentMemory(PersistentMemoryBase):
 
     def __init__(
         self,
-        agent_name: Optional[str] = None,
-        user_name: Optional[str] = None,
-        session_name: Optional[str] = None,
-        llm_backend: Optional[Any] = None,
-        llm_config: Optional[Dict[str, Any]] = None,
-        embedding_backend: Optional[Any] = None,
-        embedding_config: Optional[Dict[str, Any]] = None,
-        vector_store_config: Optional[VectorStoreConfig] = None,
-        mem0_config: Optional[MemoryConfig] = None,
-        memory_type: Optional[str] = None,
-        qdrant_client: Optional[Any] = None,
+        agent_name: str | None = None,
+        user_name: str | None = None,
+        session_name: str | None = None,
+        llm_backend: Any | None = None,
+        llm_config: dict[str, Any] | None = None,
+        embedding_backend: Any | None = None,
+        embedding_config: dict[str, Any] | None = None,
+        vector_store_config: VectorStoreConfig | None = None,
+        mem0_config: MemoryConfig | None = None,
+        memory_type: str | None = None,
+        qdrant_client: Any | None = None,
         debug: bool = False,
         **kwargs: Any,
     ) -> None:
@@ -324,7 +323,7 @@ class PersistentMemory(PersistentMemoryBase):
         self.mem0_memory = mem0.AsyncMemory(mem0_config)
         self.default_memory_type = memory_type
 
-    def _extract_metadata(self, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _extract_metadata(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         """
         Extract structured metadata from messages for better memory organization.
 
@@ -374,10 +373,10 @@ class PersistentMemory(PersistentMemoryBase):
 
     def _save_memory_debug(
         self,
-        messages: List[Dict[str, Any]],
-        metadata: Dict[str, Any],
-        facts_extracted: List[Dict[str, Any]],
-        turn: Optional[int] = None,
+        messages: list[dict[str, Any]],
+        metadata: dict[str, Any],
+        facts_extracted: list[dict[str, Any]],
+        turn: int | None = None,
     ) -> None:
         """
         Save memory debug information to disk for inspection.
@@ -449,9 +448,9 @@ class PersistentMemory(PersistentMemoryBase):
     async def save_to_memory(
         self,
         thinking: str,
-        content: List[str],
+        content: list[str],
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Agent tool: Explicitly save important information to memory.
 
@@ -506,10 +505,10 @@ class PersistentMemory(PersistentMemoryBase):
 
     async def recall_from_memory(
         self,
-        keywords: List[str],
+        keywords: list[str],
         limit: int = 5,
         **kwargs: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Agent tool: Retrieve memories based on keywords.
 
@@ -561,8 +560,8 @@ class PersistentMemory(PersistentMemoryBase):
 
     async def record(
         self,
-        messages: List[Dict[str, Any]],
-        memory_type: Optional[str] = None,
+        messages: list[dict[str, Any]],
+        memory_type: str | None = None,
         infer: bool = True,
         **kwargs: Any,
     ) -> None:
@@ -663,11 +662,11 @@ class PersistentMemory(PersistentMemoryBase):
 
     async def _mem0_add(
         self,
-        messages: Union[str, List[Dict]],
-        memory_type: Optional[str] = None,
+        messages: str | list[dict],
+        memory_type: str | None = None,
         infer: bool = True,
         **kwargs: Any,
-    ) -> Dict:
+    ) -> dict:
         """
         Internal helper to add memories to mem0.
 
@@ -796,9 +795,9 @@ class PersistentMemory(PersistentMemoryBase):
 
     async def retrieve(
         self,
-        query: Union[str, Dict[str, Any], List[Dict[str, Any]]],
+        query: str | dict[str, Any] | list[dict[str, Any]],
         limit: int = 5,
-        previous_winners: Optional[List[Dict[str, Any]]] = None,
+        previous_winners: list[dict[str, Any]] | None = None,
         **_kwargs: Any,
     ) -> str:
         """

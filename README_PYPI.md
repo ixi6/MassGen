@@ -31,15 +31,15 @@
 
 <p align="center">
   <a href="https://www.youtube.com/watch?v=5JofXWf_Ok8">
-    <img src="https://raw.githubusercontent.com/Leezekun/MassGen/main/docs/source/_static/images/thumbnail.png" alt="MassGen case study -- Berkeley Agentic AI Summit Question" width="800">
+    <img src="https://raw.githubusercontent.com/Leezekun/MassGen/main/docs/source/_static/images/thumbnail.png" alt="MassGen example" width="800">
   </a>
 </p>
 
 <p align="center">
-  <i>Scaling AI with collaborative, continuously improving agents</i>
+  <i>Scaling AI with collaborative, continuously improving agents (4x speed)</i>
 </p>
 
-MassGen is a cutting-edge multi-agent system that leverages the power of collaborative AI to solve complex tasks. It assigns a task to multiple AI agents who work in parallel, observe each other's progress, and refine their approaches to converge on the best solution to deliver a comprehensive and high-quality result. The power of this "parallel study group" approach is exemplified by advanced systems like xAI's Grok Heavy and Google DeepMind's Gemini Deep Think.
+MassGen is a cutting-edge multi-agent framework that coordinates AI agents to solve complex tasks through redundancy and iterative refinement. Every agent tackles the full problem, observing, critiquing, and building on each other's work across cycles of refinement and restarts. When agents believe there is a strong enough answer, they vote, and the best collectively validated answer wins. This approach to parallel refinement and collective validation lays the groundwork for principled multi-agent scaling, where the system continuously improves its outputs by leveraging diverse agent perspectives and enforcing quality through consensus.
 
 This project started with the "threads of thought" and "iterative refinement" ideas presented in [The Myth of Reasoning](https://docs.ag2.ai/latest/docs/blog/2025/04/16/Reasoning/), and extends the classic "multi-agent conversation" idea in [AG2](https://github.com/ag2ai/ag2). Here is a [video recording](https://www.youtube.com/watch?v=xM2Uguw1UsQ) of the background context introduction presented at the Berkeley Agentic AI Summit 2025.
 
@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.51 Features](#-latest-features-v0151)
+- [v0.1.59 Features](#-latest-features-v0159)
 </details>
 
 <details open>
@@ -121,15 +121,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.51)](#recent-achievements-v0151)
-- [Previous Achievements (v0.0.3 - v0.1.50)](#previous-achievements-v003---v0150)
+- [Recent Achievements (v0.1.59)](#recent-achievements-v0159)
+- [Previous Achievements (v0.0.3 - v0.1.58)](#previous-achievements-v003---v0158)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.52 Roadmap](#v0152-roadmap)
+- [v0.1.60 Roadmap](#v0160-roadmap)
 </details>
 
 <details open>
@@ -154,27 +154,23 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.51)
+## 🆕 Latest Features (v0.1.60)
 
-**🎉 Released: February 13, 2026**
+**🎉 Released: March 6, 2026**
 
-**What's New in v0.1.51:**
-- **📝 Change Documents (Changedoc)** - Decision journals agents write in `tasks/changedoc.md` during coordination, capturing decision provenance, rationale, and code traceability
-- **✅ Changedoc-Anchored Evaluation** - 5 changedoc-specific checklist items with mandatory gap report before verdict
-- **🔍 Review Modal Improvements** - Multi-context, multi-file diff visualization with critique capabilities
-- **🛡️ Drift Conflict Policy** - Configurable handling of target-file drift: `skip`, `prefer_presenter`, or `fail`
-- **🎯 `--cwd-context` CLI Flag** - Inject CWD as context path (`ro`/`rw`) — equivalent to `Ctrl+P` in TUI
+**What's New in v0.1.60:**
+- **🛠️ Multimodal Tool Improvements** - Rewritten `read_media` with clearer schema and `MediaCallLedgerHook` for tracking media calls.
+- **🤖 Subagent Enhancements** - `inherit_spawning_agent_backend` for automatic backend inheritance, `final_answer_strategy` for child orchestrator policy, per-agent `subagent_agents` override.
+- **🧠 GPT-5.4** - New default OpenAI flagship model across all coordination modes.
+- **🔄 Decomp + Checklist Cooperation** - Decomp mode works with checklist workflow for quality-gated subtask iteration.
 
-**Try v0.1.51 Features:**
+**Try v0.1.60 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Launch — changedoc is enabled by default
-uv run massgen
-
-# Or add your project context quickly
-uv run massgen --cwd-context ro
+# Choose backend 'openai' with model 'gpt-5.4' in the setup wizard to start using GPT-5.4
+uv run massgen --quickstart
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1236,34 +1232,49 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.51)
+### Recent Achievements (v0.1.60)
 
-**🎉 Released: February 13, 2026**
+**🎉 Released: March 6, 2026**
 
-#### Change Documents (Changedoc)
-- **Decision Journals**: Agents write `tasks/changedoc.md` during coordination capturing decision provenance, rationale, and code traceability
-- **Observation Context**: Changedocs passed to other agents in `<changedoc>` tags for shared decision awareness
-- **Config**: `enable_changedoc: true` (default on)
+#### Multimodal Tools
+- **Rewritten `read_media` Tool** ([#978](https://github.com/massgen/MassGen/pull/978)): Clearer schema, better error handling, and improved naming
+- **`MediaCallLedgerHook`**: New hook for tracking `read_media` and `generate_media` tool calls
 
-#### Changedoc-Anchored Evaluation
-- **Specialized Checklist**: 5 changedoc-specific items — Decision Completeness, Rationale Quality, Traceability, Output Quality, Novel Elements
-- **Gap Report**: Mandatory structured gap analysis before verdict (`checklist_require_gap_report: true`)
+#### Subagent Enhancements
+- **`inherit_spawning_agent_backend`** ([#978](https://github.com/massgen/MassGen/pull/978)): Subagents automatically inherit the spawning agent's backend configuration
+- **`final_answer_strategy`**: Configurable child orchestrator final-answer policy (winner_reuse, winner_present, synthesize)
+- **Per-Agent `subagent_agents`**: Per-agent override for subagent agent configs; orchestrator config file support with robust JSON parsing
 
-#### Review Modal Improvements
-- **Multi-File Diffs**: Enhanced GitDiffReviewModal with multi-context, multi-file diff visualization and critique capabilities
+#### Model & Coordination
+- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New default OpenAI flagship model added to the model registry
+- **Decomp + Checklist Cooperation**: Decomposition mode works with the checklist workflow for quality-gated subtask iteration
+- **Improved Verification Round Time**: Better `verification_latest` prompts for faster verification rounds
 
-#### Drift Conflict Policy
-- **Change Safety**: Configurable handling of target-file drift: `skip` (default), `prefer_presenter`, or `fail`
+#### Fixes
+- **Checklist & Proposal Injections**: More reliable checklist behavior with improved proposal injection
+- **Codex Prompt Caching**: Fixed prompt caching calculation for pricing accuracy
+- **Task Plan Refresh**: Fixed task plan refresh during quality rounds
+- **Skill Prefix Handling**: Fixed edge cases in skill prefix resolution
 
-#### Changed
-- **Mode Bar Responsive Labels**: Compact labels adapting to terminal width
-- **`--cwd-context` CLI Flag**: Inject CWD as context path (`ro`/`rw`) — equivalent to `Ctrl+P` in TUI
+### Previous Achievements (v0.0.3 - v0.1.59)
 
-#### Bug Fixes
-- Final presentation fallback for empty presentations
-- Task execution timing fixes
+✅ **Quality Round Improvements (v0.1.59)**: Auto-add improvements to task plan, plan review enhancements. Better eval gen config, checklist fixes, Gemini tool name normalization for MCP. Subagent behavior adjustments, Docker skill write access fixes. Video gen skill adjustments and impact metric restoration.
 
-### Previous Achievements (v0.0.3 - v0.1.50)
+✅ **Comprehensive Multimodal Revamp (v0.1.58)**: ElevenLabs TTS/STT, Nano Banana 2 image generation, Grok multimedia generation, media generation skills, and multi-turn image editing. Nvidia NIM backend. Quality rethinking subagent. Smarter checklists with improve/preserve listings. CLI mode flags and logging architecture refactor.
+
+✅ **Delegated Subagent Protocol & Builder Subagent (v0.1.57)**: File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Substantiveness tracking for smarter convergence. Claude Code reasoning parameters for updated SDK.
+
+✅ **Spec Plan Mode & Targeted Messaging (v0.1.56)**: Formal requirements specification with `plan_mode="spec"` and TUI spec mode support. Targeted agent-to-agent messaging via `target_agents` parameter. Critic subagent for quality assessment. Media conversation continuity for follow-up image analysis. Codex OAuth login fix.
+
+✅ **Specialized Subagent Types & Dynamic Evaluation Criteria (v0.1.55)**: Discovery-based subagent roles (evaluator, explorer, researcher, novelty) via `SUBAGENT.md` frontmatter. GEPA-inspired task-specific evaluation criteria with core/stretch gates. Native backend image routing. Configurable video frame extraction.
+
+✅ **Subagent Messaging & Copilot SDK Backend (v0.1.54)**: Runtime messaging to steer running background subagents. New GitHub Copilot backend via copilot-sdk with native MCP support. Gemini 3.1 Pro support. Per-agent injection targeting.
+
+✅ **Background Tool Execution (v0.1.53)**: Non-blocking lifecycle tools for long-running work (start, monitor, wait, cancel, list). Planning task verification requirements. TUI background job indicators and lifecycle controls. Subagent infrastructure groundwork with Evaluator and Explorer types.
+
+✅ **Final Answer Modal & Coordination Quality Gates (v0.1.52)**: Dedicated final answer modal with tabbed answer and workspace/review interface. Substantive gate prevents low-value iteration rounds. Novelty injection combats premature convergence. Agent identity versioning for answer provenance tracking.
+
+✅ **Reviewing Coordination & Change Documents (v0.1.51)**: Review modal with multi-file diff visualization. Decision journal system for multi-agent coordination traceability. Changedoc-anchored evaluation checklists with gap reports. Drift conflict policy for safer change application. `--cwd-context` CLI flag.
 
 ✅ **Chunked Plan Execution & Skill Lifecycle Management (v0.1.50)**: Chunked plan execution for safer long-form task completion with progress checkpoints. Skill lifecycle management with consolidation, organizer, and previous-session skill loading. Iterative planning review modal. Responsive TUI mode bar. Worktree improvements with branch accumulation and cross-agent diff visibility.
 
@@ -1510,13 +1521,12 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.52 Roadmap
+### v0.1.60 Roadmap
 
-Version 0.1.52 focuses on spec support for planning and targeted agent queries:
+Version 0.1.60 focuses on improving skill use and exploration:
 
 #### Planned Features
-- **Spec Support for Planning** ([#881](https://github.com/massgen/MassGen/issues/881)): Add spec/proposal support to planning workflows
-- **Targeted Agent Queries** ([#809](https://github.com/massgen/MassGen/issues/809)): Support targeted queries to specific agents via subagent for more efficient coordination
+- **Improve Skill Use and Exploration** ([#873](https://github.com/massgen/MassGen/issues/873)): Local skill execution, skill registry with hierarchical organization, and skill consolidation workflow
 
 ---
 

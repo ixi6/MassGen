@@ -1,11 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 Git worktree management for isolated session environments using GitPython.
 """
 
 import logging
 import os
-from typing import List, Optional
 
 from git import GitCommandError, InvalidGitRepositoryError, Repo
 
@@ -77,7 +75,7 @@ class WorktreeManager:
             logger.error(f"Failed to remove worktree: {e.stderr}")
             raise RuntimeError(f"Failed to remove worktree: {e.stderr}")
 
-    def list_worktrees(self) -> List[dict]:
+    def list_worktrees(self) -> list[dict]:
         """
         List all worktrees in the repository.
 
@@ -117,7 +115,7 @@ class WorktreeManager:
         except GitCommandError:
             pass
 
-    def _get_branch_for_worktree(self, target_path: str) -> Optional[str]:
+    def _get_branch_for_worktree(self, target_path: str) -> str | None:
         """Find the branch name associated with a worktree path."""
         for wt in self.list_worktrees():
             if os.path.abspath(wt.get("path", "")) == target_path:

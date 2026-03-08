@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Workspace Tools MCP Server for MassGen
 
@@ -26,7 +25,7 @@ import filecmp
 import fnmatch
 import shutil
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import fastmcp
 
@@ -34,12 +33,12 @@ from massgen.filesystem_manager._constants import CRITICAL_DIRS
 
 
 def get_copy_file_pairs(
-    allowed_paths: List[Path],
+    allowed_paths: list[Path],
     source_base_path: str,
     destination_base_path: str = "",
-    include_patterns: Optional[List[str]] = None,
-    exclude_patterns: Optional[List[str]] = None,
-) -> List[Tuple[Path, Path]]:
+    include_patterns: list[str] | None = None,
+    exclude_patterns: list[str] | None = None,
+) -> list[tuple[Path, Path]]:
     """
     Get all source->destination file pairs that would be copied by copy_files_batch.
 
@@ -115,7 +114,7 @@ def get_copy_file_pairs(
     return file_pairs
 
 
-def _validate_path_access(path: Path, allowed_paths: List[Path]) -> None:
+def _validate_path_access(path: Path, allowed_paths: list[Path]) -> None:
     """
     Validate that a path is within allowed directories.
 
@@ -139,7 +138,7 @@ def _validate_path_access(path: Path, allowed_paths: List[Path]) -> None:
     raise ValueError(f"Path not in allowed directories: {path}")
 
 
-def _is_critical_path(path: Path, allowed_paths: List[Path] = None) -> bool:
+def _is_critical_path(path: Path, allowed_paths: list[Path] = None) -> bool:
     """
     Check if a path is a critical system file that should not be deleted.
 
@@ -220,7 +219,7 @@ def _is_text_file(path: Path) -> bool:
         True if file appears to be text
     """
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             # Read first 8KB to check
             chunk = f.read(8192)
             # If it contains null bytes, it's probably binary
@@ -231,7 +230,7 @@ def _is_text_file(path: Path) -> bool:
         return False
 
 
-def _is_permission_path_root(path: Path, allowed_paths: List[Path]) -> bool:
+def _is_permission_path_root(path: Path, allowed_paths: list[Path]) -> bool:
     """
     Check if a path is exactly one of the permission path roots.
 
@@ -267,7 +266,7 @@ def _is_permission_path_root(path: Path, allowed_paths: List[Path]) -> bool:
     return False
 
 
-def _validate_and_resolve_paths(allowed_paths: List[Path], source_path: str, destination_path: str) -> tuple[Path, Path]:
+def _validate_and_resolve_paths(allowed_paths: list[Path], source_path: str, destination_path: str) -> tuple[Path, Path]:
     """
     Validate source and destination paths for copy operations.
 
@@ -305,7 +304,7 @@ def _validate_and_resolve_paths(allowed_paths: List[Path], source_path: str, des
         raise ValueError(f"Path validation failed: {e}")
 
 
-def _perform_copy(source: Path, destination: Path, overwrite: bool = False) -> Dict[str, Any]:
+def _perform_copy(source: Path, destination: Path, overwrite: bool = False) -> dict[str, Any]:
     """
     Perform the actual copy operation.
 
@@ -383,7 +382,7 @@ async def create_server() -> fastmcp.FastMCP:
     #     }
 
     @mcp.tool()
-    def copy_file(source_path: str, destination_path: str, overwrite: bool = False) -> Dict[str, Any]:
+    def copy_file(source_path: str, destination_path: str, overwrite: bool = False) -> dict[str, Any]:
         """
         Copy a file or directory from any accessible path to the agent's workspace.
 
@@ -409,10 +408,10 @@ async def create_server() -> fastmcp.FastMCP:
     def copy_files_batch(
         source_base_path: str,
         destination_base_path: str = "",
-        include_patterns: Optional[List[str]] = None,
-        exclude_patterns: Optional[List[str]] = None,
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
         overwrite: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Copy multiple files with pattern matching and exclusions.
 
@@ -478,7 +477,7 @@ async def create_server() -> fastmcp.FastMCP:
             return {"success": False, "operation": "copy_files_batch", "error": str(e)}
 
     @mcp.tool()
-    def delete_file(path: str, recursive: bool = False) -> Dict[str, Any]:
+    def delete_file(path: str, recursive: bool = False) -> dict[str, Any]:
         """
         Delete a file or directory from the workspace.
 
@@ -559,9 +558,9 @@ async def create_server() -> fastmcp.FastMCP:
     @mcp.tool()
     def delete_files_batch(
         base_path: str,
-        include_patterns: Optional[List[str]] = None,
-        exclude_patterns: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        include_patterns: list[str] | None = None,
+        exclude_patterns: list[str] | None = None,
+    ) -> dict[str, Any]:
         """
         Delete multiple files matching patterns.
 
@@ -662,7 +661,7 @@ async def create_server() -> fastmcp.FastMCP:
             return {"success": False, "operation": "delete_files_batch", "error": str(e)}
 
     @mcp.tool()
-    def compare_directories(dir1: str, dir2: str, show_content_diff: bool = False) -> Dict[str, Any]:
+    def compare_directories(dir1: str, dir2: str, show_content_diff: bool = False) -> dict[str, Any]:
         """
         Compare two directories and show differences.
 
@@ -740,7 +739,7 @@ async def create_server() -> fastmcp.FastMCP:
             return {"success": False, "operation": "compare_directories", "error": str(e)}
 
     @mcp.tool()
-    def compare_files(file1: str, file2: str, context_lines: int = 3) -> Dict[str, Any]:
+    def compare_files(file1: str, file2: str, context_lines: int = 3) -> dict[str, Any]:
         """
         Compare two text files and show unified diff.
 

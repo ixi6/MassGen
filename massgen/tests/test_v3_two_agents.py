@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Test script for MassGen two-agent coordination with terminal display.
 Tests orchestrator coordination between two agents with different expertise.

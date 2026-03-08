@@ -1,11 +1,11 @@
-# -*- coding: utf-8 -*-
 """
 AG2 (AutoGen) Nested Chat Lesson Planner Tool
 This tool demonstrates interoperability by wrapping AutoGen's nested chat functionality as a MassGen custom tool.
 """
 
 import os
-from typing import Any, AsyncGenerator, Dict, List
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from autogen import ConversableAgent, GroupChat, GroupChatManager
 
@@ -14,7 +14,7 @@ from massgen.tool._result import ExecutionResult, TextContent
 
 
 def run_ag2_lesson_planner_agent(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     api_key: str,
 ):
     """
@@ -185,7 +185,7 @@ def run_ag2_lesson_planner_agent(
 
 @context_params("prompt")
 async def ag2_lesson_planner(
-    prompt: List[Dict[str, Any]],
+    prompt: list[dict[str, Any]],
 ) -> AsyncGenerator[ExecutionResult, None]:
     """
     MassGen custom tool wrapper for AG2 lesson planner.

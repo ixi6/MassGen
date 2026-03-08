@@ -49,6 +49,16 @@ Single agent keeps voting when refinement is ON. Only skip voting when refinemen
 - Always skip voting for single agent → loses the "I'm satisfied" signal
 - Force vote after first answer → too rigid, doesn't allow refinement
 
+### Decision: Multi-Agent Quick Mode Final Answer Strategy
+Introduce a `final_answer_strategy` setting with `winner_reuse`, `winner_present`, and `synthesize`. In multi-agent + refinement OFF quick mode, default it to `synthesize`.
+
+**Rationale**: Independent first drafts are useful only if the final stage can preserve complementary strengths. Reusing the voted winner is fast, but it often throws away the best ideas from losing drafts. Default synthesis keeps quick mode lightweight while making better use of parallel work.
+
+**Alternatives considered**:
+- Keep winner reuse as the default quick-mode behavior → fastest path, but lowest leverage from multiple agents
+- Force decomposition mode for synthesis → wrong mental model for users who want parallel independent drafts rather than owned subtasks
+- Add a separate "combine mode" with no shared strategy flag → more UI complexity for a concept that is really one final-answer policy choice
+
 ### Decision: Override Timing
 Allow override AFTER voting completes but BEFORE final presentation starts.
 
@@ -99,6 +109,17 @@ Voting completes
     ↓ Set orchestrator._selected_agent = chosen_agent
     ↓ Continue to presentation phase
     ↓ Chosen agent does final presentation
+```
+
+### Quick Multi-Agent Synthesis Flow
+```
+Refinement OFF + multi-agent
+    ↓ each agent produces one independent answer
+    ↓ deferred voting starts after all agents have answered
+    ↓ selected agent is chosen from votes
+    ↓ final_answer_strategy=synthesize
+    ↓ selected agent receives all completed answers in presenter context
+    ↓ selected agent synthesizes one final answer
 ```
 
 ## Open Questions

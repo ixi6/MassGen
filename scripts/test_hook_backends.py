@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Integration test script for hook framework across multiple backends.
 
@@ -37,7 +36,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 # Add massgen to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -58,11 +57,11 @@ VERBOSE = False
 E2E_MODE = False
 
 # Track hook execution for e2e tests
-E2E_HOOK_LOG: List[Dict[str, Any]] = []
-E2E_INJECTION_LOG: List[Dict[str, Any]] = []  # Track injection results
+E2E_HOOK_LOG: list[dict[str, Any]] = []
+E2E_INJECTION_LOG: list[dict[str, Any]] = []  # Track injection results
 
 # Backend configurations for testing hooks
-BACKEND_CONFIGS: Dict[str, Dict[str, Any]] = {
+BACKEND_CONFIGS: dict[str, dict[str, Any]] = {
     "claude": {
         "type": "claude",
         "model": "claude-haiku-4-5-20251001",
@@ -100,8 +99,8 @@ BACKEND_CONFIGS: Dict[str, Dict[str, Any]] = {
 
 def create_backend(
     backend_name: str,
-    config: Dict[str, Any],
-    custom_tools: Optional[List[Dict[str, Any]]] = None,
+    config: dict[str, Any],
+    custom_tools: list[dict[str, Any]] | None = None,
 ):
     """Create a backend instance based on configuration."""
     backend_type = config["type"]
@@ -144,8 +143,8 @@ def create_backend(
 def format_anthropic_message(
     tool_result: str,
     tool_use_id: str,
-    injection: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    injection: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Format a message as Anthropic API would receive it (with separate content blocks)."""
     content = [
         {
@@ -177,8 +176,8 @@ def format_anthropic_message(
 def format_openai_message(
     tool_result: str,
     tool_call_id: str,
-    injection: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
+    injection: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Format messages as OpenAI API would receive them."""
     messages = []
 
@@ -223,7 +222,7 @@ def print_verbose(label: str, content: Any, indent: int = 4) -> None:
             print(f"{prefix}  {line}")
 
 
-def test_hook_manager_integration(backend_name: str, config: Dict[str, Any]) -> Tuple[bool, str]:
+def test_hook_manager_integration(backend_name: str, config: dict[str, Any]) -> tuple[bool, str]:
     """Test that backend properly accepts and stores a GeneralHookManager."""
     try:
         backend = create_backend(backend_name, config)
@@ -252,8 +251,8 @@ def test_hook_manager_integration(backend_name: str, config: Dict[str, Any]) -> 
 
 async def test_mid_stream_injection_hook(
     backend_name: str,
-    config: Dict[str, Any],
-) -> Tuple[bool, str]:
+    config: dict[str, Any],
+) -> tuple[bool, str]:
     """Test that MidStreamInjectionHook works correctly via hook manager."""
     try:
         backend = create_backend(backend_name, config)
@@ -321,8 +320,8 @@ async def test_mid_stream_injection_hook(
 
 async def test_high_priority_task_reminder_hook(
     backend_name: str,
-    config: Dict[str, Any],
-) -> Tuple[bool, str]:
+    config: dict[str, Any],
+) -> tuple[bool, str]:
     """Test that HighPriorityTaskReminderHook injects reminders for high-priority completed tasks."""
     try:
         backend = create_backend(backend_name, config)
@@ -401,8 +400,8 @@ async def test_high_priority_task_reminder_hook(
 
 async def test_combined_hooks(
     backend_name: str,
-    config: Dict[str, Any],
-) -> Tuple[bool, str]:
+    config: dict[str, Any],
+) -> tuple[bool, str]:
     """Test that multiple hooks can be registered and both execute."""
     try:
         backend = create_backend(backend_name, config)
@@ -482,7 +481,7 @@ async def test_combined_hooks(
         return False, f"Error: {type(e).__name__}: {e}"
 
 
-async def run_tests(backend_names: List[str]) -> Dict[str, Dict[str, Tuple[bool, str]]]:
+async def run_tests(backend_names: list[str]) -> dict[str, dict[str, tuple[bool, str]]]:
     """Run all hook tests on specified backends."""
     results = {}
 
@@ -569,7 +568,7 @@ class InjectionCapturingMidStreamHook(MidStreamInjectionHook):
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         result = await super().execute(function_name, arguments, context, **kwargs)
@@ -591,7 +590,7 @@ class InjectionCapturingReminderHook(HighPriorityTaskReminderHook):
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         result = await super().execute(function_name, arguments, context, **kwargs)
@@ -644,8 +643,8 @@ CUSTOM_TOOL_CONFIG = {
 
 async def run_e2e_test(
     backend_name: str,
-    config: Dict[str, Any],
-) -> Tuple[bool, str]:
+    config: dict[str, Any],
+) -> tuple[bool, str]:
     """
     Run end-to-end test that makes real API calls.
 
@@ -811,7 +810,7 @@ async def run_e2e_test(
         logging.getLogger("massgen.backend").removeHandler(log_capture)
 
 
-async def run_e2e_tests(backend_names: List[str]) -> Dict[str, Tuple[bool, str]]:
+async def run_e2e_tests(backend_names: list[str]) -> dict[str, tuple[bool, str]]:
     """Run e2e tests on specified backends."""
     results = {}
 

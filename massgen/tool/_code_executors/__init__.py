@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Code execution tools."""
 
 from ._python_executor import run_python_script

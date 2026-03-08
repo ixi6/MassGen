@@ -13,10 +13,10 @@ agents:
           category: "multimodal"
           path: "massgen/tool/_multimodal_tools/understand_video.py"
           function: ["understand_video"]
-        - name: ["text_to_video_generation"]
+        - name: ["generate_media"]
           category: "multimodal"
-          path: "massgen/tool/_multimodal_tools/text_to_video_generation.py"
-          function: ["text_to_video_generation"]
+          path: "massgen/tool/_multimodal_tools/generation/generate_media.py"
+          function: ["generate_media"]
     system_message: |
       You are an AI assistant with access to text-to-video generation capabilities.
 
@@ -31,10 +31,10 @@ agents:
           category: "multimodal"
           path: "massgen/tool/_multimodal_tools/understand_video.py"
           function: ["understand_video"]
-        - name: ["text_to_video_generation"]
+        - name: ["generate_media"]
           category: "multimodal"
-          path: "massgen/tool/_multimodal_tools/text_to_video_generation.py"
-          function: ["text_to_video_generation"]
+          path: "massgen/tool/_multimodal_tools/generation/generate_media.py"
+          function: ["generate_media"]
     system_message: |
       You are an AI assistant with access to text-to-video generation capabilities.
 

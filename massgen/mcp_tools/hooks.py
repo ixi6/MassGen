@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Hook system for tool call interception in the MassGen multi-agent framework.
 
@@ -21,15 +20,18 @@ Built-in Hooks:
 
 import asyncio
 import fnmatch
+import hashlib
 import importlib
 import json
 import threading
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Any, Callable, Dict, List, Literal, Optional, Union
+from pathlib import Path
+from typing import Any, Literal, Optional
 
 from ..logger_config import logger
 
@@ -44,6 +46,15 @@ except ImportError:
     ClientSession = object
     types = None
     ProgressFnT = None
+
+
+class InjectionDeliveryStatus(Enum):
+    """Delivery status for hookless runtime injection payloads."""
+
+    QUEUED = "queued"
+    DELIVERED = "delivered"
+    DEFERRED = "deferred"
+    FAILED = "failed"
 
 
 class HookType(Enum):
@@ -69,13 +80,13 @@ class HookEvent:
     hook_type: str  # "PreToolUse" or "PostToolUse"
     session_id: str
     orchestrator_id: str
-    agent_id: Optional[str]
+    agent_id: str | None
     timestamp: datetime
     tool_name: str
-    tool_input: Dict[str, Any]
-    tool_output: Optional[str] = None  # Only populated for PostToolUse
+    tool_input: dict[str, Any]
+    tool_output: str | None = None  # Only populated for PostToolUse
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "hook_type": self.hook_type,
@@ -107,26 +118,26 @@ class HookResult:
 
     # Legacy fields (for backward compatibility)
     allowed: bool = True
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    modified_args: Optional[str] = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    modified_args: str | None = None
 
     # New fields for general hook framework
     decision: Literal["allow", "deny", "ask"] = "allow"
-    reason: Optional[str] = None
-    updated_input: Optional[Dict[str, Any]] = None  # For PreToolUse
-    inject: Optional[Dict[str, Any]] = None  # For PostToolUse injection
+    reason: str | None = None
+    updated_input: dict[str, Any] | None = None  # For PreToolUse
+    inject: dict[str, Any] | None = None  # For PostToolUse injection
 
     # Error tracking for fail-open scenarios
-    hook_errors: List[str] = field(default_factory=list)
+    hook_errors: list[str] = field(default_factory=list)
 
     # Hook execution tracking (for display in TUI/WebUI)
-    hook_name: Optional[str] = None
-    hook_type: Optional[str] = None  # "pre" or "post"
-    execution_time_ms: Optional[float] = None
+    hook_name: str | None = None
+    hook_type: str | None = None  # "pre" or "post"
+    execution_time_ms: float | None = None
 
     # Aggregated hook executions (populated by GeneralHookManager.execute_hooks)
     # Each entry: {"hook_name": str, "hook_type": str, "decision": str, "reason": str, "execution_time_ms": float, "injection_preview": str}
-    executed_hooks: List[Dict[str, Any]] = field(default_factory=list)
+    executed_hooks: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self):
         """Sync legacy and new fields for compatibility."""
@@ -149,10 +160,10 @@ class HookResult:
         hook_name: str,
         hook_type: str,
         decision: str,
-        reason: Optional[str] = None,
-        execution_time_ms: Optional[float] = None,
-        injection_preview: Optional[str] = None,
-        injection_content: Optional[str] = None,
+        reason: str | None = None,
+        execution_time_ms: float | None = None,
+        injection_preview: str | None = None,
+        injection_content: str | None = None,
     ) -> None:
         """Track an executed hook for display purposes."""
         self.executed_hooks.append(
@@ -168,7 +179,7 @@ class HookResult:
         )
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "HookResult":
+    def from_dict(cls, data: dict[str, Any]) -> "HookResult":
         """Create HookResult from dictionary (e.g., from JSON)."""
         return cls(
             allowed=data.get("allowed", True),
@@ -191,12 +202,12 @@ class HookResult:
         return cls(allowed=True, decision="allow")
 
     @classmethod
-    def deny(cls, reason: Optional[str] = None) -> "HookResult":
+    def deny(cls, reason: str | None = None) -> "HookResult":
         """Create a result that denies the operation."""
         return cls(allowed=False, decision="deny", reason=reason)
 
     @classmethod
-    def ask(cls, reason: Optional[str] = None) -> "HookResult":
+    def ask(cls, reason: str | None = None) -> "HookResult":
         """Create a result that requires user confirmation."""
         return cls(allowed=True, decision="ask", reason=reason)
 
@@ -208,7 +219,7 @@ class FunctionHook(ABC):
         self.name = name
 
     @abstractmethod
-    async def execute(self, function_name: str, arguments: str, context: Optional[Dict[str, Any]] = None, **kwargs) -> HookResult:
+    async def execute(self, function_name: str, arguments: str, context: dict[str, Any] | None = None, **kwargs) -> HookResult:
         """
         Execute the hook.
 
@@ -226,8 +237,8 @@ class FunctionHookManager:
     """Manages registration and execution of function hooks."""
 
     def __init__(self):
-        self._hooks: Dict[HookType, List[FunctionHook]] = {hook_type: [] for hook_type in HookType}
-        self._global_hooks: Dict[HookType, List[FunctionHook]] = {hook_type: [] for hook_type in HookType}
+        self._hooks: dict[HookType, list[FunctionHook]] = {hook_type: [] for hook_type in HookType}
+        self._global_hooks: dict[HookType, list[FunctionHook]] = {hook_type: [] for hook_type in HookType}
 
     def register_hook(self, function_name: str, hook_type: HookType, hook: FunctionHook):
         """Register a hook for a specific function."""
@@ -243,7 +254,7 @@ class FunctionHookManager:
         """Register a hook that applies to all functions."""
         self._global_hooks[hook_type].append(hook)
 
-    def get_hooks_for_function(self, function_name: str) -> Dict[HookType, List[FunctionHook]]:
+    def get_hooks_for_function(self, function_name: str) -> dict[HookType, list[FunctionHook]]:
         """Get all hooks (function-specific + global) for a function."""
         result = {hook_type: [] for hook_type in HookType}
 
@@ -292,7 +303,7 @@ class PatternHook(FunctionHook):
         self.timeout = timeout
         self._patterns = self._parse_matcher(matcher)
 
-    def _parse_matcher(self, matcher: str) -> List[str]:
+    def _parse_matcher(self, matcher: str) -> list[str]:
         """Parse matcher into list of patterns (supports | for OR)."""
         if not matcher:
             return ["*"]
@@ -319,7 +330,7 @@ class PythonCallableHook(PatternHook):
     def __init__(
         self,
         name: str,
-        handler: Union[str, Callable],
+        handler: str | Callable,
         matcher: str = "*",
         timeout: int = 30,
         fail_closed: bool = False,
@@ -337,7 +348,7 @@ class PythonCallableHook(PatternHook):
         """
         super().__init__(name, matcher, timeout)
         self._handler_path = handler if isinstance(handler, str) else None
-        self._callable: Optional[Callable] = handler if callable(handler) else None
+        self._callable: Callable | None = handler if callable(handler) else None
         self.fail_closed = fail_closed
 
     def _import_callable(self, path: str) -> Callable:
@@ -353,7 +364,7 @@ class PythonCallableHook(PatternHook):
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         """Execute the Python callable hook."""
@@ -407,16 +418,16 @@ class PythonCallableHook(PatternHook):
 
             return self._normalize_result(result)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"[PythonCallableHook] Hook {self.name} timed out for {function_name}")
             if self.fail_closed:
                 return HookResult.deny(reason=f"Hook {self.name} timed out")
-            return HookResult.allow()
+            return HookResult(allowed=True, hook_errors=[f"Hook {self.name} timed out"])
         except Exception as e:
             logger.error(f"[PythonCallableHook] Hook {self.name} failed: {e}")
             if self.fail_closed:
                 return HookResult.deny(reason=f"Hook {self.name} failed: {e}")
-            return HookResult.allow()
+            return HookResult(allowed=True, hook_errors=[f"Hook {self.name} failed: {e}"])
 
     def _normalize_result(self, result: Any) -> HookResult:
         """Normalize hook result to HookResult."""
@@ -442,12 +453,12 @@ class GeneralHookManager:
     """
 
     def __init__(self):
-        self._global_hooks: Dict[HookType, List[PatternHook]] = {
+        self._global_hooks: dict[HookType, list[PatternHook]] = {
             HookType.PRE_TOOL_USE: [],
             HookType.POST_TOOL_USE: [],
         }
-        self._agent_hooks: Dict[str, Dict[HookType, List[PatternHook]]] = {}
-        self._agent_overrides: Dict[str, Dict[HookType, bool]] = {}
+        self._agent_hooks: dict[str, dict[HookType, list[PatternHook]]] = {}
+        self._agent_overrides: dict[str, dict[HookType, bool]] = {}
 
     def register_global_hook(self, hook_type: HookType, hook: PatternHook) -> None:
         """Register a hook that applies to all agents."""
@@ -495,9 +506,9 @@ class GeneralHookManager:
 
     def get_hooks_for_agent(
         self,
-        agent_id: Optional[str],
+        agent_id: str | None,
         hook_type: HookType,
-    ) -> List[PatternHook]:
+    ) -> list[PatternHook]:
         """Get all applicable hooks for an agent.
 
         If the agent has override=True for this hook type, only agent hooks are returned.
@@ -525,8 +536,8 @@ class GeneralHookManager:
         hook_type: HookType,
         function_name: str,
         arguments: str,
-        context: Dict[str, Any],
-        tool_output: Optional[str] = None,
+        context: dict[str, Any],
+        tool_output: str | None = None,
     ) -> HookResult:
         """Execute all matching hooks and aggregate results.
 
@@ -567,7 +578,7 @@ class GeneralHookManager:
 
         final_result = HookResult.allow()
         modified_args = arguments
-        all_injections: List[Dict[str, Any]] = []
+        all_injections: list[dict[str, Any]] = []
         hook_type_str = "pre" if hook_type == HookType.PRE_TOOL_USE else "post"
 
         for hook in matching_hooks:
@@ -672,8 +683,8 @@ class GeneralHookManager:
 
     def register_hooks_from_config(
         self,
-        hooks_config: Dict[str, Any],
-        agent_id: Optional[str] = None,
+        hooks_config: dict[str, Any],
+        agent_id: str | None = None,
     ) -> None:
         """Register hooks from YAML configuration.
 
@@ -723,7 +734,7 @@ class GeneralHookManager:
                     else:
                         self.register_global_hook(hook_type, hook)
 
-    def _create_hook_from_config(self, config: Dict[str, Any]) -> Optional[PatternHook]:
+    def _create_hook_from_config(self, config: dict[str, Any]) -> PatternHook | None:
         """Create a hook instance from configuration."""
         handler = config.get("handler")
         if not handler:
@@ -772,7 +783,7 @@ class MidStreamInjectionHook(PatternHook):
     def __init__(
         self,
         name: str = "mid_stream_injection",
-        injection_callback: Optional[Callable[[], Optional[str]]] = None,
+        injection_callback: Callable[[], str | None] | None = None,
     ):
         """
         Initialize the mid-stream injection hook.
@@ -784,7 +795,7 @@ class MidStreamInjectionHook(PatternHook):
         super().__init__(name, matcher="*", timeout=5)
         self._injection_callback = injection_callback
 
-    def set_callback(self, callback: Callable[[], Optional[str]]) -> None:
+    def set_callback(self, callback: Callable[[], str | None]) -> None:
         """Set the injection callback dynamically.
 
         The callback can be either sync or async - both are supported.
@@ -800,7 +811,7 @@ class MidStreamInjectionHook(PatternHook):
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         """Execute the mid-stream injection hook.
@@ -843,12 +854,12 @@ class MidStreamInjectionHook(PatternHook):
 
 
 class SubagentCompleteHook(PatternHook):
-    """PostToolUse hook that injects completed async subagent results.
+    """PostToolUse hook that injects completed background subagent results.
 
     This hook checks the pending results queue after each tool call
     and injects any completed subagent results into the tool output.
 
-    Used for the async subagent execution feature (MAS-214) where subagents
+    Used for background subagent execution where subagents
     run in the background and results are automatically injected when
     the parent agent executes its next tool.
     """
@@ -856,7 +867,7 @@ class SubagentCompleteHook(PatternHook):
     def __init__(
         self,
         name: str = "subagent_complete",
-        get_pending_results: Optional[Callable[[], List]] = None,
+        get_pending_results: Callable[[], list | Awaitable[list]] | None = None,
         injection_strategy: str = "tool_result",
     ):
         """
@@ -874,12 +885,12 @@ class SubagentCompleteHook(PatternHook):
 
     def set_pending_results_getter(
         self,
-        getter: Callable[[], List],
+        getter: Callable[[], list | Awaitable[list]],
     ) -> None:
         """Set the function to retrieve pending results.
 
         The getter should return a list of (subagent_id, SubagentResult) tuples
-        representing completed async subagents that need their results injected.
+        representing completed background subagents that need their results injected.
 
         Args:
             getter: A callable that returns pending results and clears the queue
@@ -890,12 +901,12 @@ class SubagentCompleteHook(PatternHook):
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         """Execute the subagent complete hook.
 
-        Checks for pending async subagent results and injects them if available.
+        Checks for pending background subagent results and injects them if available.
 
         Args:
             function_name (str): Name of the subagent function.
@@ -912,6 +923,8 @@ class SubagentCompleteHook(PatternHook):
         try:
             # Get pending results (getter should also clear them)
             pending = self._get_pending_results()
+            if asyncio.iscoroutine(pending):
+                pending = await pending
             if not pending:
                 return HookResult.allow()
 
@@ -935,6 +948,93 @@ class SubagentCompleteHook(PatternHook):
             # Fail open - don't block tool execution if injection fails
             error_msg = f"Subagent result injection failed: {e}"
             logger.error(f"[SubagentCompleteHook] {error_msg}", exc_info=True)
+            result = HookResult.allow()
+            result.add_error(error_msg)
+            result.metadata["injection_skipped"] = True
+            return result
+
+
+class BackgroundToolCompleteHook(PatternHook):
+    """PostToolUse hook that injects completed background tool results."""
+
+    def __init__(
+        self,
+        name: str = "background_tool_complete",
+        get_completed_jobs: Callable[[], list[dict[str, Any]]] | None = None,
+        injection_strategy: str = "tool_result",
+        max_result_chars: int = 600,
+    ):
+        super().__init__(name, matcher="*", timeout=5)
+        self._get_completed_jobs = get_completed_jobs
+        self._injection_strategy = injection_strategy
+        self._max_result_chars = max_result_chars
+
+    def set_completed_jobs_getter(
+        self,
+        getter: Callable[[], list[dict[str, Any]]],
+    ) -> None:
+        """Set the function used to retrieve completed background jobs."""
+        self._get_completed_jobs = getter
+
+    def _format_completed_jobs(self, jobs: list[dict[str, Any]]) -> str:
+        """Format completed background jobs for injection."""
+        lines = [
+            "",
+            "=" * 60,
+            "🔄 BACKGROUND TOOL RESULTS",
+            "=" * 60,
+            "",
+        ]
+
+        for job in jobs:
+            job_id = str(job.get("job_id", "unknown"))
+            tool_name = str(job.get("tool_name", "unknown_tool"))
+            status = str(job.get("status", "completed"))
+            lines.append(f"- [{job_id}] {tool_name} ({status})")
+
+            if job.get("result"):
+                result_text = str(job.get("result", ""))
+                if len(result_text) > self._max_result_chars:
+                    result_text = result_text[: self._max_result_chars] + "..."
+                lines.append(f"  Result: {result_text}")
+            elif job.get("error"):
+                lines.append(f"  Error: {job.get('error')}")
+
+            lines.append("")
+
+        lines.append("=" * 60)
+        return "\n".join(lines)
+
+    async def execute(
+        self,
+        function_name: str,
+        arguments: str,
+        context: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> HookResult:
+        """Inject completed background tool results when available."""
+        if not self._get_completed_jobs:
+            return HookResult.allow()
+
+        try:
+            completed_jobs = self._get_completed_jobs()
+            if not completed_jobs:
+                return HookResult.allow()
+
+            content = self._format_completed_jobs(completed_jobs)
+            logger.debug(
+                f"[BackgroundToolCompleteHook] Injecting {len(completed_jobs)} completed background job(s)",
+            )
+            return HookResult(
+                allowed=True,
+                inject={
+                    "content": content,
+                    "strategy": self._injection_strategy,
+                },
+            )
+        except Exception as e:
+            error_msg = f"Background tool result injection failed: {e}"
+            logger.error(f"[BackgroundToolCompleteHook] {error_msg}", exc_info=True)
             result = HookResult.allow()
             result.add_error(error_msg)
             result.metadata["injection_skipped"] = True
@@ -972,7 +1072,7 @@ class HighPriorityTaskReminderHook(PatternHook):
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         """Execute the high-priority task reminder hook."""
@@ -1005,6 +1105,361 @@ class HighPriorityTaskReminderHook(PatternHook):
         return HookResult.allow()
 
 
+class MediaCallLedgerHook(PatternHook):
+    """PostToolUse hook that records read/generate media provenance to scratch.
+
+    The hook is fail-open by design: ledger write errors are tracked in HookResult
+    but never block tool execution flow.
+    """
+
+    _LEDGER_LOCK = threading.Lock()
+
+    def __init__(self, name: str = "media_call_ledger"):
+        # Match both plain and prefixed custom tool names.
+        super().__init__(name, matcher="*read_media|*generate_media", timeout=5)
+
+    @staticmethod
+    def _normalize_tool_name(function_name: str) -> str | None:
+        normalized = str(function_name or "").strip().lower()
+        if normalized.endswith("read_media"):
+            return "read_media"
+        if normalized.endswith("generate_media"):
+            return "generate_media"
+        return None
+
+    @staticmethod
+    def _parse_input(arguments: str) -> dict[str, Any]:
+        if not arguments:
+            return {}
+        try:
+            parsed = json.loads(arguments)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @staticmethod
+    def _parse_output(tool_output: Any) -> dict[str, Any]:
+        if isinstance(tool_output, dict):
+            return tool_output
+        if not isinstance(tool_output, str):
+            return {}
+        raw = tool_output.strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    @staticmethod
+    def _decode_json_like(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+
+        raw = value.strip()
+        if not raw or raw[0] not in ("{", "["):
+            return value
+
+        try:
+            return json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return value
+
+    @classmethod
+    def _has_nested_json_strings(cls, value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(cls._has_nested_json_strings(v) for v in value.values())
+        if isinstance(value, list):
+            return any(cls._has_nested_json_strings(v) for v in value)
+        if not isinstance(value, str):
+            return False
+        decoded = cls._decode_json_like(value)
+        return decoded is not value
+
+    @classmethod
+    def _should_store_arguments_raw(cls, arguments_raw: str, tool_input: dict[str, Any]) -> bool:
+        raw = str(arguments_raw or "").strip()
+        if not raw:
+            return False
+
+        if cls._has_nested_json_strings(tool_input):
+            return True
+
+        if tool_input != {}:
+            return False
+
+        try:
+            parsed = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return True
+
+        return parsed != {}
+
+    @staticmethod
+    def _resolve_workspace_path(context: dict[str, Any], tool_input: dict[str, Any]) -> Path | None:
+        candidates = [
+            context.get("workspace_path"),
+            context.get("agent_cwd"),
+            tool_input.get("agent_cwd"),
+        ]
+        for candidate in candidates:
+            if not isinstance(candidate, str) or not candidate.strip():
+                continue
+            try:
+                return Path(candidate).resolve()
+            except (TypeError, ValueError):
+                continue
+        return None
+
+    @staticmethod
+    def _resolve_path(raw_path: Any, workspace_root: Path) -> str:
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            return str(raw_path)
+        path = Path(raw_path)
+        if path.is_absolute():
+            return str(path)
+        return str((workspace_root / raw_path).resolve())
+
+    @staticmethod
+    def _extract_prompt(tool_input: dict[str, Any]) -> str | list[str] | None:
+        prompt = tool_input.get("prompt")
+        if isinstance(prompt, str):
+            return prompt
+        prompts = tool_input.get("prompts")
+        if isinstance(prompts, list):
+            valid = [p for p in prompts if isinstance(p, str)]
+            if valid:
+                return valid
+        return None
+
+    @staticmethod
+    def _default_ledger_payload() -> dict[str, Any]:
+        return {
+            "version": 1,
+            "updated_at": None,
+            "entries": [],
+        }
+
+    def _load_ledger_payload(self, ledger_path: Path) -> dict[str, Any]:
+        if not ledger_path.exists():
+            return self._default_ledger_payload()
+
+        raw = ledger_path.read_text(encoding="utf-8").strip()
+        if not raw:
+            return self._default_ledger_payload()
+
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("media ledger payload must be a JSON object")
+        entries = payload.get("entries")
+        if entries is None:
+            payload["entries"] = []
+        elif not isinstance(entries, list):
+            raise ValueError("media ledger entries must be a JSON array")
+        return payload
+
+    def _capture_context_snapshot(
+        self,
+        workspace_root: Path,
+        *,
+        require_snapshot: bool,
+    ) -> tuple[bool, str | None]:
+        snapshots_dir = workspace_root / ".massgen_scratch" / "verification" / "context_snapshots"
+        snapshots_dir.mkdir(parents=True, exist_ok=True)
+        context_file = workspace_root / "CONTEXT.md"
+
+        if context_file.exists():
+            try:
+                context_content = context_file.read_text(encoding="utf-8")
+            except Exception:
+                context_content = ""
+            digest = hashlib.sha256(context_content.encode("utf-8")).hexdigest()[:12]
+            snapshot_path = snapshots_dir / f"context_{digest}.md"
+            if not snapshot_path.exists():
+                snapshot_path.write_text(context_content, encoding="utf-8")
+            rel_path = snapshot_path.relative_to(workspace_root).as_posix()
+            return (True, rel_path)
+
+        if not require_snapshot:
+            return (False, None)
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        snapshot_path = snapshots_dir / f"context_missing_{timestamp}.md"
+        if not snapshot_path.exists():
+            snapshot_path.write_text("CONTEXT.md missing at media call time.\n", encoding="utf-8")
+        rel_path = snapshot_path.relative_to(workspace_root).as_posix()
+        return (False, rel_path)
+
+    def _extract_file_mappings(
+        self,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        tool_output: dict[str, Any],
+        workspace_root: Path,
+    ) -> list[str]:
+        mappings: list[str] = []
+
+        if tool_name == "read_media":
+            inputs = self._decode_json_like(tool_input.get("inputs"))
+            if isinstance(inputs, dict):
+                inputs = [inputs]
+            if isinstance(inputs, list):
+                for idx, input_item in enumerate(inputs):
+                    if not isinstance(input_item, dict):
+                        continue
+                    files = self._decode_json_like(input_item.get("files"))
+                    if not isinstance(files, dict):
+                        continue
+                    for label, raw_path in files.items():
+                        resolved = self._resolve_path(raw_path, workspace_root)
+                        mappings.append(f"input[{idx}].{label} -> {resolved}")
+
+            continue_from = tool_input.get("continue_from")
+            if isinstance(continue_from, str) and continue_from.strip():
+                mappings.append(f"continue_from -> {continue_from.strip()}")
+            return mappings
+
+        input_images = self._decode_json_like(tool_input.get("input_images"))
+        if isinstance(input_images, str):
+            input_images = [input_images]
+        if isinstance(input_images, list):
+            for idx, raw_path in enumerate(input_images):
+                resolved = self._resolve_path(raw_path, workspace_root)
+                mappings.append(f"input_image[{idx}] -> {resolved}")
+
+        input_audio = self._decode_json_like(tool_input.get("input_audio"))
+        if input_audio:
+            mappings.append(f"input_audio -> {self._resolve_path(input_audio, workspace_root)}")
+
+        continue_from = tool_input.get("continue_from")
+        if isinstance(continue_from, str) and continue_from.strip():
+            mappings.append(f"continue_from -> {continue_from.strip()}")
+
+        if tool_output.get("batch") and isinstance(tool_output.get("results"), list):
+            for idx, result in enumerate(tool_output["results"]):
+                if not isinstance(result, dict):
+                    continue
+                output_path = result.get("file_path")
+                if isinstance(output_path, str) and output_path.strip():
+                    mappings.append(f"output[{idx}] -> {output_path}")
+        else:
+            output_path = tool_output.get("file_path")
+            if isinstance(output_path, str) and output_path.strip():
+                mappings.append(f"output -> {output_path}")
+
+        return mappings
+
+    def _append_entry(
+        self,
+        *,
+        function_name: str,
+        canonical_tool: str,
+        arguments_raw: str,
+        tool_input: dict[str, Any],
+        tool_output: dict[str, Any],
+        context: dict[str, Any],
+    ) -> None:
+        workspace_root = self._resolve_workspace_path(context, tool_input)
+        if workspace_root is None:
+            raise ValueError("workspace path unavailable for media ledger capture")
+
+        verification_dir = workspace_root / ".massgen_scratch" / "verification"
+        verification_dir.mkdir(parents=True, exist_ok=True)
+        ledger_path = verification_dir / "media_call_ledger.json"
+
+        if canonical_tool == "generate_media":
+            context_requested = bool(tool_input.get("use_context", False))
+        else:
+            context_requested = True
+
+        context_used, snapshot_rel_path = self._capture_context_snapshot(
+            workspace_root,
+            require_snapshot=context_requested or canonical_tool == "read_media",
+        )
+        mappings = self._extract_file_mappings(
+            canonical_tool,
+            tool_input,
+            tool_output,
+            workspace_root,
+        )
+
+        now = datetime.now(timezone.utc).isoformat()
+        agent_id = str(context.get("agent_id") or "unknown")
+        backend = tool_output.get("backend") or tool_input.get("backend_type")
+        model = tool_output.get("model") or tool_input.get("model")
+        success_value = tool_output.get("success")
+        success = success_value if isinstance(success_value, bool) else None
+        error_value = tool_output.get("error")
+        output_error = str(error_value).strip() if error_value is not None else None
+
+        entry = {
+            "timestamp": now,
+            "tool": canonical_tool,
+            "success": success,
+            "agent_id": agent_id,
+            "tool_name": function_name,
+            "tool_arguments": tool_input,
+            "backend": backend,
+            "model": model,
+            "context_used": context_used,
+            "context_snapshot_path": snapshot_rel_path,
+            "output_error": output_error,
+            "file_mappings": mappings,
+        }
+        if self._should_store_arguments_raw(arguments_raw, tool_input):
+            entry["tool_arguments_raw"] = arguments_raw
+
+        with self._LEDGER_LOCK:
+            ledger_payload = self._load_ledger_payload(ledger_path)
+            entries = ledger_payload.get("entries")
+            if not isinstance(entries, list):
+                raise ValueError("media ledger entries must be a JSON array")
+            entries.append(entry)
+            ledger_payload["updated_at"] = now
+            if "version" not in ledger_payload:
+                ledger_payload["version"] = 1
+            ledger_path.write_text(
+                json.dumps(ledger_payload, indent=2, ensure_ascii=False) + "\n",
+                encoding="utf-8",
+            )
+
+    async def execute(
+        self,
+        function_name: str,
+        arguments: str,
+        context: dict[str, Any] | None = None,
+        **kwargs,
+    ) -> HookResult:
+        if not self.matches(function_name):
+            return HookResult.allow()
+
+        canonical_tool = self._normalize_tool_name(function_name)
+        if canonical_tool is None:
+            return HookResult.allow()
+
+        tool_input = self._parse_input(arguments)
+        hook_context = context or {}
+        tool_output = self._parse_output(hook_context.get("tool_output"))
+
+        try:
+            self._append_entry(
+                function_name=function_name,
+                canonical_tool=canonical_tool,
+                arguments_raw=arguments,
+                tool_input=tool_input,
+                tool_output=tool_output,
+                context=hook_context,
+            )
+            return HookResult.allow()
+        except Exception as e:
+            error_msg = f"Media call ledger capture failed: {e}"
+            logger.error(f"[MediaCallLedgerHook] {error_msg}", exc_info=True)
+            result = HookResult.allow()
+            result.add_error(f"Media call ledger: {e}")
+            return result
+
+
 class RoundTimeoutState:
     """Shared state between soft and hard timeout hooks.
 
@@ -1019,7 +1474,7 @@ class RoundTimeoutState:
     MAX_CONSECUTIVE_DENIALS = 10
 
     def __init__(self):
-        self.soft_timeout_fired_at: Optional[float] = None
+        self.soft_timeout_fired_at: float | None = None
         self.consecutive_hard_denials: int = 0
         self.force_terminate: bool = False
 
@@ -1070,8 +1525,8 @@ class RoundTimeoutPostHook(PatternHook):
         name: str,
         get_round_start_time: Callable[[], float],
         get_agent_round: Callable[[], int],
-        initial_timeout_seconds: Optional[int],
-        subsequent_timeout_seconds: Optional[int],
+        initial_timeout_seconds: int | None,
+        subsequent_timeout_seconds: int | None,
         grace_seconds: int,
         agent_id: str,
         shared_state: Optional["RoundTimeoutState"] = None,
@@ -1102,7 +1557,7 @@ class RoundTimeoutPostHook(PatternHook):
         self._shared_state = shared_state
         self.use_two_tier_workspace = use_two_tier_workspace
 
-    def _get_timeout_for_current_round(self) -> Optional[int]:
+    def _get_timeout_for_current_round(self) -> int | None:
         """Return timeout based on round number (0 = initial, 1+ = subsequent)."""
         round_num = self.get_agent_round()
         if round_num == 0:
@@ -1120,7 +1575,7 @@ class RoundTimeoutPostHook(PatternHook):
         self,
         _function_name: str,
         _arguments: str,
-        _context: Optional[Dict[str, Any]] = None,
+        _context: dict[str, Any] | None = None,
         **_kwargs,
     ) -> HookResult:
         """Execute the soft timeout check after each tool call."""
@@ -1205,8 +1660,8 @@ class RoundTimeoutPreHook(PatternHook):
         name: str,
         get_round_start_time: Callable[[], float],
         get_agent_round: Callable[[], int],
-        initial_timeout_seconds: Optional[int],
-        subsequent_timeout_seconds: Optional[int],
+        initial_timeout_seconds: int | None,
+        subsequent_timeout_seconds: int | None,
         grace_seconds: int,
         agent_id: str,
         shared_state: Optional["RoundTimeoutState"] = None,
@@ -1233,7 +1688,7 @@ class RoundTimeoutPreHook(PatternHook):
         self.agent_id = agent_id
         self._shared_state = shared_state
 
-    def _get_timeout_for_current_round(self) -> Optional[int]:
+    def _get_timeout_for_current_round(self) -> int | None:
         """Return timeout based on round number (0 = initial, 1+ = subsequent)."""
         round_num = self.get_agent_round()
         if round_num == 0:
@@ -1245,7 +1700,7 @@ class RoundTimeoutPreHook(PatternHook):
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         """Execute the hard timeout check before each tool call.
@@ -1435,7 +1890,7 @@ class PermissionClientSession(ClientSession):
             raise
 
 
-def convert_sessions_to_permission_sessions(sessions: List[ClientSession], permission_manager) -> List[PermissionClientSession]:
+def convert_sessions_to_permission_sessions(sessions: list[ClientSession], permission_manager) -> list[PermissionClientSession]:
     """
     Convert a list of ClientSession objects to PermissionClientSession subclasses.
 
@@ -1454,6 +1909,69 @@ def convert_sessions_to_permission_sessions(sessions: List[ClientSession], permi
         converted.append(perm_session)
     logger.debug(f"[PermissionClientSession] Successfully converted {len(converted)} sessions")
     return converted
+
+
+class RuntimeInboxPoller:
+    """Polls a file-based inbox for runtime messages from parent process.
+
+    Used by subagent orchestrators. Messages are JSON files in
+    {workspace}/.massgen/runtime_inbox/msg_{timestamp}_{seq}.json.
+    Each file is consumed (deleted) after reading.
+    """
+
+    def __init__(self, inbox_dir: Path, min_poll_interval: float = 2.0):
+        self._inbox_dir = Path(inbox_dir)
+        self._min_poll_interval = min_poll_interval
+        self._last_poll_time: float = 0.0
+
+    @staticmethod
+    def _normalize_source(value: Any) -> str:
+        """Normalize runtime message source labels for downstream display."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized:
+                return normalized
+        # Runtime inbox messages originate from parent process by default.
+        return "parent"
+
+    def poll(self) -> list[dict]:
+        """Poll inbox for new messages.
+
+        Returns list of dicts with 'content', 'target_agents', and 'source' keys.
+        target_agents is None for messages that don't specify a target
+        (broadcast to all inner agents).
+        """
+        now = time.time()
+        if now - self._last_poll_time < self._min_poll_interval:
+            return []
+        self._last_poll_time = now
+
+        if not self._inbox_dir.exists():
+            return []
+
+        msg_files = sorted(self._inbox_dir.glob("msg_*.json"))
+        if not msg_files:
+            return []
+
+        messages: list[dict] = []
+        for f in msg_files:
+            try:
+                data = json.loads(f.read_text())
+                messages.append(
+                    {
+                        "content": data.get("content", ""),
+                        "target_agents": data.get("target_agents"),
+                        "source": self._normalize_source(data.get("source")),
+                    },
+                )
+                f.unlink()
+            except (json.JSONDecodeError, KeyError):
+                logger.warning(f"[RuntimeInboxPoller] Skipping malformed message: {f}")
+                f.unlink(missing_ok=True)
+            except Exception as e:
+                logger.error(f"[RuntimeInboxPoller] Error reading {f}: {e}")
+
+        return messages
 
 
 class HumanInputHook(PatternHook):
@@ -1475,29 +1993,103 @@ class HumanInputHook(PatternHook):
         """
         super().__init__(name, matcher="*", timeout=5)
         # Queue of pending messages, each with its own set of agents that received it
-        # Format: [{"content": str, "injected_agents": set}, ...]
+        # Format:
+        # [{
+        #   "id": int,
+        #   "content": str,
+        #   "target_agents": Optional[set[str]],  # None => legacy broadcast to all
+        #   "injected_agents": set[str],
+        # }, ...]
         self._pending_messages: list = []
+        # Historical delivery ledger keyed by agent_id so runtime injections can
+        # be re-surfaced in restart contexts within the same turn.
+        self._delivered_messages_by_agent: dict[str, list[dict[str, Any]]] = {}
         self._lock = threading.Lock()
-        self._on_inject_callback: Optional[Callable[[str], None]] = None
+        self._on_inject_callback: Callable[..., None] | None = None
+        self._on_queue_callback: Callable[..., None] | None = None
+        self._pre_execute_callback: Callable[[], None] | None = None
+        self._next_message_id: int = 1
 
-    def set_pending_input(self, content: str) -> None:
-        """Queue human input for injection into ALL agents' next tool results.
+    @staticmethod
+    def _normalize_source(value: str | None) -> str:
+        """Normalize queued runtime source for storage/display."""
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized:
+                return normalized
+        return "human"
 
-        Multiple messages can be queued - each will be injected to all agents.
+    @staticmethod
+    def _call_compat(callback: Callable[..., None], label: str, *args: Any) -> None:
+        """Call a callback with backward-compatible argument count.
+
+        Uses inspect.signature to determine the accepted parameter count and
+        passes only that many args. This avoids the fragile try/except TypeError
+        cascade which masks real TypeErrors raised inside the callback body.
+        """
+        import inspect
+
+        try:
+            sig = inspect.signature(callback)
+            n_params = len(sig.parameters)
+            callback(*args[:n_params])
+        except Exception as e:
+            logger.warning(f"[HumanInputHook] {label} callback failed: {e}")
+
+    def set_pending_input(
+        self,
+        content: str,
+        target_agents: list[str] | None = None,
+        source: str = "human",
+    ) -> int | None:
+        """Queue human input for injection into selected agents' next tool results.
+
+        Multiple messages can be queued. When ``target_agents`` is provided, the
+        message is injected once per listed agent and is considered complete when
+        all those agents receive it.
 
         Args:
             content: The human input text to inject
+            target_agents: Optional list of explicit target agent IDs.
+                ``None`` keeps legacy broadcast behavior.
+            source: Runtime input source label for TUI context (e.g., ``human``, ``parent``).
         """
+        normalized_targets: set[str] | None = None
+        if target_agents is not None:
+            normalized_targets = {aid for aid in target_agents if isinstance(aid, str) and aid.strip()}
+            if not normalized_targets:
+                logger.debug("[HumanInputHook] Ignoring empty targeted input queue request")
+                return None
+        normalized_source = self._normalize_source(source)
+
         with self._lock:
+            message_id = self._next_message_id
             self._pending_messages.append(
                 {
+                    "id": message_id,
                     "content": content,
+                    "target_agents": normalized_targets,
                     "injected_agents": set(),
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "source": normalized_source,
                 },
             )
+            self._next_message_id += 1
+            target_label = "all agents" if normalized_targets is None else ",".join(sorted(normalized_targets))
             logger.info(
-                f"[HumanInputHook] QUEUED message #{len(self._pending_messages)}: " f"'{content[:50]}...' (len={len(content)})",
+                f"[HumanInputHook] QUEUED message #{len(self._pending_messages)}: " f"'{content[:50]}...' (len={len(content)}), targets={target_label}, source={normalized_source}",
             )
+        if self._on_queue_callback:
+            normalized_callback_targets = sorted(normalized_targets) if normalized_targets is not None else None
+            self._call_compat(
+                self._on_queue_callback,
+                "Queue",
+                content,
+                normalized_callback_targets,
+                message_id,
+                normalized_source,
+            )
+        return message_id
 
     def clear_pending_input(self) -> None:
         """Clear all pending messages without injecting them."""
@@ -1513,23 +2105,159 @@ class HumanInputHook(PatternHook):
             True if any messages are queued, False otherwise
         """
         with self._lock:
-            return len(self._pending_messages) > 0
+            for msg in self._pending_messages:
+                if self._message_has_pending_delivery(msg):
+                    return True
+            return False
 
-    def set_inject_callback(self, callback: Optional[Callable[[str], None]]) -> None:
+    def has_pending_input_for_agent(self, agent_id: str) -> bool:
+        """Check if there is pending queued input for a specific agent."""
+        return self.get_pending_count_for_agent(agent_id) > 0
+
+    def get_pending_count_for_agent(self, agent_id: str) -> int:
+        """Return how many queued messages remain pending for a specific agent."""
+        with self._lock:
+            count = 0
+            for msg in self._pending_messages:
+                if self._message_targets_agent(msg, agent_id) and agent_id not in msg["injected_agents"]:
+                    count += 1
+            return count
+
+    def get_pending_counts_for_agents(self, agent_ids: list[str]) -> dict[str, int]:
+        """Return per-agent pending queue counts for the provided agent IDs."""
+        with self._lock:
+            counts: dict[str, int] = {}
+            for agent_id in agent_ids:
+                count = 0
+                for msg in self._pending_messages:
+                    if self._message_targets_agent(msg, agent_id) and agent_id not in msg["injected_agents"]:
+                        count += 1
+                counts[agent_id] = count
+            return counts
+
+    def get_pending_messages(self, agent_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        """Return queued message metadata for messages with pending deliveries.
+
+        Args:
+            agent_ids: Optional list of active agent IDs used to normalize legacy
+                broadcast mode into concrete pending-agent labels.
+
+        Returns:
+            Ordered list of pending message metadata entries.
+        """
+        normalized_agent_ids = [aid for aid in (agent_ids or []) if isinstance(aid, str) and aid.strip()]
+
+        with self._lock:
+            pending_messages: list[dict[str, Any]] = []
+            for msg in self._pending_messages:
+                if not self._message_has_pending_delivery(msg):
+                    continue
+
+                target_agents = msg.get("target_agents")
+                injected_agents = set(msg.get("injected_agents", set()))
+
+                if target_agents is None:
+                    pending_agents = [aid for aid in normalized_agent_ids if aid not in injected_agents]
+                    target_label = "all agents"
+                else:
+                    pending_agents = sorted([aid for aid in target_agents if aid not in injected_agents])
+                    target_label = ", ".join(sorted(target_agents))
+                source_label = self._normalize_source(msg.get("source"))
+
+                pending_messages.append(
+                    {
+                        "id": msg.get("id"),
+                        "content": msg.get("content", ""),
+                        "target_label": target_label,
+                        "pending_agents": pending_agents,
+                        "pending_count": len(pending_agents),
+                        "created_at": msg.get("created_at"),
+                        "source": source_label,
+                        "source_label": source_label,
+                    },
+                )
+
+            return pending_messages
+
+    def pop_latest_pending_input(self) -> dict[str, Any] | None:
+        """Remove and return the newest queued message with pending delivery."""
+        with self._lock:
+            for index in range(len(self._pending_messages) - 1, -1, -1):
+                message = self._pending_messages[index]
+                if not self._message_has_pending_delivery(message):
+                    continue
+                removed = self._pending_messages.pop(index)
+                target_agents = removed.get("target_agents")
+                source_label = self._normalize_source(removed.get("source"))
+                return {
+                    "id": removed.get("id"),
+                    "content": removed.get("content", ""),
+                    "target_label": "all agents" if target_agents is None else ", ".join(sorted(target_agents)),
+                    "created_at": removed.get("created_at"),
+                    "source": source_label,
+                    "source_label": source_label,
+                }
+        return None
+
+    def get_delivered_messages_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
+        """Return runtime inputs already delivered to a specific agent."""
+        with self._lock:
+            delivered = self._delivered_messages_by_agent.get(agent_id, [])
+            return [dict(item) for item in delivered]
+
+    def clear_delivery_history(self, agent_id: str | None = None) -> None:
+        """Clear delivered runtime-input history for one agent or all agents."""
+        with self._lock:
+            if agent_id is None:
+                cleared_count = sum(len(items) for items in self._delivered_messages_by_agent.values())
+                self._delivered_messages_by_agent.clear()
+                logger.debug(f"[HumanInputHook] Cleared delivered history for all agents ({cleared_count} entries)")
+                return
+
+            removed = self._delivered_messages_by_agent.pop(agent_id, [])
+            logger.debug(f"[HumanInputHook] Cleared delivered history for {agent_id} ({len(removed)} entries)")
+
+    @staticmethod
+    def _message_targets_agent(message: dict[str, Any], agent_id: str) -> bool:
+        """Return True when a queued message applies to the given agent."""
+        target_agents = message.get("target_agents")
+        return target_agents is None or agent_id in target_agents
+
+    @staticmethod
+    def _message_has_pending_delivery(message: dict[str, Any]) -> bool:
+        """Return True when at least one target has not yet received the message."""
+        target_agents = message.get("target_agents")
+        injected_agents = message.get("injected_agents", set())
+        if target_agents is None:
+            # Legacy broadcast mode has unknown target cardinality. Keep pending
+            # until explicit clear_pending_input() at end-of-turn.
+            return True
+        return not set(target_agents).issubset(injected_agents)
+
+    def set_inject_callback(self, callback: Callable[..., None] | None) -> None:
         """Set a callback to be invoked when input is injected.
 
-        The callback receives the injected content string.
+        Preferred callback signature is ``callback(content, agent_id)``.
+        For backward compatibility, single-argument callbacks still work.
 
         Args:
             callback: Function to call after injection, or None to clear
         """
         self._on_inject_callback = callback
 
+    def set_queue_callback(self, callback: Callable[..., None] | None) -> None:
+        """Set a callback to be invoked when runtime input is queued."""
+        self._on_queue_callback = callback
+
+    def set_pre_execute_callback(self, callback: Callable[[], None] | None) -> None:
+        """Set a callback invoked before each hook execute call."""
+        self._pre_execute_callback = callback
+
     async def execute(
         self,
         function_name: str,
         arguments: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
         **kwargs,
     ) -> HookResult:
         """Execute the human input hook after a tool call.
@@ -1546,11 +2274,17 @@ class HumanInputHook(PatternHook):
         Returns:
             HookResult with injection content if any messages pending for this agent
         """
+        if self._pre_execute_callback:
+            try:
+                self._pre_execute_callback()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"[HumanInputHook] Pre-execute callback failed: {e}")
+
         # Get agent_id from context
         agent_id = (context or {}).get("agent_id", "unknown")
 
         messages_to_inject = []
-        is_first_injection = False
+        delivered_messages: list[dict[str, Any]] = []
 
         with self._lock:
             logger.info(
@@ -1559,17 +2293,30 @@ class HumanInputHook(PatternHook):
 
             # Find all messages this agent hasn't received yet
             for msg in self._pending_messages:
+                if not self._message_targets_agent(msg, agent_id):
+                    continue
                 if agent_id not in msg["injected_agents"]:
                     messages_to_inject.append(msg["content"])
+                    delivered_messages.append(
+                        {
+                            "id": msg.get("id"),
+                            "content": msg.get("content", ""),
+                            "created_at": msg.get("created_at"),
+                            "delivered_at": datetime.now(timezone.utc).isoformat(),
+                            "source": self._normalize_source(msg.get("source")),
+                            "source_label": self._normalize_source(msg.get("source")),
+                        },
+                    )
                     msg["injected_agents"].add(agent_id)
-                    # First injection globally (first message, first agent)
-                    if not is_first_injection and len(msg["injected_agents"]) == 1:
-                        is_first_injection = True
+                    self._delivered_messages_by_agent.setdefault(agent_id, []).append(delivered_messages[-1])
 
             if messages_to_inject:
                 logger.info(
                     f"[HumanInputHook] Will inject {len(messages_to_inject)} message(s) for {agent_id}",
                 )
+
+            # Drop fully delivered explicitly-targeted messages.
+            self._pending_messages = [msg for msg in self._pending_messages if self._message_has_pending_delivery(msg)]
 
         # Check outside the lock to avoid holding it during callback
         if messages_to_inject:
@@ -1579,12 +2326,18 @@ class HumanInputHook(PatternHook):
                 f"[HumanInputHook] INJECTING {len(messages_to_inject)} message(s) " f"after {function_name} for {agent_id}",
             )
 
-            # Notify TUI on first injection (to clear the banner)
-            if is_first_injection and self._on_inject_callback:
-                try:
-                    self._on_inject_callback(combined_content)
-                except Exception as e:
-                    logger.warning(f"[HumanInputHook] Inject callback failed: {e}")
+            # Notify TUI for this agent injection.
+            # Callers can suppress the callback (e.g., Codex flush path where
+            # the hook file may not be consumed immediately by the model).
+            suppress_callback = (context or {}).get("suppress_inject_callback", False)
+            if self._on_inject_callback and not suppress_callback:
+                self._call_compat(
+                    self._on_inject_callback,
+                    "Inject",
+                    combined_content,
+                    agent_id,
+                    delivered_messages,
+                )
 
             return HookResult(
                 allowed=True,
@@ -1611,8 +2364,12 @@ __all__ = [
     "GeneralHookManager",
     # Built-in hooks
     "MidStreamInjectionHook",
+    "BackgroundToolCompleteHook",
+    "SubagentCompleteHook",
     "HighPriorityTaskReminderHook",
+    "MediaCallLedgerHook",
     "HumanInputHook",
+    "RuntimeInboxPoller",
     # Per-round timeout hooks
     "RoundTimeoutPostHook",
     "RoundTimeoutPreHook",

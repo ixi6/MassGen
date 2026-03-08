@@ -1,11 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 Simple Display for MassGen Coordination
 
 Basic text output display for minimal use cases and debugging.
 """
-
-from typing import Optional
 
 from .base_display import BaseDisplay
 
@@ -19,7 +16,7 @@ class SimpleDisplay(BaseDisplay):
         self.show_agent_prefixes = kwargs.get("show_agent_prefixes", True)
         self.show_events = kwargs.get("show_events", True)
 
-    def initialize(self, question: str, log_filename: Optional[str] = None):
+    def initialize(self, question: str, log_filename: str | None = None):
         """Initialize the display."""
         print(f"🎯 MassGen Coordination: {question}")
         if log_filename:
@@ -32,7 +29,7 @@ class SimpleDisplay(BaseDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ):
         """Update content for a specific agent."""
         if agent_id not in self.agent_ids:

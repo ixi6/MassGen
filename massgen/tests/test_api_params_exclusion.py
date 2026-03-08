@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for API parameter exclusion lists.
 
@@ -115,13 +114,18 @@ class TestKnownInternalParamsExcluded:
         "debug_delay_seconds",
         "debug_delay_after_n_tools",
         "presenter_agent",
+        "final_answer_strategy",
         "subtask",
         "fairness_enabled",
         "fairness_lead_cap_answers",
         "max_midstream_injections_per_round",
+        "defer_peer_updates_until_restart",
+        "allow_midstream_peer_updates_before_checklist_submit",
         "use_two_tier_workspace",
         "write_mode",
         "drift_conflict_policy",
+        "learning_capture_mode",
+        "disable_final_only_round_capture_fallback",
         "context_paths",
         "context_write_access_enabled",
         "enable_mcp_command_line",
@@ -134,6 +138,9 @@ class TestKnownInternalParamsExcluded:
         "direct_mcp_servers",
         "shared_tools_directory",
         "enable_multimodal_tools",
+        "subagent_types",
+        "round_evaluator_before_checklist",
+        "orchestrator_managed_round_evaluator",
     ]
 
     @pytest.mark.parametrize("param", KNOWN_INTERNAL_PARAMS)

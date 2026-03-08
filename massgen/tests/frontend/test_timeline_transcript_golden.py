@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Golden transcript tests for timeline chronology behavior."""
 
 from __future__ import annotations

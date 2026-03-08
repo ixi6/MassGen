@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 NLIP State Manager.
 
@@ -8,7 +7,7 @@ session tracking, and state persistence.
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .schema import NLIPMessage
 
@@ -26,10 +25,10 @@ class NLIPStateManager:
         Args:
             cleanup_interval: Interval in seconds for cleaning up expired sessions
         """
-        self._sessions: Dict[str, Dict[str, Any]] = {}
-        self._context_tokens: Dict[str, Any] = {}
+        self._sessions: dict[str, dict[str, Any]] = {}
+        self._context_tokens: dict[str, Any] = {}
         self._cleanup_interval = cleanup_interval
-        self._cleanup_task: Optional[asyncio.Task] = None
+        self._cleanup_task: asyncio.Task | None = None
 
     async def start(self):
         """Start background cleanup task."""
@@ -47,7 +46,7 @@ class NLIPStateManager:
     async def create_session(
         self,
         session_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Create new conversation session."""
         self._sessions[session_id] = {
@@ -74,14 +73,14 @@ class NLIPStateManager:
     async def get_session_context(
         self,
         session_id: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get context for a session."""
         return self._sessions.get(session_id)
 
     async def store_context_token(
         self,
         token: str,
-        context: Dict[str, Any],
+        context: dict[str, Any],
     ) -> None:
         """Store context associated with a token."""
         self._context_tokens[token] = {
@@ -92,7 +91,7 @@ class NLIPStateManager:
     async def retrieve_context_token(
         self,
         token: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Retrieve context for a token."""
         token_data = self._context_tokens.get(token)
         return token_data["context"] if token_data else None

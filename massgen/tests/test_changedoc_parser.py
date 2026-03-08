@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for changedoc utility module.
 
 Tests cover:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 LangGraph Lesson Planner Tool
 This tool demonstrates interoperability by wrapping LangGraph's state graph functionality as a MassGen custom tool.
@@ -6,7 +5,8 @@ This tool demonstrates interoperability by wrapping LangGraph's state graph func
 
 import operator
 import os
-from typing import Annotated, Any, AsyncGenerator, Dict, List, Sequence, TypedDict
+from collections.abc import AsyncGenerator, Sequence
+from typing import Annotated, Any, TypedDict
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -29,9 +29,9 @@ class LessonPlannerState(TypedDict):
 
 
 async def run_langgraph_lesson_planner_agent(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     api_key: str,
-) -> AsyncGenerator[Dict[str, Any], None]:
+) -> AsyncGenerator[dict[str, Any], None]:
     """
     Core LangGraph lesson planner agent - pure LangGraph implementation.
 
@@ -236,7 +236,7 @@ async def run_langgraph_lesson_planner_agent(
 
 @context_params("prompt")
 async def langgraph_lesson_planner(
-    prompt: List[Dict[str, Any]],
+    prompt: list[dict[str, Any]],
 ) -> AsyncGenerator[ExecutionResult, None]:
     """
     MassGen custom tool wrapper for LangGraph lesson planner.

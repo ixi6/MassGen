@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for background shell execution."""
 
 import time

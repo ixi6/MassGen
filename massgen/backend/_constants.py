@@ -1,11 +1,10 @@
-# -*- coding: utf-8 -*-
 """Centralized constants for backend operations.
 
 This module defines common constants used across different backend implementations,
 including provider-specific defaults and configuration values.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ..logger_config import logger
 
@@ -32,9 +31,9 @@ OPENROUTER_VALID_REASONING_EFFORTS = {"xhigh", "high", "medium", "low", "minimal
 
 
 def configure_openrouter_extra_body(
-    api_params: Dict[str, Any],
-    all_params: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
+    api_params: dict[str, Any],
+    all_params: dict[str, Any],
+) -> dict[str, Any] | None:
     """Configure extra_body for OpenRouter API requests.
 
     Handles cost tracking and web search plugin configuration with validation.

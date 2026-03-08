@@ -1,11 +1,11 @@
-# -*- coding: utf-8 -*-
 """
 SmolAgent Lesson Planner Tool
 This tool demonstrates interoperability by wrapping HuggingFace's SmolAgent framework as a MassGen custom tool.
 """
 
 import os
-from typing import Any, AsyncGenerator, Dict, Generator, List
+from collections.abc import AsyncGenerator, Generator
+from typing import Any
 
 from smolagents import (
     ActionStep,
@@ -21,9 +21,9 @@ from massgen.tool._result import ExecutionResult, TextContent
 
 
 def run_smolagent_lesson_planner_agent(
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     api_key: str,
-) -> Generator[Dict[str, Any], None, None]:
+) -> Generator[dict[str, Any], None, None]:
     """
     Core SmolAgent lesson planner agent - pure SmolAgent implementation.
 
@@ -149,7 +149,7 @@ def run_smolagent_lesson_planner_agent(
 
 @context_params("prompt")
 async def smolagent_lesson_planner(
-    prompt: List[Dict[str, Any]],
+    prompt: list[dict[str, Any]],
 ) -> AsyncGenerator[ExecutionResult, None]:
     """
     MassGen custom tool wrapper for SmolAgent lesson planner.

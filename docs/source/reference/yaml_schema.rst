@@ -578,6 +578,8 @@ Full multi-agent configuration demonstrating all 6 configuration levels:
      fairness_enabled: true                 # Keep coordination pacing balanced (default: true)
      fairness_lead_cap_answers: 2           # Max lead in answer revisions vs slowest active peer
      max_midstream_injections_per_round: 2  # Cap injected unseen source updates per round
+     defer_peer_updates_until_restart: false  # Queue peer updates for next restart instead of mid-stream injection
+     allow_midstream_peer_updates_before_checklist_submit: null  # Optional checklist-mode override before first accepted submit_checklist
 
      # Advanced settings
      skip_coordination_rounds: false        # Normal coordination
@@ -980,6 +982,10 @@ Coordination Configuration
      - integer
      - No
      - Maximum number of orchestration restarts allowed (default: 0). When set > 0, enables post-evaluation where the winning agent reviews the final answer and can request a restart with specific improvement instructions. Recommended values: 1-2.
+   * - ``subagent_types``
+     - list of strings or null
+     - No
+     - Which specialized subagent types to expose. Default (null/omitted): ``[evaluator, explorer, researcher]``. Set explicitly to include ``novelty`` or custom project types. Empty list disables all specialized types.
    * - ``enable_subagents``
      - boolean
      - No
@@ -1004,14 +1010,26 @@ Coordination Configuration
      - object
      - No
      - Optional per-round timeout settings for subagents. Uses the same keys as ``timeout_settings`` and inherits from parent if omitted.
+   * - ``subagent_runtime_mode``
+     - string
+     - No
+     - Subagent runtime boundary mode. ``isolated`` (default) or ``inherited``.
+   * - ``subagent_runtime_fallback_mode``
+     - string or null
+     - No
+     - Optional fallback mode when isolated prerequisites are unavailable. ``inherited`` or ``null`` (strict isolation). Codex in Docker mode treats unset fallback as ``inherited`` when ``subagent_runtime_mode`` is ``isolated``.
+   * - ``subagent_host_launch_prefix``
+     - list or null
+     - No
+     - Optional command prefix used to bridge isolated launches from containerized parent runtimes.
    * - ``subagent_orchestrator``
      - object
      - No
-     - Subagent orchestrator configuration (multi-agent subagents with custom models)
-   * - ``async_subagents``
+     - Subagent orchestrator configuration (multi-agent subagents with custom models), including options such as ``parse_at_references`` for literal ``@`` task text.
+   * - ``background_subagents``
      - object
      - No
-     - Async subagent configuration (``enabled``, ``injection_strategy``)
+     - Background subagent configuration (``enabled``, ``injection_strategy``)
 
 .. note::
 
@@ -1078,6 +1096,14 @@ Fairness controls are designed to solve a common multi-agent failure mode: fast 
      - integer
      - No
      - Maximum unseen source-agent updates injected mid-stream into a single agent during one round. Helps prevent fast models from receiving runaway update fanout. **Default:** ``2``.
+   * - ``defer_peer_updates_until_restart``
+     - boolean
+     - No
+     - When ``true``, peer answer updates are queued until the agent reaches a safe restart point instead of being injected mid-stream. Human/runtime/background payload delivery is unchanged. **Default:** ``false``.
+   * - ``allow_midstream_peer_updates_before_checklist_submit``
+     - boolean or null
+     - No
+     - Checklist-gated override for ``defer_peer_updates_until_restart``. When enabled, peer updates may still arrive mid-stream until the agent records its first accepted ``submit_checklist`` for the current answer. ``null`` uses the orchestrator default policy. **Default:** ``null``.
 
 **Example Configurations:**
 
@@ -1093,6 +1119,7 @@ Fast but thorough (recommended for balanced evaluation):
      fairness_enabled: true
      fairness_lead_cap_answers: 2
      max_midstream_injections_per_round: 2
+     defer_peer_updates_until_restart: false
 
 Maximum quality with bounded time:
 

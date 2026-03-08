@@ -1,12 +1,11 @@
-# -*- coding: utf-8 -*-
 """
 Server settings for MassGen HTTP server.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from os import getenv
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -15,11 +14,11 @@ class ServerSettings:
 
     host: str = "0.0.0.0"
     port: int = 4000
-    default_config: Optional[str] = None
+    default_config: str | None = None
     debug: bool = False
 
     @classmethod
-    def from_env(cls) -> "ServerSettings":
+    def from_env(cls) -> ServerSettings:
         """Load settings from environment variables."""
 
         def _get_bool(name: str, default: bool = False) -> bool:

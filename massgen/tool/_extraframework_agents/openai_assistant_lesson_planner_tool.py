@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 OpenAI Assistant Lesson Planner Tool (Multi-Agent Streaming Version)
 This tool demonstrates interoperability by wrapping OpenAI's Chat Completions API with streaming support
@@ -6,7 +5,8 @@ and multi-agent collaboration pattern similar to AG2.
 """
 
 import os
-from typing import Any, AsyncGenerator, Dict, List
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -91,7 +91,7 @@ async def run_agent_step(
 
 @context_params("prompt")
 async def openai_assistant_lesson_planner(
-    prompt: List[Dict[str, Any]],
+    prompt: list[dict[str, Any]],
 ) -> AsyncGenerator[ExecutionResult, None]:
     """
     MassGen custom tool wrapper for OpenAI lesson planner with multi-agent collaboration.

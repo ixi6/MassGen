@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 FastAPI Web Server for MassGen Web UI
 
@@ -16,7 +15,7 @@ import logging.handlers
 import os
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional, Set
+from typing import Any
 
 try:
     from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -79,7 +78,7 @@ if not workspace_logger.handlers:
 # Cache for PDF conversions (Office files converted via Docker)
 # Key: (workspace_path, file_path, mtime) -> base64 PDF content
 # This avoids re-converting the same file repeatedly (expensive Docker operation)
-_pdf_conversion_cache: Dict[tuple, str] = {}
+_pdf_conversion_cache: dict[tuple, str] = {}
 _PDF_CACHE_MAX_SIZE = 50  # Max number of cached conversions
 
 
@@ -212,7 +211,7 @@ class WorkspaceConnectionManager:
 
     def __init__(self):
         # session_id -> set of WebSocket connections for workspace updates
-        self.workspace_connections: Dict[str, Set[WebSocket]] = {}
+        self.workspace_connections: dict[str, set[WebSocket]] = {}
         # Connection counter for logging
         self._connection_count = 0
         workspace_logger.info("WorkspaceConnectionManager initialized")
@@ -306,21 +305,21 @@ class ConnectionManager:
 
     def __init__(self):
         # session_id -> set of WebSocket connections
-        self.active_connections: Dict[str, Set[WebSocket]] = {}
+        self.active_connections: dict[str, set[WebSocket]] = {}
         # session_id -> WebDisplay instance
-        self.displays: Dict[str, WebDisplay] = {}
+        self.displays: dict[str, WebDisplay] = {}
         # session_id -> orchestration task
-        self.tasks: Dict[str, asyncio.Task] = {}
+        self.tasks: dict[str, asyncio.Task] = {}
         # session_id -> log session directory (for multi-turn continuation)
-        self.session_log_dirs: Dict[str, Path] = {}
+        self.session_log_dirs: dict[str, Path] = {}
         # session_id -> current turn number
-        self.session_turns: Dict[str, int] = {}
+        self.session_turns: dict[str, int] = {}
         # session_id -> config path used
-        self.session_configs: Dict[str, str] = {}
+        self.session_configs: dict[str, str] = {}
         # Completed sessions: session_id -> metadata (persists after disconnect)
-        self.completed_sessions: Dict[str, Dict[str, Any]] = {}
+        self.completed_sessions: dict[str, dict[str, Any]] = {}
         # session_id -> orchestrator instance (for cancellation)
-        self.orchestrators: Dict[str, Any] = {}
+        self.orchestrators: dict[str, Any] = {}
 
     def mark_session_completed(
         self,
@@ -352,7 +351,7 @@ class ConnectionManager:
             if not self.active_connections[session_id]:
                 del self.active_connections[session_id]
 
-    async def broadcast(self, session_id: str, message: Dict[str, Any]) -> None:
+    async def broadcast(self, session_id: str, message: dict[str, Any]) -> None:
         """Broadcast message to all clients in a session."""
         if session_id not in self.active_connections:
             return
@@ -371,7 +370,7 @@ class ConnectionManager:
         if disconnected and session_id in self.active_connections:
             self.active_connections[session_id] -= disconnected
 
-    def get_display(self, session_id: str) -> Optional[WebDisplay]:
+    def get_display(self, session_id: str) -> WebDisplay | None:
         """Get the WebDisplay for a session."""
         return self.displays.get(session_id)
 
@@ -379,11 +378,11 @@ class ConnectionManager:
         self,
         session_id: str,
         agent_ids: list,
-        agent_models: Optional[Dict[str, str]] = None,
+        agent_models: dict[str, str] | None = None,
     ) -> WebDisplay:
         """Create a new WebDisplay for a session."""
 
-        async def broadcast_fn(message: Dict[str, Any]) -> None:
+        async def broadcast_fn(message: dict[str, Any]) -> None:
             await self.broadcast(session_id, message)
 
         display = WebDisplay(
@@ -400,24 +399,24 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # Default config path (set from CLI)
-_default_config_path: Optional[str] = None
+_default_config_path: str | None = None
 
 
-def set_default_config(config_path: Optional[str]) -> None:
+def set_default_config(config_path: str | None) -> None:
     """Set the default config path for new sessions."""
     global _default_config_path
     _default_config_path = config_path
 
 
-def get_default_config() -> Optional[str]:
+def get_default_config() -> str | None:
     """Get the default config path."""
     return _default_config_path
 
 
 def create_app(
-    config_path: Optional[str] = None,
+    config_path: str | None = None,
     automation_mode: bool = False,
-) -> "FastAPI":
+) -> FastAPI:
     """Create and configure the FastAPI application.
 
     Args:
@@ -699,7 +698,7 @@ def create_app(
             # Load existing env vars if file exists
             existing_vars = {}
             if env_path.exists():
-                with open(env_path, "r") as f:
+                with open(env_path) as f:
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#") and "=" in line:
@@ -951,7 +950,7 @@ def create_app(
 
         Request body:
         {
-            "package": "anthropic" | "openai" | "vercel" | "agent_browser" | "crawl4ai"
+            "package": "anthropic" | "openai" | "vercel" | "agent_browser" | "remotion" | "crawl4ai"
         }
 
         Returns:
@@ -963,6 +962,7 @@ def create_app(
             install_crawl4ai_skill,
             install_openai_skills,
             install_openskills_cli,
+            install_remotion_skill,
             install_vercel_skills,
         )
 
@@ -973,6 +973,7 @@ def create_app(
             "openai": (install_openai_skills, "OpenAI skills"),
             "vercel": (install_vercel_skills, "Vercel agent skills"),
             "agent_browser": (install_agent_browser_skill, "Vercel Agent Browser skill"),
+            "remotion": (install_remotion_skill, "Remotion skill"),
         }
 
         if package_id in openskills_installers:
@@ -1012,6 +1013,7 @@ def create_app(
         import os
 
         from massgen.backend.capabilities import BACKEND_CAPABILITIES
+        from massgen.config_builder import sort_quickstart_provider_ids
 
         providers = []
         for backend_type, caps in BACKEND_CAPABILITIES.items():
@@ -1032,6 +1034,12 @@ def create_app(
             if backend_type == "claude_code":
                 # Claude Code always shows - works with CLI login, CLAUDE_CODE_API_KEY, or ANTHROPIC_API_KEY
                 # Mark as available but the notes will explain auth requirements
+                has_api_key = True
+            elif backend_type == "copilot":
+                # Copilot always shows - works with gh CLI login, no API key needed
+                has_api_key = True
+            elif backend_type == "codex":
+                # Codex always shows - works with OAuth (codex login) or OPENAI_API_KEY
                 has_api_key = True
             elif caps.env_var:
                 api_key = os.getenv(caps.env_var, "")
@@ -1058,8 +1066,16 @@ def create_app(
                 },
             )
 
-        # Sort by has_api_key (available first), then by name
-        providers.sort(key=lambda p: (not p["has_api_key"], p["name"]))
+        # Sort by has_api_key (available first), then quickstart priority.
+        # Priority order defaults to: claude_code, codex, gemini.
+        ordered_ids = sort_quickstart_provider_ids([provider["id"] for provider in providers])
+        provider_rank = {provider_id: index for index, provider_id in enumerate(ordered_ids)}
+        providers.sort(
+            key=lambda provider: (
+                not provider["has_api_key"],
+                provider_rank.get(provider["id"], len(provider_rank)),
+            ),
+        )
 
         return {"providers": providers}
 
@@ -1639,7 +1655,7 @@ def create_app(
                 if log_dir:
                     status_file = log_dir / "status.json"
                     if status_file.exists():
-                        with open(status_file, "r") as f:
+                        with open(status_file) as f:
                             status_data = json.load(f)
 
                         # Get workspace path from status.json
@@ -2250,11 +2266,11 @@ def create_app(
             # Read full content for text files (limit to 1MB)
             max_size = 1024 * 1024  # 1MB
             if size > max_size:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                with open(file_path, encoding="utf-8", errors="replace") as f:
                     content = f.read(max_size)
                 content += f"\n\n... (truncated, file is {size} bytes)"
             else:
-                with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+                with open(file_path, encoding="utf-8", errors="replace") as f:
                     content = f.read()
 
             duration_ms = (time_module.time() - request_start) * 1000
@@ -3505,7 +3521,7 @@ def create_app(
                     import json
                     import time
 
-                    with open(status_file, "r") as f:
+                    with open(status_file) as f:
                         status_data = json.load(f)
                     status_data["coordination"] = status_data.get("coordination", {})
                     status_data["coordination"]["phase"] = "cancelled"
@@ -4068,7 +4084,7 @@ async def _save_session_metadata(
     question: str,
     orchestrator: Any,
     config_path: str,
-    log_session_dir: Optional[Path],
+    log_session_dir: Path | None,
     turn_number: int = 1,
 ) -> None:
     """Save CLI-compatible metadata for multi-turn session continuation.
@@ -4142,7 +4158,7 @@ async def _save_session_metadata(
                 winning_agents_history = json.loads(
                     history_file.read_text(encoding="utf-8"),
                 )
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, OSError):
                 pass
 
         # Add current turn's winner
@@ -4196,7 +4212,7 @@ async def run_coordination_with_history(
     config_path: str,
     session_log_dir: Path,
     turn_number: int,
-    context_paths: Optional[list] = None,
+    context_paths: list | None = None,
 ) -> None:
     """Run coordination with conversation history from previous turns.
 
@@ -4395,6 +4411,7 @@ async def run_coordination_with_history(
                     diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
                     persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                    after_first_answer=pg_cfg.get("after_first_answer", "drop"),
                 )
 
             orchestrator_config.coordination_config = CoordinationConfig(
@@ -4429,6 +4446,11 @@ async def run_coordination_with_history(
                     "enable_memory_filesystem_mode",
                     False,
                 ),
+                learning_capture_mode=coord_cfg.get("learning_capture_mode", "round"),
+                disable_final_only_round_capture_fallback=coord_cfg.get(
+                    "disable_final_only_round_capture_fallback",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
@@ -4440,9 +4462,17 @@ async def run_coordination_with_history(
                 drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
             )
 
-        # Get context sharing parameters
-        snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-        agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
+        # Get context sharing parameters — scope by session to avoid
+        # concurrent WebUI sessions colliding on shared paths.
+        from massgen.cli import (
+            _scope_agent_temporary_workspace,
+            _scope_snapshot_storage,
+        )
+
+        snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+        agent_temporary_workspace = _scope_agent_temporary_workspace(
+            orchestrator_cfg.get("agent_temporary_workspace"),
+        )
 
         # Create orchestrator with history from previous turns
         orchestrator = Orchestrator(
@@ -4565,7 +4595,7 @@ async def run_coordination_with_history(
                 if status_file.exists():
                     import json
 
-                    with open(status_file, "r") as f:
+                    with open(status_file) as f:
                         status_data = json.load(f)
                     status_data["coordination"] = status_data.get("coordination", {})
                     status_data["coordination"]["phase"] = "cancelled"
@@ -4617,8 +4647,8 @@ async def run_coordination_with_history(
 async def run_coordination(
     session_id: str,
     question: str,
-    config_path: Optional[str] = None,
-    context_paths: Optional[list] = None,
+    config_path: str | None = None,
+    context_paths: list | None = None,
 ) -> None:
     """Run coordination with web display.
 
@@ -4802,6 +4832,7 @@ async def run_coordination(
                     diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
                     persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                    after_first_answer=pg_cfg.get("after_first_answer", "drop"),
                 )
 
             orchestrator_config.coordination_config = CoordinationConfig(
@@ -4836,6 +4867,11 @@ async def run_coordination(
                     "enable_memory_filesystem_mode",
                     False,
                 ),
+                learning_capture_mode=coord_cfg.get("learning_capture_mode", "round"),
+                disable_final_only_round_capture_fallback=coord_cfg.get(
+                    "disable_final_only_round_capture_fallback",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
@@ -4847,9 +4883,17 @@ async def run_coordination(
                 drift_conflict_policy=coord_cfg.get("drift_conflict_policy", "skip"),
             )
 
-        # Get context sharing parameters
-        snapshot_storage = orchestrator_cfg.get("snapshot_storage")
-        agent_temporary_workspace = orchestrator_cfg.get("agent_temporary_workspace")
+        # Get context sharing parameters — scope by session to avoid
+        # concurrent WebUI sessions colliding on shared paths.
+        from massgen.cli import (
+            _scope_agent_temporary_workspace,
+            _scope_snapshot_storage,
+        )
+
+        snapshot_storage = _scope_snapshot_storage(orchestrator_cfg.get("snapshot_storage"))
+        agent_temporary_workspace = _scope_agent_temporary_workspace(
+            orchestrator_cfg.get("agent_temporary_workspace"),
+        )
 
         # Create orchestrator with AgentConfig object
         orchestrator = Orchestrator(
@@ -4971,7 +5015,7 @@ async def run_coordination(
                 if status_file.exists():
                     import json
 
-                    with open(status_file, "r") as f:
+                    with open(status_file) as f:
                         status_data = json.load(f)
                     status_data["coordination"] = status_data.get("coordination", {})
                     status_data["coordination"]["phase"] = "cancelled"
@@ -5023,7 +5067,7 @@ def run_server(
     host: str = "127.0.0.1",
     port: int = 8000,
     reload: bool = False,
-    config_path: Optional[str] = None,
+    config_path: str | None = None,
     automation_mode: bool = False,
 ) -> None:
     """Run the web server.

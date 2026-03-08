@@ -1,10 +1,10 @@
-# -*- coding: utf-8 -*-
 import json
 import time
 from abc import ABC
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -76,8 +76,8 @@ class MassAgent(ABC):
         self,
         agent_id: int,
         orchestrator=None,
-        model_config: Optional[ModelConfig] = None,
-        stream_callback: Optional[Callable] = None,
+        model_config: ModelConfig | None = None,
+        stream_callback: Callable | None = None,
         **kwargs,
     ):
         """
@@ -127,7 +127,7 @@ class MassAgent(ABC):
         self.stream_callback = stream_callback
         self.kwargs = kwargs
 
-    def process_message(self, messages: List[Dict[str, str]], tools: List[str] = None) -> AgentResponse:
+    def process_message(self, messages: list[dict[str, str]], tools: list[str] = None) -> AgentResponse:
         """
         Core LLM inference function for task processing.
 
@@ -197,7 +197,7 @@ class MassAgent(ABC):
         self.orchestrator.notify_answer_update(self.agent_id, new_answer)
         return "The new answer has been added."
 
-    def vote(self, agent_id: int, reason: str = "", invalid_vote_options: List[int] = []):
+    def vote(self, agent_id: int, reason: str = "", invalid_vote_options: list[int] = []):
         """
         Vote for the representative agent, who you believe has found the correct solution.
 
@@ -211,7 +211,7 @@ class MassAgent(ABC):
         self.orchestrator.cast_vote(self.agent_id, agent_id, reason)
         return f"Your vote for Agent {agent_id} has been cast."
 
-    def check_update(self) -> List[int]:
+    def check_update(self) -> list[int]:
         """
         Check if there are any updates from other agents since this agent last saw them.
         """
@@ -238,7 +238,7 @@ class MassAgent(ABC):
         # Report the failure to the orchestrator for logging
         self.orchestrator.mark_agent_failed(self.agent_id, reason)
 
-    def deduplicate_function_calls(self, function_calls: List[Dict]):
+    def deduplicate_function_calls(self, function_calls: list[dict]):
         """Deduplicate function calls by their name and arguments."""
         deduplicated_function_calls = []
         for func_call in function_calls:
@@ -246,7 +246,7 @@ class MassAgent(ABC):
                 deduplicated_function_calls.append(func_call)
         return deduplicated_function_calls
 
-    def _execute_function_calls(self, function_calls: List[Dict], invalid_vote_options: List[int] = []):
+    def _execute_function_calls(self, function_calls: list[dict], invalid_vote_options: list[int] = []):
         """Execute function calls and return function outputs."""
         from .tools import register_tool
 
@@ -306,7 +306,7 @@ class MassAgent(ABC):
 
         return function_outputs, successful_called
 
-    def _get_system_tools(self) -> List[Dict[str, Any]]:
+    def _get_system_tools(self) -> list[dict[str, Any]]:
         """
         The system tools available to this agent for orchestration:
         - add_answer: Your added new answer, which should be self-contained, complete, and ready to serve as the definitive final response.
@@ -350,7 +350,7 @@ class MassAgent(ABC):
         available_options = [agent_id for agent_id, agent_state in self.orchestrator.agent_states.items() if agent_state.curr_answer]
         return [add_answer_schema, vote_schema] if available_options else [add_answer_schema]
 
-    def _get_registered_tools(self) -> List[Dict[str, Any]]:
+    def _get_registered_tools(self) -> list[dict[str, Any]]:
         """Return the tool schema for the tools that are available to this agent."""
         # Register tools from the global registry, JSON schema
         custom_tools = []
@@ -362,7 +362,7 @@ class MassAgent(ABC):
                 custom_tools.append(tool_schema)
         return custom_tools
 
-    def _get_builtin_tools(self) -> List[Dict[str, Any]]:
+    def _get_builtin_tools(self) -> list[dict[str, Any]]:
         """
         Override the parent method due to the Gemini's limitation.
         Return the built-in tools that are available to Gemini models.
@@ -375,7 +375,7 @@ class MassAgent(ABC):
                 builtin_tools.append(tool)
         return builtin_tools
 
-    def _get_all_answers(self) -> List[str]:
+    def _get_all_answers(self) -> list[str]:
         """Get all answers from all agents.
         Format:
         **Agent 1**: Answer 1
@@ -389,7 +389,7 @@ class MassAgent(ABC):
                 agent_answers.append(f"**Agent {agent_id}**: {agent_state.curr_answer}")
         return agent_answers
 
-    def _get_all_votes(self) -> List[str]:
+    def _get_all_votes(self) -> list[str]:
         """Get all votes from all agents.
         Format:
         **Vote for Agent 1**: Reason 1
@@ -435,7 +435,7 @@ class MassAgent(ABC):
 
         return status, task_input
 
-    def _get_task_input_messages(self, user_input: str) -> List[Dict[str, str]]:
+    def _get_task_input_messages(self, user_input: str) -> list[dict[str, str]]:
         """Get the task input messages for the agent."""
         return [
             {"role": "system", "content": SYSTEM_INSTRUCTION},
@@ -453,7 +453,7 @@ class MassAgent(ABC):
         all_tools.extend(self._get_system_tools())
         return working_status, working_messages, all_tools
 
-    def work_on_task(self, task: TaskInput) -> List[Dict[str, str]]:
+    def work_on_task(self, task: TaskInput) -> list[dict[str, str]]:
         """
         Work on the task with conversation continuation.
 

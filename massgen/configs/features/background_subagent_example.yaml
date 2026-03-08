@@ -1,0 +1,96 @@
+# Test background subagent: uv run massgen --display textual --config massgen/configs/features/background_subagent_example.yaml "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
+# Test specialized subagent: uv run massgen --config massgen/configs/features/background_subagent_example.yaml --cwd-context ro "Use an explorer subagent to analyze this repo"
+# Test full subagent workflow: uv run massgen --config massgen/configs/features/background_subagent_example.yaml "Spawn a background subagent to research the history of jazz. While it runs, call list_background_tools to verify it appears, wait 30s, explain what it's currently doing, then call cancel_background_tool to cancel it. After this, please continue the subagent, wait 30s, then send a message to also focus on rock and roll."
+
+agents:
+- id: agent_a
+  backend:
+    type: claude_code
+    model: claude-sonnet-4-6
+    # type: gemini
+    # model: gemini-3-flash-preview
+    # type: codex
+    # # model: gpt-5.3-codex-spark
+    # model: gpt-5.4
+    # reasoning:
+    #   effort: xhigh
+    #   # effort: medium
+    # #   summary: auto
+    cwd: workspace
+    enable_code_based_tools: true
+    exclude_file_operation_mcps: true
+    enable_mcp_command_line: true
+    command_line_execution_mode: docker
+    command_line_docker_image: ghcr.io/massgen/mcp-runtime-sudo:latest
+    # command_line_docker_image: massgen/mcp-runtime-sudo:latest  # bc we changed task plan for bcodex, we used `bash massgen/docker/build.sh --sudo`
+    command_line_docker_network_mode: bridge
+    command_line_docker_enable_sudo: true
+    command_line_docker_credentials:
+      env_file: .env
+      env_vars_from_file:
+      - OPENAI_API_KEY
+      - ANTHROPIC_API_KEY
+      - GOOGLE_API_KEY
+      - GEMINI_API_KEY
+    shared_tools_directory: shared_tools
+    auto_discover_custom_tools: true
+    exclude_custom_tools:
+    - _computer_use
+    - _claude_computer_use
+    - _gemini_computer_use
+    - _browser_automation
+    enable_web_search: true
+orchestrator:
+  snapshot_storage: snapshots
+  agent_temporary_workspace: temp_workspaces
+  voting_sensitivity: "balanced"
+  max_new_answers_per_agent: 5
+  enable_multimodal_tools: true
+  image_generation_backend: openai
+  video_generation_backend: openai
+  audio_generation_backend: openai
+  coordination:
+    max_orchestration_restarts: 0
+    use_skills: true
+    skills_directory: .agent/skills
+    enable_agent_task_planning: true
+    task_planning_filesystem_mode: true
+    enable_memory_filesystem_mode: true
+    write_mode: auto
+    enable_subagents: true
+    subagent_default_timeout: 200
+    subagent_max_concurrent: 3
+    subagent_orchestrator:
+      enabled: true
+      enable_web_search: true
+      agents:
+      - backend:
+          # type: codex
+          # # model: gpt-5.3-codex-spark
+          # model: gpt-5.4
+          # reasoning:
+          #   effort: medium
+          # type: grok
+          # model: grok-4-1-fast-reasoning
+          # type: claude_code
+          # model: claude-sonnet-4-6
+          type: gemini
+          model: gemini-3-flash-preview
+      # - backend:
+      #     type: grok
+      #     model: grok-4-1-fast-reasoning
+      #     # type: claude_code
+      #     # model: claude-sonnet-4-6
+    # persona_generator:
+    #   enabled: true
+    #   diversity_mode: implementation
+  context_paths: []
+# Timeout settings to prevent agents from getting stuck
+timeout_settings:
+  orchestrator_timeout_seconds: 1800        # 30 min overall session limit
+  initial_round_timeout_seconds: 600        # 10 min for first answer
+  subsequent_round_timeout_seconds: 450     # 7.5 min for later answers
+  round_timeout_grace_seconds: 180          # 3 min grace before hard block
+ui:
+  type: textual_terminal
+  logging_enabled: true

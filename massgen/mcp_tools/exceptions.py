@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 """
 MCP-specific exceptions with enhanced error handling and context preservation.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 from ..logger_config import logger
 
@@ -20,9 +19,9 @@ class MCPError(Exception):
     def __init__(
         self,
         message: str,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
-        timestamp: Optional[datetime] = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
+        timestamp: datetime | None = None,
     ):
         super().__init__(message)
         self.context = self._sanitize_context(context or {})
@@ -30,7 +29,7 @@ class MCPError(Exception):
         self.timestamp = timestamp or datetime.now(timezone.utc)
         self.original_message = message
 
-    def _sanitize_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_context(self, context: dict[str, Any]) -> dict[str, Any]:
         """
         Sanitize context to remove sensitive information and ensure serializability.
         """
@@ -47,7 +46,7 @@ class MCPError(Exception):
 
         return sanitized
 
-    def _build_context_from_kwargs(self, base_context: Optional[Dict[str, Any]] = None, **kwargs: Any) -> Dict[str, Any]:
+    def _build_context_from_kwargs(self, base_context: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
         """
         Merge base context with kwargs, ignoring None values.
 
@@ -55,7 +54,7 @@ class MCPError(Exception):
         with key/value pairs from kwargs where the value is not None. Returns the
         resulting context dict for use in specialized error classes.
         """
-        context: Dict[str, Any] = dict(base_context or {})
+        context: dict[str, Any] = dict(base_context or {})
         for key, value in kwargs.items():
             if value is None:
                 continue
@@ -74,7 +73,7 @@ class MCPError(Exception):
 
         return " | ".join(parts)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "error_type": self.__class__.__name__,
             "message": self.original_message,
@@ -101,13 +100,13 @@ class MCPConnectionError(MCPError):
     def __init__(
         self,
         message: str,
-        server_name: Optional[str] = None,
-        transport_type: Optional[str] = None,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        retry_count: Optional[int] = None,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        server_name: str | None = None,
+        transport_type: str | None = None,
+        host: str | None = None,
+        port: int | None = None,
+        retry_count: int | None = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
     ):
         ctx = self._build_context_from_kwargs(
             context or {},
@@ -138,12 +137,12 @@ class MCPServerError(MCPError):
     def __init__(
         self,
         message: str,
-        code: Optional[Union[int, str]] = None,
-        server_name: Optional[str] = None,
-        http_status: Optional[int] = None,
-        response_data: Optional[Dict[str, Any]] = None,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        code: int | str | None = None,
+        server_name: str | None = None,
+        http_status: int | None = None,
+        response_data: dict[str, Any] | None = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
     ):
         ctx = self._build_context_from_kwargs(
             context or {},
@@ -172,14 +171,14 @@ class MCPValidationError(MCPError):
     def __init__(
         self,
         message: str,
-        field: Optional[str] = None,
-        value: Optional[Any] = None,
-        expected_type: Optional[str] = None,
-        validation_rule: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        field: str | None = None,
+        value: Any | None = None,
+        expected_type: str | None = None,
+        validation_rule: str | None = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
     ):
-        value_str: Optional[str] = None
+        value_str: str | None = None
         if value is not None:
             try:
                 value_str = str(value)
@@ -215,12 +214,12 @@ class MCPTimeoutError(MCPError):
     def __init__(
         self,
         message: str,
-        timeout_seconds: Optional[float] = None,
-        operation: Optional[str] = None,
-        elapsed_seconds: Optional[float] = None,
-        server_name: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        timeout_seconds: float | None = None,
+        operation: str | None = None,
+        elapsed_seconds: float | None = None,
+        server_name: str | None = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
     ):
         ctx = self._build_context_from_kwargs(
             context or {},
@@ -249,12 +248,12 @@ class MCPAuthenticationError(MCPError):
     def __init__(
         self,
         message: str,
-        auth_type: Optional[str] = None,
-        username: Optional[str] = None,
-        server_name: Optional[str] = None,
-        permission_required: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        auth_type: str | None = None,
+        username: str | None = None,
+        server_name: str | None = None,
+        permission_required: str | None = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
     ):
         ctx = self._build_context_from_kwargs(
             context or {},
@@ -283,11 +282,11 @@ class MCPConfigurationError(MCPError):
     def __init__(
         self,
         message: str,
-        config_file: Optional[str] = None,
-        config_section: Optional[str] = None,
-        missing_keys: Optional[list] = None,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        config_file: str | None = None,
+        config_section: str | None = None,
+        missing_keys: list | None = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
     ):
         ctx = self._build_context_from_kwargs(
             context or {},
@@ -314,12 +313,12 @@ class MCPResourceError(MCPError):
     def __init__(
         self,
         message: str,
-        resource_type: Optional[str] = None,
-        resource_id: Optional[str] = None,
-        operation: Optional[str] = None,
-        server_name: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        error_code: Optional[str] = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        operation: str | None = None,
+        server_name: str | None = None,
+        context: dict[str, Any] | None = None,
+        error_code: str | None = None,
     ):
         ctx = self._build_context_from_kwargs(
             context or {},

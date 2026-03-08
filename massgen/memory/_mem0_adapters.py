@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Adapters for integrating MassGen backends with mem0 library.
 
@@ -6,7 +5,7 @@ This module provides bridge classes that allow MassGen's LLM and embedding
 backends to work seamlessly with the mem0 memory system.
 """
 
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Literal
 
 from mem0.embeddings.base import EmbeddingBase
 from mem0.llms.base import LLMBase
@@ -29,7 +28,7 @@ class MassGenLLMAdapter(LLMBase):
     memory inference and summarization tasks.
     """
 
-    def __init__(self, config: Optional[BaseLlmConfig] = None):
+    def __init__(self, config: BaseLlmConfig | None = None):
         """
         Initialize the adapter with a MassGen backend.
 
@@ -47,9 +46,9 @@ class MassGenLLMAdapter(LLMBase):
 
     def generate_response(
         self,
-        messages: List[Dict[str, str]],
-        response_format: Optional[Any] = None,
-        tools: Optional[List[Dict]] = None,
+        messages: list[dict[str, str]],
+        response_format: Any | None = None,
+        tools: list[dict] | None = None,
         tool_choice: str = "auto",
     ) -> str:
         """
@@ -128,7 +127,7 @@ class MassGenEmbeddingAdapter(EmbeddingBase):
     so this adapter serves as a template for future implementations.
     """
 
-    def __init__(self, config: Optional[BaseEmbedderConfig] = None):
+    def __init__(self, config: BaseEmbedderConfig | None = None):
         """
         Initialize the adapter with a MassGen embedding backend.
 
@@ -145,9 +144,9 @@ class MassGenEmbeddingAdapter(EmbeddingBase):
 
     def embed(
         self,
-        text: Union[str, List[str]],
-        memory_action: Optional[Literal["add", "search", "update"]] = None,
-    ) -> List[float]:
+        text: str | list[str],
+        memory_action: Literal["add", "search", "update"] | None = None,
+    ) -> list[float]:
         """
         Generate embeddings using the MassGen backend.
 

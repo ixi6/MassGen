@@ -71,8 +71,59 @@ Agents are STATELESS and ANONYMOUS across coordination rounds. Each round:
 - Cross-agent information (answers, workspaces) is presented anonymously
 - System prompts and branch names must NOT reveal agent identity or round history
 
+## Logging Architecture: Session-Scoped Isolation
+
+Each `massgen.run()` call (and each CLI process) gets an isolated `LoggingSession` object that owns all mutable logging state. This enables safe concurrent in-process execution via `asyncio.gather(run(), run())`.
+
+### LoggingSession
+
+`LoggingSession` (`massgen/logger_config.py`) is a dataclass holding per-run state:
+- `log_base_session_dir` / `log_session_dir` — where this run's files go
+- `current_turn` / `current_attempt` — for file sink path construction
+- `main_log_handler_id` / `streaming_log_handler_id` — loguru handler IDs owned by this session
+- `event_emitter` — the `EventEmitter` instance scoped to this run
+- `debug_mode` — whether `--debug` was passed
+
+The active session is stored in a `ContextVar[LoggingSession]` (`_current_session`). Each asyncio task inherits its parent's context, so concurrent tasks each see their own session without interfering.
+
+### Session-Filtered Loguru Sinks
+
+File sinks added during `setup_logging()` use a `_make_session_filter(session_id)` filter: only log records bound with `logger.bind(session_id=X)` reach session X's file. Use `session_logger()` (which returns `logger.bind(session_id=active_session.session_id)`) for all log calls that should be routed to the current session's file.
+
+### Event Emitter Scoping
+
+`get_event_emitter()` checks the active `LoggingSession.event_emitter` first, falling back to the global `_global_emitter`. All ~40 call sites get session scoping automatically via this single lookup point.
+
+### Backward Compatibility
+
+All existing public API functions (`get_log_session_dir`, `set_log_turn`, `set_log_attempt`, `reset_logging_session`, etc.) check the ContextVar first and fall back to legacy module globals. This Phase 1 migration keeps single-process CLI behavior unchanged.
+
+### Multi-Process Isolation
+
+Two simultaneous `uv run massgen` processes are isolated by:
+1. **Session registry locking**: `~/.massgen/sessions.json` uses `fcntl.flock` (POSIX) for atomic read-modify-write under exclusive lock (`massgen/session/_registry.py`).
+2. **Snapshot path scoping**: `snapshot_storage` from YAML is automatically scoped by the log session root name (microsecond timestamp) via `_scope_snapshot_storage()` in `cli.py`, producing paths like `.massgen/snapshots/log_20260301_XXX/agent_a/`.
+
+### Public Accessors (replace private globals)
+
+| Old | New |
+|-----|-----|
+| `_CURRENT_ATTEMPT` | `get_current_attempt()` |
+| `_DEBUG_MODE` | `is_debug_mode()` |
+| `_LOG_SESSION_DIR` | `get_log_session_dir()` |
+| `_EVENT_EMITTER` | `get_event_emitter()` (via `events.py`) |
+
 ## TUI Design Principles
 
 **Timeline Chronology Rule**: Tool batching MUST respect chronological order. Tools should ONLY be batched when they arrive consecutively with no intervening content (thinking, text, status). When non-tool content arrives, any pending batch must be finalized before the content is added, and the next tool starts a fresh batch.
 
 This is enforced via `ToolBatchTracker.mark_content_arrived()` in `content_handlers.py`, which is called whenever non-tool content is added to the timeline.
+
+### TUI Debug Logging
+
+All TUI debug logging goes through `massgen/frontend/displays/shared/tui_debug.py`. This module is the **single source of truth** for TUI debug file output.
+
+- **Enable**: set `MASSGEN_TUI_DEBUG=1` in your environment.
+- **Log file**: `<tempdir>/tui_debug.log` (uses `tempfile.gettempdir()` for cross-platform support).
+- **Usage**: call `tui_log(msg)` from anywhere in the TUI layer. Widget-specific wrappers (e.g. `_wizard_log`, `_tab_log`) add a prefix tag and delegate to `tui_log`.
+- **Do NOT** create ad-hoc `logging.FileHandler` instances with hard-coded paths in widget files — always use `tui_log`.

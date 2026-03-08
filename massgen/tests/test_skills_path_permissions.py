@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for skills directory path permissions.
 
 Verifies that agents without command-line execution still get the skills

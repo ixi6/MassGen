@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Coordination Tracker for MassGen Orchestrator
 
@@ -12,11 +11,12 @@ us exactly what occurred and when.
 """
 
 import json
+import secrets
 import time
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .logger_config import logger
 from .structured_logging import (
@@ -76,11 +76,11 @@ class CoordinationEvent:
 
     timestamp: float
     event_type: EventType
-    agent_id: Optional[str] = None
+    agent_id: str | None = None
     details: str = ""
-    context: Optional[Dict[str, Any]] = None
+    context: dict[str, Any] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "timestamp": self.timestamp,
@@ -98,7 +98,7 @@ class AgentAnswer:
     agent_id: str
     content: str
     timestamp: float
-    changedoc: Optional[str] = None  # Content from changedoc.md decision journal
+    changedoc: str | None = None  # Content from changedoc.md decision journal
 
     @property
     def label(self) -> str:
@@ -121,7 +121,7 @@ class AgentVote:
     voter_anon_id: str  # Anonymous voter ID like "agent1"
     reason: str
     timestamp: float
-    available_answers: List[str]  # Available answer labels like ["agent1.1", "agent2.1"]
+    available_answers: list[str]  # Available answer labels like ["agent1.1", "agent2.1"]
 
 
 class CoordinationTracker:
@@ -134,63 +134,63 @@ class CoordinationTracker:
 
     def __init__(self):
         # Event log - chronological record of everything that happens
-        self.events: List[CoordinationEvent] = []
+        self.events: list[CoordinationEvent] = []
 
         # Answer tracking
-        self.answers_by_agent: Dict[
+        self.answers_by_agent: dict[
             str,
-            List[AgentAnswer],
+            list[AgentAnswer],
         ] = {}  # agent_id -> list of regular answers
-        self.final_answers: Dict[str, AgentAnswer] = {}  # agent_id -> final answer
+        self.final_answers: dict[str, AgentAnswer] = {}  # agent_id -> final answer
 
         # Vote tracking
-        self.votes: List[AgentVote] = []
+        self.votes: list[AgentVote] = []
 
         # Coordination iteration tracking
         self.current_iteration: int = 0
-        self.agent_rounds: Dict[
+        self.agent_rounds: dict[
             str,
             int,
         ] = {}  # Per-agent round tracking - increments when restart completed
-        self.agent_round_context: Dict[
+        self.agent_round_context: dict[
             str,
-            Dict[int, List[str]],
+            dict[int, list[str]],
         ] = {}  # What context each agent had in each round
-        self.iteration_available_labels: List[str] = []  # Frozen snapshot of available answer labels for current iteration
+        self.iteration_available_labels: list[str] = []  # Frozen snapshot of available answer labels for current iteration
 
         # Restart tracking - track pending restarts per agent
-        self.pending_agent_restarts: Dict[
+        self.pending_agent_restarts: dict[
             str,
             bool,
         ] = {}  # agent_id -> is restart pending
 
         # Session info
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
-        self.agent_ids: List[str] = []
-        self.final_winner: Optional[str] = None
-        self.final_context: Optional[Dict[str, Any]] = None  # Context provided to final agent
+        self.start_time: float | None = None
+        self.end_time: float | None = None
+        self.agent_ids: list[str] = []
+        self.final_winner: str | None = None
+        self.final_context: dict[str, Any] | None = None  # Context provided to final agent
         self.is_final_round: bool = False  # Track if we're in the final presentation round
-        self.user_prompt: Optional[str] = None  # Store the initial user prompt
-        self.log_path: Optional[str] = None  # MAS-199: Path to log directory for hybrid access
+        self.user_prompt: str | None = None  # Store the initial user prompt
+        self.log_path: str | None = None  # MAS-199: Path to log directory for hybrid access
 
         # Agent mappings - coordination tracker is the single source of truth
-        self.agent_context_labels: Dict[
+        self.agent_context_labels: dict[
             str,
-            List[str],
+            list[str],
         ] = {}  # Track what labels each agent can see
 
         # Snapshot mapping - tracks filesystem snapshots for answers/votes
-        self.snapshot_mappings: Dict[
+        self.snapshot_mappings: dict[
             str,
-            Dict[str, Any],
+            dict[str, Any],
         ] = {}  # label/vote_id -> snapshot info
 
         # Logfire tracing - context manager for session span
         self._session_span_context = None
 
         # Enforcement observability - track workflow enforcement events per agent
-        self.enforcement_events: Dict[str, List[Dict[str, Any]]] = {}
+        self.enforcement_events: dict[str, list[dict[str, Any]]] = {}
 
     def _make_snapshot_path(self, kind: str, agent_id: str, timestamp: str) -> str:
         """Generate standardized snapshot paths.
@@ -213,10 +213,10 @@ class CoordinationTracker:
 
     def initialize_session(
         self,
-        agent_ids: List[str],
-        user_prompt: Optional[str] = None,
+        agent_ids: list[str],
+        user_prompt: str | None = None,
         # New workflow analysis fields (MAS-199)
-        log_path: Optional[str] = None,
+        log_path: str | None = None,
     ):
         """Initialize a new coordination session."""
         self.start_time = time.time()
@@ -224,6 +224,9 @@ class CoordinationTracker:
         self.answers_by_agent = {aid: [] for aid in agent_ids}
         self.user_prompt = user_prompt
         self.log_path = log_path  # Store for later use (MAS-199)
+
+        # Generate stable anonymous path tokens for each agent (MAS-338)
+        self._path_tokens: dict[str, str] = {agent_id: secrets.token_hex(4) for agent_id in agent_ids}  # 8-char hex = 4 bytes
 
         # Initialize per-agent round tracking
         self.agent_rounds = {aid: 0 for aid in agent_ids}
@@ -261,13 +264,22 @@ class CoordinationTracker:
         agent_num = self._get_agent_number(agent_id)
         return f"agent{agent_num}" if agent_num else agent_id
 
-    def _get_agent_number(self, agent_id: str) -> Optional[int]:
+    def get_path_token(self, agent_id: str) -> str:
+        """Get stable anonymous path token for this agent's workspace directories.
+
+        Returns an 8-character hex string that is stable within a session but
+        does not reveal the real agent_id. Falls back to generating a new token
+        if the agent_id was not registered at session initialization.
+        """
+        return self._path_tokens.get(agent_id, secrets.token_hex(4))
+
+    def _get_agent_number(self, agent_id: str) -> int | None:
         """Get the 1-based number for an agent (1, 2, 3, etc.)."""
         if agent_id in self.agent_ids:
             return self.agent_ids.index(agent_id) + 1
         return None
 
-    def get_anonymous_agent_mapping(self) -> Dict[str, str]:
+    def get_anonymous_agent_mapping(self) -> dict[str, str]:
         """
         Get consistent anonymous agent ID mapping (anon → real).
 
@@ -282,7 +294,7 @@ class CoordinationTracker:
         sorted_ids = sorted(self.agent_ids)
         return {f"agent{i}": real_id for i, real_id in enumerate(sorted_ids, 1)}
 
-    def get_reverse_agent_mapping(self) -> Dict[str, str]:
+    def get_reverse_agent_mapping(self) -> dict[str, str]:
         """
         Get reverse mapping from real agent ID to anonymous ID.
 
@@ -293,7 +305,23 @@ class CoordinationTracker:
         sorted_ids = sorted(self.agent_ids)
         return {real_id: f"agent{i}" for i, real_id in enumerate(sorted_ids, 1)}
 
-    def get_agents_with_answers_anon(self, answers: Dict[str, Any]) -> List[str]:
+    def get_answer_label_mapping(self) -> dict[str, str]:
+        """Get mapping from real agent ID to their latest versioned answer label.
+
+        Returns:
+            Dict mapping real IDs to versioned labels, e.g.:
+            {"agent_a": "agent1.2", "agent_b": "agent2.1"}
+
+        Only includes agents that have at least one answer.
+        """
+        mapping = {}
+        for agent_id in self.agent_ids:
+            label = self.get_latest_answer_label(agent_id)
+            if label:
+                mapping[agent_id] = label
+        return mapping
+
+    def get_agents_with_answers_anon(self, answers: dict[str, Any]) -> list[str]:
         """
         Get list of anonymous IDs for agents that have answers.
 
@@ -308,11 +336,11 @@ class CoordinationTracker:
         sorted_ids = sorted(self.agent_ids)
         return [f"agent{i}" for i, aid in enumerate(sorted_ids, 1) if aid in answers]
 
-    def get_agent_context_labels(self, agent_id: str) -> List[str]:
+    def get_agent_context_labels(self, agent_id: str) -> list[str]:
         """Get the answer labels this agent can currently see."""
         return self.agent_context_labels.get(agent_id, []).copy()
 
-    def get_latest_answer_label(self, agent_id: str) -> Optional[str]:
+    def get_latest_answer_label(self, agent_id: str) -> str | None:
         """Get the latest answer label for an agent."""
         if agent_id in self.answers_by_agent and self.answers_by_agent[agent_id]:
             return self.answers_by_agent[agent_id][-1].label
@@ -322,7 +350,7 @@ class CoordinationTracker:
         self,
         voter_id: str,
         voted_for_agent_id: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """Get the answer label that a voter was shown for a specific agent.
 
         This looks up what label the voter saw in their context when they were
@@ -356,6 +384,14 @@ class CoordinationTracker:
     def get_agent_round(self, agent_id: str) -> int:
         """Get the current round for a specific agent."""
         return self.agent_rounds.get(agent_id, 0)
+
+    def set_agent_round(self, agent_id: str, round_num: int) -> None:
+        """Set the round counter for an agent directly.
+
+        Used by round resume to fast-forward agents to the target round
+        without replaying the full event-driven round loop.
+        """
+        self.agent_rounds[agent_id] = round_num
 
     @property
     def max_round(self) -> int:
@@ -396,7 +432,7 @@ class CoordinationTracker:
                 pass
             self._session_span_context = None
 
-    def end_iteration(self, reason: str, details: Optional[Dict[str, Any]] = None):
+    def end_iteration(self, reason: str, details: dict[str, Any] | None = None):
         """Record how an iteration ended."""
         context = {
             "iteration": self.current_iteration,
@@ -430,10 +466,10 @@ class CoordinationTracker:
     def track_agent_context(
         self,
         agent_id: str,
-        answers: Dict[str, str],
-        conversation_history: Optional[Dict[str, Any]] = None,
-        agent_full_context: Optional[str] = None,
-        snapshot_dir: Optional[str] = None,
+        answers: dict[str, str],
+        conversation_history: dict[str, Any] | None = None,
+        agent_full_context: str | None = None,
+        snapshot_dir: str | None = None,
     ):
         """Record when an agent receives context.
 
@@ -474,7 +510,7 @@ class CoordinationTracker:
     def update_agent_context_with_new_answers(
         self,
         agent_id: str,
-        new_answer_agent_ids: List[str],
+        new_answer_agent_ids: list[str],
     ):
         """Update an agent's context labels when they receive injected updates.
 
@@ -482,25 +518,37 @@ class CoordinationTracker:
         (preempt-not-restart), ensuring their context_labels accurately reflects
         what they've seen for vote label resolution.
 
+        When a newer version of an answer is injected (e.g. agent1.2 replacing
+        agent1.1), the old label is **replaced** rather than kept alongside the
+        new one.  This prevents the checklist from requiring scores for stale
+        superseded versions that the agent should no longer evaluate.
+
         Args:
             agent_id: The agent receiving the update
             new_answer_agent_ids: List of agent IDs whose answers are being injected
         """
-        # Get current context labels for this agent
         current_labels = self.agent_context_labels.get(agent_id, [])
 
-        # Add labels for the new answers
         for answering_agent_id in new_answer_agent_ids:
             if answering_agent_id in self.answers_by_agent and self.answers_by_agent[answering_agent_id]:
-                # Get the most recent answer's label
                 latest_answer = self.answers_by_agent[answering_agent_id][-1]
-                if latest_answer.label not in current_labels:
-                    current_labels.append(latest_answer.label)
+                new_label = latest_answer.label
 
-        # Update the agent's context labels
+                if new_label in current_labels:
+                    continue  # already present, nothing to do
+
+                # Remove any older label from the same agent base
+                # Labels follow "agent{N}.{version}" pattern
+                agent_num = self._get_agent_number(answering_agent_id)
+                if agent_num is not None:
+                    prefix = f"agent{agent_num}."
+                    current_labels = [lbl for lbl in current_labels if not lbl.startswith(prefix)]
+
+                current_labels.append(new_label)
+
         self.agent_context_labels[agent_id] = current_labels
 
-    def track_restart_signal(self, triggering_agent: str, agents_restarted: List[str]):
+    def track_restart_signal(self, triggering_agent: str, agents_restarted: list[str]):
         """Record when a restart is triggered - but don't increment rounds yet."""
         # Mark affected agents as having pending restarts
         for agent_id in agents_restarted:
@@ -566,7 +614,7 @@ class CoordinationTracker:
         self,
         agent_id: str,
         answer: str,
-        snapshot_timestamp: Optional[str] = None,
+        snapshot_timestamp: str | None = None,
     ):
         """Record when an agent provides a new answer.
 
@@ -634,8 +682,8 @@ class CoordinationTracker:
     def add_agent_vote(
         self,
         agent_id: str,
-        vote_data: Dict[str, Any],
-        snapshot_timestamp: Optional[str] = None,
+        vote_data: dict[str, Any],
+        snapshot_timestamp: str | None = None,
     ):
         """Record when an agent votes.
 
@@ -742,7 +790,7 @@ class CoordinationTracker:
     def add_agent_stop(
         self,
         agent_id: str,
-        stop_data: Dict[str, Any],
+        stop_data: dict[str, Any],
     ):
         """Record when an agent stops in decomposition mode.
 
@@ -771,7 +819,7 @@ class CoordinationTracker:
         self,
         agent_id: str,
         vote_summary: str,
-        all_answers: Dict[str, str],
+        all_answers: dict[str, str],
     ):
         """Record when final agent is selected."""
         self.final_winner = agent_id
@@ -822,7 +870,7 @@ class CoordinationTracker:
         self,
         agent_id: str,
         final_answer: str,
-        snapshot_timestamp: Optional[str] = None,
+        snapshot_timestamp: str | None = None,
     ):
         """Record the final answer presentation.
 
@@ -975,9 +1023,9 @@ class CoordinationTracker:
     def _add_event(
         self,
         event_type: EventType,
-        agent_id: Optional[str],
+        agent_id: str | None,
         details: str,
-        context: Optional[Dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ):
         """Internal method to add an event."""
         # Automatically include current iteration and round in context
@@ -1014,7 +1062,7 @@ class CoordinationTracker:
         self._close_session_span()
 
     @property
-    def all_answers(self) -> Dict[str, str]:
+    def all_answers(self) -> dict[str, str]:
         """Get all answers as a label->content dictionary."""
         result = {}
         # Add regular answers
@@ -1026,7 +1074,7 @@ class CoordinationTracker:
             result[answer.label] = answer.content
         return result
 
-    def get_summary(self) -> Dict[str, Any]:
+    def get_summary(self) -> dict[str, Any]:
         """Get session summary statistics."""
         duration = (self.end_time or time.time()) - (self.start_time or time.time())
         restart_count = len(
@@ -1264,7 +1312,7 @@ class CoordinationTracker:
             total_tool_calls = 0
             total_tool_failures = 0
             total_tool_time_ms = 0.0
-            tools_by_name: Dict[str, Dict[str, Any]] = {}
+            tools_by_name: dict[str, dict[str, Any]] = {}
             for agent_status in agent_statuses.values():
                 tm = agent_status.get("tool_metrics")
                 if tm:
@@ -1567,11 +1615,11 @@ class CoordinationTracker:
         reason: str,
         attempt: int,
         max_attempts: int,
-        tool_calls: Optional[List[str]] = None,
-        error_message: Optional[str] = None,
-        buffer_preview: Optional[str] = None,
+        tool_calls: list[str] | None = None,
+        error_message: str | None = None,
+        buffer_preview: str | None = None,
         buffer_chars: int = 0,
-        docker_health: Optional[Dict[str, Any]] = None,
+        docker_health: dict[str, Any] | None = None,
     ) -> None:
         """Track a workflow enforcement event for an agent.
 
@@ -1620,7 +1668,7 @@ class CoordinationTracker:
             f"[CoordinationTracker] Enforcement event for {agent_id}: " f"reason={reason}, attempt={attempt}/{max_attempts}, " f"tools={tool_calls}, buffer_chars={buffer_chars}",
         )
 
-    def get_agent_reliability(self, agent_id: str) -> Dict[str, Any]:
+    def get_agent_reliability(self, agent_id: str) -> dict[str, Any]:
         """Get reliability metrics for an agent based on enforcement events.
 
         Returns a summary of enforcement attempts including:
@@ -1644,9 +1692,9 @@ class CoordinationTracker:
             return None  # No enforcement events means perfect reliability
 
         # Aggregate by round
-        by_round: Dict[str, Dict[str, Any]] = {}
-        unknown_tools: List[str] = []
-        workflow_errors: List[str] = []
+        by_round: dict[str, dict[str, Any]] = {}
+        unknown_tools: list[str] = []
+        workflow_errors: list[str] = []
         total_buffer_chars_lost = 0
 
         for event in events:

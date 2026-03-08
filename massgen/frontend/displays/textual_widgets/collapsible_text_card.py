@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Collapsible Text Card Widget for MassGen TUI.
 
@@ -8,7 +7,6 @@ matching the streaming UX where newest content is visible.
 """
 
 import re
-from typing import List, Optional
 
 from rich.text import Text
 from textual.events import Click
@@ -74,8 +72,8 @@ class CollapsibleTextCard(Static):
         content: str,
         label: str = "Thinking",
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the collapsible text card.
 
@@ -90,7 +88,7 @@ class CollapsibleTextCard(Static):
         self._label = label
         # Three-level expansion: 0=minimal, 1=preview, 2=full
         self._expansion_level = 0
-        self._chunks: List[str] = [self._content] if self._content else []
+        self._chunks: list[str] = [self._content] if self._content else []
         # Add label-based class for CSS targeting (e.g., label-thinking, label-content)
         self.add_class(f"label-{label.lower()}")
         # Appearance animation state

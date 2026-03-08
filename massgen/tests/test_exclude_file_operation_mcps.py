@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for exclude_file_operation_mcps parameter.
 

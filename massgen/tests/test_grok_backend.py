@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Test script for Grok backend integration with architecture.
 Tests basic functionality, tool integration, and streaming.

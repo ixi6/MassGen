@@ -61,6 +61,11 @@ Using BackgroundShellManager
 
 MassGen provides ``BackgroundShellManager`` for robust background execution. **Always use this instead of subprocess directly.**
 
+.. note::
+
+   ``BackgroundShellManager`` is for running full CLI processes (for example, ``uv run massgen ...``) in the background.
+   For non-blocking **tool calls inside an agent run**, use the tool lifecycle documented in :doc:`../tools/background_tools`.
+
 Basic Usage
 -----------
 

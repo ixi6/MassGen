@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 """Unit tests for compression utilities.
 
 Tests the core compression recovery logic in _compression_utils.py.
 """
 
-import asyncio
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -449,7 +447,7 @@ class TestCompressMessagesForRecovery:
         """Should fall back to truncation message on timeout."""
 
         async def mock_stream_timeout(*args, **kwargs):
-            raise asyncio.TimeoutError("Request timed out")
+            raise TimeoutError("Request timed out")
             yield  # Make it a generator
 
         with patch("massgen.cli.create_backend") as mock_create:

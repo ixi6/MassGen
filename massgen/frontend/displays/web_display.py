@@ -1,17 +1,18 @@
-# -*- coding: utf-8 -*-
 """
 Web Display for MassGen Coordination
 
 Implements BaseDisplay to broadcast coordination updates via WebSocket.
 Provides real-time streaming to connected web clients.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import time
+from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any
 
 from .base_display import BaseDisplay
 
@@ -32,10 +33,10 @@ class WebDisplay(BaseDisplay):
 
     def __init__(
         self,
-        agent_ids: List[str],
-        broadcast: Optional[Callable[[Dict[str, Any]], Coroutine[Any, Any, None]]] = None,
-        session_id: Optional[str] = None,
-        agent_models: Optional[Dict[str, str]] = None,
+        agent_ids: list[str],
+        broadcast: Callable[[dict[str, Any]], Coroutine[Any, Any, None]] | None = None,
+        session_id: str | None = None,
+        agent_models: dict[str, str] | None = None,
         **kwargs: Any,
     ):
         super().__init__(agent_ids, **kwargs)
@@ -45,29 +46,29 @@ class WebDisplay(BaseDisplay):
         self.agent_models = agent_models or {}
 
         # Event queue for when broadcast is not set (testing/standalone mode)
-        self._event_queue: asyncio.Queue[Dict[str, Any]] = asyncio.Queue()
+        self._event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._closed = False
 
         # Sequence number for ordering events
         self._sequence = 0
 
         # Track state for visualization
-        self._vote_distribution: Dict[str, int] = {}
-        self._vote_targets: Dict[str, str] = {}  # agent_id -> voted_for
-        self._selected_agent: Optional[str] = None
-        self._final_answer: Optional[str] = None
+        self._vote_distribution: dict[str, int] = {}
+        self._vote_targets: dict[str, str] = {}  # agent_id -> voted_for
+        self._selected_agent: str | None = None
+        self._final_answer: str | None = None
 
         # Timeline events for visualization (answers, votes, final with context sources)
-        self._timeline_events: List[Dict[str, Any]] = []
+        self._timeline_events: list[dict[str, Any]] = []
 
         # Track file workspace changes per agent
-        self._agent_files: Dict[str, List[Dict[str, Any]]] = {agent_id: [] for agent_id in agent_ids}
+        self._agent_files: dict[str, list[dict[str, Any]]] = {agent_id: [] for agent_id in agent_ids}
 
         # Orchestrator reference (set by CoordinationUI)
-        self.orchestrator: Optional[Any] = None
+        self.orchestrator: Any | None = None
 
         # Log session directory (set by _setup_agent_output_files, used by server API)
-        self.log_session_dir: Optional[Path] = None
+        self.log_session_dir: Path | None = None
 
         # Setup agent output files (same as terminal displays)
         self._setup_agent_output_files()
@@ -77,7 +78,7 @@ class WebDisplay(BaseDisplay):
         self._sequence += 1
         return self._sequence
 
-    def _emit(self, event_type: str, data: Dict[str, Any]) -> None:
+    def _emit(self, event_type: str, data: dict[str, Any]) -> None:
         """Emit an event to connected clients.
 
         Args:
@@ -120,7 +121,7 @@ class WebDisplay(BaseDisplay):
                 self._output_dir.mkdir(parents=True, exist_ok=True)
 
                 # Initialize file paths for each agent
-                self._agent_output_files: Dict[str, Path] = {}
+                self._agent_output_files: dict[str, Path] = {}
                 for agent_id in self.agent_ids:
                     file_path = self._output_dir / f"{agent_id}.txt"
                     self._agent_output_files[agent_id] = file_path
@@ -168,7 +169,7 @@ class WebDisplay(BaseDisplay):
     # BaseDisplay Interface Implementation
     # =========================================================================
 
-    def initialize(self, question: str, log_filename: Optional[str] = None) -> None:
+    def initialize(self, question: str, log_filename: str | None = None) -> None:
         """Initialize the display with question and agent list.
 
         Args:
@@ -205,7 +206,7 @@ class WebDisplay(BaseDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ) -> None:
         """Stream content updates to a specific agent panel.
 
@@ -254,7 +255,7 @@ class WebDisplay(BaseDisplay):
             },
         )
 
-    def update_timeout_status(self, agent_id: str, timeout_state: Dict[str, Any]) -> None:
+    def update_timeout_status(self, agent_id: str, timeout_state: dict[str, Any]) -> None:
         """Update timeout display for an agent.
 
         Args:
@@ -275,8 +276,8 @@ class WebDisplay(BaseDisplay):
     def update_hook_execution(
         self,
         agent_id: str,
-        tool_call_id: Optional[str],
-        hook_info: Dict[str, Any],
+        tool_call_id: str | None,
+        hook_info: dict[str, Any],
     ) -> None:
         """Update display with hook execution information.
 
@@ -315,8 +316,8 @@ class WebDisplay(BaseDisplay):
     def stream_final_answer_chunk(
         self,
         chunk: str,
-        selected_agent: Optional[str],
-        vote_results: Optional[Dict[str, Any]] = None,
+        selected_agent: str | None,
+        vote_results: dict[str, Any] | None = None,
     ) -> None:
         """Stream incoming final presentation content to the WebUI.
 
@@ -364,8 +365,8 @@ class WebDisplay(BaseDisplay):
     def show_final_answer(
         self,
         answer: str,
-        vote_results: Optional[Dict[str, Any]] = None,
-        selected_agent: Optional[str] = None,
+        vote_results: dict[str, Any] | None = None,
+        selected_agent: str | None = None,
     ) -> None:
         """Display the final coordinated answer with convergence animation.
 
@@ -481,7 +482,7 @@ class WebDisplay(BaseDisplay):
     # Web-Specific Methods (beyond BaseDisplay)
     # =========================================================================
 
-    def update_vote_distribution(self, votes: Dict[str, int]) -> None:
+    def update_vote_distribution(self, votes: dict[str, int]) -> None:
         """Send vote distribution update for visualization.
 
         Args:
@@ -523,7 +524,7 @@ class WebDisplay(BaseDisplay):
         self,
         agent_id: str,
         answer_label: str,
-        context_sources: List[str],
+        context_sources: list[str],
         round_num: int,
     ) -> None:
         """Record an answer node with its context sources for timeline visualization.
@@ -551,7 +552,7 @@ class WebDisplay(BaseDisplay):
         voter_id: str,
         vote_label: str,
         voted_for: str,
-        available_answers: List[str],
+        available_answers: list[str],
         voting_round: int = 1,
     ) -> None:
         """Record a vote node with its available answers for timeline visualization.
@@ -580,7 +581,7 @@ class WebDisplay(BaseDisplay):
     def record_final_with_context(
         self,
         agent_id: str,
-        context_sources: List[str],
+        context_sources: list[str],
     ) -> None:
         """Record a final answer node with its context sources for timeline visualization.
 
@@ -605,7 +606,7 @@ class WebDisplay(BaseDisplay):
         agent_id: str,
         path: str,
         operation: str,
-        content: Optional[str] = None,
+        content: str | None = None,
     ) -> None:
         """Notify about file changes in agent workspace.
 
@@ -651,8 +652,8 @@ class WebDisplay(BaseDisplay):
         self,
         agent_id: str,
         tool_name: str,
-        tool_args: Dict[str, Any],
-        tool_id: Optional[str] = None,
+        tool_args: dict[str, Any],
+        tool_id: str | None = None,
     ) -> None:
         """Notify about tool call execution.
 
@@ -677,7 +678,7 @@ class WebDisplay(BaseDisplay):
         agent_id: str,
         tool_name: str,
         result: str,
-        tool_id: Optional[str] = None,
+        tool_id: str | None = None,
         success: bool = True,
     ) -> None:
         """Notify about tool call result.
@@ -700,7 +701,7 @@ class WebDisplay(BaseDisplay):
             },
         )
 
-    def send_error(self, message: str, agent_id: Optional[str] = None) -> None:
+    def send_error(self, message: str, agent_id: str | None = None) -> None:
         """Send error notification.
 
         Args:
@@ -719,10 +720,10 @@ class WebDisplay(BaseDisplay):
         self,
         agent_id: str,
         content: str,
-        answer_id: Optional[str] = None,
+        answer_id: str | None = None,
         answer_number: int = 1,
-        answer_label: Optional[str] = None,
-        workspace_path: Optional[str] = None,
+        answer_label: str | None = None,
+        workspace_path: str | None = None,
     ) -> None:
         """Notify about a new answer from an agent.
 
@@ -766,11 +767,11 @@ class WebDisplay(BaseDisplay):
                     timeout=30.0,  # Send keepalive every 30s
                 )
                 yield json.dumps(event)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 # Send keepalive to keep connection alive
                 yield json.dumps({"type": "keepalive", "timestamp": time.time()})
 
-    def get_state_snapshot(self) -> Dict[str, Any]:
+    def get_state_snapshot(self) -> dict[str, Any]:
         """Get current display state for late-joining clients.
 
         Returns:

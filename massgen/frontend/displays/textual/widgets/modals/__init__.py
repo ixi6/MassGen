@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Extracted modal components for the MassGen TUI.
 
@@ -24,6 +23,7 @@ from .browser_modals import (
 from .content_modals import (
     ContextModal,
     ConversationHistoryModal,
+    EvaluationCriteriaModal,
     TextContentModal,
     TurnDetailModal,
 )
@@ -33,6 +33,7 @@ from .coordination_modals import (
     OrchestratorEventsModal,
     VoteResultsModal,
 )
+from .final_answer_modal import FinalAnswerModal, FinalAnswerModalData
 from .input_modals import (
     BroadcastPromptModal,
     ChunkAdvanceModal,
@@ -40,6 +41,7 @@ from .input_modals import (
     DecompositionSubtasksModal,
     StructuredBroadcastPromptModal,
 )
+from .review_changes_panel import ReviewChangesPanel
 from .review_modal import GitDiffReviewModal
 from .shortcuts_modal import KeyboardShortcutsModal
 from .skills_modals import SkillsModal
@@ -70,6 +72,7 @@ __all__ = [
     # Content modals
     "ContextModal",
     "ConversationHistoryModal",
+    "EvaluationCriteriaModal",
     "TextContentModal",
     "TurnDetailModal",
     # Input modals
@@ -78,6 +81,11 @@ __all__ = [
     "DecompositionGenerationModal",
     "DecompositionSubtasksModal",
     "StructuredBroadcastPromptModal",
+    # Final answer modal
+    "FinalAnswerModal",
+    "FinalAnswerModalData",
+    # Review panel
+    "ReviewChangesPanel",
     # Review modal
     "GitDiffReviewModal",
     # Shortcuts modal

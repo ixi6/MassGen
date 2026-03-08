@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Security utilities for MCP command validation and sanitization. These functions provide comprehensive security checks and validation for MCP servers and tools.
 """
@@ -10,7 +9,7 @@ import shlex
 import socket
 import urllib.parse
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Union
+from typing import Any
 
 # Security validation constants
 MAX_COMMAND_LENGTH = 1000
@@ -70,7 +69,7 @@ def _validate_string_length(value: str, max_length: int, field_name: str) -> Non
         raise ValueError(f"{field_name} too long: {len(value)} > {max_length} characters")
 
 
-def _get_set_from_config(config: dict, key: str, default: Optional[List] = None) -> Optional[Set[str]]:
+def _get_set_from_config(config: dict, key: str, default: list | None = None) -> set[str] | None:
     """Extract a set from config, handling empty lists and None."""
     value = config.get(key, default or [])
     if not value:
@@ -78,7 +77,7 @@ def _get_set_from_config(config: dict, key: str, default: Optional[List] = None)
     return set(value) if isinstance(value, (list, set, tuple)) else None
 
 
-def _get_dict_from_config(config: dict, key: str, default: Optional[dict] = None) -> dict:
+def _get_dict_from_config(config: dict, key: str, default: dict | None = None) -> dict:
     """Safely extract dict from config with type checking."""
     value = config.get(key, default or {})
     return value if isinstance(value, dict) else {}
@@ -103,7 +102,7 @@ def substitute_env_variables(text: str) -> str:
     return re.sub(r"\$\{([A-Z_][A-Z0-9_]*)\}", replace_env_var, text)
 
 
-def _get_default_allowed_executables(level: str) -> Set[str]:
+def _get_default_allowed_executables(level: str) -> set[str]:
     """Get default allowed executables based on security level.
 
     Args:
@@ -112,7 +111,7 @@ def _get_default_allowed_executables(level: str) -> Set[str]:
     Returns:
         Set of allowed executable names (lowercase)
     """
-    base_strict: Set[str] = {
+    base_strict: set[str] = {
         # Python interpreters
         "python",
         "python3",
@@ -173,8 +172,8 @@ def prepare_command(
     max_length: int = MAX_COMMAND_LENGTH,
     *,
     security_level: str = "strict",
-    allowed_executables: Optional[Set[str]] = None,
-) -> List[str]:
+    allowed_executables: set[str] | None = None,
+) -> list[str]:
     """
     Sanitize a command and split it into parts before using it to run an MCP server.
 
@@ -261,7 +260,7 @@ def validate_url(
     resolve_dns: bool = False,
     allow_private_ips: bool = False,
     allow_localhost: bool = False,
-    allowed_hostnames: Optional[Set[str]] = None,
+    allowed_hostnames: set[str] | None = None,
 ) -> bool:
     """
     Validate URL for security and correctness.
@@ -310,13 +309,13 @@ def validate_url(
             raise ValueError(f"Hostname not allowed for security reasons: {hostname}")
 
         # Try to interpret hostname as an IP address (IPv4/IPv6)
-        ip_obj: Optional[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]
+        ip_obj: ipaddress.IPv4Address | ipaddress.IPv6Address | None
         try:
             ip_obj = ipaddress.ip_address(hostname)
         except ValueError:
             ip_obj = None
 
-        def _is_forbidden_ip(ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address]) -> bool:
+        def _is_forbidden_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
             if allow_private_ips:
                 return False
             return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified
@@ -371,15 +370,15 @@ def validate_url(
 
 
 def validate_environment_variables(
-    env: Dict[str, str],
+    env: dict[str, str],
     *,
     level: str = "strict",
     mode: str = "denylist",
-    allowed_vars: Optional[Set[str]] = None,
-    denied_vars: Optional[Set[str]] = None,
+    allowed_vars: set[str] | None = None,
+    denied_vars: set[str] | None = None,
     max_key_length: int = MAX_ENV_KEY_LENGTH,
     max_value_length: int = MAX_ENV_VALUE_LENGTH,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """
     Validate environment variables for security.
 
@@ -401,13 +400,13 @@ def validate_environment_variables(
     if not isinstance(env, dict):
         raise ValueError("Environment variables must be a dictionary")
 
-    validated_env: Dict[str, str] = {}
+    validated_env: dict[str, str] = {}
 
     # Normalize security level for consistency
     normalized_level = _normalize_security_level(level)
 
     # Defaults tuned per level
-    default_deny: Set[str] = {
+    default_deny: set[str] = {
         "LD_LIBRARY_PATH",
         "DYLD_LIBRARY_PATH",
         "PYTHONPATH",
@@ -521,7 +520,7 @@ def validate_server_security(config: dict) -> dict:
                 if not validated_config["command"]:
                     raise ValueError("Command list cannot be empty")
                 # Validate the command list by joining and re-parsing
-                command_str = " ".join(shlex.quote(arg) for arg in validated_config["command"])
+                command_str = shlex.join(validated_config["command"])
                 validated_config["command"] = prepare_command(
                     command_str,
                     security_level=security_level,
@@ -703,7 +702,7 @@ def sanitize_tool_name(tool_name: str, server_name: str) -> str:
     return final_name
 
 
-def _is_file_operation_tool(tool_name: Optional[str]) -> bool:
+def _is_file_operation_tool(tool_name: str | None) -> bool:
     """Check if a tool name corresponds to a file operation tool that needs higher limits.
 
     Args:
@@ -724,11 +723,11 @@ def _is_file_operation_tool(tool_name: Optional[str]) -> bool:
 
 
 def validate_tool_arguments(
-    arguments: Dict[str, Any],
+    arguments: dict[str, Any],
     max_depth: int = MAX_TOOL_ARG_DEPTH,
     max_size: int = MAX_TOOL_ARG_SIZE,
-    tool_name: Optional[str] = None,
-) -> Dict[str, Any]:
+    tool_name: str | None = None,
+) -> dict[str, Any]:
     """
     Validate tool arguments for security and size limits.
 
@@ -781,7 +780,7 @@ def validate_tool_arguments(
             if len(value) > MAX_DICT_KEYS:
                 raise ValueError(f"Dictionary too large: {len(value)} > {MAX_DICT_KEYS} keys")
             _add_size(2)
-            validated: Dict[str, Any] = {}
+            validated: dict[str, Any] = {}
             first = True
             for k, v in value.items():
                 if not isinstance(k, str):

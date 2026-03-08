@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Token and Cost Management Module
 Provides unified token estimation and cost calculation for all backends.
@@ -7,7 +6,7 @@ Provides unified token estimation and cost calculation for all backends.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..logger_config import logger
 
@@ -31,7 +30,7 @@ class TokenUsage:
     cached_input_tokens: int = 0  # Prompt cache hits (Anthropic/OpenAI)
     cache_creation_tokens: int = 0  # Cache write tokens (Anthropic)
 
-    def add(self, other: "TokenUsage"):
+    def add(self, other: TokenUsage):
         """Add another TokenUsage to this one."""
         self.input_tokens += other.input_tokens
         self.output_tokens += other.output_tokens
@@ -49,7 +48,7 @@ class TokenUsage:
         self.cached_input_tokens = 0
         self.cache_creation_tokens = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "input_tokens": self.input_tokens,
@@ -77,7 +76,7 @@ class ToolExecutionMetric:
     start_time: float
     end_time: float = 0.0
     success: bool = True
-    error_message: Optional[str] = None
+    error_message: str | None = None
     input_chars: int = 0  # Character count in arguments
     output_chars: int = 0  # Character count in result
 
@@ -96,7 +95,7 @@ class ToolExecutionMetric:
         """Estimated output tokens (~4 chars per token)."""
         return self.output_chars // 4
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "tool_name": self.tool_name,
@@ -133,14 +132,14 @@ class APICallMetric:
     end_time: float = 0.0
     time_to_first_token_ms: float = 0.0  # TTFT for streaming
     success: bool = True
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
     @property
     def duration_ms(self) -> float:
         """Total API call duration in milliseconds."""
         return (self.end_time - self.start_time) * 1000 if self.end_time else 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "agent_id": self.agent_id,
@@ -201,7 +200,7 @@ class RoundTokenUsage:
         """Round duration in milliseconds."""
         return (self.end_time - self.start_time) * 1000 if self.end_time else 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
         return {
             "round_number": self.round_number,
@@ -232,8 +231,8 @@ class ModelPricing:
 
     input_cost_per_1k: float  # Cost per 1000 input tokens
     output_cost_per_1k: float  # Cost per 1000 output tokens
-    context_window: Optional[int] = None
-    max_output_tokens: Optional[int] = None
+    context_window: int | None = None
+    max_output_tokens: int | None = None
     source: str = "unknown"  # Where pricing came from: "litellm", "hardcoded", "api"
 
 
@@ -241,9 +240,10 @@ class TokenCostCalculator:
     """Unified token estimation and cost calculation."""
 
     # Default pricing data for various providers and models
-    PROVIDER_PRICING: Dict[str, Dict[str, ModelPricing]] = {
+    PROVIDER_PRICING: dict[str, dict[str, ModelPricing]] = {
         "OpenAI": {
-            # GPT-5 models (400K context window)
+            # GPT-5 models
+            "gpt-5.4": ModelPricing(0.0025, 0.015, 1050000, 128000),
             "gpt-5.2": ModelPricing(0.00175, 0.014, 400000, 128000),
             "gpt-5": ModelPricing(0.00125, 0.01, 400000, 128000),
             "gpt-5-mini": ModelPricing(0.00025, 0.002, 400000, 128000),
@@ -276,6 +276,7 @@ class TokenCostCalculator:
             "claude-3-haiku": ModelPricing(0.00025, 0.00125, 200000, 4096),
         },
         "Google": {
+            "gemini-3.1-pro-preview": ModelPricing(0.002, 0.012, 1048576, 65536),  # $2/MTok input, $12/MTok output, 1M context, 64K output
             "gemini-2.0-flash-exp": ModelPricing(0.0, 0.0, 1048576, 8192),  # Free during experimental
             "gemini-2.0-flash-thinking-exp": ModelPricing(0.0, 0.0, 32767, 8192),
             "gemini-1.5-pro": ModelPricing(0.00125, 0.005, 2097152, 8192),
@@ -354,7 +355,7 @@ class TokenCostCalculator:
         except Exception as e:
             logger.warning(f"Failed to initialize tiktoken: {e}")
 
-    def _fetch_litellm_pricing(self) -> Optional[Dict]:
+    def _fetch_litellm_pricing(self) -> dict | None:
         """Fetch pricing database from LiteLLM (cached for 1 hour).
 
         Returns:
@@ -383,7 +384,7 @@ class TokenCostCalculator:
             logger.debug(f"Failed to fetch LiteLLM pricing database: {e}")
             return None
 
-    def estimate_tokens(self, text: Union[str, List[Dict[str, Any]]], method: str = "auto") -> int:
+    def estimate_tokens(self, text: str | list[dict[str, Any]], method: str = "auto") -> int:
         """
         Estimate token count for text or messages.
 
@@ -454,7 +455,7 @@ class TokenCostCalculator:
 
         return int(estimate)
 
-    def _messages_to_text(self, messages: List[Dict[str, Any]]) -> str:
+    def _messages_to_text(self, messages: list[dict[str, Any]]) -> str:
         """Convert message list to text for token estimation."""
         text_parts = []
 
@@ -498,7 +499,7 @@ class TokenCostCalculator:
             result[k] = self._dict_to_namespace(v) if isinstance(v, dict) else v
         return SimpleNamespace(**result)
 
-    def _map_provider_to_litellm(self, provider: Optional[str]) -> Optional[str]:
+    def _map_provider_to_litellm(self, provider: str | None) -> str | None:
         """Map MassGen provider names to litellm provider identifiers."""
         if not provider:
             return None
@@ -521,7 +522,7 @@ class TokenCostCalculator:
         }
         return mapping.get(provider.lower())
 
-    def extract_token_breakdown(self, usage: Union[Dict[str, Any], Any]) -> Dict[str, int]:
+    def extract_token_breakdown(self, usage: dict[str, Any] | Any) -> dict[str, int]:
         """Extract detailed token counts from usage object.
 
         Handles provider-specific formats:
@@ -559,6 +560,7 @@ class TokenCostCalculator:
                 "completion_tokens",
                 "output_tokens",
                 "reasoning_tokens",
+                "cached_input_tokens",
                 "cache_read_input_tokens",
                 "cache_creation_input_tokens",
                 "prompt_token_count",
@@ -596,6 +598,10 @@ class TokenCostCalculator:
         breakdown["cached_input_tokens"] = u.get("cache_read_input_tokens", 0) or 0
         breakdown["cache_creation_tokens"] = u.get("cache_creation_input_tokens", 0) or 0
 
+        # Extract cached tokens (Codex/OpenAI top-level field)
+        if not breakdown["cached_input_tokens"]:
+            breakdown["cached_input_tokens"] = u.get("cached_input_tokens", 0) or 0
+
         # Extract cached tokens (OpenAI format - nested in prompt_tokens_details)
         if not breakdown["cached_input_tokens"]:
             prompt_details = u.get("prompt_tokens_details") or u.get("input_tokens_details")
@@ -614,8 +620,8 @@ class TokenCostCalculator:
     def calculate_cost_with_usage_object(
         self,
         model: str,
-        usage: Union[Dict[str, Any], Any],
-        provider: Optional[str] = None,
+        usage: dict[str, Any] | Any,
+        provider: str | None = None,
     ) -> float:
         """
         Calculate cost from API usage object using litellm.completion_cost() directly.
@@ -655,6 +661,7 @@ class TokenCostCalculator:
                     "input_tokens",
                     "output_tokens",
                     "reasoning_tokens",
+                    "cached_input_tokens",
                     "cache_read_input_tokens",
                     "cache_creation_input_tokens",
                     "completion_tokens_details",
@@ -676,6 +683,13 @@ class TokenCostCalculator:
                 usage_dict["prompt_tokens"] = usage_dict["prompt_token_count"]
             if "candidates_token_count" in usage_dict and "completion_tokens" not in usage_dict:
                 usage_dict["completion_tokens"] = usage_dict["candidates_token_count"]
+
+            # Normalize Codex/OpenAI top-level cached_input_tokens to prompt_tokens_details.
+            # This matches the canonical OpenAI usage shape litellm expects for cache discounts.
+            if usage_dict.get("cached_input_tokens", 0) and "prompt_tokens_details" not in usage_dict:
+                usage_dict["prompt_tokens_details"] = {
+                    "cached_tokens": usage_dict["cached_input_tokens"],
+                }
 
             # Create mock response as dict (litellm prefers this format)
             mock_response = {
@@ -705,7 +719,7 @@ class TokenCostCalculator:
         # Fallback: Use litellm pricing database with manual calculation
         return self._calculate_cost_from_pricing_db(model, usage, provider)
 
-    def _namespace_to_dict(self, obj: Any) -> Dict[str, Any]:
+    def _namespace_to_dict(self, obj: Any) -> dict[str, Any]:
         """Recursively convert object with __dict__ to dict for litellm."""
         if not hasattr(obj, "__dict__"):
             return obj
@@ -721,8 +735,8 @@ class TokenCostCalculator:
     def _calculate_cost_from_pricing_db(
         self,
         model: str,
-        usage: Union[Dict[str, Any], Any],
-        provider: Optional[str] = None,
+        usage: dict[str, Any] | Any,
+        provider: str | None = None,
     ) -> float:
         """Fallback cost calculation using litellm pricing database.
 
@@ -787,7 +801,7 @@ class TokenCostCalculator:
 
     def _extract_and_calculate_basic_cost(
         self,
-        usage: Union[Dict, Any],
+        usage: dict | Any,
         provider: str,
         model: str,
     ) -> float:
@@ -808,7 +822,7 @@ class TokenCostCalculator:
 
         return self.calculate_cost(input_tokens, output_tokens, provider, model)
 
-    def get_model_pricing(self, provider: str, model: str) -> Optional[ModelPricing]:
+    def get_model_pricing(self, provider: str, model: str) -> ModelPricing | None:
         """
         Get pricing information for a specific model.
 
@@ -939,7 +953,7 @@ class TokenCostCalculator:
         # Try to infer from model name patterns
         model_lower = model_normalized.lower()
 
-        def _with_source(pricing: Optional[ModelPricing], matched_key: str) -> Optional[ModelPricing]:
+        def _with_source(pricing: ModelPricing | None, matched_key: str) -> ModelPricing | None:
             """Helper to add source and logging to pattern-matched pricing."""
             if pricing:
                 logger.info(f"[TokenCostCalculator] Pricing for '{model}' from hardcoded (pattern: {matched_key})")
@@ -995,6 +1009,8 @@ class TokenCostCalculator:
             return _with_source(provider_models.get("claude-3-haiku"), "claude-3-haiku")
 
         # Gemini variants
+        elif "gemini-3.1-pro" in model_lower:
+            return _with_source(provider_models.get("gemini-3.1-pro-preview"), "gemini-3.1-pro-preview")
         elif "gemini-2" in model_lower and "flash" in model_lower:
             return _with_source(provider_models.get("gemini-2.0-flash-exp"), "gemini-2.0-flash-exp")
         elif "gemini-1.5-pro" in model_lower:
@@ -1066,7 +1082,7 @@ class TokenCostCalculator:
 
         return total_cost
 
-    def update_token_usage(self, usage: TokenUsage, messages: List[Dict[str, Any]], response_content: str, provider: str, model: str) -> TokenUsage:
+    def update_token_usage(self, usage: TokenUsage, messages: list[dict[str, Any]], response_content: str, provider: str, model: str) -> TokenUsage:
         """
         Update token usage with new conversation turn.
 

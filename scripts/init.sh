@@ -112,7 +112,7 @@ echo -e "${BLUE}[1/8] Checking system requirements...${NC}"
 # Check Python
 if ! command -v python3 &> /dev/null; then
     echo -e "${RED}✗ Error: Python 3 is not installed${NC}"
-    echo "Please install Python 3.11 or higher"
+    echo "Please install Python 3.12 or higher"
     exit 1
 fi
 
@@ -120,8 +120,8 @@ PYTHON_VERSION=$(python3 --version | cut -d' ' -f2)
 PYTHON_MAJOR=$(echo $PYTHON_VERSION | cut -d'.' -f1)
 PYTHON_MINOR=$(echo $PYTHON_VERSION | cut -d'.' -f2)
 
-if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 11 ]); then
-    echo -e "${RED}✗ Error: Python 3.11+ required (found $PYTHON_VERSION)${NC}"
+if [ "$PYTHON_MAJOR" -lt 3 ] || ([ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 12 ]); then
+    echo -e "${RED}✗ Error: Python 3.12+ required (found $PYTHON_VERSION)${NC}"
     exit 1
 fi
 

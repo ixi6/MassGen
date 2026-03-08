@@ -1,5 +1,5 @@
-# -*- coding: utf-8 -*-
 """Simple FastMCP Streamable HTTP Server"""
+
 import random
 from datetime import datetime
 

@@ -1,16 +1,14 @@
-# -*- coding: utf-8 -*-
 """Changedoc utility for reading decision journal files from agent workspaces."""
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 CHANGEDOC_FILENAME = "tasks/changedoc.md"
 
 
-def read_changedoc_from_workspace(workspace_path: Path) -> Optional[str]:
+def read_changedoc_from_workspace(workspace_path: Path) -> str | None:
     """Read tasks/changedoc.md from an agent's workspace directory.
 
     Args:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 NLIP Router.
 
@@ -8,8 +7,9 @@ between NLIP messages and native tool protocols.
 
 import json
 import uuid
+from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any
 
 from ..logger_config import logger
 from .schema import (
@@ -52,7 +52,7 @@ class NLIPRouter:
         tool_manager: Any = None,
         mcp_executor: Any = None,
         enable_nlip: bool = True,
-        config: Optional[Dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ):
         """
         Initialize NLIP router.
@@ -72,15 +72,15 @@ class NLIPRouter:
         self.token_tracker = NLIPTokenTracker()
 
         # Initialize protocol translators
-        self.translators: Dict[str, ProtocolTranslator] = {
+        self.translators: dict[str, ProtocolTranslator] = {
             "mcp": MCPTranslator(),
             "custom": CustomToolTranslator(),
             "builtin": BuiltinToolTranslator(),
         }
 
         # Message tracking
-        self._pending_requests: Dict[str, NLIPRequest] = {}
-        self._active_sessions: Dict[str, List[NLIPMessage]] = {}
+        self._pending_requests: dict[str, NLIPRequest] = {}
+        self._active_sessions: dict[str, list[NLIPMessage]] = {}
 
     def is_enabled(self) -> bool:
         """Check if NLIP routing is enabled."""
@@ -304,7 +304,7 @@ class NLIPRouter:
     async def _execute_mcp_tool(
         self,
         tool_call: NLIPToolCall,
-        native_call: Dict[str, Any],
+        native_call: dict[str, Any],
     ) -> Any:
         """Execute MCP tool using injected executor."""
         if not self.mcp_executor:
@@ -364,8 +364,8 @@ class NLIPRouter:
     def _create_response(
         self,
         request: NLIPMessage,
-        content: Dict[str, Any],
-        tool_results: Optional[List[NLIPToolResult]] = None,
+        content: dict[str, Any],
+        tool_results: list[NLIPToolResult] | None = None,
     ) -> NLIPResponse:
         """Create NLIP response message."""
         return NLIPResponse(
@@ -481,8 +481,8 @@ class NLIPRouter:
 
     async def _convert_tool_calls_to_nlip(
         self,
-        native_tool_calls: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        native_tool_calls: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Convert native tool calls to NLIP format."""
         nlip_calls = []
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Unit tests for decomposition coordination mode.
 
@@ -12,6 +11,7 @@ Tests cover:
 - AgentState stop metadata fields
 """
 
+import json
 import time
 
 import pytest
@@ -19,6 +19,8 @@ import pytest
 import massgen.orchestrator as orchestrator_module
 from massgen.agent_config import AgentConfig, CoordinationConfig
 from massgen.config_validator import ConfigValidator
+from massgen.evaluation_criteria_generator import GeneratedCriterion
+from massgen.mcp_tools.checklist_tools_server import write_checklist_specs
 from massgen.mcp_tools.hooks import RoundTimeoutState
 from massgen.orchestrator import AgentState, Orchestrator
 from massgen.system_prompt_sections import DecompositionSection
@@ -37,6 +39,25 @@ class _StubAgent:
     def __init__(self):
         self.backend = _StubBackend()
         self._orchestrator = None
+
+    def get_configurable_system_message(self):
+        return ""
+
+
+class _ChecklistBackend:
+    def __init__(self):
+        self.filesystem_manager = None
+        self.config = {}
+        self.mcp_servers = []
+
+
+class _ChecklistAgent:
+    def __init__(self):
+        self.backend = _ChecklistBackend()
+        self._orchestrator = None
+
+    def get_configurable_system_message(self):
+        return ""
 
 
 def _get_tool_names(tools, api_format):
@@ -244,6 +265,11 @@ class TestDecompositionConfig:
         config = AgentConfig()
         assert config.presenter_agent is None
 
+    def test_agent_config_has_final_answer_strategy(self):
+        """AgentConfig has final_answer_strategy field."""
+        config = AgentConfig()
+        assert config.final_answer_strategy is None
+
     def test_coordination_config_has_task_decomposer(self):
         """CoordinationConfig has task_decomposer field."""
         config = CoordinationConfig()
@@ -289,6 +315,28 @@ class TestDecompositionConfig:
         result = validator.validate_config(config)
         presenter_errors = [e for e in result.errors if "presenter_agent" in e.location]
         assert len(presenter_errors) == 1
+
+    def test_config_validator_valid_final_answer_strategy(self):
+        """Valid final_answer_strategy values pass validation."""
+        validator = ConfigValidator()
+        config = {
+            "agents": [{"id": "a", "backend": {"type": "openai", "model": "gpt-4o-mini"}}],
+            "orchestrator": {"final_answer_strategy": "synthesize"},
+        }
+        result = validator.validate_config(config)
+        strategy_errors = [e for e in result.errors if "final_answer_strategy" in e.location]
+        assert len(strategy_errors) == 0
+
+    def test_config_validator_invalid_final_answer_strategy(self):
+        """Invalid final_answer_strategy values are rejected."""
+        validator = ConfigValidator()
+        config = {
+            "agents": [{"id": "a", "backend": {"type": "openai", "model": "gpt-4o-mini"}}],
+            "orchestrator": {"final_answer_strategy": "invalid"},
+        }
+        result = validator.validate_config(config)
+        strategy_errors = [e for e in result.errors if "final_answer_strategy" in e.location]
+        assert len(strategy_errors) == 1
 
     def test_config_validator_valid_presenter_agent(self):
         """Valid presenter_agent passes validation."""
@@ -803,6 +851,7 @@ class TestNoHookMidstreamFallback:
 
         frontend_state = orchestrator.agent_states["frontend"]
         frontend_state.restart_pending = True
+        frontend_state.answer = "frontend existing answer"  # Must have answer for injection to proceed
         frontend_state.seen_answer_counts = {"frontend": 0, "backend": 0}
 
         # Backend has one unseen answer revision.
@@ -849,8 +898,115 @@ class TestNoHookMidstreamFallback:
 
         frontend_state = orchestrator.agent_states["frontend"]
         frontend_state.restart_pending = True
+        frontend_state.answer = "frontend existing answer"  # Must have answer for injection to proceed
         frontend_state.midstream_injections_this_round = 1
         frontend_state.seen_answer_counts = {"frontend": 0, "backend": 0}
+
+        answer = type("Answer", (), {"timestamp": 42.0, "label": "backend.1", "content": "backend update"})()
+        orchestrator.coordination_tracker.answers_by_agent["backend"] = [answer]
+        orchestrator.agent_states["backend"].answer = "backend update"
+
+        injected = await orchestrator._prepare_no_hook_midstream_enforcement(
+            "frontend",
+            {},
+        )
+
+        assert injected is None
+        assert frontend_state.restart_pending is True
+        assert frontend_state.injection_count == 0
+
+    @pytest.mark.asyncio
+    async def test_no_hook_midstream_enforcement_defers_peer_updates_until_restart(self):
+        config = AgentConfig()
+        config.fairness_enabled = False
+        config.defer_peer_updates_until_restart = True
+        orchestrator = Orchestrator(
+            agents={"frontend": _StubAgent(), "backend": _StubAgent()},
+            config=config,
+        )
+
+        frontend_state = orchestrator.agent_states["frontend"]
+        frontend_state.restart_pending = True
+        frontend_state.answer = "frontend existing answer"
+        frontend_state.seen_answer_counts = {"frontend": 0, "backend": 0}
+
+        answer = type("Answer", (), {"timestamp": 42.0, "label": "backend.1", "content": "backend update"})()
+        orchestrator.coordination_tracker.answers_by_agent["backend"] = [answer]
+        orchestrator.agent_states["backend"].answer = "backend update"
+
+        injected = await orchestrator._prepare_no_hook_midstream_enforcement(
+            "frontend",
+            {},
+        )
+
+        assert injected is None
+        assert frontend_state.restart_pending is True
+        assert frontend_state.injection_count == 0
+
+    @pytest.mark.asyncio
+    async def test_no_hook_midstream_enforcement_allows_pre_checklist_injection_when_enabled(self, monkeypatch):
+        config = AgentConfig()
+        config.fairness_enabled = False
+        config.voting_sensitivity = "checklist_gated"
+        config.defer_peer_updates_until_restart = True
+        config.allow_midstream_peer_updates_before_checklist_submit = True
+        orchestrator = Orchestrator(
+            agents={"frontend": _StubAgent(), "backend": _StubAgent()},
+            config=config,
+        )
+
+        frontend_state = orchestrator.agent_states["frontend"]
+        frontend_state.restart_pending = True
+        frontend_state.answer = "frontend existing answer"
+        frontend_state.seen_answer_counts = {"frontend": 0, "backend": 0}
+        frontend_state.checklist_calls_this_round = 0
+
+        answer = type("Answer", (), {"timestamp": 42.0, "label": "backend.1", "content": "backend update"})()
+        orchestrator.coordination_tracker.answers_by_agent["backend"] = [answer]
+        orchestrator.agent_states["backend"].answer = "backend update"
+
+        copied = {"called": False}
+
+        async def _fake_copy(_agent_id):
+            copied["called"] = True
+            return None
+
+        monkeypatch.setattr(orchestrator, "_copy_all_snapshots_to_temp_workspace", _fake_copy)
+        monkeypatch.setattr(
+            orchestrator,
+            "_build_tool_result_injection",
+            lambda _aid, selected, existing_answers=None: f"injected::{','.join(sorted(selected.keys()))}",
+        )
+
+        answers_seen_at_start = {}
+        injected = await orchestrator._prepare_no_hook_midstream_enforcement(
+            "frontend",
+            answers_seen_at_start,
+        )
+
+        assert copied["called"] is True
+        assert injected == "injected::backend"
+        assert answers_seen_at_start == {"backend": "backend update"}
+        assert frontend_state.injection_count == 1
+        assert frontend_state.restart_pending is False
+
+    @pytest.mark.asyncio
+    async def test_no_hook_midstream_enforcement_stops_pre_checklist_injection_after_first_submit(self):
+        config = AgentConfig()
+        config.fairness_enabled = False
+        config.voting_sensitivity = "checklist_gated"
+        config.defer_peer_updates_until_restart = True
+        config.allow_midstream_peer_updates_before_checklist_submit = True
+        orchestrator = Orchestrator(
+            agents={"frontend": _StubAgent(), "backend": _StubAgent()},
+            config=config,
+        )
+
+        frontend_state = orchestrator.agent_states["frontend"]
+        frontend_state.restart_pending = True
+        frontend_state.answer = "frontend existing answer"
+        frontend_state.seen_answer_counts = {"frontend": 0, "backend": 0}
+        frontend_state.checklist_calls_this_round = 1
 
         answer = type("Answer", (), {"timestamp": 42.0, "label": "backend.1", "content": "backend update"})()
         orchestrator.coordination_tracker.answers_by_agent["backend"] = [answer]
@@ -882,6 +1038,161 @@ class TestDecompositionPromptGuidance:
         assert "Team fairness policy is active to prevent runaway iteration loops." in content
         assert "It does NOT mean reducing quality or stopping early." in content
         assert "Quality bar for `new_answer`" in content
+
+    def test_decomposition_checklist_guidance_scores_current_subtask_not_peer_ranking(self):
+        section = DecompositionSection(
+            subtask="Build the timeline section",
+            voting_threshold=5,
+            voting_sensitivity="checklist_gated",
+            answers_used=1,
+            answer_cap=3,
+            custom_checklist_items=["Criterion 1", "Criterion 2"],
+        )
+        content = section.build_content()
+
+        assert "select the answer with the strongest overall scores" not in content
+        assert "Score EACH agent per dimension" not in content
+        assert "Score your current work against the criteria" in content
+
+    def test_stdio_checklist_submit_state_is_visible_to_decomposition_runtime(self, tmp_path):
+        config = AgentConfig()
+        config.voting_sensitivity = "checklist_gated"
+        config.defer_peer_updates_until_restart = True
+        config.allow_midstream_peer_updates_before_checklist_submit = True
+        orchestrator = Orchestrator(
+            agents={"frontend": _StubAgent()},
+            config=config,
+        )
+
+        backend = orchestrator.agents["frontend"].backend
+        backend._checklist_state = {"checklist_calls_this_round": 0}
+        specs_path = tmp_path / "checklist_specs.json"
+        write_checklist_specs(
+            ["Criterion 1"],
+            {
+                "checklist_calls_this_round": 1,
+                "checklist_history": [
+                    {
+                        "verdict": "stop",
+                        "true_count": 1,
+                        "total_score": 8,
+                        "items_detail": [{"id": "E1", "score": 8, "passed": True}],
+                    },
+                ],
+            },
+            specs_path,
+        )
+        backend._checklist_specs_path = specs_path
+
+        assert orchestrator._has_successful_checklist_submit_this_round("frontend") is True
+        assert orchestrator.agent_states["frontend"].checklist_calls_this_round == 1
+
+    def test_decomposition_fallback_criteria_enforce_owned_scope_and_integration(self):
+        config = AgentConfig()
+        config.coordination_mode = "decomposition"
+        orchestrator = Orchestrator(
+            agents={"frontend": _StubAgent()},
+            config=config,
+        )
+        orchestrator._agent_subtasks["frontend"] = "Build the timeline section and keep shared navigation aligned."
+
+        items, categories, _ = orchestrator._get_active_criteria("frontend")
+
+        assert items is not None
+        assert "Build the timeline section" in items[0]
+        assert any("relevant peer work" in item.lower() for item in items)
+        assert any("owned scope" in item.lower() for item in items)
+        assert any("meaningful improvement" in item.lower() for item in items)
+        assert categories["E1"] == "must"
+
+    def test_decomposition_agent_specific_criteria_are_routed_to_prompt_only_for_that_agent(self):
+        config = AgentConfig()
+        config.coordination_mode = "decomposition"
+        config.voting_sensitivity = "checklist_gated"
+        config.voting_threshold = 5
+        orchestrator = Orchestrator(
+            agents={"frontend": _StubAgent(), "backend": _StubAgent()},
+            config=config,
+        )
+        orchestrator._agent_subtasks = {
+            "frontend": "Build the timeline section.",
+            "backend": "Wire the content API.",
+        }
+        orchestrator._agent_subtask_criteria = {
+            "frontend": [
+                GeneratedCriterion(id="E1", text="Frontend timeline is polished.", category="must"),
+            ],
+            "backend": [
+                GeneratedCriterion(id="E1", text="Backend API is robust.", category="must"),
+            ],
+        }
+
+        frontend_items, frontend_categories, frontend_verify_by = orchestrator._get_active_criteria("frontend")
+        message = orchestrator._get_system_message_builder().build_coordination_message(
+            agent=orchestrator.agents["frontend"],
+            agent_id="frontend",
+            answers={},
+            planning_mode_enabled=False,
+            use_skills=False,
+            enable_memory=False,
+            enable_task_planning=False,
+            previous_turns=[],
+            vote_only=False,
+            agent_mapping={"frontend": "agent1", "backend": "agent2"},
+            voting_sensitivity_override=None,
+            voting_threshold=config.voting_threshold,
+            checklist_require_gap_report=True,
+            gap_report_mode="changedoc",
+            answers_used=0,
+            answer_cap=2,
+            coordination_mode="decomposition",
+            agent_subtask=orchestrator._agent_subtasks["frontend"],
+            custom_checklist_items=frontend_items,
+            item_categories=frontend_categories,
+            item_verify_by=frontend_verify_by,
+            builder_enabled=True,
+        )
+
+        assert "Frontend timeline is polished." in message
+        assert "Backend API is robust." not in message
+
+    def test_decomposition_checklist_refresh_writes_agent_specific_items(self):
+        config = AgentConfig()
+        config.coordination_mode = "decomposition"
+        config.voting_sensitivity = "checklist_gated"
+        config.voting_threshold = 5
+        orchestrator = Orchestrator(
+            agents={"frontend": _ChecklistAgent(), "backend": _ChecklistAgent()},
+            config=config,
+        )
+        orchestrator._agent_subtasks = {
+            "frontend": "Build the timeline section.",
+            "backend": "Wire the content API.",
+        }
+        orchestrator._agent_subtask_criteria = {
+            "frontend": [
+                GeneratedCriterion(id="E1", text="Frontend timeline is polished.", category="must"),
+                GeneratedCriterion(id="E2", text="Frontend integrates shared nav cleanly.", category="must"),
+            ],
+            "backend": [
+                GeneratedCriterion(id="E1", text="Backend API is robust.", category="must"),
+            ],
+        }
+
+        orchestrator._refresh_checklist_state_for_agent("frontend")
+
+        frontend_backend = orchestrator.agents["frontend"].backend
+        assert frontend_backend._checklist_items == [
+            "Frontend timeline is polished.",
+            "Frontend integrates shared nav cleanly.",
+        ]
+        assert frontend_backend._checklist_state["item_categories"] == {
+            "E1": "must",
+            "E2": "must",
+        }
+        specs_payload = json.loads(frontend_backend._checklist_specs_path.read_text())
+        assert specs_payload["items"] == frontend_backend._checklist_items
+        assert "Backend API is robust." not in specs_payload["items"]
 
 
 # =============================================================================

@@ -1,11 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 None Display for MassGen Coordination
 
 Silent display that suppresses all output. Used for programmatic API and LiteLLM.
 """
-
-from typing import Optional
 
 from .base_display import BaseDisplay
 
@@ -17,7 +14,7 @@ class NoneDisplay(BaseDisplay):
         """Initialize none display."""
         super().__init__(agent_ids, **kwargs)
 
-    def initialize(self, question: str, log_filename: Optional[str] = None):
+    def initialize(self, question: str, log_filename: str | None = None):
         """Initialize the display (no-op)."""
 
     def update_agent_content(
@@ -25,7 +22,7 @@ class NoneDisplay(BaseDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ):
         """Update content for a specific agent (no-op)."""
         if agent_id in self.agent_ids:

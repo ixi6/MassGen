@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from fastapi.testclient import TestClient
 
 from massgen.server.app import create_app

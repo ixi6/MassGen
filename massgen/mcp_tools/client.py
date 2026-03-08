@@ -1,15 +1,16 @@
-# -*- coding: utf-8 -*-
 """
 MCP client implementation for connecting to MCP servers. This module provides enhanced MCP client
 functionality to connect with MCP servers and integrate external tools into the MassGen workflow.
 """
+
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
 from types import TracebackType
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
+from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
 from mcp import types as mcp_types
@@ -52,7 +53,7 @@ class HookType(Enum):
     PRE_TOOL_USE = "PreToolUse"
 
 
-def _ensure_timedelta(value: Union[int, float, timedelta], default_seconds: float) -> timedelta:
+def _ensure_timedelta(value: int | float | timedelta, default_seconds: float) -> timedelta:
     """
     Ensure a value is converted to timedelta for consistent timeout handling.
 
@@ -84,8 +85,8 @@ def _ensure_timedelta(value: Union[int, float, timedelta], default_seconds: floa
 class _ServerClient:
     """Internal container for per-server state."""
 
-    session: Optional[ClientSession] = None
-    manager_task: Optional[asyncio.Task] = None
+    session: ClientSession | None = None
+    manager_task: asyncio.Task | None = None
     connected_event: asyncio.Event = None
     disconnect_event: asyncio.Event = None
     connection_lock: asyncio.Lock = None
@@ -126,13 +127,13 @@ class MCPClient:
 
     def __init__(
         self,
-        server_configs: List[Dict[str, Any]],
+        server_configs: list[dict[str, Any]],
         *,
         timeout_seconds: int = 30,
-        allowed_tools: Optional[List[str]] = None,
-        exclude_tools: Optional[List[str]] = None,
-        status_callback: Optional[Callable[[str, Dict[str, Any]], Awaitable[None]]] = None,
-        hooks: Optional[Dict[HookType, List[Callable[[str, Dict[str, Any]], Awaitable[bool]]]]] = None,
+        allowed_tools: list[str] | None = None,
+        exclude_tools: list[str] | None = None,
+        status_callback: Callable[[str, dict[str, Any]], Awaitable[None]] | None = None,
+        hooks: dict[HookType, list[Callable[[str, dict[str, Any]], Awaitable[bool]]]] | None = None,
     ):
         """
         Initialize MCP client.
@@ -161,13 +162,13 @@ class MCPClient:
         self._circuit_breaker = MCPCircuitBreaker()
 
         # Per-server tracking
-        self._server_clients: Dict[str, _ServerClient] = {}
+        self._server_clients: dict[str, _ServerClient] = {}
         for config in self._server_configs:
             self._server_clients[config["name"]] = _ServerClient()
 
         # Unified registry for tools
-        self.tools: Dict[str, mcp_types.Tool] = {}
-        self._tool_to_server: Dict[str, str] = {}
+        self.tools: dict[str, mcp_types.Tool] = {}
+        self._tool_to_server: dict[str, str] = {}
 
         # Connection management
         self._initialized = False
@@ -176,7 +177,7 @@ class MCPClient:
         self._context_managed = False
 
     @property
-    def session(self) -> Optional[ClientSession]:
+    def session(self) -> ClientSession | None:
         """Return first server's session for backward compatibility."""
         if self._server_configs:
             first_server_name = self._server_configs[0]["name"]
@@ -239,7 +240,7 @@ class MCPClient:
                 },
             )
 
-    async def _connect_server(self, server_name: str, config: Dict[str, Any]) -> bool:
+    async def _connect_server(self, server_name: str, config: dict[str, Any]) -> bool:
         """Connect to a single server with circuit breaker integration.
 
         Returns:
@@ -295,7 +296,7 @@ class MCPClient:
                     server_client.disconnect_event.set()
                     try:
                         await asyncio.wait_for(server_client.manager_task, timeout=5.0)
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         logger.warning(f"Manager task for {server_name} didn't shutdown gracefully, cancelling")
                         server_client.manager_task.cancel()
                         try:
@@ -327,7 +328,7 @@ class MCPClient:
         successful = sum(1 for r in results if r is True)
         logger.info(f"Connected to {successful}/{len(self._server_configs)} servers")
 
-    def _create_transport_context(self, config: Dict[str, Any]):
+    def _create_transport_context(self, config: dict[str, Any]):
         """Create the appropriate transport context manager based on config."""
         transport_type = config.get("type", "stdio")
         server_name = config["name"]
@@ -431,7 +432,7 @@ class MCPClient:
         else:
             raise MCPConnectionError(f"Unsupported transport type: {transport_type}")
 
-    async def _run_manager(self, server_name: str, config: Dict[str, Any]) -> None:
+    async def _run_manager(self, server_name: str, config: dict[str, Any]) -> None:
         """Background task that owns the transport and session contexts for a server."""
         server_client = self._server_clients[server_name]
         connection_successful = False
@@ -503,7 +504,7 @@ class MCPClient:
             else:
                 server_client.connection_state = ConnectionState.DISCONNECTED
 
-    async def _discover_capabilities(self, server_name: str, config: Dict[str, Any]) -> None:
+    async def _discover_capabilities(self, server_name: str, config: dict[str, Any]) -> None:
         """Discover server capabilities (tools, resources, prompts) with name prefixing for multi-server."""
         logger.debug(f"Discovering capabilities for {server_name}")
 
@@ -558,7 +559,7 @@ class MCPClient:
             server_client.disconnect_event.set()
             try:
                 await asyncio.wait_for(server_client.manager_task, timeout=5.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"Manager task for {server_name} didn't shutdown gracefully, cancelling")
                 server_client.manager_task.cancel()
                 try:
@@ -576,10 +577,10 @@ class MCPClient:
     async def call_tool(
         self,
         tool_name: str,
-        arguments: Dict[str, Any],
-        agent_id: Optional[str] = None,
-        round_number: Optional[int] = None,
-        round_type: Optional[str] = None,
+        arguments: dict[str, Any],
+        agent_id: str | None = None,
+        round_number: int | None = None,
+        round_type: str | None = None,
     ) -> Any:
         """
         Call an MCP tool with validation and timeout handling.
@@ -750,7 +751,7 @@ class MCPClient:
 
             return result
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             # Note: log_tool_execution is NOT called here - parent handles logging
             # Log the arguments that caused the timeout for debugging
             logger.error(
@@ -811,7 +812,7 @@ class MCPClient:
                 context={"tool_name": original_tool_name, "arguments": validated_arguments},
             ) from e
 
-    def get_available_tools(self) -> List[str]:
+    def get_available_tools(self) -> list[str]:
         """Get list of available tool names."""
         return list(self.tools.keys())
 
@@ -819,11 +820,11 @@ class MCPClient:
         """Check if any servers are connected."""
         return self._initialized and any(sc.initialized for sc in self._server_clients.values())
 
-    def get_server_names(self) -> List[str]:
+    def get_server_names(self) -> list[str]:
         """Get list of connected server names."""
         return [name for name, sc in self._server_clients.items() if sc.initialized]
 
-    def get_active_sessions(self) -> List[ClientSession]:
+    def get_active_sessions(self) -> list[ClientSession]:
         """Return active MCP ClientSession objects for all connected servers."""
         sessions = []
         for server_client in self._server_clients.values():
@@ -831,7 +832,7 @@ class MCPClient:
                 sessions.append(server_client.session)
         return sessions
 
-    async def health_check_all(self) -> Dict[str, bool]:
+    async def health_check_all(self) -> dict[str, bool]:
         """
         Perform health check on all connected MCP servers.
 
@@ -864,7 +865,7 @@ class MCPClient:
         health_status = await self.health_check_all()
         return all(health_status.values()) if health_status else False
 
-    async def _reconnect_failed_servers(self, max_retries: int = 3) -> Dict[str, bool]:
+    async def _reconnect_failed_servers(self, max_retries: int = 3) -> dict[str, bool]:
         """
         Attempt to reconnect any failed servers with circuit breaker integration.
 
@@ -984,9 +985,9 @@ class MCPClient:
 
     async def __aexit__(
         self,
-        _exc_type: Optional[type],
-        _exc_val: Optional[BaseException],
-        _exc_tb: Optional[TracebackType],
+        _exc_type: type | None,
+        _exc_val: BaseException | None,
+        _exc_tb: TracebackType | None,
     ) -> None:
         """Async context manager exit."""
         try:
@@ -999,11 +1000,11 @@ class MCPClient:
     @classmethod
     async def create_and_connect(
         cls,
-        server_configs: List[Dict[str, Any]],
+        server_configs: list[dict[str, Any]],
         *,
         timeout_seconds: int = 30,
-        allowed_tools: Optional[List[str]] = None,
-        exclude_tools: Optional[List[str]] = None,
+        allowed_tools: list[str] | None = None,
+        exclude_tools: list[str] | None = None,
     ) -> "MCPClient":
         """
         Create and connect MCP client in one step.

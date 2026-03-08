@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Plan storage and session management for plan-and-execute workflow."""
 
 import json
@@ -6,7 +5,7 @@ import shutil
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .logger_config import logger
 
@@ -21,24 +20,26 @@ class PlanMetadata:
     created_at: str
     planning_session_id: str
     planning_log_dir: str
-    planning_prompt: Optional[str] = None  # Original user query that initiated planning
-    planning_turn: Optional[int] = None  # Turn number when planning was initiated
-    execution_session_id: Optional[str] = None
-    execution_log_dir: Optional[str] = None
+    planning_prompt: str | None = None  # Original user query that initiated planning
+    planning_turn: int | None = None  # Turn number when planning was initiated
+    execution_session_id: str | None = None
+    execution_log_dir: str | None = None
     status: str = "planning"  # planning, ready, executing, resumable, completed, failed
-    context_paths: Optional[List[Dict[str, Any]]] = None  # Context paths from planning phase
+    context_paths: list[dict[str, Any]] | None = None  # Context paths from planning phase
     # Planning review loop metadata
     plan_revision: int = 1
     planning_iteration_count: int = 1
-    planning_feedback_history: Optional[List[str]] = None
-    last_planning_mode: Optional[str] = None  # "multi" | "single"
+    planning_feedback_history: list[str] | None = None
+    last_planning_mode: str | None = None  # "multi" | "single"
     # Chunk execution metadata
-    execution_mode: Optional[str] = None  # "chunked_by_planner_v1"
-    chunk_order: Optional[List[str]] = None
-    current_chunk: Optional[str] = None
-    completed_chunks: Optional[List[str]] = None
-    chunk_history: Optional[List[Dict[str, Any]]] = None
-    resumable_state: Optional[Dict[str, Any]] = None
+    execution_mode: str | None = None  # "chunked_by_planner_v1"
+    chunk_order: list[str] | None = None
+    current_chunk: str | None = None
+    completed_chunks: list[str] | None = None
+    chunk_history: list[dict[str, Any]] | None = None
+    resumable_state: dict[str, Any] | None = None
+    # Artifact type: "plan" for task plans, "spec" for requirement specs
+    artifact_type: str = "plan"  # "plan" | "spec"
 
 
 class PlanSession:
@@ -73,7 +74,7 @@ class PlanSession:
         """Save plan metadata to disk."""
         self.metadata_file.write_text(json.dumps(asdict(metadata), indent=2))
 
-    def log_event(self, event_type: str, data: Dict[str, Any]):
+    def log_event(self, event_type: str, data: dict[str, Any]):
         """Append event to execution log."""
         event = {"timestamp": datetime.now().isoformat(), "event_type": event_type, "data": data}
         with self.execution_log_file.open("a") as f:
@@ -86,8 +87,14 @@ class PlanSession:
         shutil.copytree(self.workspace_dir, self.frozen_dir)
         logger.info(f"[PlanStorage] Froze workspace snapshot: {self.frozen_dir}")
 
-    def compute_plan_diff(self) -> Dict[str, Any]:
+    def compute_plan_diff(self) -> dict[str, Any]:
         """Compare workspace/ and frozen/ to detect plan drift."""
+        # Spec sessions use spec.json, not plan.json — diff not yet supported
+        workspace_spec = self.workspace_dir / "spec.json"
+        frozen_spec = self.frozen_dir / "spec.json"
+        if workspace_spec.exists() or frozen_spec.exists():
+            return {"info": "spec_session_no_diff"}
+
         # Plan is stored as plan.json in workspace root (renamed from project_plan.json during finalize)
         workspace_plan = self.workspace_dir / "plan.json"
         frozen_plan = self.frozen_dir / "plan.json"
@@ -138,8 +145,8 @@ class PlanStorage:
         self,
         planning_session_id: str,
         planning_log_dir: str,
-        planning_prompt: Optional[str] = None,
-        planning_turn: Optional[int] = None,
+        planning_prompt: str | None = None,
+        planning_turn: int | None = None,
     ) -> PlanSession:
         """Create a new plan session.
 
@@ -172,7 +179,7 @@ class PlanStorage:
         logger.info(f"[PlanStorage] Created plan session: {plan_id}")
         return session
 
-    def get_latest_plan(self) -> Optional[PlanSession]:
+    def get_latest_plan(self) -> PlanSession | None:
         """Get most recent plan session."""
         if not PLANS_DIR.exists():
             return None
@@ -184,7 +191,7 @@ class PlanStorage:
         plan_id = plan_dirs[0].name.replace("plan_", "")
         return PlanSession(plan_id)
 
-    def get_latest_resumable_plan(self) -> Optional[PlanSession]:
+    def get_latest_resumable_plan(self) -> PlanSession | None:
         """Get the most recent resumable plan session, if any."""
         if not PLANS_DIR.exists():
             return None
@@ -205,7 +212,7 @@ class PlanStorage:
                 return session
         return None
 
-    def get_all_plans(self, limit: int = 10) -> List[PlanSession]:
+    def get_all_plans(self, limit: int = 10) -> list[PlanSession]:
         """Get all plan sessions sorted by creation date (newest first).
 
         Args:
@@ -238,7 +245,7 @@ class PlanStorage:
 
         return sessions
 
-    def get_plan_by_id(self, plan_id: str) -> Optional[PlanSession]:
+    def get_plan_by_id(self, plan_id: str) -> PlanSession | None:
         """Get a specific plan session by its ID.
 
         Args:
@@ -256,7 +263,7 @@ class PlanStorage:
         self,
         session: PlanSession,
         workspace_source: Path,
-        context_paths: Optional[List[Dict[str, Any]]] = None,
+        context_paths: list[dict[str, Any]] | None = None,
     ):
         """Copy planning workspace to plan storage and freeze it.
 
@@ -300,10 +307,17 @@ class PlanStorage:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(item, dest)
 
-            # Step 2: Rename project_plan.json -> plan.json in temp workspace
-            # Planning phase outputs project_plan.json (to distinguish from internal tasks/plan.json)
-            # but execution phase expects plan/plan.json to align with MCP tools
+            # Step 2: Rename artifact files in temp workspace
+            # Planning phase outputs project_plan.json or project_spec.json
+            # (to distinguish from internal tasks/ files).
+            # Execution phase expects plan.json or spec.json at workspace root.
+            is_spec_artifact = False
             project_plan = temp_workspace / "project_plan.json"
+            project_spec = temp_workspace / "project_spec.json"
+            if project_spec.exists():
+                project_spec.rename(temp_workspace / "spec.json")
+                logger.info("[PlanStorage] Renamed project_spec.json -> spec.json")
+                is_spec_artifact = True
             if project_plan.exists():
                 project_plan.rename(temp_workspace / "plan.json")
                 logger.info("[PlanStorage] Renamed project_plan.json -> plan.json")
@@ -333,8 +347,35 @@ class PlanStorage:
             # Empty list [] means "no new paths provided, retain existing value".
             if context_paths:
                 metadata.context_paths = context_paths
-            metadata.execution_mode = metadata.execution_mode or "chunked_by_planner_v1"
-            metadata.chunk_order = metadata.chunk_order or []
+
+            if is_spec_artifact:
+                metadata.artifact_type = "spec"
+                # Extract chunk order from spec requirements
+                spec_file = session.workspace_dir / "spec.json"
+                if spec_file.exists():
+                    try:
+                        spec_data = json.loads(spec_file.read_text())
+                        seen: set[str] = set()
+                        chunks: list[str] = []
+                        for req in spec_data.get("requirements", []):
+                            chunk = req.get("chunk", "")
+                            if chunk and chunk not in seen:
+                                seen.add(chunk)
+                                chunks.append(chunk)
+                        metadata.chunk_order = chunks
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(
+                            f"[PlanStorage] Failed to parse chunk order from spec.json: {e}. " f"chunk_order will be empty.",
+                        )
+                        metadata.chunk_order = []
+                else:
+                    metadata.chunk_order = []
+                metadata.execution_mode = metadata.execution_mode or "chunked_by_planner_v1"
+            else:
+                metadata.artifact_type = "plan"
+                metadata.execution_mode = metadata.execution_mode or "chunked_by_planner_v1"
+                metadata.chunk_order = metadata.chunk_order or []
+
             metadata.completed_chunks = metadata.completed_chunks or []
             metadata.chunk_history = metadata.chunk_history or []
             metadata.planning_feedback_history = metadata.planning_feedback_history or []

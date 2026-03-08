@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Share MassGen sessions via GitHub Gist.
 
 This module provides functionality to upload MassGen session logs to GitHub Gist
@@ -20,7 +19,7 @@ import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from rich.console import Console
 
@@ -38,7 +37,9 @@ from .filesystem_manager._constants import SHARE_EXCLUDE_DIRS as EXCLUDE_PATTERN
 from .filesystem_manager._constants import (
     SHARE_EXCLUDE_EXTENSIONS as EXCLUDE_EXTENSIONS,
 )
-from .filesystem_manager._constants import WORKSPACE_INCLUDE_EXTENSIONS
+from .filesystem_manager._constants import (
+    WORKSPACE_INCLUDE_EXTENSIONS,
+)
 
 # =============================================================================
 # Office Document PDF Conversion
@@ -52,7 +53,7 @@ MASSGEN_DOCKER_IMAGES = [
 ]
 
 
-def _get_available_docker_image(client) -> Optional[str]:
+def _get_available_docker_image(client) -> str | None:
     """Find the first available MassGen Docker image.
 
     Args:
@@ -70,7 +71,7 @@ def _get_available_docker_image(client) -> Optional[str]:
     return None
 
 
-def convert_office_to_pdf(file_path: Path, console: Optional[Console] = None) -> Optional[bytes]:
+def convert_office_to_pdf(file_path: Path, console: Console | None = None) -> bytes | None:
     """Convert DOCX/PPTX/XLSX to PDF using Docker + LibreOffice.
 
     Uses the same approach as the webui /api/convert/document endpoint.
@@ -180,10 +181,10 @@ class TurnInfo:
     total_attempts: int
     attempt_path: Path
     status: str = "complete"
-    question: Optional[str] = None
-    winner: Optional[str] = None
+    question: str | None = None
+    winner: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return {
             "turn_number": self.turn_number,
@@ -213,7 +214,7 @@ class WorkspaceWarning:
     actual_size: int
     limit: int
     file_count: int
-    files: List[Tuple[str, int]] = field(default_factory=list)
+    files: list[tuple[str, int]] = field(default_factory=list)
 
 
 class WorkspaceAction(Enum):
@@ -236,8 +237,8 @@ class WorkspaceDecision:
     """
 
     action: WorkspaceAction
-    new_limit: Optional[int] = None
-    selected_files: Optional[List[str]] = None
+    new_limit: int | None = None
+    selected_files: list[str] | None = None
 
 
 # Priority files to always include (most important first)
@@ -324,7 +325,7 @@ def should_exclude(path: Path, rel_path: str) -> bool:
     return False
 
 
-def collect_files(log_dir: Path) -> Tuple[Dict[str, str], List[Tuple[str, int]]]:
+def collect_files(log_dir: Path) -> tuple[dict[str, str], list[tuple[str, int]]]:
     """Collect and flatten files for gist upload.
 
     Args:
@@ -335,8 +336,8 @@ def collect_files(log_dir: Path) -> Tuple[Dict[str, str], List[Tuple[str, int]]]
         - files: Dict mapping flattened filenames to content
         - skipped: List of (rel_path, size) tuples for skipped files
     """
-    files: Dict[str, str] = {}
-    skipped: List[Tuple[str, int]] = []
+    files: dict[str, str] = {}
+    skipped: list[tuple[str, int]] = []
     total_size = 0
 
     # First pass: collect all eligible files with sizes
@@ -365,7 +366,7 @@ def collect_files(log_dir: Path) -> Tuple[Dict[str, str], List[Tuple[str, int]]]
             continue
 
     # Sort: priority files first, then by size (smaller first)
-    def sort_key(item: Tuple[str, Path, int]) -> Tuple[int, int, int]:
+    def sort_key(item: tuple[str, Path, int]) -> tuple[int, int, int]:
         rel_path, _, size = item
         filename = Path(rel_path).name
         if filename in PRIORITY_FILES:
@@ -406,11 +407,11 @@ def collect_files(log_dir: Path) -> Tuple[Dict[str, str], List[Tuple[str, int]]]
 
 def collect_files_multi_turn(
     session_root: Path,
-    turns: List["TurnInfo"],
+    turns: list["TurnInfo"],
     include_workspace: bool = True,
     workspace_limit: int = 500_000,
-    console: Optional[Console] = None,
-) -> Tuple[Dict[str, str], List[Tuple[str, int]], List[WorkspaceWarning]]:
+    console: Console | None = None,
+) -> tuple[dict[str, str], list[tuple[str, int]], list[WorkspaceWarning]]:
     """Collect files from all turns in a multi-turn session.
 
     Unlike collect_files() which only collects from a single attempt directory,
@@ -433,9 +434,9 @@ def collect_files_multi_turn(
         - skipped: List of (rel_path, size) tuples for skipped files
         - warnings: List of WorkspaceWarning for limit exceedances
     """
-    files: Dict[str, str] = {}
-    skipped: List[Tuple[str, int]] = []
-    warnings: List[WorkspaceWarning] = []
+    files: dict[str, str] = {}
+    skipped: list[tuple[str, int]] = []
+    warnings: list[WorkspaceWarning] = []
     total_size = 0
     # Track if we've already shown Docker warning (avoid duplicates)
     _docker_warning_shown = False
@@ -492,7 +493,7 @@ def collect_files_multi_turn(
         # 6. Other files by size
 
         # First, identify the latest timestamp per agent for workspace files
-        agent_timestamps: Dict[str, List[str]] = {}
+        agent_timestamps: dict[str, list[str]] = {}
         for rel_path, _, _, _, _ in candidates:
             if "workspace" in rel_path and "/final/" not in rel_path:
                 import re
@@ -511,7 +512,7 @@ def collect_files_multi_turn(
         for agent_id in agent_timestamps:
             agent_timestamps[agent_id].sort(reverse=True)
 
-        def sort_key(item: Tuple[str, Path, int, bool, bool]) -> Tuple[int, int, int, str, int]:
+        def sort_key(item: tuple[str, Path, int, bool, bool]) -> tuple[int, int, int, str, int]:
             rel_path, file_path, size, is_previewable, is_answer = item
             filename = Path(rel_path).name
 
@@ -684,10 +685,10 @@ def collect_files_multi_turn(
 
 def collect_workspace_files(
     session_root: Path,
-    turns: List["TurnInfo"],
+    turns: list["TurnInfo"],
     limit_per_agent: int = 500_000,
-    console: Optional[Console] = None,
-) -> Dict[str, Tuple[str, int]]:
+    console: Console | None = None,
+) -> dict[str, tuple[str, int]]:
     """Collect workspace files from all turns with size tracking.
 
     Workspace files are found in patterns like:
@@ -707,7 +708,7 @@ def collect_workspace_files(
     Returns:
         Dict mapping flattened file paths to (content, size) tuples
     """
-    workspace_files: Dict[str, Tuple[str, int]] = {}
+    workspace_files: dict[str, tuple[str, int]] = {}
     # Track which Office files we've already warned about (avoid duplicate warnings)
     _docker_warning_shown = False
 
@@ -801,7 +802,7 @@ def collect_workspace_files(
     return workspace_files
 
 
-def detect_sensitive_patterns(workspace_dir: Path) -> List[str]:
+def detect_sensitive_patterns(workspace_dir: Path) -> list[str]:
     """Detect files that may contain sensitive data.
 
     Checks for:
@@ -815,7 +816,7 @@ def detect_sensitive_patterns(workspace_dir: Path) -> List[str]:
     Returns:
         List of relative file paths that may contain sensitive data
     """
-    sensitive_files: List[str] = []
+    sensitive_files: list[str] = []
 
     # Sensitive filename patterns
     sensitive_names = {
@@ -872,7 +873,7 @@ def prompt_workspace_limit_exceeded(
     agent_id: str,
     actual_size: int,
     limit: int,
-    files: List[Tuple[str, int]],
+    files: list[tuple[str, int]],
 ) -> WorkspaceDecision:
     """Prompt user when workspace exceeds size limit.
 
@@ -929,7 +930,7 @@ def prompt_workspace_limit_exceeded(
         return WorkspaceDecision(action=WorkspaceAction.CANCEL)
 
 
-def prompt_sensitive_data_warning(sensitive_files: List[str]) -> bool:
+def prompt_sensitive_data_warning(sensitive_files: list[str]) -> bool:
     """Prompt user about detected sensitive data.
 
     Args:
@@ -983,7 +984,7 @@ def prompt_large_session_warning(file_count: int, total_size: int) -> bool:
     return answer if answer is not None else True
 
 
-def prompt_file_selection(files: List[Tuple[str, int]], limit: int) -> List[str]:
+def prompt_file_selection(files: list[tuple[str, int]], limit: int) -> list[str]:
     """Prompt user to select specific files to include.
 
     Args:
@@ -1025,7 +1026,7 @@ def prompt_file_selection(files: List[Tuple[str, int]], limit: int) -> List[str]
     return selected if selected else []
 
 
-def determine_session_status(turns: List["TurnInfo"]) -> str:
+def determine_session_status(turns: list["TurnInfo"]) -> str:
     """Determine overall session status from turns.
 
     Args:
@@ -1054,7 +1055,7 @@ def determine_session_status(turns: List["TurnInfo"]) -> str:
     return "complete"
 
 
-def extract_error_info(turn_path: Path) -> Optional[Dict[str, Any]]:
+def extract_error_info(turn_path: Path) -> dict[str, Any] | None:
     """Extract error details from a turn's status.json.
 
     Args:
@@ -1099,9 +1100,9 @@ def extract_error_info(turn_path: Path) -> Optional[Dict[str, Any]]:
 
 def create_session_manifest(
     session_root: Path,
-    turns: List["TurnInfo"],
-    error_info: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    turns: list["TurnInfo"],
+    error_info: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Create _session_manifest.json content for multi-turn sessions.
 
     Args:
@@ -1143,7 +1144,7 @@ def create_session_manifest(
                 pass
 
     # Count unique turns (not attempts)
-    unique_turn_numbers = set(turn.turn_number for turn in turns)
+    unique_turn_numbers = {turn.turn_number for turn in turns}
     # Count total attempts across all turns
     total_attempts = len(turns)
 
@@ -1202,7 +1203,7 @@ def parse_size(size_str: str) -> int:
     raise ValueError(f'Invalid size string: "{size_str}". Use format like "500KB" or "1MB".')
 
 
-def create_gist(files: Dict[str, str], description: str, console: Optional[Console] = None) -> str:
+def create_gist(files: dict[str, str], description: str, console: Console | None = None) -> str:
     """Create a secret gist and return the gist ID.
 
     Uses a two-step process for large files:
@@ -1236,7 +1237,7 @@ def create_gist(files: Dict[str, str], description: str, console: Optional[Conso
             return _create_gist_via_api(files, description, tmpdir_path)
 
 
-def _create_gist_via_api(files: Dict[str, str], description: str, tmpdir_path: Path) -> str:
+def _create_gist_via_api(files: dict[str, str], description: str, tmpdir_path: Path) -> str:
     """Create gist using gh CLI API (limited to ~1MB per file)."""
     # Write files to temp directory
     for name, content in files.items():
@@ -1269,10 +1270,10 @@ def _create_gist_via_api(files: Dict[str, str], description: str, tmpdir_path: P
 
 
 def _create_gist_via_git(
-    files: Dict[str, str],
+    files: dict[str, str],
     description: str,
     tmpdir_path: Path,
-    console: Optional[Console] = None,
+    console: Console | None = None,
 ) -> str:
     """Create gist using git push (supports up to 100MB per file).
 
@@ -1386,8 +1387,8 @@ def _create_gist_via_git(
 
 def share_session_multi_turn(
     session_root: Path,
-    turns: List["TurnInfo"],
-    console: Optional[Console] = None,
+    turns: list["TurnInfo"],
+    console: Console | None = None,
     include_workspace: bool = True,
     workspace_limit: int = 500_000,
     dry_run: bool = False,
@@ -1523,7 +1524,7 @@ def share_session_multi_turn(
     return f"{VIEWER_URL_BASE}?gist={gist_id}"
 
 
-def share_session(log_dir: Path | str, console: Optional[Console] = None) -> str:
+def share_session(log_dir: Path | str, console: Console | None = None) -> str:
     """Upload session to GitHub Gist and return viewer URL.
 
     Args:

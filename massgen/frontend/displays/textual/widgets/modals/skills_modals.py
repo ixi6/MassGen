@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 """Skill management modals for Textual TUI."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 try:
     from textual.app import ComposeResult
@@ -20,8 +19,8 @@ from ..modal_base import BaseModal
 class SkillsModal(BaseModal):
     """Modal for viewing and toggling available skills for the current session."""
 
-    LOCATION_ORDER: Tuple[str, ...] = ("builtin", "project", "user", "previous_session")
-    LOCATION_LABELS: Dict[str, str] = {
+    LOCATION_ORDER: tuple[str, ...] = ("builtin", "project", "user", "previous_session")
+    LOCATION_LABELS: dict[str, str] = {
         "builtin": "Built-in Skills",
         "project": "Project Skills",
         "user": "User Skills (~/.agent/skills)",
@@ -31,18 +30,18 @@ class SkillsModal(BaseModal):
     def __init__(
         self,
         *,
-        skills_by_location: Dict[str, List[Dict[str, Any]]],
-        enabled_skill_names: Optional[List[str]],
+        skills_by_location: dict[str, list[dict[str, Any]]],
+        enabled_skill_names: list[str] | None,
         include_previous_session_skills: bool,
-        registry_content: Optional[str] = None,
+        registry_content: str | None = None,
     ) -> None:
         super().__init__()
         self._skills_by_location = {location: list(skills_by_location.get(location, [])) for location in self.LOCATION_ORDER}
         self._enabled_skill_names = enabled_skill_names
         self._include_previous_session_skills = include_previous_session_skills
         self._registry_content = registry_content
-        self._checkbox_to_meta: Dict[str, Dict[str, str]] = {}
-        self._previous_session_checkbox_ids: Set[str] = set()
+        self._checkbox_to_meta: dict[str, dict[str, str]] = {}
+        self._previous_session_checkbox_ids: set[str] = set()
 
     def _is_enabled(self, name: str) -> bool:
         """Return whether a skill should render as enabled."""
@@ -52,9 +51,9 @@ class SkillsModal(BaseModal):
         return name.lower() in enabled
 
     @staticmethod
-    def _build_tags(skill: Dict[str, Any], location: str) -> List[str]:
+    def _build_tags(skill: dict[str, Any], location: str) -> list[str]:
         """Build compact label tags for a skill row."""
-        tags: List[str] = [location.replace("_", " ")]
+        tags: list[str] = [location.replace("_", " ")]
         if location in {"project", "user"} or bool(skill.get("is_custom")):
             tags.append("custom")
         if location == "previous_session" or bool(skill.get("is_evolving")):
@@ -62,7 +61,7 @@ class SkillsModal(BaseModal):
         return tags
 
     @staticmethod
-    def _build_detail(skill: Dict[str, Any]) -> str:
+    def _build_detail(skill: dict[str, Any]) -> str:
         """Build detail line shown under each skill row."""
         description = str(skill.get("description", "") or "").strip()
         origin = str(skill.get("origin", "") or "").strip()
@@ -173,9 +172,9 @@ class SkillsModal(BaseModal):
             elif location == "previous_session":
                 cb.value = include_previous
 
-    def _collect_enabled_names(self) -> List[str]:
+    def _collect_enabled_names(self) -> list[str]:
         """Collect selected skill names from checkbox state."""
-        selected: List[str] = []
+        selected: list[str] = []
         include_previous = self._include_previous_sessions()
         for checkbox_id, meta in self._checkbox_to_meta.items():
             location = meta.get("location", "")

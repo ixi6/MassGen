@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 LiteLLM Custom Provider for MassGen
 
@@ -60,7 +59,7 @@ Usage:
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Type hints for litellm - actual import happens at runtime
 try:
@@ -110,21 +109,21 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
     def completion(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        api_base: Optional[str] = None,
-        custom_llm_provider: Optional[str] = None,
-        model_response: Optional[Any] = None,
-        print_verbose: Optional[callable] = None,
-        encoding: Optional[Any] = None,
-        api_key: Optional[str] = None,
-        logging_obj: Optional[Any] = None,
-        optional_params: Optional[Dict[str, Any]] = None,
+        messages: list[dict[str, Any]],
+        api_base: str | None = None,
+        custom_llm_provider: str | None = None,
+        model_response: Any | None = None,
+        print_verbose: callable | None = None,
+        encoding: Any | None = None,
+        api_key: str | None = None,
+        logging_obj: Any | None = None,
+        optional_params: dict[str, Any] | None = None,
         acompletion: bool = False,
-        litellm_params: Optional[Dict[str, Any]] = None,
-        logger_fn: Optional[callable] = None,
-        headers: Optional[Dict[str, str]] = None,
-        timeout: Optional[float] = None,
-        client: Optional[Any] = None,
+        litellm_params: dict[str, Any] | None = None,
+        logger_fn: callable | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        client: Any | None = None,
         **kwargs,
     ) -> ModelResponse:
         """Synchronous completion using MassGen.
@@ -218,20 +217,20 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
     async def acompletion(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        api_base: Optional[str] = None,
-        custom_llm_provider: Optional[str] = None,
-        model_response: Optional[Any] = None,
-        print_verbose: Optional[callable] = None,
-        encoding: Optional[Any] = None,
-        api_key: Optional[str] = None,
-        logging_obj: Optional[Any] = None,
-        optional_params: Optional[Dict[str, Any]] = None,
-        litellm_params: Optional[Dict[str, Any]] = None,
-        logger_fn: Optional[callable] = None,
-        headers: Optional[Dict[str, str]] = None,
-        timeout: Optional[float] = None,
-        client: Optional[Any] = None,
+        messages: list[dict[str, Any]],
+        api_base: str | None = None,
+        custom_llm_provider: str | None = None,
+        model_response: Any | None = None,
+        print_verbose: callable | None = None,
+        encoding: Any | None = None,
+        api_key: str | None = None,
+        logging_obj: Any | None = None,
+        optional_params: dict[str, Any] | None = None,
+        litellm_params: dict[str, Any] | None = None,
+        logger_fn: callable | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: float | None = None,
+        client: Any | None = None,
         **kwargs,
     ) -> ModelResponse:
         """Async completion using MassGen.
@@ -350,7 +349,7 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
             # Assume it's an example config name: massgen/basic_multi
             return f"@examples/{spec}", None, False
 
-    def _extract_query(self, messages: List[Dict[str, Any]]) -> str:
+    def _extract_query(self, messages: list[dict[str, Any]]) -> str:
         """Extract query from messages list (last user message).
 
         Args:
@@ -372,7 +371,7 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
                 return content
         return ""
 
-    def _extract_conversation_history(self, messages: List[Dict[str, Any]]) -> Optional[List[Dict[str, str]]]:
+    def _extract_conversation_history(self, messages: list[dict[str, Any]]) -> list[dict[str, str]] | None:
         """Extract conversation history from messages (excluding last user message).
 
         If there are prior messages in the conversation, return them as history
@@ -406,7 +405,7 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
 
         return history if history else None
 
-    def _build_response(self, model: str, result: Dict[str, Any]) -> ModelResponse:
+    def _build_response(self, model: str, result: dict[str, Any]) -> ModelResponse:
         """Build LiteLLM-compatible ModelResponse.
 
         Args:

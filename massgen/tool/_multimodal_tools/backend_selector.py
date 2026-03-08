@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Backend selector for multimodal tools.
 
@@ -15,7 +14,6 @@ with the agent's primary backend.
 
 import os
 from dataclasses import dataclass
-from typing import Optional
 
 from massgen.logger_config import logger
 
@@ -35,7 +33,7 @@ class BackendConfig:
                 return True
         return False
 
-    def get_api_key(self) -> Optional[str]:
+    def get_api_key(self) -> str | None:
         """Get the first available API key."""
         for env_var in self.api_key_env_vars:
             key = os.getenv(env_var)
@@ -58,7 +56,7 @@ GEMINI_AUDIO = BackendConfig(
 
 GEMINI_VIDEO = BackendConfig(
     name="gemini",
-    model="gemini-3-flash-preview",
+    model="gemini-3.1-pro-preview",
     api_key_env_vars=["GOOGLE_API_KEY", "GEMINI_API_KEY"],
 )
 
@@ -78,13 +76,13 @@ OPENAI_AUDIO = BackendConfig(
 
 OPENAI_VIDEO = BackendConfig(
     name="openai",
-    model="gpt-4.1",
+    model="gpt-5.4",
     api_key_env_vars=["OPENAI_API_KEY"],
 )
 
 OPENAI_IMAGE = BackendConfig(
     name="openai",
-    model="gpt-4.1",
+    model="gpt-5.4",
     api_key_env_vars=["OPENAI_API_KEY"],
 )
 
@@ -118,13 +116,13 @@ GROK_VIDEO = BackendConfig(
 # OpenRouter backends - OpenAI-compatible API
 OPENROUTER_IMAGE = BackendConfig(
     name="openrouter",
-    model="openai/gpt-4.1",  # OpenAI model naming
+    model="openai/gpt-5.2",  # OpenAI model naming
     api_key_env_vars=["OPENROUTER_API_KEY"],
 )
 
 OPENROUTER_VIDEO = BackendConfig(
     name="openrouter",
-    model="openai/gpt-4.1",  # OpenAI model naming, uses frame extraction
+    model="openai/gpt-5.2",  # OpenAI model naming, uses frame extraction
     api_key_env_vars=["OPENROUTER_API_KEY"],
 )
 
@@ -190,9 +188,9 @@ class MultimodalBackendSelector:
     def get_backend(
         self,
         media_type: str,
-        preferred_backend: Optional[str] = None,
-        preferred_model: Optional[str] = None,
-    ) -> Optional[BackendConfig]:
+        preferred_backend: str | None = None,
+        preferred_model: str | None = None,
+    ) -> BackendConfig | None:
         """
         Get the best available backend for a media type.
 
@@ -265,9 +263,9 @@ _selector = MultimodalBackendSelector()
 
 def get_backend(
     media_type: str,
-    preferred_backend: Optional[str] = None,
-    preferred_model: Optional[str] = None,
-) -> Optional[BackendConfig]:
+    preferred_backend: str | None = None,
+    preferred_model: str | None = None,
+) -> BackendConfig | None:
     """
     Convenience function to get the best available backend.
 

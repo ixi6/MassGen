@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Run MassGen with terminal recording and evaluate the frontend display.
 
@@ -13,12 +12,11 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
-from typing import List, Optional
 
 from massgen.tool._result import ExecutionResult, TextContent
 
 
-def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None) -> None:
+def _validate_path_access(path: Path, allowed_paths: list[Path] | None = None) -> None:
     """
     Validate that a path is within allowed directories.
 
@@ -154,8 +152,8 @@ async def run_massgen_with_recording(
     timeout_seconds: int = 300,
     width: int = 1920,
     height: int = 1080,
-    allowed_paths: Optional[List[str]] = None,
-    agent_cwd: Optional[str] = None,
+    allowed_paths: list[str] | None = None,
+    agent_cwd: str | None = None,
 ) -> ExecutionResult:
     """
     Run MassGen with terminal recording and save the video.

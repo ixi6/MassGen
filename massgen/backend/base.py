@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 Base backend interface for LLM providers.
 """
+
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ import re
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, AsyncGenerator, Dict, List, Optional, Union
+from typing import Any
 
 from ..filesystem_manager import FilesystemManager, PathPermissionManagerHook
 from ..mcp_tools.hooks import FunctionHookManager, HookType
@@ -24,6 +25,7 @@ from ..token_manager import (
     TokenUsage,
 )
 from ..utils import CoordinationStage
+from ..utils.tool_argument_normalization import normalize_json_object_argument
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +38,7 @@ class FilesystemSupport(Enum):
     MCP = "mcp"  # Filesystem support through MCP servers
 
 
-def get_multimodal_tool_definitions() -> List[Dict[str, Any]]:
+def get_multimodal_tool_definitions() -> list[dict[str, Any]]:
     """Return the standard multimodal custom tool definitions (read_media, generate_media).
 
     Used by backends that need to register multimodal tools when enable_multimodal_tools is true.
@@ -64,28 +66,28 @@ class StreamChunk:
     type: str  # "content", "tool_calls", "complete_message", "complete_response", "done",
     # "error", "agent_status", "reasoning", "reasoning_done", "reasoning_summary",
     # "reasoning_summary_done", "backend_status", "compression_status"
-    content: Optional[str] = None
-    tool_calls: Optional[List[Dict[str, Any]]] = None  # User-defined function tools (need execution)
-    complete_message: Optional[Dict[str, Any]] = None  # Complete assistant message
-    response: Optional[Dict[str, Any]] = None  # Raw Responses API response
-    usage: Optional[Dict[str, Any]] = None  # Token usage metadata (prompt/completion/total)
-    error: Optional[str] = None
-    source: Optional[str] = None  # Source identifier (e.g., agent_id, "orchestrator")
-    status: Optional[str] = None  # For agent status updates
-    detail: Optional[str] = None  # Additional detail for status updates
+    content: str | None = None
+    tool_calls: list[dict[str, Any]] | None = None  # User-defined function tools (need execution)
+    complete_message: dict[str, Any] | None = None  # Complete assistant message
+    response: dict[str, Any] | None = None  # Raw Responses API response
+    usage: dict[str, Any] | None = None  # Token usage metadata (prompt/completion/total)
+    error: str | None = None
+    source: str | None = None  # Source identifier (e.g., agent_id, "orchestrator")
+    status: str | None = None  # For agent status updates
+    detail: str | None = None  # Additional detail for status updates
 
     # Reasoning-related fields
-    reasoning_delta: Optional[str] = None  # Delta text from reasoning stream
-    reasoning_text: Optional[str] = None  # Complete reasoning text
-    reasoning_summary_delta: Optional[str] = None  # Delta text from reasoning summary stream
-    reasoning_summary_text: Optional[str] = None  # Complete reasoning summary text
-    item_id: Optional[str] = None  # Reasoning item ID
-    content_index: Optional[int] = None  # Reasoning content index
-    summary_index: Optional[int] = None  # Reasoning summary index
+    reasoning_delta: str | None = None  # Delta text from reasoning stream
+    reasoning_text: str | None = None  # Complete reasoning text
+    reasoning_summary_delta: str | None = None  # Delta text from reasoning summary stream
+    reasoning_summary_text: str | None = None  # Complete reasoning summary text
+    item_id: str | None = None  # Reasoning item ID
+    content_index: int | None = None  # Reasoning content index
+    summary_index: int | None = None  # Reasoning summary index
 
     # Hook execution info (for "hook_execution" type chunks)
-    hook_info: Optional[Dict[str, Any]] = None  # Hook execution details for display
-    tool_call_id: Optional[str] = None  # ID of tool call this hook is attached to
+    hook_info: dict[str, Any] | None = None  # Hook execution details for display
+    tool_call_id: str | None = None  # ID of tool call this hook is attached to
 
     # Display flag - reserved for future use (not yet consumed by any handler)
     display: bool = True
@@ -94,7 +96,7 @@ class StreamChunk:
 class LLMBackend(ABC):
     """Abstract base class for LLM providers."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         self.api_key = api_key
 
         # Extract and remove instance_id before storing config (used only for Docker, not for API calls)
@@ -110,18 +112,18 @@ class LLMBackend(ABC):
         self._last_call_input_tokens: int = 0
 
         # Round-level token tracking
-        self._round_token_history: List[RoundTokenUsage] = []
+        self._round_token_history: list[RoundTokenUsage] = []
         self._current_round_number: int = 0
         self._current_round_type: str = ""
-        self._round_start_snapshot: Optional[Dict[str, Any]] = None
+        self._round_start_snapshot: dict[str, Any] | None = None
         self._round_start_tool_count: int = 0
         self._round_used_fallback_estimation: bool = False  # Track if fallback was used in current round
 
         # API call timing (pure LLM time, excluding tool execution)
-        self._api_call_history: List[APICallMetric] = []
-        self._current_api_call: Optional[APICallMetric] = None
+        self._api_call_history: list[APICallMetric] = []
+        self._current_api_call: APICallMetric | None = None
         self._api_call_index: int = 0
-        self._current_agent_id: Optional[str] = None
+        self._current_agent_id: str | None = None
 
         # # Initialize tool manager
         # self.custom_tool_manager = ToolManager()
@@ -335,6 +337,15 @@ class LLMBackend(ABC):
             "use_two_tier_workspace",  # Two-tier workspace (scratch/deliverable) + git versioning
             "write_mode",  # Isolated write context mode (auto/worktree/isolated/legacy)
             "drift_conflict_policy",  # Isolated apply drift resolution policy
+            "subagent_types",  # Which subagent types to expose (handled by orchestrator)
+            "round_evaluator_before_checklist",  # Coordination-only evaluator-first loop control
+            "orchestrator_managed_round_evaluator",  # Gate for orchestrator-owned round_evaluator launch
+            "enable_quality_rethink_on_iteration",  # Coordination-only quality task injection toggle
+            "enable_novelty_on_iteration",  # Coordination-only novelty task injection toggle
+            "novelty_injection",  # Novelty pressure level (none/gentle/moderate/aggressive)
+            "improvements",  # propose_improvements gate settings (orchestrator/checklist only)
+            "learning_capture_mode",  # Learning capture timing (round/verification_and_final_only/final_only)
+            "disable_final_only_round_capture_fallback",  # Coordination-only fallback control for final_only+skip_final_presentation
             # Multimodal tools configuration (handled by CustomToolAndMCPBackend)
             "enable_multimodal_tools",
             "multimodal_config",
@@ -353,18 +364,24 @@ class LLMBackend(ABC):
             "voting_sensitivity",
             "voting_threshold",
             "checklist_require_gap_report",
+            "gap_report_mode",
             # Decomposition mode parameters (handled by orchestrator, not passed to API)
             "coordination_mode",
             "presenter_agent",
+            "final_answer_strategy",
             "subtask",
             # Fairness controls (handled by orchestrator, not passed to API)
             "fairness_enabled",
             "fairness_lead_cap_answers",
             "max_midstream_injections_per_round",
+            "defer_peer_updates_until_restart",
+            "allow_midstream_peer_updates_before_checklist_submit",
+            "max_checklist_calls_per_round",
+            "checklist_first_answer",
         }
 
     @abstractmethod
-    async def stream_with_tools(self, messages: List[Dict[str, Any]], tools: List[Dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk, None]:
+    async def stream_with_tools(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]], **kwargs) -> AsyncGenerator[StreamChunk]:
         """
         Stream a response with tool calling support.
 
@@ -381,7 +398,7 @@ class LLMBackend(ABC):
     def get_provider_name(self) -> str:
         """Get the name of this provider."""
 
-    def estimate_tokens(self, text: Union[str, List[Dict[str, Any]]], method: str = "auto") -> int:
+    def estimate_tokens(self, text: str | list[dict[str, Any]], method: str = "auto") -> int:
         """
         Estimate token count for text or messages.
 
@@ -409,7 +426,7 @@ class LLMBackend(ABC):
         provider = self.get_provider_name()
         return self.token_calculator.calculate_cost(input_tokens, output_tokens, provider, model)
 
-    def update_token_usage(self, messages: List[Dict[str, Any]], response_content: str, model: str) -> TokenUsage:
+    def update_token_usage(self, messages: list[dict[str, Any]], response_content: str, model: str) -> TokenUsage:
         """
         Update token usage tracking.
 
@@ -472,7 +489,7 @@ class LLMBackend(ABC):
         if hasattr(self, "set_round_number"):
             self.set_round_number(round_number)
 
-    def end_round_tracking(self, outcome: str) -> Optional[RoundTokenUsage]:
+    def end_round_tracking(self, outcome: str) -> RoundTokenUsage | None:
         """Mark end of round and calculate delta tokens.
 
         Args:
@@ -541,7 +558,7 @@ class LLMBackend(ABC):
         )
         return round_usage
 
-    def get_round_token_history(self) -> List[Dict[str, Any]]:
+    def get_round_token_history(self) -> list[dict[str, Any]]:
         """Get token usage history by round."""
         return [r.to_dict() for r in self._round_token_history]
 
@@ -587,7 +604,7 @@ class LLMBackend(ABC):
         if self._current_api_call and self._current_api_call.time_to_first_token_ms == 0:
             self._current_api_call.time_to_first_token_ms = (time.time() - self._current_api_call.start_time) * 1000
 
-    def end_api_call_timing(self, success: bool = True, error: Optional[str] = None) -> None:
+    def end_api_call_timing(self, success: bool = True, error: str | None = None) -> None:
         """End timing and record the API call.
 
         Call this when the stream completes or an error occurs.
@@ -610,7 +627,7 @@ class LLMBackend(ABC):
             )
             self._current_api_call = None
 
-    def get_api_call_history(self) -> List[APICallMetric]:
+    def get_api_call_history(self) -> list[APICallMetric]:
         """Get all API call metrics.
 
         Returns:
@@ -685,7 +702,7 @@ class LLMBackend(ABC):
                 f"Model may not be in pricing database (litellm or provider-returned cost).",
             )
 
-    def _estimate_token_usage(self, messages: List[Dict[str, Any]], response_content: str, model: str) -> None:
+    def _estimate_token_usage(self, messages: list[dict[str, Any]], response_content: str, model: str) -> None:
         """Fallback: Estimate tokens for backends without usage data (local models).
 
         Uses tiktoken for estimation when API doesn't return usage data.
@@ -741,11 +758,11 @@ class LLMBackend(ABC):
         # Subclasses should override this method
         return FilesystemSupport.NONE
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Get list of builtin tools supported by this provider."""
         return []
 
-    def extract_tool_name(self, tool_call: Dict[str, Any]) -> str:
+    def extract_tool_name(self, tool_call: dict[str, Any]) -> str:
         """
         Extract tool name from a tool call (handles multiple formats).
 
@@ -769,7 +786,7 @@ class LLMBackend(ABC):
         # Fallback
         return "unknown"
 
-    def extract_tool_arguments(self, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_tool_arguments(self, tool_call: dict[str, Any]) -> dict[str, Any]:
         """
         Extract tool arguments from a tool call (handles multiple formats).
 
@@ -784,7 +801,6 @@ class LLMBackend(ABC):
         Returns:
             Tool arguments dictionary (parsed from JSON string if needed)
         """
-        import json
 
         # Chat Completions format
         if "function" in tool_call:
@@ -798,15 +814,21 @@ class LLMBackend(ABC):
         else:
             args = {}
 
-        # Parse JSON string if needed
-        if isinstance(args, str):
-            try:
-                return json.loads(args) if args.strip() else {}
-            except (json.JSONDecodeError, ValueError):
-                return {}
-        return args if isinstance(args, dict) else {}
+        try:
+            parsed, decode_passes = normalize_json_object_argument(
+                args,
+                field_name="arguments",
+            )
+        except ValueError:
+            return {}
+        if decode_passes > 1:
+            logger.info(
+                "[Backend] Normalized %s decode passes while extracting tool arguments",
+                decode_passes,
+            )
+        return parsed
 
-    def extract_tool_call_id(self, tool_call: Dict[str, Any]) -> str:
+    def extract_tool_call_id(self, tool_call: dict[str, Any]) -> str:
         """
         Extract tool call ID from a tool call (handles multiple formats).
 
@@ -832,9 +854,9 @@ class LLMBackend(ABC):
 
     def create_tool_result_message(
         self,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         result_content: str,
-    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         """
         Create a tool result message in this backend's expected format.
 
@@ -851,7 +873,7 @@ class LLMBackend(ABC):
         tool_call_id = self.extract_tool_call_id(tool_call)
         return {"role": "tool", "tool_call_id": tool_call_id, "content": result_content}
 
-    def extract_tool_result_content(self, tool_result_message: Dict[str, Any]) -> str:
+    def extract_tool_result_content(self, tool_result_message: dict[str, Any]) -> str:
         """
         Extract the content/output from a tool result message in this backend's format.
 
@@ -987,7 +1009,7 @@ class LLMBackend(ABC):
 # ---------------------------------------------------------------------------
 
 
-def extract_structured_response(text: str) -> Optional[Dict[str, Any]]:
+def extract_structured_response(text: str) -> dict[str, Any] | None:
     """Extract a structured JSON workflow tool call from text.
 
     Looks for ``{"tool_name": "...", "arguments": {...}}`` in the text,
@@ -1063,7 +1085,7 @@ def extract_structured_response(text: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def parse_workflow_tool_calls(text: str) -> List[Dict[str, Any]]:
+def parse_workflow_tool_calls(text: str) -> list[dict[str, Any]]:
     """Parse workflow tool calls from accumulated text output.
 
     Returns a list of tool-call dicts in the standard format expected by
@@ -1087,7 +1109,7 @@ def parse_workflow_tool_calls(text: str) -> List[Dict[str, Any]]:
             ]
 
     # Fallback: regex for multiple tool calls
-    tool_calls: List[Dict[str, Any]] = []
+    tool_calls: list[dict[str, Any]] = []
     seen: set = set()
     patterns = [
         r'\{"tool_name":\s*"([^"]+)",\s*"arguments":\s*(\{[^}]*\})\}',
@@ -1113,7 +1135,7 @@ def parse_workflow_tool_calls(text: str) -> List[Dict[str, Any]]:
     return tool_calls
 
 
-def build_workflow_instructions(tools: List[Dict[str, Any]]) -> str:
+def build_workflow_instructions(tools: list[dict[str, Any]]) -> str:
     """Build workflow tool instructions for system prompt injection.
 
     Filters *tools* to workflow tools only and returns the instruction text
@@ -1126,7 +1148,7 @@ def build_workflow_instructions(tools: List[Dict[str, Any]]) -> str:
     if not workflow_tools:
         return ""
 
-    parts: List[str] = ["\n--- Coordination Actions ---"]
+    parts: list[str] = ["\n--- Coordination Actions ---"]
     for tool in workflow_tools:
         name = tool.get("function", {}).get("name", "unknown")
         description = tool.get("function", {}).get("description", "No description")
@@ -1191,7 +1213,7 @@ def build_workflow_instructions(tools: List[Dict[str, Any]]) -> str:
     return "\n".join(parts)
 
 
-def build_workflow_mcp_instructions(tools: List[Dict[str, Any]], mcp_prefix: str = "") -> str:
+def build_workflow_mcp_instructions(tools: list[dict[str, Any]], mcp_prefix: str = "") -> str:
     """Build instructions for when workflow tools are available as native MCP tools.
 
     Unlike build_workflow_instructions() which includes JSON format examples for
@@ -1211,7 +1233,7 @@ def build_workflow_mcp_instructions(tools: List[Dict[str, Any]], mcp_prefix: str
 
     tool_names = [t.get("function", {}).get("name", "") for t in workflow_tools]
 
-    parts: List[str] = ["\n--- MassGen Coordination Instructions ---"]
+    parts: list[str] = ["\n--- MassGen Coordination Instructions ---"]
     parts.append(
         "CRITICAL: You MUST call one of the following MCP tools before finishing your response. " "Do NOT just write text — you must actually invoke the tool.",
     )
@@ -1256,9 +1278,9 @@ def build_workflow_mcp_instructions(tools: List[Dict[str, Any]], mcp_prefix: str
 
 
 def build_workflow_mcp_server_config(
-    tools: List[Dict[str, Any]],
+    tools: list[dict[str, Any]],
     specs_dir: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Build an MCP server config for workflow tools.
 
     Filters *tools* to workflow tools only, writes specs to disk,

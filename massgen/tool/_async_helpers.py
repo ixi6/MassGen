@@ -1,15 +1,14 @@
-# -*- coding: utf-8 -*-
 """Async utility functions for wrapping different return types."""
 
 import asyncio
-from typing import AsyncGenerator, Callable, Generator, Optional
+from collections.abc import AsyncGenerator, Callable, Generator
 
 from ._result import ExecutionResult, TextContent
 
 
 async def _apply_post_processing(
     result: ExecutionResult,
-    processor: Optional[Callable[[ExecutionResult], Optional[ExecutionResult]]],
+    processor: Callable[[ExecutionResult], ExecutionResult | None] | None,
 ) -> ExecutionResult:
     """Apply post-processing to an execution result."""
     if processor:
@@ -21,7 +20,7 @@ async def _apply_post_processing(
 
 async def wrap_object_async(
     obj: ExecutionResult,
-    processor: Optional[Callable[[ExecutionResult], Optional[ExecutionResult]]],
+    processor: Callable[[ExecutionResult], ExecutionResult | None] | None,
 ) -> AsyncGenerator[ExecutionResult, None]:
     """Convert a single ExecutionResult to async generator."""
     yield await _apply_post_processing(obj, processor)
@@ -29,7 +28,7 @@ async def wrap_object_async(
 
 async def wrap_sync_gen_async(
     sync_gen: Generator[ExecutionResult, None, None],
-    processor: Optional[Callable[[ExecutionResult], Optional[ExecutionResult]]],
+    processor: Callable[[ExecutionResult], ExecutionResult | None] | None,
 ) -> AsyncGenerator[ExecutionResult, None]:
     """Convert sync generator to async generator."""
     for chunk in sync_gen:
@@ -38,7 +37,7 @@ async def wrap_sync_gen_async(
 
 async def wrap_as_async_generator(
     async_gen: AsyncGenerator[ExecutionResult, None],
-    processor: Optional[Callable[[ExecutionResult], Optional[ExecutionResult]]],
+    processor: Callable[[ExecutionResult], ExecutionResult | None] | None,
 ) -> AsyncGenerator[ExecutionResult, None]:
     """Wrap async generator with interruption handling."""
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for the LangGraph lesson planner tool wrapper."""
 
 import asyncio

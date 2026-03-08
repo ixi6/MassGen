@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Tests for MassGen programmatic API and LiteLLM integration.
 
@@ -28,9 +27,9 @@ class TestBuildConfig:
         assert len(config["agents"]) == 2  # Default is 2 agents
         assert "orchestrator" in config
 
-        # Check default model is gpt-5.2 (current default in ConfigBuilder)
+        # Check default model is gpt-5.4 (current default in ConfigBuilder)
         for agent in config["agents"]:
-            assert agent["backend"]["model"] == "gpt-5.2"
+            assert agent["backend"]["model"] == "gpt-5.4"
 
     def test_build_config_with_num_agents(self):
         """Test config with specified number of agents."""

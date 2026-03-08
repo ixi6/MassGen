@@ -1,20 +1,20 @@
-# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from collections.abc import AsyncIterator
+from typing import Any
 
 from massgen.backend.base import StreamChunk
 from massgen.tool.workflow_toolkits.base import WORKFLOW_TOOL_NAMES
 
 
-def _extract_tool_name(tool_call: Dict[str, Any]) -> str:
+def _extract_tool_name(tool_call: dict[str, Any]) -> str:
     fn = tool_call.get("function") or {}
     return fn.get("name") or ""
 
 
-def _normalize_tool_call(tool_call: Dict[str, Any], idx: int) -> Dict[str, Any]:
+def _normalize_tool_call(tool_call: dict[str, Any], idx: int) -> dict[str, Any]:
     """
     Ensure a tool call matches OpenAI chat.completions shape:
     {"id","type":"function","function":{"name","arguments":<string>}}
@@ -39,10 +39,10 @@ def _normalize_tool_call(tool_call: Dict[str, Any], idx: int) -> Dict[str, Any]:
     return tc
 
 
-def filter_external_tool_calls(tool_calls: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+def filter_external_tool_calls(tool_calls: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     if not tool_calls:
         return []
-    filtered: List[Dict[str, Any]] = []
+    filtered: list[dict[str, Any]] = []
     for idx, tc in enumerate(tool_calls):
         name = _extract_tool_name(tc)
         if name in WORKFLOW_TOOL_NAMES:
@@ -60,17 +60,17 @@ def _is_trace_content(chunk: StreamChunk) -> bool:
 def build_chat_completion_response(
     *,
     content: str,
-    tool_calls: List[Dict[str, Any]],
+    tool_calls: list[dict[str, Any]],
     model: str,
     finish_reason: str,
-    created: Optional[int] = None,
-    response_id: Optional[str] = None,
-    reasoning_content: Optional[str] = None,
-) -> Dict[str, Any]:
+    created: int | None = None,
+    response_id: str | None = None,
+    reasoning_content: str | None = None,
+) -> dict[str, Any]:
     created = created or int(time.time())
     response_id = response_id or f"chatcmpl_{uuid.uuid4().hex}"
 
-    message: Dict[str, Any] = {"role": "assistant"}
+    message: dict[str, Any] = {"role": "assistant"}
     if content:
         message["content"] = content
     else:
@@ -95,10 +95,10 @@ def build_chat_completion_response(
     }
 
 
-def _format_trace_chunk(chunk: StreamChunk) -> Optional[str]:
+def _format_trace_chunk(chunk: StreamChunk) -> str | None:
     """Format a non-content chunk into a trace string for reasoning_content."""
     t = str(chunk.type)
-    parts: List[str] = []
+    parts: list[str] = []
 
     # Include source/agent info if available
     source = getattr(chunk, "source", None) or "system"
@@ -138,12 +138,12 @@ async def accumulate_stream_to_response(
     stream: AsyncIterator[StreamChunk],
     *,
     model: str,
-) -> Tuple[Dict[str, Any], str]:
-    content_parts: List[str] = []
-    reasoning_parts: List[str] = []
-    tool_calls: List[Dict[str, Any]] = []
+) -> tuple[dict[str, Any], str]:
+    content_parts: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
     finish_reason = "stop"
-    usage: Optional[Dict[str, Any]] = None
+    usage: dict[str, Any] | None = None
     tool_calls_received = False
 
     async for chunk in stream:
@@ -195,13 +195,13 @@ def make_sse_chunk(
     *,
     response_id: str,
     model: str,
-    delta: Dict[str, Any],
-    finish_reason: Optional[str] = None,
-    created: Optional[int] = None,
-    usage: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    delta: dict[str, Any],
+    finish_reason: str | None = None,
+    created: int | None = None,
+    usage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     created = created or int(time.time())
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "id": response_id,
         "object": "chat.completion.chunk",
         "created": created,
@@ -224,7 +224,7 @@ async def stream_to_sse_frames(
     *,
     model: str,
     response_id: str,
-) -> AsyncIterator[Dict[str, Any]]:
+) -> AsyncIterator[dict[str, Any]]:
     """
     Convert StreamChunks into OpenAI-compatible SSE frame payload dicts.
 
@@ -236,11 +236,11 @@ async def stream_to_sse_frames(
     5. Emit finish frame
     """
     # Buffer all chunks first
-    content_chunks: List[str] = []
-    reasoning_parts: List[str] = []
-    tool_calls: List[Dict[str, Any]] = []
-    error_content: Optional[str] = None
-    usage_data: Optional[Dict[str, Any]] = None
+    content_chunks: list[str] = []
+    reasoning_parts: list[str] = []
+    tool_calls: list[dict[str, Any]] = []
+    error_content: str | None = None
+    usage_data: dict[str, Any] | None = None
 
     async for chunk in stream:
         t = str(chunk.type)

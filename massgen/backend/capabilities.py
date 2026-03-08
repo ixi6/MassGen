@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Single source of truth for backend capabilities.
 All documentation and UI should pull from this registry.
@@ -55,7 +54,6 @@ This will verify:
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set
 
 
 class Capability(Enum):
@@ -84,19 +82,19 @@ class BackendCapabilities:
 
     backend_type: str
     provider_name: str
-    supported_capabilities: Set[str]  # Set of capability strings (e.g., "web_search")
-    builtin_tools: List[str]  # Tools native to the backend
+    supported_capabilities: set[str]  # Set of capability strings (e.g., "web_search")
+    builtin_tools: list[str]  # Tools native to the backend
     filesystem_support: str  # "none", "native", or "mcp"
-    models: List[str]  # Available models
+    models: list[str]  # Available models
     default_model: str  # Default model for this backend
-    env_var: Optional[str] = None  # Required environment variable (e.g., "OPENAI_API_KEY")
+    env_var: str | None = None  # Required environment variable (e.g., "OPENAI_API_KEY")
     notes: str = ""  # Additional notes about the backend
-    model_release_dates: Optional[Dict[str, str]] = None  # Model -> "YYYY-MM" release date mapping
-    base_url: Optional[str] = None  # API base URL for OpenAI-compatible providers
+    model_release_dates: dict[str, str] | None = None  # Model -> "YYYY-MM" release date mapping
+    base_url: str | None = None  # API base URL for OpenAI-compatible providers
 
 
 # THE REGISTRY - Single source of truth for all backend capabilities
-BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
+BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
     "openai": BackendCapabilities(
         backend_type="openai",
         provider_name="OpenAI",
@@ -114,6 +112,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         builtin_tools=["web_search", "code_interpreter"],
         filesystem_support="mcp",
         models=[
+            "gpt-5.4",
             "gpt-5.2",
             "gpt-5.1-codex-max",
             "gpt-5.1-codex",
@@ -130,14 +129,15 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
             "gpt-4o-mini",
             "o4-mini",
         ],
-        default_model="gpt-5.2",
+        default_model="gpt-5.4",
         env_var="OPENAI_API_KEY",
         notes=(
-            "GPT-5.2 is the recommended default. Codex models (gpt-5.1-codex, gpt-5-codex) are optimized "
+            "GPT-5.4 is the recommended default. Codex models (gpt-5.1-codex, gpt-5-codex) are optimized "
             "for shorter system messages and may not work well with MassGen's coordination prompts. "
             "Reasoning support in GPT-5 and o-series models. Audio/video generation (v0.0.30+)."
         ),
         model_release_dates={
+            "gpt-5.4": "2026-03",
             "gpt-5.2": "2025-12",
             "gpt-5.1-codex-max": "2025-12",
             "gpt-5.1-codex": "2025-12",
@@ -164,6 +164,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
             "mcp",
             "tool_search",
             "programmatic_tool_calling",
+            "image_understanding",
             "audio_understanding",
             "video_understanding",
         },
@@ -237,6 +238,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         models=[
             # Alias notation (recommended for experimentation)
             "claude-opus-4-6",
+            "claude-sonnet-4-6",
             "claude-sonnet-4-5",
             "claude-opus-4-5",
             "claude-opus-4",
@@ -263,6 +265,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
             "mcp",
             "filesystem_native",
             "web_search",
+            "image_understanding",
         },
         builtin_tools=[
             "shell",
@@ -273,22 +276,25 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         filesystem_support="native",
         models=[
+            "gpt-5.4",
             "gpt-5.3-codex",
             "gpt-5.2-codex",
             "gpt-5.1-codex",
             "gpt-5-codex",
             "gpt-4.1",
         ],
-        default_model="gpt-5.3-codex",
+        default_model="gpt-5.4",
         env_var="OPENAI_API_KEY",
         notes=(
-            "OpenAI Codex CLI with OAuth support. Works with ChatGPT Plus/Pro subscription "
-            "(via `codex login`) or OPENAI_API_KEY. Native filesystem access via CLI. "
+            "OpenAI Codex CLI with OAuth support. Run `codex login` and complete the browser "
+            "OAuth flow with your ChatGPT Plus/Pro account, or use OPENAI_API_KEY as a fallback. "
+            "Native filesystem access via CLI. "
             "Requires: npm install -g @openai/codex. "
             "SANDBOX LIMITATION: OS-level sandbox (Seatbelt/Landlock) only restricts writes, "
             "NOT reads. For security-sensitive workloads, prefer Docker mode for full isolation."
         ),
         model_release_dates={
+            "gpt-5.4": "2026-03",
             "gpt-5.3-codex": "2026-02",
             "gpt-5.2-codex": "2025-12",
             "gpt-5.1-codex": "2025-12",
@@ -310,6 +316,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         builtin_tools=["google_search_retrieval", "code_execution"],
         filesystem_support="mcp",
         models=[
+            "gemini-3.1-pro-preview",
             "gemini-3-flash-preview",
             "gemini-3-pro-preview",
             "gemini-2.5-flash",
@@ -319,6 +326,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         env_var="GEMINI_API_KEY",
         notes="Google Search Retrieval provides web search. Image understanding. Image generation via Imagen 3. Video generation via Veo 2.",
         model_release_dates={
+            "gemini-3.1-pro-preview": "2026-02",
             "gemini-3-flash-preview": "2025-12",
             "gemini-3-pro-preview": "2025-11",
             "gemini-2.5-flash": "2025-06",
@@ -569,6 +577,20 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         notes="OpenAI-compatible API. Chinese language optimized models with long context windows.",
         base_url="https://api.moonshot.cn/v1",
     ),
+    "nvidia_nim": BackendCapabilities(
+        backend_type="nvidia_nim",
+        provider_name="Nvidia NIM",
+        supported_capabilities={
+            "mcp",
+        },
+        builtin_tools=[],
+        filesystem_support="mcp",
+        models=["moonshotai/kimi-k2.5", "custom"],
+        default_model="moonshotai/kimi-k2.5",
+        env_var="NGC_API_KEY",
+        notes="OpenAI-compatible API. Nvidia NIM inference microservices. Access to models like Kimi K2.5, DeepSeek, Llama, and Nemotron via Nvidia's cloud.",
+        base_url="https://integrate.api.nvidia.com/v1",
+    ),
     "nebius": BackendCapabilities(
         backend_type="nebius",
         provider_name="Nebius AI Studio",
@@ -625,10 +647,79 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         env_var="UI_TARS_API_KEY",
         notes="OpenAI-compatible API via HuggingFace Inference Endpoints. UI-TARS-1.5-7B model for GUI automation with vision and reasoning. Requires UI_TARS_ENDPOINT environment variable.",
     ),
+    "copilot": BackendCapabilities(
+        backend_type="copilot",
+        provider_name="GitHub Copilot",
+        supported_capabilities={
+            "mcp",
+            "web_search",
+        },
+        builtin_tools=[],
+        filesystem_support="mcp",
+        models=[
+            "gpt-4.1",
+            "gpt-5-mini",
+            "claude-sonnet-4",
+            "gemini-2.5-pro",
+        ],
+        default_model="gpt-5-mini",
+        env_var=None,
+        notes="GitHub Copilot SDK integration. Requires 'copilot' package installed. Auth via GitHub subscription.",
+    ),
 }
 
 
-def get_capabilities(backend_type: str) -> Optional[BackendCapabilities]:
+_DISPLAY_NAME_TO_BACKEND_TYPE: dict[str, str] = {
+    "openai": "openai",
+    "azure openai": "azure_openai",
+    "claude": "claude",
+    "claude code": "claude_code",
+    "claude_code": "claude_code",
+    "gemini": "gemini",
+    "grok": "grok",
+    "chatcompletion": "chatcompletion",
+    "chat completion": "chatcompletion",
+    "openrouter": "openrouter",
+    "cerebras ai": "cerebras",
+    "together ai": "together",
+    "fireworks ai": "fireworks",
+    "groq": "groq",
+    "zai": "zai",
+    "nebius ai studio": "nebius",
+    "kimi": "moonshot",
+    "nvidia nim": "nvidia_nim",
+    "poe": "poe",
+    "qwen": "qwen",
+    "vllm": "vllm",
+    "sglang": "sglang",
+    "copilot": "copilot",
+}
+
+
+def normalize_backend_type(backend_type: str | None) -> str | None:
+    """Normalize backend identifiers for capability lookup."""
+    if backend_type is None:
+        return None
+
+    normalized = str(backend_type).strip()
+    if not normalized:
+        return None
+
+    normalized_lower = normalized.lower()
+    if normalized_lower in BACKEND_CAPABILITIES:
+        return normalized_lower
+
+    if normalized_lower in _DISPLAY_NAME_TO_BACKEND_TYPE:
+        return _DISPLAY_NAME_TO_BACKEND_TYPE[normalized_lower]
+
+    underscored = normalized_lower.replace(" ", "_").replace("-", "_")
+    if underscored in BACKEND_CAPABILITIES:
+        return underscored
+
+    return normalized_lower
+
+
+def get_capabilities(backend_type: str | None) -> BackendCapabilities | None:
     """Get capabilities for a backend type.
 
     Args:
@@ -637,10 +728,11 @@ def get_capabilities(backend_type: str) -> Optional[BackendCapabilities]:
     Returns:
         BackendCapabilities object if found, None otherwise
     """
-    return BACKEND_CAPABILITIES.get(backend_type)
+    normalized_backend_type = normalize_backend_type(backend_type)
+    return BACKEND_CAPABILITIES.get(normalized_backend_type) if normalized_backend_type else None
 
 
-def has_capability(backend_type: str, capability: str) -> bool:
+def has_capability(backend_type: str | None, capability: str) -> bool:
     """Check if backend supports a capability.
 
     Args:
@@ -654,7 +746,7 @@ def has_capability(backend_type: str, capability: str) -> bool:
     return capability in caps.supported_capabilities if caps else False
 
 
-def get_all_backend_types() -> List[str]:
+def get_all_backend_types() -> list[str]:
     """Get list of all registered backend types.
 
     Returns:
@@ -663,7 +755,7 @@ def get_all_backend_types() -> List[str]:
     return list(BACKEND_CAPABILITIES.keys())
 
 
-def get_backends_with_capability(capability: str) -> List[str]:
+def get_backends_with_capability(capability: str) -> list[str]:
     """Get all backends that support a given capability.
 
     Args:
@@ -675,7 +767,7 @@ def get_backends_with_capability(capability: str) -> List[str]:
     return [backend_type for backend_type, caps in BACKEND_CAPABILITIES.items() if capability in caps.supported_capabilities]
 
 
-def validate_backend_config(backend_type: str, config: Dict) -> List[str]:
+def validate_backend_config(backend_type: str, config: dict) -> list[str]:
     """Validate a backend configuration against its capabilities.
 
     Args:

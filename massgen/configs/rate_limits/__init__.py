@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Rate limit configuration module for MassGen.
 

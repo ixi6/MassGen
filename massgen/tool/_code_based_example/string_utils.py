@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Example custom tools for code-based tools demo.
 

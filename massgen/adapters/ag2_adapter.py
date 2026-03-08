@@ -1,14 +1,15 @@
-# -*- coding: utf-8 -*-
 """
 AG2 (AutoGen) adapter for MassGen.
 
 Supports both single agents and GroupChat configurations.
 """
+
 # Suppress autogen deprecation warnings
 import json
 import uuid
 import warnings
-from typing import Any, AsyncGenerator, Dict, List
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from massgen.logger_config import log_backend_activity, logger
 
@@ -197,7 +198,7 @@ class AG2Adapter(AgentAdapter):
                 llm_config=create_llm_config(default_llm_config),
             )
 
-    def _setup_group_manager_args(self, pattern_config: Dict[str, Any], default_llm_config: Any) -> Dict[str, Any]:
+    def _setup_group_manager_args(self, pattern_config: dict[str, Any], default_llm_config: Any) -> dict[str, Any]:
         """
         Set up group_manager_args for pattern.
 
@@ -224,10 +225,10 @@ class AG2Adapter(AgentAdapter):
     def _create_pattern(
         self,
         pattern_type: str,
-        pattern_config: Dict[str, Any],
-        agents: List[ConversableAgent],
-        agent_name_map: Dict[str, ConversableAgent],
-        group_manager_args: Dict[str, Any],
+        pattern_config: dict[str, Any],
+        agents: list[ConversableAgent],
+        agent_name_map: dict[str, ConversableAgent],
+        group_manager_args: dict[str, Any],
         *args,
     ) -> Any:
         """
@@ -268,7 +269,7 @@ class AG2Adapter(AgentAdapter):
         else:
             raise NotImplementedError(f"Pattern type '{pattern_type}' not supported")
 
-    async def _execute_single_agent(self, messages: List[Dict[str, Any]], agent: ConversableAgent) -> AsyncGenerator[StreamChunk, None]:
+    async def _execute_single_agent(self, messages: list[dict[str, Any]], agent: ConversableAgent) -> AsyncGenerator[StreamChunk, None]:
         """
         Execute single AG2 agent.
 
@@ -305,8 +306,8 @@ class AG2Adapter(AgentAdapter):
 
     async def _execute_single_agent_with_coordination(
         self,
-        messages: List[Dict[str, Any]],
-        _tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        _tools: list[dict[str, Any]],
     ) -> AsyncGenerator[StreamChunk, None]:
         """
         Execute single AG2 agent with MassGen coordination stage handling.
@@ -376,7 +377,7 @@ class AG2Adapter(AgentAdapter):
             async for chunk in self._execute_single_agent(messages, self.agent):
                 yield chunk
 
-    async def _execute_group_chat(self, messages: List[Dict[str, Any]]) -> AsyncGenerator[str, None]:
+    async def _execute_group_chat(self, messages: list[dict[str, Any]]) -> AsyncGenerator[str, None]:
         """
         Execute AG2 group chat with pattern.
 
@@ -418,7 +419,7 @@ class AG2Adapter(AgentAdapter):
             )
             yield formatted_message
 
-    async def _execute_group_chat_with_user_agent(self, messages: List[Dict[str, Any]]) -> AsyncGenerator[StreamChunk, None]:
+    async def _execute_group_chat_with_user_agent(self, messages: list[dict[str, Any]]) -> AsyncGenerator[StreamChunk, None]:
         messages_to_execute = []
         if self.coordination_stage == CoordinationStage.INITIAL_ANSWER:
             # Todo: should make ag2 integration stateful and put this in reset_state
@@ -447,8 +448,8 @@ class AG2Adapter(AgentAdapter):
 
     async def execute_streaming(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """
@@ -502,7 +503,7 @@ class AG2Adapter(AgentAdapter):
     # TOOL REGISTRATION METHODS
     # =============================================================================
 
-    def _register_tools(self, tools: List[Dict[str, Any]]) -> None:
+    def _register_tools(self, tools: list[dict[str, Any]]) -> None:
         """
         Register tools with the agent(s).
 
@@ -522,7 +523,7 @@ class AG2Adapter(AgentAdapter):
         else:
             register_tools_for_agent(tools, self.agent)
 
-    def _register_tools_for_group_chat(self, tools: List[Dict[str, Any]]) -> None:
+    def _register_tools_for_group_chat(self, tools: list[dict[str, Any]]) -> None:
         """Register tools to group chat agents based on type."""
         workflow_tools, other_tools = self._separate_workflow_and_other_tools(tools)
 
@@ -535,7 +536,7 @@ class AG2Adapter(AgentAdapter):
 
         self.workflow_tools = workflow_tools
 
-    def _separate_workflow_and_other_tools(self, tools: List[Dict[str, Any]]) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def _separate_workflow_and_other_tools(self, tools: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Separate workflow tools from other tools.
 

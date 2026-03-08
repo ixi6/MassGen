@@ -141,6 +141,7 @@ In multi-turn (interactive) sessions, cancellation works slightly differently:
 
 * **First Ctrl+C**: Saves partial progress and returns to the prompt
 * **Second Ctrl+C**: Exits the session entirely
+* **Queued runtime fallback prompts persist**: If pending runtime-injection text is promoted to a new turn prompt and that turn is cancelled, the prompt is retained in conversation history for subsequent turns
 
 This allows you to cancel a long-running turn without losing your entire session:
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Context Window Monitoring Utility
 
@@ -6,7 +5,7 @@ Provides logging and tracking for context window usage during agent execution.
 Helps debug memory and token management by showing real-time context usage.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..logger_config import logger
 from ..token_manager.token_manager import TokenCostCalculator
@@ -59,9 +58,9 @@ class ContextWindowMonitor:
 
     def log_context_usage(
         self,
-        messages: List[Dict[str, Any]],
-        turn_number: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        turn_number: int | None = None,
+    ) -> dict[str, Any]:
         """
         Log current context window usage.
 
@@ -128,8 +127,8 @@ class ContextWindowMonitor:
     def log_context_usage_from_tokens(
         self,
         current_tokens: int,
-        turn_number: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        turn_number: int | None = None,
+    ) -> dict[str, Any]:
         """
         Log context window usage from actual token count (from API response).
 
@@ -192,7 +191,7 @@ class ContextWindowMonitor:
         self,
         input_tokens: int,
         output_tokens: int,
-        turn_number: Optional[int] = None,
+        turn_number: int | None = None,
     ):
         """
         Log summary for a single turn.
@@ -234,7 +233,7 @@ class ContextWindowMonitor:
         logger.info(f"   Peak usage: {(total_tokens/self.context_window)*100:.1f}%")
         logger.info("=" * 70)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get current monitoring stats."""
         total_tokens = self.total_input_tokens + self.total_output_tokens
 
@@ -250,7 +249,7 @@ class ContextWindowMonitor:
 
 
 def create_monitor_from_config(
-    config: Dict[str, Any],
+    config: dict[str, Any],
     model_name: str,
     provider: str = "openai",
 ) -> ContextWindowMonitor:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for ExecutionTraceWriter.
 
 TDD tests based on OpenSpec scenarios in:

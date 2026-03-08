@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Task context loading for external API calls.
 
 This module provides the load_task_context function that reads CONTEXT.md
@@ -9,7 +8,6 @@ or spawning subagents, ensuring external APIs have context about the task.
 """
 
 from pathlib import Path
-from typing import Optional
 
 from loguru import logger
 
@@ -30,7 +28,7 @@ class TaskContextResult:
 
     def __init__(
         self,
-        content: Optional[str],
+        content: str | None,
         was_truncated: bool = False,
         original_length: int = 0,
         truncated_length: int = 0,
@@ -40,7 +38,7 @@ class TaskContextResult:
         self.original_length = original_length
         self.truncated_length = truncated_length
 
-    def get_warning(self) -> Optional[str]:
+    def get_warning(self) -> str | None:
         """Get warning message if context was truncated."""
         if self.was_truncated:
             return f"WARNING: CONTEXT.md was truncated from {self.original_length} to " f"{self.truncated_length} characters. Consider shortening it for better results."
@@ -48,7 +46,7 @@ class TaskContextResult:
 
 
 def load_task_context(
-    workspace_path: Optional[str],
+    workspace_path: str | None,
     max_chars: int = DEFAULT_MAX_CHARS,
     required: bool = True,
     return_result: bool = False,
@@ -87,7 +85,7 @@ def load_task_context(
         ...     print(result.get_warning())
     """
 
-    def _return(content: Optional[str], was_truncated: bool = False, original_len: int = 0, truncated_len: int = 0):
+    def _return(content: str | None, was_truncated: bool = False, original_len: int = 0, truncated_len: int = 0):
         """Helper to return either string or TaskContextResult based on return_result flag."""
         if return_result:
             return TaskContextResult(content, was_truncated, original_len, truncated_len)
@@ -146,7 +144,7 @@ def load_task_context(
                 )
             return _return(None)
 
-        logger.info(f"[TaskContext] Loaded {len(content)} chars from {context_path}")
+        logger.debug(f"[TaskContext] Loaded {len(content)} chars from {context_path}")
         return _return(content, was_truncated, original_len, len(content))
 
     except TaskContextError:
@@ -160,10 +158,10 @@ def load_task_context(
 
 
 def load_task_context_with_warning(
-    workspace_path: Optional[str],
-    existing_context: Optional[str] = None,
+    workspace_path: str | None,
+    existing_context: str | None = None,
     max_chars: int = DEFAULT_MAX_CHARS,
-) -> tuple[Optional[str], Optional[str]]:
+) -> tuple[str | None, str | None]:
     """Load task context, returning both content and any truncation warning.
 
     This is a convenience function for tools that need to:
@@ -201,7 +199,7 @@ def load_task_context_with_warning(
 
 def format_prompt_with_context(
     prompt: str,
-    task_context: Optional[str],
+    task_context: str | None,
 ) -> str:
     """Format a prompt with task context prepended.
 

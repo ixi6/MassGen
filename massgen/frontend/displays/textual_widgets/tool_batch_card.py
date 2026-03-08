@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tool Batch Card Widget for MassGen TUI.
 
@@ -18,7 +17,6 @@ Visual design:
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List, Optional
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -35,14 +33,14 @@ class ToolBatchItem:
     tool_name: str
     display_name: str  # Just the tool name part (e.g., "write_file")
     status: str  # running, success, error
-    args_summary: Optional[str] = None
-    args_full: Optional[str] = None
-    result_summary: Optional[str] = None
-    result_full: Optional[str] = None
-    error: Optional[str] = None
-    start_time: Optional[datetime] = None
-    end_time: Optional[datetime] = None
-    elapsed_seconds: Optional[float] = None
+    args_summary: str | None = None
+    args_full: str | None = None
+    result_summary: str | None = None
+    result_full: str | None = None
+    error: str | None = None
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    elapsed_seconds: float | None = None
 
 
 class ToolBatchCard(Static, can_focus=True):
@@ -84,8 +82,8 @@ class ToolBatchCard(Static, can_focus=True):
         self,
         server_name: str,
         *,
-        id: Optional[str] = None,
-        classes: Optional[str] = None,
+        id: str | None = None,
+        classes: str | None = None,
     ) -> None:
         """Initialize the batch card.
 
@@ -96,9 +94,9 @@ class ToolBatchCard(Static, can_focus=True):
         """
         super().__init__(id=id, classes=classes)
         self.server_name = server_name
-        self._tools: Dict[str, ToolBatchItem] = {}  # tool_id -> ToolBatchItem
-        self._tool_order: List[str] = []  # Maintain insertion order
-        self._tool_line_map: Dict[int, str] = {}  # line_number -> tool_id for click detection
+        self._tools: dict[str, ToolBatchItem] = {}  # tool_id -> ToolBatchItem
+        self._tool_order: list[str] = []  # Maintain insertion order
+        self._tool_line_map: dict[int, str] = {}  # line_number -> tool_id for click detection
         self._expanded = False
         self._start_time = datetime.now()
 
@@ -436,7 +434,7 @@ class ToolBatchCard(Static, can_focus=True):
             self._update_status_class()
             self._refresh_content()
 
-    def get_tool(self, tool_id: str) -> Optional[ToolBatchItem]:
+    def get_tool(self, tool_id: str) -> ToolBatchItem | None:
         """Get a tool by ID.
 
         Args:
@@ -459,7 +457,7 @@ class ToolBatchCard(Static, can_focus=True):
         return tool_id in self._tools
 
     @property
-    def tools(self) -> List[ToolBatchItem]:
+    def tools(self) -> list[ToolBatchItem]:
         """Get all tools in insertion order."""
         return [self._tools[tid] for tid in self._tool_order if tid in self._tools]
 

@@ -1,16 +1,14 @@
-# -*- coding: utf-8 -*-
 """
 External agent adapters for MassGen.
 
 This package provides adapters for integrating various external agent
 frameworks and systems into MassGen's orchestration system.
 """
-from typing import Dict, Type
 
 from .base import AgentAdapter
 
 # Adapter registry maps framework names to adapter classes
-adapter_registry: Dict[str, Type[AgentAdapter]] = {}
+adapter_registry: dict[str, type[AgentAdapter]] = {}
 
 # Try to import AG2 adapter (optional dependency)
 try:

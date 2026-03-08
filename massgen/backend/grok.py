@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Grok/xAI backend is using the chat_completions backend for streaming.
 It overrides methods for Grok-specific features (Grok Live Search).
@@ -15,12 +14,13 @@ TODO for future releases:
 - Test multi-agent orchestrator integration
 - Validate advanced Grok-specific features
 """
+
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from openai import AsyncOpenAI
 
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 class GrokBackend(ChatCompletionsBackend):
     """Grok backend using xAI's OpenAI-compatible API."""
 
-    def __init__(self, api_key: Optional[str] = None, **kwargs):
+    def __init__(self, api_key: str | None = None, **kwargs):
         super().__init__(api_key, **kwargs)
         self.api_key = api_key or os.getenv("XAI_API_KEY")
         self.base_url = "https://api.x.ai/v1"
@@ -46,9 +46,9 @@ class GrokBackend(ChatCompletionsBackend):
 
     def _customize_api_params(
         self,
-        api_params: Dict[str, Any],
-        all_params: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        api_params: dict[str, Any],
+        all_params: dict[str, Any],
+    ) -> dict[str, Any]:
         """Add Grok Live Search parameters to API params if web search is enabled.
 
         This hook is called by the parent class before making the API call.
@@ -76,6 +76,6 @@ class GrokBackend(ChatCompletionsBackend):
         """Get the name of this provider."""
         return "Grok"
 
-    def get_supported_builtin_tools(self) -> List[str]:
+    def get_supported_builtin_tools(self) -> list[str]:
         """Get list of builtin tools supported by Grok."""
         return ["web_search"]

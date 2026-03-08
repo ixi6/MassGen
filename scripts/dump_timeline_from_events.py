@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """Replay events.jsonl through the TUI pipeline for debugging.
 
 Replays events through the same pipeline as the live TUI, including
@@ -25,7 +24,6 @@ import os
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 from massgen.events import MassGenEvent
 from massgen.frontend.displays.timeline_event_recorder import TimelineEventRecorder
@@ -84,7 +82,7 @@ def parse_mode_flags(args: list[str]) -> tuple[str, list[str]]:
     return mode, filtered_args
 
 
-def _parse_event_timestamp(value: Optional[str]) -> Optional[datetime]:
+def _parse_event_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
     normalized = value.replace("Z", "+00:00")
@@ -429,7 +427,7 @@ def main() -> int:
         print(f"File not found: {path}", file=sys.stderr)
         return 1
 
-    target_agent: Optional[str] = args[1] if len(args) > 1 else None
+    target_agent: str | None = args[1] if len(args) > 1 else None
 
     events = load_events(path)
     agent_ids = {target_agent} if target_agent else detect_agent_ids(events)

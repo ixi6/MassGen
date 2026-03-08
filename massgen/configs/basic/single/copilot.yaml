@@ -1,0 +1,22 @@
+# MassGen Copilot Configuration
+# `uv run massgen --config @examples/basic/single/copilot.yaml "What is GitHub copilot?"`
+#
+# Prerequisites:
+#   1. Active GitHub Copilot subscription (https://github.com/features/copilot/plans)
+#   2. Install the Copilot CLI:
+#        macOS/Linux: brew install copilot-cli
+#        npm:         npm install -g @github/copilot
+#        Windows:     winget install GitHub.Copilot
+#   3. Authenticate by running `copilot` and using /login, or set GH_TOKEN / GITHUB_TOKEN
+#
+# No API key is needed — auth is handled through your GitHub Copilot subscription.
+
+agents:
+  - id: "copilot-assistant"
+    backend:
+      type: "copilot"
+      model: "gpt-5-mini"
+
+ui:
+  display_type: "textual_terminal"
+  logging_enabled: true

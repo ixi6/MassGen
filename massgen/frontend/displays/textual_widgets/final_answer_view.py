@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Final Answer View Widget for MassGen TUI.
 
@@ -9,7 +8,7 @@ and voting details. Used when user navigates to "Final Answer" via the view drop
 import logging
 import platform
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -58,7 +57,7 @@ class FinalAnswerView(Vertical):
     class VotingDetailsRequested(Message):
         """Message emitted when voting details button is clicked."""
 
-        def __init__(self, vote_results: Dict[str, Any]) -> None:
+        def __init__(self, vote_results: dict[str, Any]) -> None:
             self.vote_results = vote_results
             super().__init__()
 
@@ -66,7 +65,7 @@ class FinalAnswerView(Vertical):
         self,
         agent_id: str = "",
         content: str = "",
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
         """Initialize the FinalAnswerView.
@@ -147,7 +146,7 @@ class FinalAnswerView(Vertical):
         except Exception:
             pass
 
-    def set_metadata(self, metadata: Dict[str, Any]) -> None:
+    def set_metadata(self, metadata: dict[str, Any]) -> None:
         """Update the metadata display.
 
         Args:

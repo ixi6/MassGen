@@ -671,6 +671,19 @@ Every analysis report MUST answer these questions:
 - What was the total duration and breakdown by phase?
 - What were the slowest operations?
 - Which tools took the most time?
+- Build a **per-round timing table sorted by agent** with:
+  - Round start/end timestamps
+  - Total round time
+  - Tool wall time
+  - Non-tool time (model/streaming/waiting)
+- Split each checklist-containing round into:
+  - **Evaluation** = round start -> first `submit_checklist` start
+  - **Checklist->Propose** = first `submit_checklist` end -> first `propose_improvements` start
+  - **Implementation** = first `propose_improvements` end -> round end
+  - **Post-checklist (no propose)** = first `submit_checklist` end -> round end (if no propose happened)
+- Report percentages for **evaluation vs implementation**:
+  - Across all checklist-containing segments
+  - Across only segments that actually include `propose_improvements`
 
 #### 3. Command Pattern Analysis
 - **Were there frequently repeated commands that could be avoided?** (e.g., `openskills read`, `npm install`, `ls -R`)
@@ -752,6 +765,92 @@ Check if agents needed retries due to workflow violations. Key metrics:
 
 See "Enforcement Reliability" in the Key Local Log Files section for the full schema and reason codes.
 
+#### 11. Answer Quality Progression
+
+**Data Sources:** `agent_outputs/agent_*.txt`, `agent_*/*/execution_trace.md`, `agent_*/*/vote.json`
+
+For each agent, trace how answer quality evolved across rounds:
+- What specifically changed between answer N and answer N+1?
+- Were changes **substantive** (new approach, novel feature, structural improvement) or **cosmetic** (minor wording, small style tweak)?
+- Did any agents regress — produce a worse answer after seeing others?
+- Which evaluation criteria improved per round, and which stagnated?
+
+**Score each round-over-round transition:**
+- 🟢 Substantive improvement — meaningfully better on at least one important dimension
+- 🟡 Marginal improvement — polished but no new capability or insight
+- 🔴 No improvement / regression — same or worse despite the cost
+
+#### 12. Improvement Proposal Quality
+
+**Data Sources:** `agent_outputs/agent_*.txt` (look for gap analysis, diagnostic sections, improvement plans), `agent_*/*/vote.json`
+
+Before each new answer, agents (or the coordination system) propose improvements. Analyze each:
+- **Specificity**: Did the proposal identify *why* something fails, or just that it fails? ("Animation timing misaligned with 5-second viewing window" vs "improve animation")
+- **Actionability**: Could a downstream agent implement the proposal without additional reasoning?
+- **Accuracy**: Did the proposal correctly diagnose the root problem, or address symptoms?
+- **Completeness**: Did it cover all the key gaps, or miss the decisive differentiator?
+
+**Rate each proposal:**
+
+| Proposal | Specific? | Actionable? | Accurate? | Was it the right call? |
+|----------|-----------|-------------|-----------|------------------------|
+| [proposal summary] | Yes/No | Yes/No | Yes/No | Yes/No — [why] |
+
+Also note: were improvements proposed by the agent itself (self-reflection), by peer evaluation, or inferred from evaluation criteria gaps?
+
+#### 13. Round ROI ("Was It Worth It?")
+
+**Data Sources:** `metrics_summary.json`, `coordination_events.json`, agent outputs
+
+For each round, evaluate return on investment:
+- **Cost**: tokens × model rate for this round
+- **Time**: wall-clock seconds for this round
+- **Quality delta**: what materially changed vs the prior best answer
+- **Verdict**: Was the round worth its cost and time?
+
+| Round | Agent | Cost | Time | Quality Delta | Verdict |
+|-------|-------|------|------|---------------|---------|
+| R0 | agent_a | $X | Xs | Baseline | — |
+| R1 | agent_a | $X | Xs | [what changed] | 🟢/🟡/🔴 |
+
+**Diminishing returns detection**: At what round did additional iterations stop producing meaningful improvement? Was there a clear stopping point the system missed?
+
+Also flag: did any agent spend expensive rounds just verifying/validating rather than improving?
+
+#### 14. Delegation & Model Allocation Analysis
+
+**Data Sources:** `agent_outputs/agent_*.txt`, `execution_trace.md`, `metrics_summary.json`
+
+Analyze what fraction of each agent's work was mechanical vs required genuine intelligence, and whether the right model tier was used.
+
+**Classify each agent's work per round:**
+
+- **Mechanical** (predictable, templated, a weaker model could do it — AND consumes enough context to be worth delegating):
+  - Structural validation (element counts, dimension checks, format compliance) — especially when it generates lots of shell output
+  - Boilerplate generation (loops, coordinate math, template filling) — large repetitive code blocks
+  - Binary checklist scoring (E1–E4 style: does feature X exist?) — when it involves many tool calls or long output
+  - Evidence collection (running shell commands, parsing output, pixel diffs) — high token cost for low reasoning content
+
+  *Note: protocol steps like task status updates and workflow tool calls are not worth delegating — they're low-context and the main model handles them cheaply inline. The question is whether delegating saves meaningful tokens, not just whether a weaker model could theoretically do it.*
+
+- **Quality / Intelligence** (requires genuine reasoning, synthesis, or creativity):
+  - Root cause diagnosis (connecting symptom to underlying design flaw)
+  - Cross-agent synthesis (identifying best elements from N answers and planning a hybrid)
+  - Novel approach invention (feature or design not present in any prior answer)
+  - Pedagogical or domain reasoning (e.g., "this animation timing misses the 5s attention window")
+  - Tradeoff analysis (why one design choice beats another for a specific goal)
+
+**For each agent/round, estimate:**
+- % mechanical vs % quality reasoning
+- Which specific activities were mechanical vs intelligence-requiring
+- Quote passages: mechanical template-filling vs genuine diagnostic insight
+
+**Overall assessment:**
+- What fraction of total context (tokens) across the run was mechanical?
+- Could a cheaper model (e.g., Haiku) have handled the mechanical fraction without degrading output quality?
+- Were any quality-critical moments handled by a weaker subagent (or should they have been escalated)?
+- Estimated cost savings if mechanical work had been routed to a cheaper model tier
+
 ### Data Sources for Each Question
 
 | Question | Primary Source | Secondary Source |
@@ -761,6 +860,7 @@ See "Enforcement Reliability" in the Key Local Log Files section for the full sc
 | Command patterns | `streaming_debug.log` (grep for `"command":`) | - |
 | Work duplication | `streaming_debug.log` (grep for tool prompts/args) | `metrics_summary.json` tool counts |
 | Agent decisions | `agent_*/*/vote.json`, `coordination_events.json` | Logfire vote spans |
+| Eval vs implementation timing | `status.json`, `metrics_events.json` | `events.jsonl`, Logfire span durations |
 | Cost/tokens | `metrics_summary.json` | Logfire usage attributes |
 | Errors | `coordination_events.json`, `metrics_summary.json` | Logfire `is_exception=true` |
 | Enforcement | `status.json` → `agents[].reliability` | - |
@@ -785,6 +885,122 @@ cat agent_*/*/vote.json | jq '.reason'
 **Find timeout events:**
 ```bash
 cat coordination_events.json | jq '.events[] | select(.event_type == "agent_timeout")'
+```
+
+**Compute per-round evaluation vs implementation timing (sorted by agent):**
+```bash
+python - <<'PY'
+import json
+from collections import defaultdict
+from pathlib import Path
+
+base = Path(".")
+status = json.loads((base / "status.json").read_text())
+metrics = json.loads((base / "metrics_events.json").read_text())
+
+def m(seconds):
+    return seconds / 60.0
+
+def union(intervals):
+    if not intervals:
+        return 0.0
+    intervals = sorted(intervals)
+    cs, ce = intervals[0]
+    total = 0.0
+    for s, e in intervals[1:]:
+        if s <= ce:
+            ce = max(ce, e)
+        else:
+            total += ce - cs
+            cs, ce = s, e
+    total += ce - cs
+    return total
+
+segments = []
+for agent_id, agent_data in status["agents"].items():
+    rounds = sorted(agent_data.get("round_history", []), key=lambda r: r["start_time"])
+    for idx, r in enumerate(rounds, 1):
+        segments.append({
+            "agent": agent_id,
+            "seg_idx": idx,
+            "round_number": r["round_number"],
+            "round_type": r["round_type"],
+            "outcome": r["outcome"],
+            "start": float(r["start_time"]),
+            "end": float(r["end_time"]),
+            "duration": float(r["duration_ms"]) / 1000.0,
+        })
+
+by_segment = defaultdict(list)
+for t in metrics["tool_executions"]:
+    ts = float(t["start_time"])
+    te = float(t["end_time"])
+    candidates = [
+        s for s in segments
+        if s["agent"] == t["agent_id"] and not (te < s["start"] or ts > s["end"])
+    ]
+    if not candidates:
+        continue
+    best = max(
+        candidates,
+        key=lambda s: max(0.0, min(te, s["end"]) - max(ts, s["start"])),
+    )
+    by_segment[(best["agent"], best["seg_idx"])].append(t)
+
+rows = []
+for s in sorted(segments, key=lambda x: (x["agent"], x["start"])):
+    calls = sorted(by_segment.get((s["agent"], s["seg_idx"]), []), key=lambda t: t["start_time"])
+    submit = [t for t in calls if t["tool_name"] == "mcp__massgen_checklist__submit_checklist"]
+    propose = [t for t in calls if t["tool_name"] == "mcp__massgen_checklist__propose_improvements"]
+
+    # round-level tool wall time
+    ints = []
+    for t in calls:
+        ts, te = float(t["start_time"]), float(t["end_time"])
+        ov = max(0.0, min(te, s["end"]) - max(ts, s["start"]))
+        if ov > 0:
+            ints.append((max(ts, s["start"]), min(te, s["end"])))
+    tool_wall = union(ints)
+    non_tool = max(0.0, s["duration"] - tool_wall)
+
+    eval_pre = mid = impl_post = post_no_propose = 0.0
+    first_submit = submit[0] if submit else None
+    first_propose = propose[0] if propose else None
+
+    if first_submit:
+        eval_pre = max(0.0, min(s["end"], float(first_submit["start_time"])) - s["start"])
+    elif first_propose:
+        eval_pre = max(0.0, min(s["end"], float(first_propose["start_time"])) - s["start"])
+
+    if first_submit and first_propose:
+        mid = max(0.0, min(s["end"], float(first_propose["start_time"])) - float(first_submit["end_time"]))
+        impl_post = max(0.0, s["end"] - float(first_propose["end_time"]))
+    elif first_submit and not first_propose:
+        post_no_propose = max(0.0, s["end"] - float(first_submit["end_time"]))
+    elif first_propose and not first_submit:
+        impl_post = max(0.0, s["end"] - float(first_propose["end_time"]))
+
+    rows.append({
+        **s,
+        "tool_wall": tool_wall,
+        "non_tool": non_tool,
+        "submit_count": len(submit),
+        "propose_count": len(propose),
+        "eval_pre": eval_pre,
+        "mid": mid,
+        "impl_post": impl_post,
+        "post_no_propose": post_no_propose,
+    })
+
+print("| Agent | Segment | Round | Type | Outcome | Total (min) | Tool wall (min) | Non-tool (min) | Eval pre (min) | Checklist->Propose (min) | Improve post-propose (min) | Post-checklist no-propose (min) |")
+print("|---|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|")
+for r in rows:
+    print(
+        f"| {r['agent']} | {r['seg_idx']} | {r['round_number']} | {r['round_type']} | {r['outcome']} | "
+        f"{m(r['duration']):.2f} | {m(r['tool_wall']):.2f} | {m(r['non_tool']):.2f} | "
+        f"{m(r['eval_pre']):.2f} | {m(r['mid']):.2f} | {m(r['impl_post']):.2f} | {m(r['post_no_propose']):.2f} |"
+    )
+PY
 ```
 
 ### Report Template
@@ -838,6 +1054,31 @@ Save this report to `[log_dir]/turn_N/ANALYSIS_REPORT.md` (where N is the turn n
 | initial_answer | | | | | |
 | voting | | | | | |
 | presentation | | | | | |
+
+### Per-Round Timing (Sorted by Agent)
+| Agent | Segment | Round | Type | Outcome | Start-End | Total (min) | Tool wall (min) | Non-tool (min) |
+|-------|---------|-------|------|---------|-----------|-------------|-----------------|----------------|
+| agent_a | 1 | r0 | initial_answer | answer | HH:MM:SS-HH:MM:SS | | | |
+| ... | | | | | | | | |
+
+### Evaluation vs Implementation Timing (Checklist-Gated Phases)
+
+**Phase definitions used in this report:**
+- Evaluation = round start -> first `submit_checklist` start
+- Checklist->Propose = first `submit_checklist` end -> first `propose_improvements` start
+- Implementation = first `propose_improvements` end -> round end
+- Post-checklist (no propose) = first `submit_checklist` end -> round end (if no propose happened)
+
+| Scope | Evaluation (min / %) | Checklist->Propose (min / %) | Implementation (min / %) | Post-checklist no-propose (min / %) |
+|-------|-----------------------|-------------------------------|---------------------------|--------------------------------------|
+| All checklist-containing segments | | | | |
+| Only segments with propose_improvements | | | | |
+
+### Per-Round Evaluation vs Improvement Table
+| Agent | Segment | Round | Total (min) | Eval pre-checklist (min) | Checklist->Propose (min) | Improve post-propose (min) | Post-checklist no-propose (min) | Eval vs Improve verdict |
+|-------|---------|-------|-------------|----------------------------|---------------------------|-----------------------------|----------------------------------|-------------------------|
+| agent_c | 2 | r1 | | | | | | [which side dominates and why] |
+| ... | | | | | | | | |
 
 ### Top Bottlenecks
 1. [Operation] - X seconds (X% of total)
@@ -975,15 +1216,18 @@ Based on the analysis, the following issues are suggested for tracking. If you h
 
 ### Workflow for Generating Report
 
-1. **Read local files first** (metrics_summary.json, coordination_table.txt, coordination_events.json)
-2. **Query Logfire** for trace_id and timing data (if available; wait and retry on rate limits)
-3. **Analyze streaming_debug.log** for command patterns
-4. **Check vote.json files** for agent reasoning
-5. **Generate the report** using the template
-6. **Save to** `[log_dir]/turn_N/ANALYSIS_REPORT.md` (N = turn number being analyzed)
-7. **Print summary** to the user
-8. **Suggest Linear issues** based on findings - present to user for approval, if session is interactive
-9. **Create approved issues** in Linear with `log-analysis` label
+1. **Read local files first** (metrics_summary.json, coordination_table.txt, coordination_events.json, status.json, metrics_events.json)
+2. **Build per-round timing table sorted by agent**, including total/tool/non-tool time
+3. **Compute checklist phase windows** (`pre_checklist`, `checklist_to_propose`, `post_propose`, `post_checklist_no_propose`) and evaluation vs implementation percentages
+4. **For large logs, parallelize workflow analysis**: assign one subagent per agent/workflow lane and merge their timing tables
+5. **Query Logfire** for trace_id and timing data (if available; wait and retry on rate limits)
+6. **Analyze streaming_debug.log** for command patterns
+7. **Check vote.json files** for agent reasoning
+8. **Generate the report** using the template
+9. **Save to** `[log_dir]/turn_N/ANALYSIS_REPORT.md` (N = turn number being analyzed)
+10. **Print summary** to the user
+11. **Suggest Linear issues** based on findings - present to user for approval, if session is interactive
+12. **Create approved issues** in Linear with `log-analysis` label
 
 ## Part 7: Quick Reference - SQL Queries
 

@@ -2,7 +2,7 @@ agents:
 - id: agent_a
   backend:
     type: codex
-    model: gpt-5.3-codex
+    model: gpt-5.4
     cwd: workspace
     exclude_file_operation_mcps: false
 orchestrator:

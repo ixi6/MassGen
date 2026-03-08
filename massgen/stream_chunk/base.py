@@ -1,14 +1,14 @@
-# -*- coding: utf-8 -*-
 """
 Base classes for stream chunks.
 Provides abstract base class and enums for streaming responses.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class ChunkType(Enum):
@@ -65,13 +65,13 @@ class BaseStreamChunk(ABC):
     """
 
     type: ChunkType
-    source: Optional[str] = None
-    timestamp: Optional[float] = None
-    sequence_number: Optional[int] = None
+    source: str | None = None
+    timestamp: float | None = None
+    sequence_number: int | None = None
     display: bool = True  # Set to False for verbose diagnostic messages that shouldn't be shown in TUI
 
     @abstractmethod
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """
         Convert chunk to dictionary representation.
 

@@ -3,7 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 <!-- OPENSPEC:START -->
-# OpenSpec Instructions
+## OpenSpec Instructions
 
 These instructions are for AI assistants working in this project.
 
@@ -24,6 +24,8 @@ Keep this managed block so 'openspec update' can refresh the instructions.
 ## Planning
 When planning or creating specs, use AskUserQuestions to ensure you align with the user before creating full planning files.
 
+Also, please add a 'What's Next' section at the end of each plan. This will let us chain plans and clear context in a smart manner.
+
 ## Instruction File Parity
 
 `CLAUDE.md` and `AGENTS.md` are required to stay identical in this repo.
@@ -38,6 +40,10 @@ When planning or creating specs, use AskUserQuestions to ensure you align with t
 ## Implementation Guidelines
 
 After implementing any feature that involves passing parameters through multiple layers (e.g., backend -> manager -> component), always verify the full wiring chain end-to-end by tracing the parameter from its origin to its final usage site. Do not rely solely on unit tests passing -- add an integration smoke test or assertion that the parameter actually arrives at its destination, not just that the downstream logic works when the parameter is provided.
+
+For cross-backend tool-calling behavior (OpenAI-compatible, Claude, Gemini, Codex/Claude Code via MCP, etc.), treat backend-side argument normalization and schema validation as the source of truth. Prompt guidance can encourage correct argument shape, but correctness must not depend on prompt compliance alone (e.g., tolerate/detect accidentally stringified JSON argument payloads in adapters and tool gateways).
+
+When fixing `E501` in prompt text (especially triple-quoted system prompts), preserve the rendered prompt exactly. Wrap long source lines using escaped line continuation (`\` at end-of-line) so lint passes without introducing extra newline characters or changing prompt behavior.
 
 ## Anti-Patterns
 
@@ -168,6 +174,16 @@ base.py (abstract interface)
             +-- grok.py (xAI)
 ```
 
+## Backend Parity (Critical)
+
+When adding framework tooling capabilities (for example custom-tool lifecycle, background execution, or MCP behavior), do not assume one backend implementation covers all backends.
+
+- `base_with_custom_tool_and_mcp.py` changes cover its inheritors (`response`, `chat_completions`, `claude`, `gemini`, `grok`), but **not** native backends like `claude_code.py` and `codex.py`.
+- `claude_code.py` has its own SDK MCP wrapping path and requires explicit wiring for new framework custom tools.
+- `codex.py` relies on `massgen/mcp_tools/custom_tools_server.py` + `.codex/custom_tool_specs.json`; new custom/background capabilities must be wired through that path explicitly.
+- Any non-trivial tooling feature should add backend parity tests for at least: one `base_with_custom_tool_and_mcp` backend, `claude_code`, and `codex`.
+- **Workspace metadata directories**: Backends that create config directories in the workspace (e.g., `.codex/` for Codex) must add those directory names to the `_metadata_dirs` set in `FilesystemManager.save_snapshot()`'s `has_meaningful_content()` helper (`massgen/filesystem_manager/_filesystem_manager.py`). Otherwise, these metadata-only directories cause the final snapshot to copy a near-empty workspace instead of falling back to `snapshot_storage` with the real deliverables. Current exclusions: `.git`, `.codex`, `.massgen`, `memory`.
+
 ## Configuration
 
 YAML configs in `massgen/configs/` define agent setups. Structure:
@@ -195,6 +211,12 @@ Documentation must be consistent with implementation, concise, and usable. Full 
 ## Registry Updates
 
 Checklists for adding new models and new YAML parameters. Full guide: `docs/modules/registry.md`. Key rule: when adding YAML params, update both `base.py` and `_api_params_handler_base.py` exclusion lists.
+
+## Code-Based Tools and FRAMEWORK_MCPS
+
+When `enable_code_based_tools` is on (CodeAct paradigm), MCP tools are converted to Python wrapper scripts that agents call via filesystem execution — **unless** the MCP server name is in `FRAMEWORK_MCPS` (`massgen/filesystem_manager/_constants.py`). Framework MCPs stay as direct protocol tools sent to the model.
+
+**When adding a new MCP server that must be called directly by the model** (not via code execution), add its server name to `FRAMEWORK_MCPS`. If you forget, the tool will silently work but only through the code-based path — the model won't see it as a native tool call. This is critical for tools like `massgen_checklist` where the orchestrator depends on the tool result to control agent flow.
 
 ## CodeRabbit Integration
 
@@ -234,6 +256,27 @@ uv run pytest massgen/tests/integration -q
 
 Markers: `@pytest.mark.integration` (opt-in: `--run-integration`), `@pytest.mark.live_api` (opt-in: `--run-live-api`), `@pytest.mark.expensive`, `@pytest.mark.docker`, `@pytest.mark.asyncio`.
 
+### AI Test Run Protocol (Required)
+
+When running pytest as an AI agent, always capture full output to a log and print explicit completion markers. This prevents accidental duplicate reruns caused by partial/streamed output.
+
+```bash
+# Run once and emit explicit completion markers
+uv run pytest massgen/tests/ -q --tb=short -ra --color=no > /tmp/pytest_ai.log 2>&1
+rc=$?
+echo "__PYTEST_EXIT_CODE:$rc"
+echo "__PYTEST_LOG:/tmp/pytest_ai.log"
+
+# Return concise but fully explainable output
+tail -n 80 /tmp/pytest_ai.log
+rg -n "^(FAILED|ERROR) " /tmp/pytest_ai.log | tail -n 20
+```
+
+Interpretation rules:
+- `__PYTEST_EXIT_CODE:0` means pytest completed successfully.
+- Any non-zero exit code means pytest completed with failures/errors (not "still running").
+- Never use `pytest ... | grep ...` as the primary execution command, since it can hide context and make completion detection unreliable.
+
 ## Key Files for New Contributors
 
 - Entry point: `massgen/cli.py`
@@ -257,6 +300,8 @@ Detailed documentation for specific modules lives in `docs/modules/`. **Always c
 - `docs/modules/subagents.md` - Subagent spawning, logging architecture, TUI integration
 - `docs/modules/interactive_mode.md` - Interactive mode architecture, launch_run MCP, system prompts, project workspace
 - `docs/modules/worktrees.md` - Worktree lifecycle, branch naming, scratch archives, system prompt integration
+- `docs/modules/composition.md` - **Composable primitives, phase architecture, domain-specific checklist gates** — how personas, eval criteria, decomposition, and planning compose for maximum quality
+- `docs/modules/coordination_workflow.md` - **Round lifecycle and checklist workflow** — the implement → evaluate → submit cycle, when to call `submit_checklist` vs `new_answer`, and why agents must not re-evaluate within a round
 
 ## MassGen Skills
 

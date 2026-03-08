@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Base interface for native hook adapters.
 
 This module provides the abstract base class for adapting MassGen's hook framework
@@ -8,8 +7,9 @@ through MassGen's GeneralHookManager.
 """
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..hooks import GeneralHookManager, HookEvent, HookResult, HookType, PatternHook
@@ -59,7 +59,7 @@ class NativeHookAdapter(ABC):
         self,
         hook: "PatternHook",
         hook_type: "HookType",
-        context_factory: Optional[Callable[[], Dict[str, Any]]] = None,
+        context_factory: Callable[[], dict[str, Any]] | None = None,
     ) -> Any:
         """Convert a MassGen hook to native format.
 
@@ -83,9 +83,9 @@ class NativeHookAdapter(ABC):
     def build_native_hooks_config(
         self,
         hook_manager: "GeneralHookManager",
-        agent_id: Optional[str] = None,
-        context_factory: Optional[Callable[[], Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        agent_id: str | None = None,
+        context_factory: Callable[[], dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Build complete native hooks configuration from GeneralHookManager.
 
         Iterates through all hooks registered in the GeneralHookManager,
@@ -104,8 +104,8 @@ class NativeHookAdapter(ABC):
     @abstractmethod
     def merge_native_configs(
         self,
-        *configs: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        *configs: dict[str, Any],
+    ) -> dict[str, Any]:
         """Merge multiple native hook configs into one.
 
         Used to combine different sources of hooks:
@@ -122,9 +122,9 @@ class NativeHookAdapter(ABC):
 
     @staticmethod
     def create_hook_event_from_native(
-        native_input: Dict[str, Any],
+        native_input: dict[str, Any],
         hook_type: "HookType",
-        context: Dict[str, Any],
+        context: dict[str, Any],
     ) -> "HookEvent":
         """Create MassGen HookEvent from native input format.
 
@@ -165,7 +165,7 @@ class NativeHookAdapter(ABC):
     def convert_hook_result_to_native(
         result: "HookResult",
         hook_type: "HookType",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Convert MassGen HookResult to native response format.
 
         This is a default implementation that returns a generic dict.

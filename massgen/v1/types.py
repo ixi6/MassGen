@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 MassGen System Types
 
@@ -8,7 +7,7 @@ used throughout the MassGen framework.
 
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -46,14 +45,14 @@ class VoteRecord:
 class ModelConfig:
     """Configuration for agent model parameters."""
 
-    model: Optional[str] = None
-    tools: Optional[List[str]] = None
+    model: str | None = None
+    tools: list[str] | None = None
     max_retries: int = 10  # max retries for each LLM call
     max_rounds: int = 10  # max round for task
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    inference_timeout: Optional[float] = 180  # seconds
+    max_tokens: int | None = None
+    temperature: float | None = None
+    top_p: float | None = None
+    inference_timeout: float | None = 180  # seconds
     stream: bool = True  # whether to stream the response
 
 
@@ -62,8 +61,8 @@ class TaskInput:
     """Represents a task to be processed by the MassGen system."""
 
     question: str
-    context: Dict[str, Any] = field(default_factory=dict)  # may support more information in the future, like images
-    task_id: Optional[str] = None
+    context: dict[str, Any] = field(default_factory=dict)  # may support more information in the future, like images
+    task_id: str | None = None
 
 
 @dataclass
@@ -74,12 +73,12 @@ class SystemState:
     - completed: the representative agent has presented the solution and the task is completed
     """
 
-    task: Optional[TaskInput] = None
+    task: TaskInput | None = None
     phase: str = "collaboration"  # "collaboration", "debate", "completed"
-    start_time: Optional[float] = None
-    end_time: Optional[float] = None
+    start_time: float | None = None
+    end_time: float | None = None
     consensus_reached: bool = False
-    representative_agent_id: Optional[int] = None
+    representative_agent_id: int | None = None
 
 
 @dataclass
@@ -89,23 +88,23 @@ class AgentState:
     agent_id: int
     status: str = "working"  # "working", "voted", "failed"
     curr_answer: str = ""  # the latest answer of the agent's work
-    updated_answers: List[AnswerRecord] = field(default_factory=list)  # a list of answer records
-    curr_vote: Optional[VoteRecord] = None  # Which agent's solution this agent voted for
-    cast_votes: List[VoteRecord] = field(default_factory=list)  # a list of vote records
-    seen_updates_timestamps: Dict[int, float] = field(default_factory=dict)  # agent_id -> last_seen_timestamp
-    chat_history: List[Dict[str, Any]] = field(default_factory=list)  # a list of conversation records
+    updated_answers: list[AnswerRecord] = field(default_factory=list)  # a list of answer records
+    curr_vote: VoteRecord | None = None  # Which agent's solution this agent voted for
+    cast_votes: list[VoteRecord] = field(default_factory=list)  # a list of vote records
+    seen_updates_timestamps: dict[int, float] = field(default_factory=dict)  # agent_id -> last_seen_timestamp
+    chat_history: list[dict[str, Any]] = field(default_factory=list)  # a list of conversation records
     chat_round: int = 0  # the number of chat rounds the agent has participated in
-    execution_start_time: Optional[float] = None
-    execution_end_time: Optional[float] = None
+    execution_start_time: float | None = None
+    execution_end_time: float | None = None
 
     @property
-    def execution_time(self) -> Optional[float]:
+    def execution_time(self) -> float | None:
         """Calculate execution time if both start and end times are available."""
         if self.execution_start_time and self.execution_end_time:
             return self.execution_end_time - self.execution_start_time
         return None
 
-    def add_update(self, answer: str, timestamp: Optional[float] = None):
+    def add_update(self, answer: str, timestamp: float | None = None):
         """Add an update to the agent's history."""
         if timestamp is None:
             timestamp = time.time()
@@ -118,13 +117,13 @@ class AgentState:
         self.updated_answers.append(record)
         self.curr_answer = answer
 
-    def mark_updates_seen(self, agent_updates: Dict[int, float]):
+    def mark_updates_seen(self, agent_updates: dict[int, float]):
         """Mark updates from other agents as seen."""
         for agent_id, timestamp in agent_updates.items():
             if agent_id != self.agent_id:  # Don't track own updates
                 self.seen_updates_timestamps[agent_id] = timestamp
 
-    def has_unseen_updates(self, other_agent_updates: Dict[int, float]) -> bool:
+    def has_unseen_updates(self, other_agent_updates: dict[int, float]) -> bool:
         """Check if there are unseen updates from other agents."""
         for agent_id, timestamp in other_agent_updates.items():
             if agent_id != self.agent_id:  # Don't check own updates
@@ -139,9 +138,9 @@ class AgentResponse:
     """Response from an agent's process_message function."""
 
     text: str
-    code: List[str] = field(default_factory=list)
-    citations: List[Dict[str, Any]] = field(default_factory=list)
-    function_calls: List[Dict[str, Any]] = field(default_factory=list)
+    code: list[str] = field(default_factory=list)
+    citations: list[dict[str, Any]] = field(default_factory=list)
+    function_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -150,12 +149,12 @@ class LogEntry:
 
     timestamp: float
     event_type: str  # e.g., "agent_answer_update", "voting", "phase_change", etc.
-    agent_id: Optional[int]
+    agent_id: int | None
     phase: str
-    data: Dict[str, Any]
-    session_id: Optional[str] = None
+    data: dict[str, Any]
+    session_id: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
         return asdict(self)
 
@@ -167,7 +166,7 @@ class StreamingDisplayConfig:
     display_enabled: bool = True
     max_lines: int = 10
     save_logs: bool = True
-    stream_callback: Optional[Any] = None  # Callable, but avoid circular imports
+    stream_callback: Any | None = None  # Callable, but avoid circular imports
 
 
 @dataclass
@@ -175,7 +174,7 @@ class LoggingConfig:
     """Configuration for logging system."""
 
     log_dir: str = "logs"
-    session_id: Optional[str] = None
+    session_id: str | None = None
     non_blocking: bool = False
 
 
@@ -209,10 +208,10 @@ class MassConfig:
     """Complete MassGen system configuration."""
 
     orchestrator: OrchestratorConfig = field(default_factory=OrchestratorConfig)
-    agents: List[AgentConfig] = field(default_factory=list)
+    agents: list[AgentConfig] = field(default_factory=list)
     streaming_display: StreamingDisplayConfig = field(default_factory=StreamingDisplayConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    task: Optional[Dict[str, Any]] = None  # Task-specific configuration
+    task: dict[str, Any] | None = None  # Task-specific configuration
 
     def validate(self) -> bool:
         """Validate the complete configuration."""

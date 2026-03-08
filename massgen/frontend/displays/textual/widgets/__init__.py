@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Textual widgets for the MassGen TUI.
 
@@ -25,6 +24,7 @@ from .modals import (  # Browser modals; Status modals; Coordination modals; Con
     CostBreakdownModal,
     DecompositionGenerationModal,
     DecompositionSubtasksModal,
+    EvaluationCriteriaModal,
     FileInspectionModal,
     GitDiffReviewModal,
     KeyboardShortcutsModal,
@@ -64,6 +64,7 @@ __all__ = [
     # Content modals
     "ContextModal",
     "ConversationHistoryModal",
+    "EvaluationCriteriaModal",
     "TextContentModal",
     "TurnDetailModal",
     # Input modals

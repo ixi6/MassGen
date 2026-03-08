@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for multi-turn session sharing functionality.
 
 Tests the enhanced sharing capabilities including:

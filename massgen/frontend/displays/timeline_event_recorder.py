@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Timeline event recorder for events.jsonl parity debugging.
 
 Uses TimelineEventAdapter with a mock panel/timeline so that ALL filtering,
@@ -8,7 +7,8 @@ dedup, and special-casing from the live TUI is applied identically.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from massgen.events import MassGenEvent
 
@@ -23,10 +23,10 @@ class _MockTimeline:
 
     def __init__(self, line_callback: Callable[[str], None]) -> None:
         self._cb = line_callback
-        self._tools: Dict[str, Any] = {}
-        self._batches: Dict[str, List[Any]] = {}
-        self._tool_to_batch: Dict[str, str] = {}
-        self._deferred_round_banners: Dict[int, tuple[str, str]] = {}
+        self._tools: dict[str, Any] = {}
+        self._batches: dict[str, list[Any]] = {}
+        self._tool_to_batch: dict[str, str] = {}
+        self._deferred_round_banners: dict[int, tuple[str, str]] = {}
         self._shown_round_banners: set[int] = set()
 
     # --- Text / separators ---
@@ -56,7 +56,7 @@ class _MockTimeline:
             self._deferred_round_banners.pop(round_number, None)
         self._cb(format_separator(label, round_number, subtitle))
 
-    def defer_round_banner(self, round_number: int, label: str, subtitle: Optional[str] = None) -> None:
+    def defer_round_banner(self, round_number: int, label: str, subtitle: str | None = None) -> None:
         if round_number in self._shown_round_banners:
             return
         self._deferred_round_banners[round_number] = (label, subtitle or "")
@@ -89,7 +89,7 @@ class _MockTimeline:
         if prev and prev[0].status != tool_data.status:
             self._cb(format_tool(tool_data, rn, "update_standalone", server_name=getattr(tool_data, "server_name", None)))
 
-    def get_tool(self, tool_id: str) -> Optional[Any]:
+    def get_tool(self, tool_id: str) -> Any | None:
         entry = self._tools.get(tool_id)
         return entry[0] if entry else None
 
@@ -133,7 +133,7 @@ class _MockTimeline:
         if not prev or prev[0].status != tool_data.status:
             self._cb(format_tool(tool_data, rn, "update_batch", batch_id=batch_id, server_name=getattr(tool_data, "server_name", None)))
 
-    def get_tool_batch(self, tool_id: str) -> Optional[str]:
+    def get_tool_batch(self, tool_id: str) -> str | None:
         return self._tool_to_batch.get(tool_id)
 
     # --- No-ops for widget-specific calls ---
@@ -151,7 +151,7 @@ class _MockTimeline:
 class _MockPanel:
     """Minimal mock panel that provides a timeline and agent_id."""
 
-    def __init__(self, timeline: _MockTimeline, agent_id: Optional[str] = None) -> None:
+    def __init__(self, timeline: _MockTimeline, agent_id: str | None = None) -> None:
         self._timeline = timeline
         self.agent_id = agent_id
 
@@ -181,7 +181,7 @@ class TimelineEventRecorder:
         self,
         line_callback: Callable[[str], None],
         *,
-        agent_ids: Optional[set[str]] = None,
+        agent_ids: set[str] | None = None,
     ) -> None:
         self._line_callback = line_callback
         self._agent_ids = agent_ids

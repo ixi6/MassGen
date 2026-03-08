@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """System message builder for MassGen orchestration.
 
 This module provides the SystemMessageBuilder class which centralizes all system
@@ -9,8 +8,9 @@ This was extracted from orchestrator.py to improve separation of concerns and
 reduce coupling between orchestration logic and prompt construction.
 """
 
+import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from loguru import logger
 
@@ -30,6 +30,7 @@ from massgen.system_prompt_sections import (
     GrokGuidanceSection,
     MemorySection,
     MultimodalToolsSection,
+    NoveltyPressureSection,
     OutputFirstVerificationSection,
     PlanningModeSection,
     PostEvaluationSection,
@@ -62,10 +63,10 @@ class SystemMessageBuilder:
         self,
         config,  # CoordinationConfig type
         message_templates,  # MessageTemplates type
-        agents: Dict[str, Any],  # Dict[str, ChatAgent]
-        snapshot_storage: Optional[str] = None,
-        session_id: Optional[str] = None,
-        agent_temporary_workspace: Optional[str] = None,
+        agents: dict[str, Any],  # Dict[str, ChatAgent]
+        snapshot_storage: str | None = None,
+        session_id: str | None = None,
+        agent_temporary_workspace: str | None = None,
     ):
         """Initialize the system message builder.
 
@@ -90,11 +91,50 @@ class SystemMessageBuilder:
         coord = getattr(self.config, "coordination_config", None)
         return bool(coord and getattr(coord, "enable_changedoc", True))
 
+    @property
+    def _learning_capture_mode(self) -> str:
+        """Return configured learning capture mode."""
+        coord = getattr(self.config, "coordination_config", None)
+        return getattr(coord, "learning_capture_mode", "round")
+
+    @property
+    def _round_learning_capture_enabled(self) -> bool:
+        """Return True when round-time learning capture should be enabled.
+
+        In final_only mode, if final presentation is skipped (refinement-off flow),
+        we must still enable round-time capture so there is a place to write
+        evolving skills and memory.
+        """
+        if self._learning_capture_mode == "round":
+            return True
+        if self._learning_capture_mode == "final_only":
+            coord = getattr(self.config, "coordination_config", None)
+            disable_fallback = getattr(
+                coord,
+                "disable_final_only_round_capture_fallback",
+                False,
+            )
+            if disable_fallback is True:
+                return False
+            if not getattr(self.config, "skip_final_presentation", False):
+                return False
+            if getattr(self.config, "skip_voting", False):
+                return True
+            return getattr(self.config, "final_answer_strategy", None) not in {"winner_present", "synthesize"}
+        return False
+
+    @property
+    def _round_verification_capture_enabled(self) -> bool:
+        """Return True when round-time verification replay capture should be enabled."""
+        if self._round_learning_capture_enabled:
+            return True
+        return self._learning_capture_mode == "verification_and_final_only"
+
     @staticmethod
     def _filter_skills_by_enabled_names(
-        all_skills: List[Dict[str, Any]],
-        enabled_skill_names: Optional[List[str]],
-    ) -> List[Dict[str, Any]]:
+        all_skills: list[dict[str, Any]],
+        enabled_skill_names: list[str] | None,
+    ) -> list[dict[str, Any]]:
         """Filter discovered skills using an optional runtime allowlist.
 
         Args:
@@ -113,37 +153,59 @@ class SystemMessageBuilder:
         if not enabled:
             return []
 
-        filtered: List[Dict[str, Any]] = []
+        filtered: list[dict[str, Any]] = []
         for skill in all_skills:
             skill_name = str(skill.get("name", "")).strip().lower()
             if skill_name in enabled:
                 filtered.append(skill)
         return filtered
 
+    def _discover_specialized_subagents(self, allowed_types: list[str] | None = None):
+        """Discover specialized subagent types from disk (cached per builder instance)."""
+        cache_key = tuple(sorted(allowed_types)) if allowed_types is not None else None
+        if not hasattr(self, "_specialized_subagents_cache"):
+            self._specialized_subagents_cache = {}
+        if cache_key not in self._specialized_subagents_cache:
+            from massgen.subagent.type_scanner import scan_subagent_types
+
+            result = scan_subagent_types(allowed_types=allowed_types)
+            self._specialized_subagents_cache[cache_key] = result
+            if result:
+                logger.info(
+                    f"[SystemMessageBuilder] Discovered {len(result)} " f"specialized subagent types: {[t.name for t in result]}",
+                )
+        return self._specialized_subagents_cache[cache_key]
+
     def build_coordination_message(
         self,
         agent,  # ChatAgent
         agent_id: str,
-        answers: Optional[Dict[str, str]],
+        answers: dict[str, str] | None,
         planning_mode_enabled: bool,
         use_skills: bool,
         enable_memory: bool,
         enable_task_planning: bool,
-        previous_turns: List[Dict[str, Any]],
-        human_qa_history: Optional[List[Dict[str, str]]] = None,
+        previous_turns: list[dict[str, Any]],
+        human_qa_history: list[dict[str, str]] | None = None,
         vote_only: bool = False,
-        agent_mapping: Optional[Dict[str, str]] = None,
-        voting_sensitivity_override: Optional[str] = None,
-        voting_threshold: Optional[int] = None,
+        agent_mapping: dict[str, str] | None = None,
+        voting_sensitivity_override: str | None = None,
+        voting_threshold: int | None = None,
         checklist_require_gap_report: bool = True,
+        gap_report_mode: str = "changedoc",
         answers_used: int = 0,
-        answer_cap: Optional[int] = None,
+        answer_cap: int | None = None,
         coordination_mode: str = "voting",
-        agent_subtask: Optional[str] = None,
-        worktree_paths: Optional[Dict[str, str]] = None,
-        branch_name: Optional[str] = None,
-        other_branches: Optional[Dict[str, str]] = None,
-        branch_diff_summaries: Optional[Dict[str, str]] = None,
+        agent_subtask: str | None = None,
+        worktree_paths: dict[str, str] | None = None,
+        branch_name: str | None = None,
+        other_branches: dict[str, str] | None = None,
+        branch_diff_summaries: dict[str, str] | None = None,
+        novelty_pressure_data: dict[str, Any] | None = None,
+        custom_checklist_items: list[str] | None = None,
+        item_categories: dict[str, str] | None = None,
+        item_verify_by: dict[str, str] | None = None,
+        builder_enabled: bool = True,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -218,7 +280,11 @@ class SystemMessageBuilder:
                     answers_used=answers_used,
                     answer_cap=answer_cap,
                     checklist_require_gap_report=checklist_require_gap_report,
+                    gap_report_mode=gap_report_mode,
                     has_changedoc=changedoc_enabled,
+                    custom_checklist_items=custom_checklist_items,
+                    item_categories=item_categories,
+                    item_verify_by=item_verify_by,
                 ),
             )
         else:
@@ -226,6 +292,15 @@ class SystemMessageBuilder:
             voting_sensitivity = voting_sensitivity_override or self.message_templates._voting_sensitivity
             answer_novelty_requirement = self.message_templates._answer_novelty_requirement
             round_number = len(previous_turns) + 1 if previous_turns else 1
+
+            improvements_cfg = dict(
+                getattr(
+                    getattr(self.config, "coordination_config", None),
+                    "improvements",
+                    {},
+                )
+                or {},
+            )
             builder.add_section(
                 EvaluationSection(
                     voting_sensitivity=voting_sensitivity,
@@ -234,11 +309,44 @@ class SystemMessageBuilder:
                     round_number=round_number,
                     voting_threshold=voting_threshold,
                     checklist_require_gap_report=checklist_require_gap_report,
+                    gap_report_mode=gap_report_mode,
                     answers_used=answers_used,
                     answer_cap=answer_cap,
                     has_changedoc=changedoc_enabled,
+                    custom_checklist_items=custom_checklist_items,
+                    item_categories=item_categories,
+                    item_verify_by=item_verify_by,
+                    has_existing_answers=bool(answers) or answers_used > 0,
+                    builder_enabled=builder_enabled,
+                    improvements_cfg=improvements_cfg,
+                    round_evaluator_before_checklist=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "round_evaluator_before_checklist",
+                        False,
+                    ),
+                    orchestrator_managed_round_evaluator=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "orchestrator_managed_round_evaluator",
+                        False,
+                    ),
                 ),
             )
+
+        # PRIORITY 10 (MEDIUM): Novelty Pressure (conditional)
+        if novelty_pressure_data is not None:
+            novelty_injection = getattr(
+                self.config.coordination_config,
+                "novelty_injection",
+                "none",
+            )
+            if novelty_injection != "none":
+                builder.add_section(
+                    NoveltyPressureSection(
+                        novelty_level=novelty_injection,
+                        consecutive_incremental_rounds=novelty_pressure_data.get("consecutive", 0),
+                        restart_count=novelty_pressure_data.get("restart_count", 0),
+                    ),
+                )
 
         # PRIORITY 5 (HIGH): Skills - Must be visible early
         if use_skills:
@@ -301,7 +409,13 @@ class SystemMessageBuilder:
                 "temp_workspace_memories": temp_workspace_memories,
                 "archived_memories": archived_memories,
             }
-            builder.add_section(MemorySection(memory_config))
+            builder.add_section(
+                MemorySection(
+                    memory_config,
+                    read_only=not self._round_learning_capture_enabled,
+                    allow_verification_capture=self._round_verification_capture_enabled,
+                ),
+            )
             archived_count = len(archived_memories.get("short_term", {})) + len(archived_memories.get("long_term", {}))
             logger.info(
                 f"[SystemMessageBuilder] Added memory section "
@@ -421,8 +535,32 @@ class SystemMessageBuilder:
                     workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
                 # Get max concurrent from config, default to 3
                 max_concurrent = getattr(self.config.coordination_config, "subagent_max_concurrent", 3)
-                builder.add_section(SubagentSection(workspace_path, max_concurrent))
-                logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent})")
+                default_timeout = getattr(self.config.coordination_config, "subagent_default_timeout", 300)
+                # Discover specialized subagent types from disk, filtered by config
+                from massgen.subagent.type_scanner import DEFAULT_SUBAGENT_TYPES
+
+                _st_cfg = getattr(self.config.coordination_config, "subagent_types", None)
+                _allowed = _st_cfg if _st_cfg is not None else DEFAULT_SUBAGENT_TYPES
+                specialized_subagents = self._discover_specialized_subagents(allowed_types=_allowed)
+                builder.add_section(
+                    SubagentSection(
+                        workspace_path,
+                        max_concurrent,
+                        default_timeout=default_timeout,
+                        specialized_subagents=specialized_subagents,
+                        round_evaluator_before_checklist=getattr(
+                            self.config.coordination_config,
+                            "round_evaluator_before_checklist",
+                            False,
+                        ),
+                        orchestrator_managed_round_evaluator=getattr(
+                            self.config.coordination_config,
+                            "orchestrator_managed_round_evaluator",
+                            False,
+                        ),
+                    ),
+                )
+                logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent}, specialized_types: {len(specialized_subagents)})")
 
         # PRIORITY 10 (MEDIUM): Task Context (when multimodal tools OR subagents are enabled)
         # This instructs agents to create CONTEXT.md before using tools that make external API calls
@@ -441,14 +579,23 @@ class SystemMessageBuilder:
                 and agent.backend.filesystem_manager
                 and agent.backend.filesystem_manager.cwd
             )
-            builder.add_section(TaskPlanningSection(filesystem_mode=filesystem_mode, decomposition_mode=is_decomposition))
+            # specialized_subagents is only defined when enable_subagents is True;
+            # ternary is safe here because Python short-circuits on the False branch.
+            _tp_subagents = specialized_subagents if enable_subagents else []
+            builder.add_section(
+                TaskPlanningSection(
+                    filesystem_mode=filesystem_mode,
+                    decomposition_mode=is_decomposition,
+                    specialized_subagents=_tp_subagents,
+                ),
+            )
 
         # PRIORITY 10 (MEDIUM): Evolving Skills (when auto-discovery AND task planning are both enabled)
         # Both gates must be true: evolving skills are structured work plans that complement task planning
         auto_discover_enabled = False
         if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
             auto_discover_enabled = agent.backend.config.get("auto_discover_custom_tools", False)
-        if auto_discover_enabled and enable_task_planning:
+        if auto_discover_enabled and enable_task_planning and self._round_learning_capture_enabled:
             # Check for plan.json to provide plan-aware guidance
             plan_context = None
             if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
@@ -493,7 +640,7 @@ class SystemMessageBuilder:
             from massgen.system_prompt_sections import ChangedocSection
 
             has_prior_answers = bool(answers)
-            builder.add_section(ChangedocSection(has_prior_answers=has_prior_answers))
+            builder.add_section(ChangedocSection(has_prior_answers=has_prior_answers, gap_report_mode=gap_report_mode))
             logger.info(f"[SystemMessageBuilder] Added changedoc instructions for {agent_id} (prior_answers={has_prior_answers})")
 
         # Build and return the complete structured system prompt
@@ -502,18 +649,16 @@ class SystemMessageBuilder:
     def build_presentation_message(
         self,
         agent,  # ChatAgent
-        all_answers: Dict[str, str],
-        previous_turns: List[Dict[str, Any]],
-        enable_image_generation: bool = False,
-        enable_audio_generation: bool = False,
+        all_answers: dict[str, str],
+        previous_turns: list[dict[str, Any]],
         enable_file_generation: bool = False,
-        enable_video_generation: bool = False,
         has_irreversible_actions: bool = False,
         enable_command_execution: bool = False,
         docker_mode: bool = False,
         enable_sudo: bool = False,
         concurrent_tool_execution: bool = False,
-        agent_mapping: Optional[Dict[str, str]] = None,
+        agent_mapping: dict[str, str] | None = None,
+        artifact_type: str | None = None,
     ) -> str:
         """Build system message for final presentation phase.
 
@@ -524,10 +669,7 @@ class SystemMessageBuilder:
             agent: The presenting agent
             all_answers: All answers from coordination phase
             previous_turns: List of previous turn data for filesystem context
-            enable_image_generation: Whether image generation is enabled
-            enable_audio_generation: Whether audio generation is enabled
             enable_file_generation: Whether file generation is enabled
-            enable_video_generation: Whether video generation is enabled
             has_irreversible_actions: Whether agent has write access
             enable_command_execution: Whether command execution is enabled
             docker_mode: Whether commands run in Docker
@@ -545,14 +687,10 @@ class SystemMessageBuilder:
         if agent_system_message is None:
             agent_system_message = ""
 
-        # Get presentation instructions from message_templates
-        # (This contains special logic for image/audio/file/video generation)
+        # Get presentation instructions from message_templates.
         presentation_instructions = self.message_templates.final_presentation_system_message(
             original_system_message=agent_system_message,
-            enable_image_generation=enable_image_generation,
-            enable_audio_generation=enable_audio_generation,
             enable_file_generation=enable_file_generation,
-            enable_video_generation=enable_video_generation,
             has_irreversible_actions=has_irreversible_actions,
             enable_command_execution=enable_command_execution,
         )
@@ -613,6 +751,9 @@ Review these and consolidate into a single `SKILL.md` in the output directory:
 - **## Expected Outputs**: What this workflow produces
 - **## Learnings**: What worked well, what didn't, tips for future use
 
+If `tasks/changedoc.md` exists, use it as the authoritative source for decision rationale and learnings
+when synthesizing the final `SKILL.md`.
+
 This makes the work reusable for similar future tasks."""
                 sections_content.append(evolving_skill_instructions)
                 logger.info("[SystemMessageBuilder] Added evolving skill output instructions for presentation")
@@ -627,6 +768,26 @@ This makes the work reusable for similar future tasks."""
                 sections_content.append(_CHANGEDOC_PRESENTER_INSTRUCTIONS)
                 logger.info("[SystemMessageBuilder] Added changedoc consolidation instructions for presentation")
 
+            # Add memory consolidation instructions if memory mode is enabled
+            coordination_config = getattr(self.config, "coordination_config", None)
+            memory_enabled = bool(
+                coordination_config and getattr(coordination_config, "enable_memory_filesystem_mode", False),
+            )
+            if memory_enabled:
+                from massgen.system_prompt_sections import (
+                    _MEMORY_PRESENTER_INSTRUCTIONS,
+                )
+
+                sections_content.append(_MEMORY_PRESENTER_INSTRUCTIONS)
+                logger.info("[SystemMessageBuilder] Added memory consolidation instructions for presentation")
+
+            # Add spec compliance instructions if executing against a spec
+            if artifact_type == "spec":
+                from massgen.system_prompt_sections import _SPEC_PRESENTER_INSTRUCTIONS
+
+                sections_content.append(_SPEC_PRESENTER_INSTRUCTIONS)
+                logger.info("[SystemMessageBuilder] Added spec compliance instructions for presentation")
+
             # Combine: filesystem sections + presentation instructions
             filesystem_content = "\n\n".join(sections_content)
             return f"{filesystem_content}\n\n## Instructions\n{presentation_instructions}"
@@ -640,15 +801,33 @@ This makes the work reusable for similar future tasks."""
 
                 presentation_instructions += _CHANGEDOC_PRESENTER_INSTRUCTIONS
 
+            # Add memory consolidation instructions if memory mode is enabled (no filesystem case)
+            coordination_config = getattr(self.config, "coordination_config", None)
+            memory_enabled = bool(
+                coordination_config and getattr(coordination_config, "enable_memory_filesystem_mode", False),
+            )
+            if memory_enabled:
+                from massgen.system_prompt_sections import (
+                    _MEMORY_PRESENTER_INSTRUCTIONS,
+                )
+
+                presentation_instructions += _MEMORY_PRESENTER_INSTRUCTIONS
+
+            # Add spec compliance instructions if executing against a spec
+            if artifact_type == "spec":
+                from massgen.system_prompt_sections import _SPEC_PRESENTER_INSTRUCTIONS
+
+                presentation_instructions += _SPEC_PRESENTER_INSTRUCTIONS
+
             # No filesystem - just return presentation instructions
             return presentation_instructions
 
     def build_post_evaluation_message(
         self,
         agent,  # ChatAgent
-        all_answers: Dict[str, str],
-        previous_turns: List[Dict[str, Any]],
-        agent_mapping: Optional[Dict[str, str]] = None,
+        all_answers: dict[str, str],
+        previous_turns: list[dict[str, Any]],
+        agent_mapping: dict[str, str] | None = None,
     ) -> str:
         """Build system message for post-evaluation phase.
 
@@ -714,7 +893,7 @@ This makes the work reusable for similar future tasks."""
         return "\n\n".join(parts)
 
     @staticmethod
-    def _get_tool_category_overrides(agent) -> Dict[str, str]:
+    def _get_tool_category_overrides(agent) -> dict[str, str]:
         """Get tool_category_overrides for an agent's backend."""
         from massgen.backend.native_tool_mixin import NativeToolBackendMixin
 
@@ -725,15 +904,15 @@ This makes the work reusable for similar future tasks."""
     def _build_filesystem_sections(
         self,
         agent,  # ChatAgent
-        all_answers: Dict[str, str],
-        previous_turns: List[Dict[str, Any]],
+        all_answers: dict[str, str],
+        previous_turns: list[dict[str, Any]],
         enable_command_execution: bool,
         docker_mode: bool = False,
         enable_sudo: bool = False,
         concurrent_tool_execution: bool = False,
-        agent_mapping: Optional[Dict[str, str]] = None,
+        agent_mapping: dict[str, str] | None = None,
         decomposition_mode: bool = False,
-    ) -> Tuple[Any, Any, Optional[Any]]:  # Tuple[FilesystemOperationsSection, FilesystemBestPracticesSection, Optional[CommandExecutionSection]]
+    ) -> tuple[Any, Any, Any | None]:  # Tuple[FilesystemOperationsSection, FilesystemBestPracticesSection, Optional[CommandExecutionSection]]
         """Build filesystem-related sections.
 
         This consolidates the duplicated logic across all three builder methods
@@ -807,7 +986,7 @@ This makes the work reusable for similar future tasks."""
 
         return fs_ops, fs_best, cmd_exec
 
-    def _get_all_memories(self) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    def _get_all_memories(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """Read all memories from all agents' workspaces.
 
         Returns:
@@ -855,7 +1034,7 @@ This makes the work reusable for similar future tasks."""
 
         return short_term_memories, long_term_memories
 
-    def _load_archived_memories(self) -> Dict[str, Dict[str, Any]]:
+    def _load_archived_memories(self) -> dict[str, dict[str, Any]]:
         """Load all archived memories from sessions directory with deduplication.
 
         Deduplicate by filename - for memories with the same name across multiple archives,
@@ -875,7 +1054,7 @@ This makes the work reusable for similar future tasks."""
 
         # Track all memories by filename with metadata for deduplication
         # Format: {tier: {filename: [{"content": str, "source": str, "timestamp": float, "path": Path}, ...]}}
-        all_memories: Dict[str, Dict[str, list]] = {"short_term": {}, "long_term": {}}
+        all_memories: dict[str, dict[str, list]] = {"short_term": {}, "long_term": {}}
 
         # Scan all archived answer directories
         for archive_dir in sorted(archive_base.iterdir()):
@@ -894,8 +1073,8 @@ This makes the work reusable for similar future tasks."""
 
                 for mem_file in tier_dir.glob("*.md"):
                     try:
-                        filename = mem_file.stem
-                        content = mem_file.read_text()
+                        filename = self._get_archived_memory_key(mem_file.stem, dir_name)
+                        content = self._normalize_memory_content_paths(mem_file.read_text())
                         timestamp = mem_file.stat().st_mtime
 
                         # Initialize list for this filename if needed
@@ -928,7 +1107,60 @@ This makes the work reusable for similar future tasks."""
 
         return deduplicated
 
-    def _load_temp_workspace_memories(self) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _get_archived_memory_key(filename: str, archive_dir_name: str) -> str:
+        """Return a dedupe key for archived memory files.
+
+        Verification replay memories must remain distinct per agent even when they
+        share the same canonical filename (`verification_latest.md`).
+        """
+        normalized = filename.strip()
+        if normalized.startswith("verification_latest__"):
+            return normalized
+        if normalized != "verification_latest":
+            return normalized
+
+        match = re.match(r"^(?P<agent>.+)_answer_\d+$", archive_dir_name)
+        if not match:
+            return normalized
+        return f"{normalized}__{match.group('agent')}"
+
+    def _get_workspace_path_replacements(self) -> list[tuple[str, str]]:
+        """Map agent workspace roots to temp workspace token paths."""
+        if not self.agent_temporary_workspace:
+            return []
+
+        temp_base = Path(self.agent_temporary_workspace)
+        replacements: list[tuple[str, str]] = []
+
+        for agent in self.agents.values():
+            backend = getattr(agent, "backend", None)
+            filesystem_manager = getattr(backend, "filesystem_manager", None)
+            if not filesystem_manager:
+                continue
+
+            source_workspace = getattr(filesystem_manager, "cwd", None)
+            workspace_token = getattr(filesystem_manager, "workspace_token", None)
+            if not source_workspace or not workspace_token:
+                continue
+
+            source_root = str(Path(source_workspace).resolve())
+            temp_root = str((temp_base / workspace_token).resolve())
+            if source_root != temp_root:
+                replacements.append((source_root, temp_root))
+
+        # Longest-first avoids partial-prefix replacement mismatches.
+        replacements.sort(key=lambda pair: len(pair[0]), reverse=True)
+        return replacements
+
+    def _normalize_memory_content_paths(self, content: str) -> str:
+        """Normalize absolute workspace paths in memory content for current context."""
+        normalized = content
+        for source_root, temp_root in self._get_workspace_path_replacements():
+            normalized = normalized.replace(source_root, temp_root)
+        return normalized
+
+    def _load_temp_workspace_memories(self) -> list[dict[str, Any]]:
         """Load all memories from temp workspace directories.
 
         Returns:
@@ -966,12 +1198,15 @@ This makes the work reusable for similar future tasks."""
                     try:
                         memory_data = self._parse_memory_file(mem_file)
                         if memory_data:
+                            memory_data["content"] = self._normalize_memory_content_paths(
+                                str(memory_data.get("content", "")),
+                            )
                             memories["short_term"][mem_file.stem] = memory_data
                         else:
                             # Fallback to raw content if parsing fails
                             memories["short_term"][mem_file.stem] = {
                                 "name": mem_file.stem,
-                                "content": mem_file.read_text(),
+                                "content": self._normalize_memory_content_paths(mem_file.read_text()),
                             }
                     except Exception as e:
                         logger.warning(f"[SystemMessageBuilder] Failed to read temp workspace memory {mem_file}: {e}")
@@ -983,12 +1218,15 @@ This makes the work reusable for similar future tasks."""
                     try:
                         memory_data = self._parse_memory_file(mem_file)
                         if memory_data:
+                            memory_data["content"] = self._normalize_memory_content_paths(
+                                str(memory_data.get("content", "")),
+                            )
                             memories["long_term"][mem_file.stem] = memory_data
                         else:
                             # Fallback to raw content if parsing fails
                             memories["long_term"][mem_file.stem] = {
                                 "name": mem_file.stem,
-                                "content": mem_file.read_text(),
+                                "content": self._normalize_memory_content_paths(mem_file.read_text()),
                             }
                     except Exception as e:
                         logger.warning(f"[SystemMessageBuilder] Failed to read temp workspace memory {mem_file}: {e}")
@@ -1005,7 +1243,7 @@ This makes the work reusable for similar future tasks."""
         return temp_memories
 
     @staticmethod
-    def _parse_memory_file(file_path: Path) -> Optional[Dict[str, Any]]:
+    def _parse_memory_file(file_path: Path) -> dict[str, Any] | None:
         """Parse a memory markdown file with YAML frontmatter.
 
         Args:

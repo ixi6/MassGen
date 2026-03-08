@@ -1,9 +1,10 @@
-# -*- coding: utf-8 -*-
 """
 External agent backend for integrating external agent frameworks and systems.
 Supports AG2, LangChain, and other external agents through adapters.
 """
-from typing import Any, AsyncGenerator, Dict, List, Optional
+
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from massgen.adapters import adapter_registry
 from massgen.backend.base import FilesystemSupport, LLMBackend, StreamChunk
@@ -20,7 +21,7 @@ class ExternalAgentBackend(LLMBackend):
     def __init__(
         self,
         adapter_type: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         **kwargs,
     ):
         """
@@ -51,7 +52,7 @@ class ExternalAgentBackend(LLMBackend):
         # Now initialize base class
         super().__init__(api_key=api_key, **kwargs)
 
-    def _extract_adapter_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
+    def _extract_adapter_config(self, config: dict[str, Any]) -> dict[str, Any]:
         """Extract framework-specific configuration."""
         # Remove base backend parameters
         excluded_params = self.get_base_excluded_config_params()
@@ -68,8 +69,8 @@ class ExternalAgentBackend(LLMBackend):
 
     async def stream_with_tools(
         self,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """

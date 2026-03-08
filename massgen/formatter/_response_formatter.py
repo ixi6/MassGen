@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Response API formatter implementation.
 Handles formatting for OpenAI Response API format with multimodal support.
@@ -7,7 +6,7 @@ Handles formatting for OpenAI Response API format with multimodal support.
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 from ._formatter_base import FormatterBase
 
@@ -15,7 +14,7 @@ from ._formatter_base import FormatterBase
 class ResponseFormatter(FormatterBase):
     """Formatter for Response API format with multimodal support."""
 
-    def format_messages(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Convert messages from Chat Completions format to Response API format.
 
@@ -134,7 +133,7 @@ class ResponseFormatter(FormatterBase):
 
         return converted_messages
 
-    def _convert_multimodal_content(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_multimodal_content(self, message: dict[str, Any]) -> dict[str, Any]:
         """
         Convert multimodal content to Response API format.
 
@@ -204,7 +203,7 @@ class ResponseFormatter(FormatterBase):
         message["content"] = converted_content
         return message
 
-    def _convert_image_content(self, image_item: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_image_content(self, image_item: dict[str, Any]) -> dict[str, Any]:
         """
         Convert image content item to Response API format.
 
@@ -284,7 +283,7 @@ class ResponseFormatter(FormatterBase):
 
         return True
 
-    def format_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Convert tools from Chat Completions format to Response API format if needed.
 
@@ -313,7 +312,7 @@ class ResponseFormatter(FormatterBase):
 
         return converted_tools
 
-    def format_custom_tools(self, custom_tools: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def format_custom_tools(self, custom_tools: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Convert custom tools from RegisteredToolEntry format to Response API format.
 
@@ -401,7 +400,7 @@ class ResponseFormatter(FormatterBase):
 
         return converted_tools
 
-    def format_mcp_tools(self, mcp_functions: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def format_mcp_tools(self, mcp_functions: dict[str, Any]) -> list[dict[str, Any]]:
         """Convert MCP tools to Response API format (OpenAI function declarations)."""
         if not mcp_functions:
             return []

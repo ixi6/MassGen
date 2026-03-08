@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Tests for ProjectInstructionsSection - automatic discovery of CLAUDE.md/AGENTS.md files.
 
@@ -7,7 +6,6 @@ Tests the hierarchical discovery algorithm that implements the agents.md standar
 - CLAUDE.md takes precedence over AGENTS.md
 - Walk up directory hierarchy to workspace root
 """
-
 
 import pytest
 

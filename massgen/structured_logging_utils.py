@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Utilities for structured logging and observability.
 
@@ -28,7 +27,6 @@ Usage:
 """
 
 from pathlib import Path, PurePath
-from typing import Optional, Union
 
 
 class PreviewLengths:
@@ -73,10 +71,10 @@ WORKSPACES_DIR_NAME = "workspaces"
 
 
 def truncate_for_log(
-    text: Optional[str],
+    text: str | None,
     max_length: int = PreviewLengths.DEFAULT,
     suffix: str = "...",
-) -> Optional[str]:
+) -> str | None:
     """
     Truncate text for logging with consistent behavior.
 
@@ -120,7 +118,7 @@ def truncate_for_log(
     return text[:truncate_at] + suffix
 
 
-def extract_workspace_info(file_path: Optional[Union[str, Path]]) -> Optional[str]:
+def extract_workspace_info(file_path: str | Path | None) -> str | None:
     """
     Extract workspace name from a MassGen workspace path.
 
@@ -163,7 +161,7 @@ def extract_workspace_info(file_path: Optional[Union[str, Path]]) -> Optional[st
     return None
 
 
-def is_massgen_workspace_path(file_path: Optional[Union[str, Path]]) -> bool:
+def is_massgen_workspace_path(file_path: str | Path | None) -> bool:
     """
     Check if a path is within a MassGen workspace.
 

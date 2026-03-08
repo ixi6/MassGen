@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
 """
 New Answer toolkit for MassGen workflow coordination.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .base import BaseToolkit, ToolType
 
@@ -11,7 +10,7 @@ from .base import BaseToolkit, ToolType
 class NewAnswerToolkit(BaseToolkit):
     """New Answer toolkit for agent coordination workflows."""
 
-    def __init__(self, template_overrides: Optional[Dict[str, Any]] = None):
+    def __init__(self, template_overrides: dict[str, Any] | None = None):
         """
         Initialize the New Answer toolkit.
 
@@ -30,7 +29,7 @@ class NewAnswerToolkit(BaseToolkit):
         """Type of this toolkit."""
         return ToolType.WORKFLOW
 
-    def is_enabled(self, config: Dict[str, Any]) -> bool:
+    def is_enabled(self, config: dict[str, Any]) -> bool:
         """
         Check if new answer is enabled in configuration.
 
@@ -43,7 +42,7 @@ class NewAnswerToolkit(BaseToolkit):
         # Enable by default for workflow, unless explicitly disabled
         return config.get("enable_workflow_tools", True)
 
-    def get_tools(self, config: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def get_tools(self, config: dict[str, Any]) -> list[dict[str, Any]]:
         """
         Get new answer tool definition based on API format.
 
@@ -94,7 +93,12 @@ class NewAnswerToolkit(BaseToolkit):
                             "properties": {
                                 "content": {
                                     "type": "string",
-                                    "description": "Your improved answer. If any builtin tools like search or code execution were used, mention how they are used here.",
+                                    "description": (
+                                        "Your improved answer (HIGH-LEVEL summary): what you created, where to find it, "
+                                        "how to use it, key features. Do NOT include full code listings - code belongs in "
+                                        "workspace files. If any builtin tools like search or code execution were used, "
+                                        "mention how they are used here."
+                                    ),
                                 },
                             },
                             "required": ["content"],

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Log Streamer Utility for MassGen TUI.
 
@@ -7,7 +6,6 @@ Provides efficient log file tailing for real-time display of subagent logs.
 
 from collections import deque
 from pathlib import Path
-from typing import List
 
 
 class LogStreamer:
@@ -34,7 +32,7 @@ class LogStreamer:
         self._position = 0
         self._file_size = 0
 
-    def get_new_lines(self) -> List[str]:
+    def get_new_lines(self) -> list[str]:
         """Read new lines since last call.
 
         Returns:
@@ -57,17 +55,17 @@ class LogStreamer:
             if self._position >= current_size:
                 return []
 
-            with open(self._path, "r", encoding="utf-8", errors="replace") as f:
+            with open(self._path, encoding="utf-8", errors="replace") as f:
                 f.seek(self._position)
                 lines = f.readlines()
                 self._position = f.tell()
 
             return [line.rstrip() for line in lines if line.strip()]
 
-        except (OSError, IOError):
+        except OSError:
             return []
 
-    def tail(self, n: int = 50) -> List[str]:
+    def tail(self, n: int = 50) -> list[str]:
         """Get last N lines from the file efficiently.
 
         Args:
@@ -83,7 +81,7 @@ class LogStreamer:
             # Use deque for efficient tail
             result: deque[str] = deque(maxlen=n)
 
-            with open(self._path, "r", encoding="utf-8", errors="replace") as f:
+            with open(self._path, encoding="utf-8", errors="replace") as f:
                 for line in f:
                     stripped = line.rstrip()
                     if stripped:
@@ -91,7 +89,7 @@ class LogStreamer:
 
             return list(result)
 
-        except (OSError, IOError):
+        except OSError:
             return []
 
     def reset(self) -> None:
@@ -111,7 +109,7 @@ class LogStreamer:
             try:
                 self._file_size = self._path.stat().st_size
                 self._position = self._file_size
-            except (OSError, IOError):
+            except OSError:
                 pass
 
 
@@ -133,7 +131,7 @@ def count_files_in_directory(directory: Path, recursive: bool = True) -> int:
             return sum(1 for p in directory.rglob("*") if p.is_file())
         else:
             return sum(1 for p in directory.iterdir() if p.is_file())
-    except (OSError, IOError):
+    except OSError:
         return 0
 
 

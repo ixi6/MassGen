@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Shadow repository management for isolated environments outside of git repos.
 """
@@ -7,7 +6,6 @@ import logging
 import os
 import shutil
 import tempfile
-from typing import Dict, List, Optional
 
 from git import GitCommandError, Repo
 
@@ -22,7 +20,7 @@ class ShadowRepo:
     This allows using git-based diffing and review even for plain directories.
     """
 
-    def __init__(self, source_path: str, temp_base: Optional[str] = None):
+    def __init__(self, source_path: str, temp_base: str | None = None):
         """
         Initialize the ShadowRepo.
 
@@ -35,7 +33,7 @@ class ShadowRepo:
             raise ValueError(f"Source path {source_path} is not a directory")
 
         self.temp_dir = tempfile.mkdtemp(prefix="massgen_shadow_", dir=temp_base)
-        self.repo: Optional[Repo] = None
+        self.repo: Repo | None = None
         self.is_initialized = False
 
     def initialize(self) -> str:
@@ -73,7 +71,7 @@ class ShadowRepo:
             self.cleanup()
             raise RuntimeError(f"Failed to initialize shadow repo: {e.stderr}")
 
-    def get_changes(self) -> List[Dict[str, str]]:
+    def get_changes(self) -> list[dict[str, str]]:
         """
         Get list of changes in the shadow repo since initial commit.
 

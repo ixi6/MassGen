@@ -1,9 +1,7 @@
-# -*- coding: utf-8 -*-
 """Tests for the AtPathCompleter class."""
 
 import tempfile
 from pathlib import Path
-from typing import List
 
 import pytest
 from prompt_toolkit.completion import CompleteEvent
@@ -12,7 +10,7 @@ from prompt_toolkit.document import Document
 from massgen.path_handling import AtPathCompleter
 
 
-def get_completions(completer: AtPathCompleter, text: str) -> List[str]:
+def get_completions(completer: AtPathCompleter, text: str) -> list[str]:
     """Helper to get completion texts from a completer."""
     doc = Document(text)
     event = CompleteEvent()

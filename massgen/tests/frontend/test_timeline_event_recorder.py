@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Unit tests for TimelineEventRecorder and its timeline mocks."""
 
 from datetime import datetime, timezone

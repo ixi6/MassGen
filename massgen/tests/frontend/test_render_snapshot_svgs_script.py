@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """Tests for scripts/render_snapshot_svgs.py."""
 
 from __future__ import annotations
@@ -6,6 +5,10 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 from pathlib import Path
+
+import pytest
+
+pytestmark = pytest.mark.snapshot
 
 
 def _load_script_module():

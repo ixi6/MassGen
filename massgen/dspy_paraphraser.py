@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 DSPy-based question paraphrasing for multi-agent coordination.
 
@@ -12,7 +11,7 @@ import hashlib
 import json
 import os
 import threading
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 try:
     import dspy
@@ -66,12 +65,12 @@ class QuestionParaphraser:
 
     def __init__(
         self,
-        lm: "dspy.LM",
+        lm: dspy.LM,
         num_variants: int = 3,
         strategy: str = "balanced",
         cache_enabled: bool = True,
         semantic_threshold: float = 0.85,
-        temperature_range: Tuple[float, float] = (0.3, 0.9),
+        temperature_range: tuple[float, float] = (0.3, 0.9),
         use_chain_of_thought: bool = False,
         validate_semantics: bool = True,
     ):
@@ -129,7 +128,7 @@ class QuestionParaphraser:
             self.validator = dspy.Predict(SemanticValidationSignature)
 
         # Simple in-memory cache
-        self._cache: Dict[str, List[str]] = {}
+        self._cache: dict[str, list[str]] = {}
 
         # Metrics tracking for optimization
         self._metrics = {
@@ -144,9 +143,9 @@ class QuestionParaphraser:
     def generate_variants(
         self,
         question: str,
-        context: Optional[str] = None,
+        context: str | None = None,
         force_regenerate: bool = False,
-    ) -> List[str]:
+    ) -> list[str]:
         """Generate N paraphrased variants of the question.
 
         Args:
@@ -251,7 +250,7 @@ class QuestionParaphraser:
 
         return variants
 
-    def _get_temperature_schedule(self) -> List[float]:
+    def _get_temperature_schedule(self) -> list[float]:
         """Get temperature schedule based on strategy to control diversity across variants."""
         min_temp, max_temp = self.temperature_range
 
@@ -361,7 +360,7 @@ class QuestionParaphraser:
         self,
         question: str,
         count: int,
-    ) -> List[str]:
+    ) -> list[str]:
         """Generate simple fallback variants when DSPy fails.
 
         Args:
@@ -399,7 +398,7 @@ class QuestionParaphraser:
 
         return variants
 
-    def _get_cache_key(self, question: str, context: Optional[str]) -> str:
+    def _get_cache_key(self, question: str, context: str | None) -> str:
         """Generate cache key from question and configuration.
 
         Args:
@@ -424,7 +423,7 @@ class QuestionParaphraser:
         serialized = json.dumps(key_payload, sort_keys=True)
         return hashlib.md5(serialized.encode()).hexdigest()
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get paraphraser metrics for monitoring and optimization.
 
         Returns:
@@ -440,8 +439,8 @@ class QuestionParaphraser:
 
 
 def create_dspy_lm_from_backend_config(
-    backend_config: Dict[str, Any],
-) -> Optional["dspy.LM"]:
+    backend_config: dict[str, Any],
+) -> dspy.LM | None:
     # If DSPy is not available, return None
     if dspy is None:
         return None

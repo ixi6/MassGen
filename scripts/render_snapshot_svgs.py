@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """Render Textual snapshot SVGs to PNG using Playwright's browser engine.
 
 This is intended for local visual review when your tooling cannot display SVG

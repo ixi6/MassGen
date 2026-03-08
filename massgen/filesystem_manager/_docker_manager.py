@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Docker Container Manager for MassGen
 
@@ -10,7 +9,7 @@ while keeping MCP servers on the host.
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..logger_config import logger
 
@@ -42,12 +41,12 @@ class DockerManager:
         self,
         image: str = "ghcr.io/massgen/mcp-runtime:latest",
         network_mode: str = "none",
-        memory_limit: Optional[str] = None,
-        cpu_limit: Optional[float] = None,
+        memory_limit: str | None = None,
+        cpu_limit: float | None = None,
         enable_sudo: bool = False,
-        credentials: Optional[Dict[str, Any]] = None,
-        packages: Optional[Dict[str, Any]] = None,
-        instance_id: Optional[str] = None,
+        credentials: dict[str, Any] | None = None,
+        packages: dict[str, Any] | None = None,
+        instance_id: str | None = None,
     ):
         """
         Initialize Docker manager.
@@ -59,7 +58,8 @@ class DockerManager:
             cpu_limit: CPU limit (e.g., 2.0 for 2 CPUs)
             enable_sudo: Enable sudo access in containers (isolated from host system)
             credentials: Credential management configuration:
-                mount: List of credential types to mount ["ssh_keys", "git_config", "gh_config", "npm_config", "pypi_config"]
+                mount: List of credential types to mount
+                    ["ssh_keys", "git_config", "gh_config", "npm_config", "pypi_config", "claude_config", "codex_config"]
                 additional_mounts: Custom volume mounts {host_path: {bind: container_path, mode: ro/rw}}
                 env_file: Path to .env file to load
                 env_vars: List of environment variables to pass from host
@@ -75,7 +75,13 @@ class DockerManager:
         if not DOCKER_AVAILABLE:
             raise RuntimeError("Docker Python library not available. Install with: pip install docker")
 
-        self.instance_id = instance_id  # Unique instance ID for parallel execution
+        # Auto-generate a session-unique instance_id to prevent container
+        # name collisions when two concurrent processes use the same config.
+        if instance_id is None:
+            import uuid
+
+            instance_id = uuid.uuid4().hex[:8]
+        self.instance_id = instance_id
 
         # If sudo is enabled and user is using default image, switch to sudo variant
         self.enable_sudo = enable_sudo
@@ -104,6 +110,7 @@ class DockerManager:
         self.mount_gh_config = "gh_config" in mount_list
         self.mount_npm_config = "npm_config" in mount_list
         self.mount_pypi_config = "pypi_config" in mount_list
+        self.mount_claude_config = "claude_config" in mount_list
         self.mount_codex_config = "codex_config" in mount_list
         self.additional_mounts = credentials.get("additional_mounts", {})
         self.env_file_path = credentials.get("env_file")
@@ -151,8 +158,8 @@ class DockerManager:
             logger.error(f"❌ [Docker] Failed to connect to Docker daemon: {e}")
             raise RuntimeError(f"Failed to connect to Docker: {e}")
 
-        self.containers: Dict[str, Container] = {}  # agent_id -> container
-        self.temp_skills_dirs: Dict[str, Path] = {}  # agent_id -> temp skills directory path
+        self.containers: dict[str, Container] = {}  # agent_id -> container
+        self.temp_skills_dirs: dict[str, Path] = {}  # agent_id -> temp skills directory path
 
     def ensure_image_exists(self) -> None:
         """
@@ -179,47 +186,11 @@ class DockerManager:
                     )
                 raise RuntimeError(f"Failed to pull Docker image '{self.image}': {e}")
 
-    def _load_env_file(self, env_file_path: str) -> Dict[str, str]:
-        """
-        Load environment variables from a .env file.
-
-        Automatically checks common locations in order:
-        1. ~/.massgen/.env (recommended global location)
-        2. The provided env_file_path (expanded)
-        3. ./.env (current directory fallback)
-
-        Args:
-            env_file_path: Path to .env file
-
-        Returns:
-            Dictionary of environment variables
-
-        Raises:
-            RuntimeError: If file cannot be read or parsed
-        """
+    def _parse_single_env_file(self, env_path: Path) -> dict[str, str]:
+        """Parse a single .env file and return its key-value pairs."""
         env_vars = {}
-
-        # Check common locations in priority order
-        home_env = Path.home() / ".massgen" / ".env"
-        provided_path = Path(env_file_path).expanduser().resolve()
-        local_env = Path(".env").resolve()
-
-        # Determine which path to use
-        if home_env.exists():
-            env_path = home_env
-        elif provided_path.exists():
-            env_path = provided_path
-        elif local_env.exists():
-            env_path = local_env
-        else:
-            # No .env file found - this is OK (e.g., using Claude Code with CLI login)
-            logger.info("📄 [Docker] No .env file found - continuing without environment file")
-            return env_vars
-
-        logger.info(f"📄 [Docker] Loading environment variables from: {env_path}")
-
         try:
-            with open(env_path, "r") as f:
+            with open(env_path) as f:
                 for line_num, line in enumerate(f, 1):
                     line = line.strip()
                     # Skip empty lines and comments
@@ -240,15 +211,64 @@ class DockerManager:
 
                         env_vars[key] = value
                     else:
-                        logger.warning(f"⚠️ [Docker] Skipping invalid line {line_num} in {env_file_path}: {line}")
-
-            logger.info(f"    Loaded {len(env_vars)} environment variable(s)")
-            return env_vars
-
+                        logger.warning(f"⚠️ [Docker] Skipping invalid line {line_num} in {env_path}: {line}")
         except Exception as e:
-            raise RuntimeError(f"Failed to read environment file {env_file_path}: {e}")
+            raise RuntimeError(f"Failed to read environment file {env_path}: {e}")
+        return env_vars
 
-    def _build_environment(self) -> Dict[str, str]:
+    def _load_env_file(self, env_file_path: str) -> dict[str, str]:
+        """
+        Load environment variables from .env files.
+
+        Loads cumulatively from all locations that exist, with later files
+        overriding earlier ones:
+        1. ~/.massgen/.env (global defaults)
+        2. The provided env_file_path (expanded)
+        3. ./.env (current directory, highest priority)
+
+        Args:
+            env_file_path: Path to .env file
+
+        Returns:
+            Dictionary of environment variables
+
+        Raises:
+            RuntimeError: If a found file cannot be read or parsed
+        """
+        env_vars = {}
+
+        # Build deduplicated list of candidate paths (preserving order)
+        home_env = Path.home() / ".massgen" / ".env"
+        provided_path = Path(env_file_path).expanduser().resolve()
+        local_env = Path(".env").resolve()
+
+        seen = set()
+        candidates = []
+        for p in [home_env, provided_path, local_env]:
+            resolved = p.resolve()
+            if resolved not in seen:
+                seen.add(resolved)
+                candidates.append(resolved)
+
+        loaded_any = False
+        for env_path in candidates:
+            if env_path.exists():
+                logger.info(f"📄 [Docker] Loading environment variables from: {env_path}")
+                file_vars = self._parse_single_env_file(env_path)
+                logger.info(f"    Loaded {len(file_vars)} variable(s) from {env_path.name}")
+                env_vars.update(file_vars)
+                loaded_any = True
+
+        if not loaded_any:
+            # No .env file found - this is OK (e.g., using Claude Code with CLI login)
+            logger.info("📄 [Docker] No .env file found - continuing without environment file")
+
+        if loaded_any:
+            logger.info(f"    Total environment variables from .env files: {len(env_vars)}")
+
+        return env_vars
+
+    def _build_environment(self) -> dict[str, str]:
         """
         Build environment variables dict to pass to container.
 
@@ -264,7 +284,13 @@ class DockerManager:
                 # Filter to only specific vars if env_vars_from_file is specified
                 if self.env_vars_from_file:
                     filtered_env = {k: v for k, v in file_env.items() if k in self.env_vars_from_file}
+                    matched = [k for k in self.env_vars_from_file if k in file_env]
+                    missing = [k for k in self.env_vars_from_file if k not in file_env]
                     logger.info(f"    Filtered to {len(filtered_env)} of {len(file_env)} variables from .env file")
+                    logger.info(f"    Matched keys: {matched}")
+                    if missing:
+                        logger.warning(f"    Requested env vars not found in .env files: {missing}")
+                        logger.info(f"    Available keys in .env files: {sorted(file_env.keys())}")
                     env_vars.update(filtered_env)
                 else:
                     # Load all variables from file
@@ -289,7 +315,7 @@ class DockerManager:
 
         return env_vars
 
-    def _build_credential_mounts(self) -> Dict[str, Dict[str, str]]:
+    def _build_credential_mounts(self) -> dict[str, dict[str, str]]:
         """
         Build volume mounts for credential files.
 
@@ -335,8 +361,24 @@ class DockerManager:
             else:
                 logger.warning(f"⚠️ [Docker] npm config not found: {npm_config}")
 
-        # Codex config: handled separately via _copy_codex_auth() after container creation
-        # (Codex needs write access to ~/.codex/ for session files, so we can't mount read-only)
+        # Mount Claude Code config (read-only)
+        if self.mount_claude_config:
+            claude_config = home_dir / ".claude"
+            if claude_config.exists():
+                mounts[str(claude_config)] = {"bind": "/home/massgen/.claude", "mode": "ro"}
+                logger.info(f"🔐 [Docker] Mounting Claude config: {claude_config} → /home/massgen/.claude (ro)")
+            else:
+                logger.warning(f"⚠️ [Docker] Claude config directory not found: {claude_config}")
+
+        # Mount Codex config (read-only). Useful for keyless OAuth pass-through
+        # when nested workflows/subagents need access to host codex login state.
+        if self.mount_codex_config:
+            codex_config = home_dir / ".codex"
+            if codex_config.exists():
+                mounts[str(codex_config)] = {"bind": "/home/massgen/.codex", "mode": "ro"}
+                logger.info(f"🔐 [Docker] Mounting Codex config: {codex_config} → /home/massgen/.codex (ro)")
+            else:
+                logger.warning(f"⚠️ [Docker] Codex config directory not found: {codex_config}")
 
         # Mount pypi config (read-only)
         if self.mount_pypi_config:
@@ -491,16 +533,16 @@ class DockerManager:
         self,
         agent_id: str,
         workspace_path: Path,
-        temp_workspace_path: Optional[Path] = None,
-        context_paths: Optional[List[Dict[str, Any]]] = None,
-        session_mount: Optional[Dict[str, Dict[str, str]]] = None,
-        skills_directory: Optional[str] = None,
-        massgen_skills: Optional[List[str]] = None,
-        shared_tools_directory: Optional[Path] = None,
+        temp_workspace_path: Path | None = None,
+        context_paths: list[dict[str, Any]] | None = None,
+        session_mount: dict[str, dict[str, str]] | None = None,
+        skills_directory: str | None = None,
+        massgen_skills: list[str] | None = None,
+        shared_tools_directory: Path | None = None,
         load_previous_session_skills: bool = False,
-        extra_mount_paths: Optional[List[tuple]] = None,
+        extra_mount_paths: list[tuple] | None = None,
         skills_writable: bool = False,
-    ) -> Optional[Path]:
+    ) -> Path | None:
         """
         Create and start a persistent Docker container for an agent.
 
@@ -585,6 +627,9 @@ class DockerManager:
         env_vars["XDG_CACHE_HOME"] = workspace_cache
         env_vars["XDG_DATA_HOME"] = workspace_data
 
+        # Suppress FastMCP CLI banner for MCP servers running inside the container
+        env_vars["FASTMCP_SHOW_CLI_BANNER"] = "false"
+
         # Python tools
         env_vars["PIP_CACHE_DIR"] = f"{workspace_cache}/pip"
         env_vars["UV_CACHE_DIR"] = f"{workspace_cache}/uv"
@@ -594,6 +639,17 @@ class DockerManager:
         # Node.js tools
         env_vars["npm_config_cache"] = f"{workspace_cache}/npm"
         env_vars["PNPM_HOME"] = f"{workspace_data}/pnpm"
+        # Ensure Node can resolve globally installed modules (e.g., Playwright CLI package).
+        global_node_paths = ["/usr/lib/node_modules", "/usr/local/lib/node_modules"]
+        existing_node_path = env_vars.get("NODE_PATH", "")
+        if existing_node_path:
+            node_path_entries = [entry for entry in existing_node_path.split(":") if entry]
+            for path in global_node_paths:
+                if path not in node_path_entries:
+                    node_path_entries.append(path)
+            env_vars["NODE_PATH"] = ":".join(node_path_entries)
+        else:
+            env_vars["NODE_PATH"] = ":".join(global_node_paths)
 
         # Rust tools
         env_vars["CARGO_HOME"] = f"{workspace_data}/cargo"
@@ -854,7 +910,7 @@ class DockerManager:
             logger.error(f"❌ [Docker] Failed to create container for agent {agent_id}: {e}")
             raise RuntimeError(f"Failed to create Docker container for agent {agent_id}: {e}")
 
-    def get_container(self, agent_id: str) -> Optional[Container]:
+    def get_container(self, agent_id: str) -> Container | None:
         """
         Get container for an agent.
 
@@ -870,9 +926,9 @@ class DockerManager:
         self,
         agent_id: str,
         command: str,
-        workdir: Optional[str] = None,
-        timeout: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        workdir: str | None = None,
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
         """
         Execute a command inside the agent's container.
 
@@ -1029,7 +1085,7 @@ class DockerManager:
         except DockerException as e:
             logger.error(f"❌ [Docker] Failed to remove container for agent {agent_id}: {e}")
 
-    def cleanup(self, agent_id: Optional[str] = None) -> None:
+    def cleanup(self, agent_id: str | None = None) -> None:
         """
         Clean up containers and temp skills directories.
 
@@ -1106,7 +1162,7 @@ class DockerManager:
         except Exception as e:
             logger.warning(f"⚠️ [Docker] Could not log container info: {e}")
 
-    def get_container_health(self, agent_id: str) -> Dict[str, Any]:
+    def get_container_health(self, agent_id: str) -> dict[str, Any]:
         """
         Get health/status information for a container.
 
@@ -1168,7 +1224,7 @@ class DockerManager:
         agent_id: str,
         tail: int = 100,
         timestamps: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Get logs from a container.
 

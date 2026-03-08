@@ -1,14 +1,14 @@
-# -*- coding: utf-8 -*-
 """Async utility functions for MassGen."""
 
 import asyncio
 import concurrent.futures
-from typing import Any, Coroutine, Optional, TypeVar
+from collections.abc import Coroutine
+from typing import Any, TypeVar
 
 T = TypeVar("T")
 
 
-def run_async_safely(coro: Coroutine[Any, Any, T], timeout: Optional[float] = None) -> T:
+def run_async_safely(coro: Coroutine[Any, Any, T], timeout: float | None = None) -> T:
     """
     Run async code safely from sync context, handling nested event loops.
 

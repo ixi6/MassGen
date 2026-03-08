@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Integration tests for code-based tools feature.
 
@@ -16,7 +15,7 @@ import json
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -28,7 +27,7 @@ from massgen.mcp_tools.code_generator import MCPToolCodeGenerator
 class MockToolObject:
     """Mock MCP tool object."""
 
-    def __init__(self, description: str, input_schema: Dict[str, Any]):
+    def __init__(self, description: str, input_schema: dict[str, Any]):
         self.description = description
         self.inputSchema = input_schema
 

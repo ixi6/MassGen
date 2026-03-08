@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-# -*- coding: utf-8 -*-
 """
 Rich Terminal Display for MassGen Coordination
 
@@ -26,7 +24,7 @@ except ImportError:
     UNIX_TERMINAL_SUPPORT = False
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .terminal_display import TerminalDisplay
 
@@ -90,7 +88,7 @@ except ImportError:
 class RichTerminalDisplay(TerminalDisplay):
     """Enhanced terminal display using Rich library for beautiful formatting."""
 
-    def __init__(self, agent_ids: List[str], **kwargs: Any) -> None:
+    def __init__(self, agent_ids: list[str], **kwargs: Any) -> None:
         """Initialize rich terminal display.
 
         Args:
@@ -164,7 +162,7 @@ class RichTerminalDisplay(TerminalDisplay):
         self._full_refresh_interval = self._get_adaptive_full_refresh_interval()
 
         # Performance monitoring
-        self._refresh_times: List[float] = []
+        self._refresh_times: list[float] = []
         self._dropped_frames = 0
         self._performance_check_interval = 5.0  # Check performance every 5 seconds
 
@@ -172,7 +170,7 @@ class RichTerminalDisplay(TerminalDisplay):
         self._refresh_executor = ThreadPoolExecutor(
             max_workers=min(len(agent_ids) * 2 + 8, 20),
         )
-        self._agent_panels_cache: Dict[str, Panel] = {}
+        self._agent_panels_cache: dict[str, Panel] = {}
         self._header_cache = None
         self._footer_cache = None
         self._layout_update_lock = threading.Lock()
@@ -244,7 +242,7 @@ class RichTerminalDisplay(TerminalDisplay):
         self._last_content_hash = {agent_id: "" for agent_id in agent_ids}
 
         # Adaptive debounce mechanism for updates
-        self._debounce_timers: Dict[str, threading.Timer] = {}
+        self._debounce_timers: dict[str, threading.Timer] = {}
         self._debounce_delay = self._get_adaptive_debounce_delay()
 
         # Layered refresh strategy
@@ -319,7 +317,7 @@ class RichTerminalDisplay(TerminalDisplay):
             "output_dir",
             log_session_dir / "agent_outputs",
         )
-        self.agent_files: Dict[str, Path] = {}
+        self.agent_files: dict[str, Path] = {}
         self.system_status_file = None
         self._selected_agent = None
         self._setup_agent_files()
@@ -436,7 +434,7 @@ class RichTerminalDisplay(TerminalDisplay):
         with open(str(self.system_status_file), "w", encoding="utf-8") as f:
             f.write("=== SYSTEM STATUS LOG ===\n\n")
 
-    def _detect_terminal_performance(self) -> Dict[str, Any]:
+    def _detect_terminal_performance(self) -> dict[str, Any]:
         """Detect terminal performance characteristics for adaptive refresh rates."""
         terminal_info = {
             "type": "unknown",
@@ -546,7 +544,7 @@ class RichTerminalDisplay(TerminalDisplay):
 
     def _get_adaptive_refresh_rate(
         self,
-        user_override: Optional[int] = None,
+        user_override: int | None = None,
     ) -> int:
         """Get adaptive refresh rate based on terminal performance."""
         if user_override is not None:
@@ -698,7 +696,7 @@ class RichTerminalDisplay(TerminalDisplay):
                             # If live display fails, fallback to simple mode
                             self._fallback_to_simple_display()
 
-    def _create_live_display_with_fallback(self) -> Optional[Live]:
+    def _create_live_display_with_fallback(self) -> Live | None:
         """Create Live display with terminal compatibility checks and fallback."""
         try:
             # Test terminal capabilities
@@ -763,7 +761,7 @@ class RichTerminalDisplay(TerminalDisplay):
         except Exception:
             return False
 
-    def _get_adaptive_live_settings(self) -> Dict[str, Any]:
+    def _get_adaptive_live_settings(self) -> dict[str, Any]:
         """Get Live display settings adapted to terminal performance."""
         perf_tier = self._terminal_performance["performance_tier"]
 
@@ -1018,7 +1016,7 @@ class RichTerminalDisplay(TerminalDisplay):
     def initialize(
         self,
         question: str,
-        log_filename: Optional[str] = None,
+        log_filename: str | None = None,
     ) -> None:
         """Initialize the rich display with question and optional log file."""
         self.log_filename = log_filename
@@ -1638,7 +1636,7 @@ class RichTerminalDisplay(TerminalDisplay):
         try:
             file_path = self.agent_files[agent_id]
             if file_path.exists():
-                with open(file_path, "r", encoding="utf-8") as f:
+                with open(file_path, encoding="utf-8") as f:
                     content = f.read()
                     if "[" in content:
                         content = content.replace("[", r"\[")
@@ -1955,7 +1953,7 @@ class RichTerminalDisplay(TerminalDisplay):
                 return
 
             # Collect tool metrics from all agents
-            all_tools: Dict[str, Dict[str, Any]] = {}
+            all_tools: dict[str, dict[str, Any]] = {}
             total_calls = 0
             total_failures = 0
             total_time_ms = 0.0
@@ -2069,7 +2067,7 @@ class RichTerminalDisplay(TerminalDisplay):
                 return  # No rounds to show
 
             # Aggregate by outcome
-            by_outcome: Dict[str, Dict[str, Any]] = {}
+            by_outcome: dict[str, dict[str, Any]] = {}
             total_input = 0
             total_output = 0
             total_cost = 0.0
@@ -2225,7 +2223,7 @@ class RichTerminalDisplay(TerminalDisplay):
         except Exception:
             pass  # Fail silently - metrics display is non-critical
 
-    def _get_workspace_path(self) -> Optional[str]:
+    def _get_workspace_path(self) -> str | None:
         """Get the workspace path from the orchestrator if available."""
         if not hasattr(self, "orchestrator") or not self.orchestrator:
             return None
@@ -2293,7 +2291,7 @@ class RichTerminalDisplay(TerminalDisplay):
             return
 
         try:
-            with open(self.system_status_file, "r", encoding="utf-8") as f:
+            with open(self.system_status_file, encoding="utf-8") as f:
                 content = f.read()
                 if "[" in content:
                     content = content.replace("[", r"\[")
@@ -2520,7 +2518,7 @@ class RichTerminalDisplay(TerminalDisplay):
             expand=True,  # Full width
         )
 
-    def _create_post_evaluation_panel(self) -> Optional[Panel]:
+    def _create_post_evaluation_panel(self) -> Panel | None:
         """Create a panel for post-evaluation display (below agent columns)."""
         if not self._post_evaluation_active:
             return None
@@ -2551,7 +2549,7 @@ class RichTerminalDisplay(TerminalDisplay):
             height=6,  # Fixed height to not take too much space
         )
 
-    def _create_restart_context_panel(self) -> Optional[Panel]:
+    def _create_restart_context_panel(self) -> Panel | None:
         """Create restart context panel for attempt 2+ (yellow warning at top)."""
         if not self._restart_context_reason or not self._restart_context_instructions:
             return None
@@ -2801,7 +2799,7 @@ class RichTerminalDisplay(TerminalDisplay):
         except Exception:
             return Text(content, style=f"bold {self.colors['info']}")
 
-    def _detect_language(self, content: str) -> Optional[str]:
+    def _detect_language(self, content: str) -> str | None:
         """Detect programming language from content."""
         content_lower = content.lower()
 
@@ -2853,7 +2851,7 @@ class RichTerminalDisplay(TerminalDisplay):
             pass
         return "Unknown"
 
-    def _get_all_agent_costs(self) -> Dict[str, Any]:
+    def _get_all_agent_costs(self) -> dict[str, Any]:
         """Collect token usage from all agent backends.
 
         Uses round history totals when available for consistency with the Round Summary table.
@@ -2864,7 +2862,7 @@ class RichTerminalDisplay(TerminalDisplay):
         """
         from massgen.token_manager.token_manager import TokenUsage
 
-        result: Dict[str, Any] = {"agents": {}, "total": TokenUsage()}
+        result: dict[str, Any] = {"agents": {}, "total": TokenUsage()}
 
         try:
             if not hasattr(self, "orchestrator") or not self.orchestrator:
@@ -3057,7 +3055,7 @@ class RichTerminalDisplay(TerminalDisplay):
         agent_id: str,
         content: str,
         content_type: str = "thinking",
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ) -> None:
         """Update content for a specific agent with rich formatting and file output."""
 
@@ -3344,7 +3342,7 @@ class RichTerminalDisplay(TerminalDisplay):
                 # Write system status update for important events
                 self._write_system_status()
 
-    def display_vote_results(self, vote_results: Dict[str, Any]) -> None:
+    def display_vote_results(self, vote_results: dict[str, Any]) -> None:
         """Display voting results in a formatted rich panel."""
         if not vote_results or not vote_results.get("vote_counts"):
             return
@@ -3585,7 +3583,7 @@ class RichTerminalDisplay(TerminalDisplay):
         self,
         selected_agent: str,
         presentation_stream: Any,
-        vote_results: Optional[Dict[str, Any]] = None,
+        vote_results: dict[str, Any] | None = None,
     ) -> None:
         """Display final presentation with streaming box followed by clean final answer box."""
         if not selected_agent:
@@ -3773,7 +3771,7 @@ class RichTerminalDisplay(TerminalDisplay):
     def show_final_answer(
         self,
         answer: str,
-        vote_results: Dict[str, Any] = None,
+        vote_results: dict[str, Any] = None,
         selected_agent: str = None,
     ):
         """Display the final coordinated answer prominently with voting results, final presentation, and agent selector."""
@@ -4344,7 +4342,7 @@ class RichTerminalDisplay(TerminalDisplay):
     def _show_orchestrator_final_presentation(
         self,
         selected_agent: str,
-        vote_results: Dict[str, Any] = None,
+        vote_results: dict[str, Any] = None,
     ) -> None:
         """Show the final presentation from the orchestrator for the selected agent."""
         import time
@@ -4871,7 +4869,7 @@ class RichTerminalDisplay(TerminalDisplay):
             self._flush_char_delay = char_delay
             self._flush_word_delay = word_delay
 
-    async def prompt_for_broadcast_response(self, broadcast_request: Any) -> Optional[Any]:
+    async def prompt_for_broadcast_response(self, broadcast_request: Any) -> Any | None:
         """Prompt human for response to a broadcast question using Rich formatting.
 
         Args:
@@ -4992,7 +4990,7 @@ class RichTerminalDisplay(TerminalDisplay):
 
             logger.info("📢 [Human Input] Broadcast prompt cleanup complete, resuming normal operation")
 
-    async def _prompt_simple_question(self, broadcast_request: Any, logger) -> Optional[str]:
+    async def _prompt_simple_question(self, broadcast_request: Any, logger) -> str | None:
         """Handle simple free-form text question prompt.
 
         Args:
@@ -5065,7 +5063,7 @@ class RichTerminalDisplay(TerminalDisplay):
                 await asyncio.sleep(1.0)
                 return None
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(f"📢 [Human Input] Timeout after {broadcast_request.timeout} seconds")
             self.console.print("\n⏱️  [red bold]Timeout - no response submitted[/red bold]\n")
             await asyncio.sleep(1.0)
@@ -5086,7 +5084,7 @@ class RichTerminalDisplay(TerminalDisplay):
             await asyncio.sleep(2.0)
             return None
 
-    async def _prompt_structured_questions(self, broadcast_request: Any, logger) -> Optional[List]:
+    async def _prompt_structured_questions(self, broadcast_request: Any, logger) -> list | None:
         """Handle structured questions with options.
 
         Args:
@@ -5227,7 +5225,7 @@ class RichTerminalDisplay(TerminalDisplay):
 
                 await asyncio.sleep(0.5)  # Brief pause between questions
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"📢 [Human Input] Timeout on question {q_idx + 1}")
                 self.console.print("\n⏱️  [red bold]Timeout - skipping remaining questions[/red bold]\n")
                 await asyncio.sleep(1.0)
@@ -5259,7 +5257,7 @@ def is_rich_available() -> bool:
 
 
 # Factory function for creating display
-def create_rich_display(agent_ids: List[str], **kwargs) -> RichTerminalDisplay:
+def create_rich_display(agent_ids: list[str], **kwargs) -> RichTerminalDisplay:
     """Create a RichTerminalDisplay instance.
 
     Args:

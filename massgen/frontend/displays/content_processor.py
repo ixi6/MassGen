@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Unified Content Processor for MassGen TUI.
 
@@ -17,7 +16,7 @@ import ast
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Literal
 
 from massgen.events import EventType, MassGenEvent
 
@@ -29,6 +28,7 @@ from .content_handlers import (
     get_tool_category,
 )
 from .content_normalizer import ContentNormalizer, NormalizedContent
+from .shared.tui_debug import tui_log
 from .task_plan_support import is_planning_tool
 
 # Output types for ContentProcessor
@@ -76,33 +76,33 @@ class ContentOutput:
     round_number: int = 1
 
     # For tool content
-    tool_data: Optional[ToolDisplayData] = None
-    batch_action: Optional[BatchAction] = None
-    batch_id: Optional[str] = None
-    server_name: Optional[str] = None
-    pending_tool_id: Optional[str] = None  # For convert_to_batch
+    tool_data: ToolDisplayData | None = None
+    batch_action: BatchAction | None = None
+    batch_id: str | None = None
+    server_name: str | None = None
+    pending_tool_id: str | None = None  # For convert_to_batch
 
     # For text content
-    text_content: Optional[str] = None
+    text_content: str | None = None
     text_style: str = ""
     text_class: str = ""
 
     # For batched tools (multiple tools in a batch)
-    batch_tools: List[ToolDisplayData] = field(default_factory=list)
+    batch_tools: list[ToolDisplayData] = field(default_factory=list)
 
     # For separators
     separator_label: str = ""
     separator_subtitle: str = ""
 
     # For hook attachments to tool cards
-    hook_tool_call_id: Optional[str] = None
-    hook_info: Optional[Dict[str, Any]] = None
+    hook_tool_call_id: str | None = None
+    hook_info: dict[str, Any] | None = None
 
     # Original normalized content (for debugging/advanced use)
-    normalized: Optional[NormalizedContent] = None
+    normalized: NormalizedContent | None = None
 
     # Extra metadata for specialized output types (final_presentation_start, etc.)
-    extra: Optional[Dict[str, Any]] = None
+    extra: dict[str, Any] | None = None
 
 
 class ContentProcessor:
@@ -131,8 +131,8 @@ class ContentProcessor:
         self._event_counter = 0
 
         # Event processing state
-        self._event_tool_states: Dict[str, Dict[str, Any]] = {}
-        self._event_pending_batch: List[ToolDisplayData] = []
+        self._event_tool_states: dict[str, dict[str, Any]] = {}
+        self._event_pending_batch: list[ToolDisplayData] = []
         self._event_round_number: int = 1
 
     def reset(self) -> None:
@@ -155,7 +155,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int = 1,
-    ) -> Optional[Union[ContentOutput, List[ContentOutput]]]:
+    ) -> ContentOutput | list[ContentOutput] | None:
         """Process a structured MassGenEvent.
 
         This is the entry point for processing events. It handles the different
@@ -231,7 +231,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle tool_start event."""
         tool_id = event.data.get("tool_id", "")
         tool_name = event.data.get("tool_name", "unknown")
@@ -242,6 +242,8 @@ class ContentProcessor:
         # but keep planning tools so task plans can update.
         if ContentNormalizer.is_filtered_tool(tool_name) and not is_planning_tool(tool_name):
             return None
+
+        tui_log(f"[TOOL_EVENT] tool_name={tool_name} server_name={server_name} tool_type={'mcp' if server_name else 'tool'}")
 
         # Get category info for proper styling
         category_info = get_tool_category(tool_name)
@@ -269,6 +271,7 @@ class ContentProcessor:
             start_time=datetime.fromisoformat(event.timestamp) if event.timestamp else datetime.now(),
             args_summary=args_summary,
             args_full=args_str,
+            server_name=server_name,
         )
 
         # Store tool state for completion matching
@@ -294,13 +297,15 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle tool_complete event."""
         tool_id = event.data.get("tool_id", "")
         tool_name = event.data.get("tool_name", "")
         result_text = event.data.get("result", "")
         elapsed = event.data.get("elapsed_seconds", 0)
         is_error = event.data.get("is_error", False)
+        completion_status = str(event.data.get("status", "success")).lower()
+        async_id = event.data.get("async_id")
 
         # Filter out internal coordination tools (task_plan, etc.),
         # but keep planning tools so task plans can update.
@@ -316,24 +321,42 @@ class ContentProcessor:
         if not original_data:
             # No matching start - create minimal tool data
             tool_name = event.data.get("tool_name", "unknown")
+            server_name = event.data.get("server_name")
             category_info = get_tool_category(tool_name)
             display_name = format_tool_display_name(tool_name)
             original_data = ToolDisplayData(
                 tool_id=tool_id,
                 tool_name=tool_name,
                 display_name=display_name,
-                tool_type="tool",
+                tool_type="mcp" if server_name else "tool",
                 category=category_info["category"],
                 icon=category_info["icon"],
                 color=category_info["color"],
                 status="running",
                 start_time=datetime.now(),
+                server_name=server_name,
             )
 
         # Create result summary
         result_summary = result_text[:100] + "..." if len(result_text) > 100 else result_text
 
+        # Infer background metadata for generalized start_background_tool payloads
+        # where backends may emit status=success and encode job_id in JSON result.
+        completion_status, async_id = self._infer_background_tool_metadata(
+            tool_name=original_data.tool_name,
+            completion_status=completion_status,
+            async_id=async_id,
+            result_text=result_text,
+        )
+
         # Create updated ToolDisplayData
+        if completion_status == "background":
+            display_status = "background"
+        elif is_error or completion_status in {"error", "failed", "cancelled"}:
+            display_status = "error"
+        else:
+            display_status = "success"
+
         tool_data = ToolDisplayData(
             tool_id=tool_id,
             tool_name=original_data.tool_name,
@@ -342,15 +365,17 @@ class ContentProcessor:
             category=original_data.category,
             icon=original_data.icon,
             color=original_data.color,
-            status="error" if is_error else "success",
+            status=display_status,
             start_time=original_data.start_time,
             end_time=datetime.fromisoformat(event.timestamp) if event.timestamp else datetime.now(),
             args_summary=original_data.args_summary,
             args_full=original_data.args_full,
             result_summary=result_summary,
             result_full=result_text,
-            error=result_text if is_error else None,
+            error=result_text if display_status == "error" else None,
             elapsed_seconds=elapsed,
+            async_id=async_id,
+            server_name=original_data.server_name,
         )
 
         # Determine batch action for completion
@@ -368,11 +393,90 @@ class ContentProcessor:
             server_name=batch_server,
         )
 
+    @staticmethod
+    def _is_start_background_tool(tool_name: str) -> bool:
+        """Return True when tool_name represents the background start lifecycle tool."""
+        return str(tool_name or "").lower().endswith("start_background_tool")
+
+    @staticmethod
+    def _parse_text_payload(text: str) -> dict[str, Any] | list[Any] | None:
+        """Parse a text payload that may be JSON or a Python repr."""
+        if not isinstance(text, str):
+            return None
+        trimmed = text.strip()
+        if not trimmed:
+            return None
+
+        for parser in (json.loads, ast.literal_eval):
+            try:
+                parsed = parser(trimmed)
+            except (json.JSONDecodeError, TypeError, ValueError, SyntaxError):
+                continue
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        return None
+
+    @classmethod
+    def _parse_result_dict(cls, result_text: str) -> dict[str, Any] | None:
+        """Parse tool result text as a dict, unwrapping Claude SDK content blocks when needed."""
+        parsed = cls._parse_text_payload(result_text)
+        if isinstance(parsed, dict):
+            return parsed
+
+        if isinstance(parsed, list):
+            for item in parsed:
+                if not isinstance(item, dict):
+                    continue
+                for key in ("text", "data", "content"):
+                    nested_raw = item.get(key)
+                    if nested_raw is None:
+                        continue
+                    if isinstance(nested_raw, dict):
+                        return nested_raw
+                    nested = cls._parse_text_payload(str(nested_raw))
+                    if isinstance(nested, dict):
+                        return nested
+        return None
+
+    def _infer_background_tool_metadata(
+        self,
+        tool_name: str,
+        completion_status: str,
+        async_id: str | None,
+        result_text: str,
+    ) -> tuple[str, str | None]:
+        """Infer background display metadata from lifecycle tool payloads."""
+        inferred_status = completion_status
+        inferred_async_id = async_id
+
+        if inferred_async_id and inferred_status == "success":
+            inferred_status = "background"
+            return inferred_status, inferred_async_id
+
+        payload = self._parse_result_dict(result_text)
+        if not payload:
+            return inferred_status, inferred_async_id
+
+        job_id = str(payload.get("job_id") or "").strip()
+        payload_status = str(payload.get("status") or "").lower().strip()
+        payload_success = payload.get("success")
+
+        if job_id:
+            inferred_async_id = job_id
+
+        should_mark_background = bool(job_id) and (
+            payload_status in {"running", "background", "pending", "queued"} or (self._is_start_background_tool(tool_name) and payload_success is True and not payload_status)
+        )
+        if should_mark_background and inferred_status == "success":
+            inferred_status = "background"
+
+        return inferred_status, inferred_async_id
+
     def _handle_event_thinking(
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle thinking event.
 
         Thinking events arrive as small streaming tokens (e.g. " planning",
@@ -411,7 +515,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle text event.
 
         Applies the same filtering as main TUI for visual parity.
@@ -444,7 +548,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle status event."""
         message = event.data.get("message", "")
         level = event.data.get("level", "info")
@@ -474,7 +578,7 @@ class ContentProcessor:
     def _handle_event_round_start(
         self,
         event: MassGenEvent,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle round_start event.
 
         Round banners are now handled exclusively by agent_restart events.
@@ -489,7 +593,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle final_answer event."""
         content = event.data.get("content", "")
 
@@ -503,7 +607,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle workspace_action event."""
         action_type = event.data.get("action_type", "unknown")
         params = event.data.get("params")
@@ -527,7 +631,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle restart_banner event."""
         attempt = event.data.get("attempt", 1)
         max_attempts = event.data.get("max_attempts", 3)
@@ -544,7 +648,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle presentation_start event.
 
         Note: This event is suppressed because FINAL_PRESENTATION_START
@@ -559,7 +663,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle agent_restart event."""
         agent_round = event.data.get("restart_round", round_number)
         try:
@@ -586,7 +690,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle phase_change event."""
         phase = event.data.get("phase", "unknown")
 
@@ -602,7 +706,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle hook_execution event.
 
         Returns a hook ContentOutput so the event pipeline can attach hook
@@ -623,13 +727,32 @@ class ContentProcessor:
         if not isinstance(raw_hook_info, dict):
             raw_hook_info = {}
 
+        hook_name = str(raw_hook_info.get("hook_name", ""))
+        injection_content = raw_hook_info.get("injection_content")
         hook_info = {
-            "hook_name": raw_hook_info.get("hook_name", ""),
+            "hook_name": hook_name,
             "hook_type": raw_hook_info.get("hook_type", ""),
             "status": raw_hook_info.get("decision", raw_hook_info.get("status", "")),
-            "injection_content": raw_hook_info.get("injection_content"),
+            "injection_content": injection_content,
             "output": raw_hook_info.get("output", ""),
         }
+
+        if hook_name == "human_input_hook" and injection_content and event.agent_id:
+            payload = str(injection_content)
+            marker = "[Human Input]:"
+            marker_index = payload.find(marker)
+            if marker_index >= 0:
+                payload = payload[marker_index + len(marker) :]
+            payload = " ".join(payload.split())
+            if payload:
+                return ContentOutput(
+                    output_type="status",
+                    round_number=round_number,
+                    text_content=f"Runtime Injection -> Delivered to {event.agent_id}: {payload}",
+                    text_style="dim cyan",
+                    text_class="status runtime-injection",
+                )
+
         # Only emit if there's a tool to attach to
         if not tool_call_id:
             return None
@@ -644,7 +767,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle post_evaluation event."""
         phase = event.data.get("phase", "")
         content = event.data.get("content", "")
@@ -681,7 +804,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle system_status event."""
         message = event.data.get("message", "")
 
@@ -697,7 +820,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle answer_submitted coordination event.
 
         Creates a workspace/new_answer tool card matching the main TUI's
@@ -754,7 +877,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle vote coordination event.
 
         Creates a workspace/vote tool card matching the main TUI's
@@ -811,7 +934,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle agent_stopped coordination event (decomposition mode).
 
         Creates a workspace/stop tool card for the subagent TUI parity.
@@ -860,7 +983,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[Union[ContentOutput, List[ContentOutput]]]:
+    ) -> ContentOutput | list[ContentOutput] | None:
         """Handle winner_selected coordination event.
 
         Creates a FinalPresentationCard in completion-only mode (no streaming
@@ -870,7 +993,7 @@ class ContentProcessor:
         vote_results_str = event.data.get("vote_results", "")
 
         # Parse vote_results if it's a string repr
-        vote_counts: Dict[str, Any] = {}
+        vote_counts: dict[str, Any] = {}
         is_tie = False
         if vote_results_str:
             try:
@@ -901,7 +1024,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle context_received coordination event."""
         # Context sharing is an internal orchestration detail — don't render
         return None
@@ -910,7 +1033,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle injection_received event.
 
         The injection content is already carried by the preceding
@@ -923,7 +1046,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle final_presentation_start event.
 
         Returns a ContentOutput with output_type="final_presentation_start"
@@ -949,7 +1072,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle final_presentation_chunk event — streamed content for the card."""
         content = event.data.get("content", "")
         if not content:
@@ -966,7 +1089,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle final_presentation_end event — marks the card as complete."""
         return ContentOutput(
             output_type="final_presentation_end",
@@ -981,7 +1104,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle answer_locked event — timeline locks to final answer."""
         return ContentOutput(
             output_type="answer_locked",
@@ -996,7 +1119,7 @@ class ContentProcessor:
         self,
         event: MassGenEvent,
         round_number: int,
-    ) -> Optional[ContentOutput]:
+    ) -> ContentOutput | None:
         """Handle orchestrator_timeout event.
 
         Returns a ContentOutput with structured timeout data for the TUI
@@ -1015,7 +1138,7 @@ class ContentProcessor:
             },
         )
 
-    def flush_pending_batch(self, round_number: int = 1) -> Optional[ContentOutput]:
+    def flush_pending_batch(self, round_number: int = 1) -> ContentOutput | None:
         """Flush any pending tool batch and return it.
 
         Call this when done processing events to finalize any incomplete batch.

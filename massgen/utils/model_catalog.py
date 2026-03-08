@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Dynamic model catalog fetcher for chat completion providers.
 Fetches model lists from provider APIs with caching.
@@ -10,7 +9,6 @@ import json
 import os
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
 
 import httpx
 
@@ -43,7 +41,7 @@ def is_cache_valid(cache_path: Path) -> bool:
         return False
 
 
-def read_cache(cache_path: Path) -> Optional[List[str]]:
+def read_cache(cache_path: Path) -> list[str] | None:
     """Read model list from cache."""
     try:
         with open(cache_path) as f:
@@ -53,7 +51,7 @@ def read_cache(cache_path: Path) -> Optional[List[str]]:
         return None
 
 
-def write_cache(cache_path: Path, models: List[str]):
+def write_cache(cache_path: Path, models: list[str]):
     """Write model list to cache."""
     ensure_cache_dir()
     data = {"models": models, "cached_at": datetime.now().isoformat()}
@@ -61,7 +59,7 @@ def write_cache(cache_path: Path, models: List[str]):
         json.dump(data, f, indent=2)
 
 
-async def fetch_openrouter_models(api_key: Optional[str] = None) -> List[str]:
+async def fetch_openrouter_models(api_key: str | None = None) -> list[str]:
     """Fetch model list from OpenRouter API.
 
     OpenRouter's /models endpoint works without authentication.
@@ -94,7 +92,7 @@ async def fetch_openrouter_models(api_key: Optional[str] = None) -> List[str]:
         return []
 
 
-async def fetch_poe_models() -> List[str]:
+async def fetch_poe_models() -> list[str]:
     """Fetch model list from POE API.
 
     Returns:
@@ -111,9 +109,9 @@ async def fetch_poe_models() -> List[str]:
 
 
 async def fetch_together_models(
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     default_model: str = "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
-) -> List[str]:
+) -> list[str]:
     """Fetch model list from Together AI API.
 
     Filters to only chat/language models, sorted by creation date (newest first).
@@ -245,12 +243,12 @@ def _is_chat_model(model_id: str, provider: str = "openai") -> bool:
 
 async def fetch_openai_compatible_models(
     base_url: str,
-    api_key: Optional[str] = None,
+    api_key: str | None = None,
     sort_by_created: bool = False,
-    default_model: Optional[str] = None,
+    default_model: str | None = None,
     filter_chat_models: bool = False,
     provider: str = "openai",
-) -> List[str]:
+) -> list[str]:
     """Fetch model list from OpenAI-compatible API endpoint.
 
     Args:
@@ -297,7 +295,7 @@ async def fetch_openai_compatible_models(
         return []
 
 
-async def get_models_for_provider(provider: str, use_cache: bool = True) -> List[str]:
+async def get_models_for_provider(provider: str, use_cache: bool = True) -> list[str]:
     """Get model list for a provider, using cache if available.
 
     Args:
@@ -350,6 +348,9 @@ async def get_models_for_provider(provider: str, use_cache: bool = True) -> List
     elif provider == "moonshot":
         # Moonshot/Kimi uses OpenAI-compatible endpoint
         models = await fetch_openai_compatible_models("https://api.moonshot.cn/v1", os.getenv("MOONSHOT_API_KEY"))
+    elif provider == "nvidia_nim":
+        # Nvidia NIM uses OpenAI-compatible endpoint
+        models = await fetch_openai_compatible_models("https://integrate.api.nvidia.com/v1", os.getenv("NGC_API_KEY"))
     elif provider == "qwen":
         # Qwen uses DashScope API (OpenAI-compatible)
         models = await fetch_openai_compatible_models(
@@ -362,7 +363,7 @@ async def get_models_for_provider(provider: str, use_cache: bool = True) -> List
             "https://api.openai.com/v1",
             os.getenv("OPENAI_API_KEY"),
             sort_by_created=True,
-            default_model="gpt-5.2",
+            default_model="gpt-5.4",
             filter_chat_models=True,
             provider="openai",
         )
@@ -374,7 +375,7 @@ async def get_models_for_provider(provider: str, use_cache: bool = True) -> List
     return models
 
 
-def get_models_for_provider_sync(provider: str, use_cache: bool = True) -> List[str]:
+def get_models_for_provider_sync(provider: str, use_cache: bool = True) -> list[str]:
     """Synchronous wrapper for get_models_for_provider.
 
     Args:

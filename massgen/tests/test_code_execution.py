@@ -1,7 +1,7 @@
-# -*- coding: utf-8 -*-
 """
 Unit tests for code execution MCP server.
 """
+
 import subprocess
 import sys
 

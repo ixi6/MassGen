@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Modal-backed cloud job launcher for MassGen automation runs."""
 
 import base64
@@ -7,7 +6,6 @@ import json
 import subprocess
 import threading
 from pathlib import Path
-from typing import List, Optional
 
 from .cloud_job import CloudJobError, CloudJobLauncher, CloudJobRequest, CloudJobResult
 from .utils import extract_artifacts
@@ -16,7 +14,7 @@ from .utils import extract_artifacts
 class ModalCloudJobLauncher(CloudJobLauncher):
     """Launch MassGen jobs in Modal and materialize outputs locally."""
 
-    def __init__(self, workspace_root: Optional[Path] = None):
+    def __init__(self, workspace_root: Path | None = None):
         super().__init__(workspace_root)
 
     def launch(self, request: CloudJobRequest) -> CloudJobResult:
@@ -49,7 +47,7 @@ class ModalCloudJobLauncher(CloudJobLauncher):
         )
 
         # Drain stderr in a background thread to avoid pipe deadlock.
-        stderr_lines: List[str] = []
+        stderr_lines: list[str] = []
 
         def _drain_stderr():
             assert proc.stderr is not None
@@ -60,7 +58,7 @@ class ModalCloudJobLauncher(CloudJobLauncher):
         stderr_thread.start()
 
         # Stream stdout
-        stdout_lines: List[str] = []
+        stdout_lines: list[str] = []
         marker_payload = None
         assert proc.stdout is not None
         for line in proc.stdout:
@@ -70,8 +68,8 @@ class ModalCloudJobLauncher(CloudJobLauncher):
                 raw = stripped[len(self.RESULT_MARKER) :]
                 try:
                     marker_payload = json.loads(raw)
-                except json.JSONDecodeError:
-                    raise CloudJobError(f"Failed to parse cloud job result JSON: {raw}")
+                except json.JSONDecodeError as e:
+                    raise CloudJobError(f"Failed to parse cloud job result JSON: {raw}") from e
             else:
                 print(f"[cloud] {line}", end="")
 

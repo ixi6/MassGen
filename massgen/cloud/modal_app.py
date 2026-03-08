@@ -14,7 +14,6 @@ from pathlib import Path
 import modal
 
 APP_NAME = "massgen-cloud-job"
-RESULT_MARKER = "__MASSGEN_CLOUD_JOB_RESULT__"
 
 
 def parse_automation_value(label: str, text: str) -> str | None:
@@ -84,6 +83,7 @@ def run_massgen_job(payload_b64: str) -> dict:
 
     prompt = str(payload["prompt"])
     config_yaml = str(payload["config_yaml"])
+    cloud_job_id = str(payload.get("cloud_job_id", ""))
     output_filename = "final_answer.txt"
 
     workspace = Path("/tmp/massgen_cloud_job")
@@ -169,5 +169,6 @@ def run_massgen_job(payload_b64: str) -> dict:
         "remote_log_dir": log_dir,
         "artifacts_tar_gz_b64": make_tar_gz_b64(artifact_root),
     }
-    print(f"{RESULT_MARKER}{json.dumps(result)}")
+    result_marker = f"__MASSGEN_CLOUD_JOB_RESULT_{cloud_job_id}__"
+    print(f"{result_marker}{json.dumps(result)}")
     return result

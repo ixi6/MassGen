@@ -25,6 +25,7 @@ class ModalCloudJobLauncher(CloudJobLauncher):
             "prompt": request.prompt,
             "config_yaml": request.config_yaml,
             "timeout_seconds": request.timeout_seconds,
+            "cloud_job_id": request.cloud_job_id,
         }
         payload_b64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
 
@@ -60,11 +61,12 @@ class ModalCloudJobLauncher(CloudJobLauncher):
         stdout_lines: list[str] = []
         marker_payload = None
         assert proc.stdout is not None
+        result_marker = f"__MASSGEN_CLOUD_JOB_RESULT_{request.cloud_job_id}__"
         for line in proc.stdout:
             stdout_lines.append(line)
             stripped = line.strip()
-            if stripped.startswith(self.RESULT_MARKER):
-                raw = stripped[len(self.RESULT_MARKER) :]
+            if stripped.startswith(result_marker):
+                raw = stripped[len(result_marker) :]
                 try:
                     marker_payload = json.loads(raw)
                 except json.JSONDecodeError as e:

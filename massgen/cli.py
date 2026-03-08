@@ -460,20 +460,10 @@ MASSGEN_QUESTIONARY_STYLE = Style(
 )
 
 
-def _is_single_agent_config(config: dict[str, Any]) -> bool:
-    """Return True when config defines exactly one agent."""
-    if "agent" in config:
-        return True
-    agents = config.get("agents", [])
-    return isinstance(agents, list) and len(agents) == 1
-
-
 def _run_cloud_job(args: argparse.Namespace, config: dict[str, Any], config_path_label: str | None) -> None:
     """Launch a MassGen run in Modal cloud and materialize results locally."""
     if not args.question:
         raise ConfigurationError("--cloud requires a question argument")
-    if not _is_single_agent_config(config):
-        raise ConfigurationError("--cloud MVP currently supports single-agent configs only")
 
     import uuid
 

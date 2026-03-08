@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Modal app entrypoint for MassGen cloud jobs."""
 
 import base64
@@ -11,7 +10,6 @@ import subprocess
 import tarfile
 import threading
 from pathlib import Path
-from typing import Dict, List
 
 import modal
 
@@ -20,12 +18,29 @@ RESULT_MARKER = "__MASSGEN_CLOUD_JOB_RESULT__"
 
 
 def parse_automation_value(label: str, text: str) -> str | None:
+    """Parse an extracted automation value from stderr text.
+
+    Args:
+        label: The automation key to look for (e.g., "LOG_DIR").
+        text: The stderr text to parse.
+
+    Returns:
+        The extracted automation value if found, else None.
+    """
     pattern = re.compile(rf"^{re.escape(label)}:\s*(.+)$", re.MULTILINE)
     match = pattern.search(text)
     return match.group(1).strip() if match else None
 
 
 def make_tar_gz_b64(source_dir: Path) -> str:
+    """Create a base64-encoded tar.gz archive of a directory.
+
+    Args:
+        source_dir: The directory to archive.
+
+    Returns:
+        A base64-encoded string of the gzipped tar archive.
+    """
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for path in source_dir.rglob("*"):
@@ -65,7 +80,7 @@ context_vol = modal.Volume.from_name(CONTEXT_VOLUME_NAME, create_if_missing=True
 )
 def run_massgen_job(payload_b64: str) -> dict:
     """Local entrypoint for Modal job."""
-    payload: Dict[str, object] = json.loads(base64.b64decode(payload_b64).decode("utf-8"))
+    payload: dict[str, object] = json.loads(base64.b64decode(payload_b64).decode("utf-8"))
 
     prompt = str(payload["prompt"])
     config_yaml = str(payload["config_yaml"])
@@ -105,8 +120,8 @@ def run_massgen_job(payload_b64: str) -> dict:
     )
 
     # Stream stdout line-by-line so `modal run` can forward it in real time.
-    stdout_lines: List[str] = []
-    stderr_lines: List[str] = []
+    stdout_lines: list[str] = []
+    stderr_lines: list[str] = []
 
     def _drain_stderr():
         assert proc.stderr is not None

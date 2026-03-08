@@ -496,6 +496,18 @@ def _run_cloud_job(args: argparse.Namespace, config: dict[str, Any], config_path
             orchestrator_cfg["context_paths"] = rewritten_paths
             config_copy["orchestrator"] = orchestrator_cfg
 
+    agents_list = config_copy.get("agents", [])
+
+    for agent_cfg in agents_list:
+        if isinstance(agent_cfg, dict):
+            backend_cfg = agent_cfg.get("backend", {})
+            agent_context_paths = backend_cfg.get("context_paths", [])
+            if agent_context_paths:
+                rewritten_paths = process_context_paths(agent_context_paths, cloud_job_id=cloud_job_id)
+                if rewritten_paths:
+                    backend_cfg["context_paths"] = rewritten_paths
+                    agent_cfg["backend"] = backend_cfg
+
     # Cloud validation compatibility for PyPI version
     # The PyPI version of massgen on Modal fails if display_type is "silent".
     # Since modal_app.py passes `--automation`, it will be re-set to "silent"

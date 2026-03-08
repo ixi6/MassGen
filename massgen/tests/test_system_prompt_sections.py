@@ -106,6 +106,22 @@ def test_checklist_gated_decision_orchestrator_managed_round_evaluator_mode_requ
     assert "save or copy that round-evaluator report into your workspace" in lower
 
 
+def test_checklist_gated_decision_orchestrator_managed_auto_injection_is_task_driven():
+    """Managed mode should teach the auto-injected branch as get_task_plan -> implement -> new_answer."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+    )
+    lower = content.lower()
+    assert "auto-injected into your task plan" in lower
+    assert "get_task_plan" in content
+    assert "do not call `submit_checklist`" in content
+    assert "do not call `propose_improvements`" in content
+    assert "do not write a second diagnostic report" in lower
+    assert "pure text artifact" in lower
+
+
 def test_checklist_gated_decision_includes_peer_build_copy_guidance():
     """Checklist workflow should explain how to evaluate peer build outputs
     without mutating read-only shared snapshots."""
@@ -146,6 +162,8 @@ def test_task_planning_section_no_subagents_omits_classification_step():
     content = TaskPlanningSection().build_content()
     assert "Classify Every Task for Delegation" not in content
     assert "Available subagent types" not in content
+    assert "subagent_type" not in content
+    assert '"mode": "delegate"' not in content
     # Step numbering should not reference STEP 3/4 when subagents are absent
     assert "STEP 2 — Execute Every Task" in content
     assert "STEP 3 — Include Task Summary" in content
@@ -164,14 +182,30 @@ def test_task_planning_section_with_subagents_includes_classification_step():
     assert "Available subagent types" in content
     assert '"builder"' in content
     assert '"evaluator"' in content
-    # subagent_name and subagent_id should appear in the classification step
-    assert "subagent_name" in content
+    assert '"mode": "inline"' in content
+    assert '"mode": "delegate"' in content
+    assert "subagent_type" in content
     assert "subagent_id" in content
+    assert "Inline means you execute the task yourself" in content
     # novelty guidance should appear in the classification step
     assert "novelty" in content.lower()
     # Step numbering should use STEP 3/4 when subagents are present
     assert "STEP 3 — Execute Every Task" in content
     assert "STEP 4 — Include Task Summary" in content
+
+
+def test_checklist_gated_decision_without_subagents_does_not_offer_delegate_execution():
+    """Managed round-evaluator guidance should stay inline-only when no subagents are available."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+        specialized_subagents_available=False,
+    )
+    lower = content.lower()
+    assert "execution.mode" not in content
+    assert "spawn_subagents()" not in content
+    assert "all injected tasks are inline in this run" in lower
 
 
 def test_task_planning_section_is_mandatory_for_complex_tasks():

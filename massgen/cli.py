@@ -3169,6 +3169,8 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         subagent_types=coord_cfg.get("subagent_types"),
         round_evaluator_before_checklist=coord_cfg.get("round_evaluator_before_checklist", False),
         orchestrator_managed_round_evaluator=coord_cfg.get("orchestrator_managed_round_evaluator", False),
+        round_evaluator_skip_synthesis=coord_cfg.get("round_evaluator_skip_synthesis", False),
+        round_evaluator_refine=coord_cfg.get("round_evaluator_refine", False),
         enable_quality_rethink_on_iteration=coord_cfg.get("enable_quality_rethink_on_iteration", False),
         enable_novelty_on_iteration=coord_cfg.get("enable_novelty_on_iteration", False),
         novelty_injection=coord_cfg.get("novelty_injection", "none"),

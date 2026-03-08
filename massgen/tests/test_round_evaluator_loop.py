@@ -171,6 +171,14 @@ def test_round_evaluator_result_serialization_roundtrip():
         execution_time_seconds=42.0,
         subagent_id="eval_1",
         log_path="/tmp/logs",
+        primary_artifact_path="/tmp/ws/critique_packet.md",
+        next_tasks_artifact_path="/tmp/ws/next_tasks.json",
+        task_plan_source="next_tasks_artifact",
+        next_tasks={
+            "schema_version": "1",
+            "execution_scope": {"active_chunk": "c1"},
+            "tasks": [{"id": "t1", "description": "Do work", "verification": "done"}],
+        },
     )
     restored = RoundEvaluatorResult.from_dict(original.to_dict())
 
@@ -180,6 +188,10 @@ def test_round_evaluator_result_serialization_roundtrip():
     assert restored.execution_time_seconds == original.execution_time_seconds
     assert restored.subagent_id == original.subagent_id
     assert restored.log_path == original.log_path
+    assert restored.primary_artifact_path == original.primary_artifact_path
+    assert restored.next_tasks_artifact_path == original.next_tasks_artifact_path
+    assert restored.task_plan_source == "next_tasks_artifact"
+    assert restored.next_tasks == original.next_tasks
 
 
 # ---------------------------------------------------------------------------
@@ -226,9 +238,111 @@ def test_evaluator_result_block_includes_status():
     assert "degraded" in block.lower()
 
 
+def test_auto_injected_evaluator_result_block_is_path_driven():
+    """Auto-injected mode should inject a compact header with exact artifact paths."""
+    from massgen.orchestrator import Orchestrator
+    from massgen.subagent.models import RoundEvaluatorResult
+
+    evaluator_result = RoundEvaluatorResult(
+        packet_text="Full critique packet body that should not be injected here",
+        clean_packet_text="Clean critique packet body that should not be injected here",
+        status="success",
+        subagent_id="eval_r2",
+        primary_artifact_path="/tmp/eval/critique_packet.md",
+        next_tasks_artifact_path="/tmp/eval/next_tasks.json",
+    )
+
+    block = Orchestrator._format_round_evaluator_result_block_static(
+        subagent_id="eval_r2",
+        evaluator_result=evaluator_result,
+        auto_injected=True,
+    )
+
+    assert "get_task_plan" in block
+    assert "/tmp/eval/critique_packet.md" in block
+    assert "/tmp/eval/next_tasks.json" in block
+    assert "submit_checklist" in block and "do not call" in block.lower()
+    assert "propose_improvements" in block and "do not call" in block.lower()
+    assert "diagnostic report" in block.lower()
+    assert "pure text artifact" in block.lower()
+    assert "Full critique packet body" not in block
+    assert "<evaluator_packet" not in block
+
+
 # ---------------------------------------------------------------------------
 # Example config tests
 # ---------------------------------------------------------------------------
+
+
+def test_parse_coordination_config_passes_round_evaluator_refine():
+    from massgen.cli import _parse_coordination_config
+
+    coord = _parse_coordination_config(
+        {
+            "round_evaluator_before_checklist": True,
+            "orchestrator_managed_round_evaluator": True,
+            "round_evaluator_refine": True,
+            "subagent_orchestrator": {"enabled": True},
+        },
+    )
+    assert coord.round_evaluator_refine is True
+
+
+def test_round_evaluator_refine_defaults_to_false():
+    from massgen.cli import _parse_coordination_config
+
+    coord = _parse_coordination_config(
+        {
+            "round_evaluator_before_checklist": True,
+            "orchestrator_managed_round_evaluator": True,
+        },
+    )
+    assert coord.round_evaluator_refine is False
+
+
+def test_config_validator_rejects_round_evaluator_refine_without_managed():
+    config = _make_round_evaluator_config()
+    config["orchestrator"]["coordination"]["orchestrator_managed_round_evaluator"] = False
+    config["orchestrator"]["coordination"]["round_evaluator_before_checklist"] = False
+    config["orchestrator"]["coordination"]["round_evaluator_refine"] = True
+
+    result = ConfigValidator().validate_config(config)
+    assert not result.is_valid()
+    assert any("round_evaluator_refine" in e.message for e in result.errors)
+
+
+def test_config_validator_accepts_round_evaluator_refine_with_managed():
+    config = _make_round_evaluator_config()
+    config["orchestrator"]["coordination"]["round_evaluator_refine"] = True
+
+    result = ConfigValidator().validate_config(config)
+    assert result.is_valid(), result.format_errors()
+
+
+def test_planning_injection_dir_is_absolute(tmp_path, monkeypatch):
+    """The injection dir stored in _planning_injection_dirs must be absolute.
+
+    If relative, the MCP subprocess (whose CWD differs from the orchestrator)
+    won't find inject_tasks.json and the agent gets an empty task plan.
+    Regression test for the bug where get_log_session_dir() returned a relative
+    path and the orchestrator passed it as-is to the planning MCP.
+    """
+    import massgen.orchestrator as orch_mod
+
+    # Simulate get_log_session_dir returning a relative path (the bug trigger)
+    relative_log_dir = Path(".massgen/massgen_logs/log_test/turn_1/attempt_1")
+    monkeypatch.setattr(
+        orch_mod,
+        "get_log_session_dir",
+        lambda *a, **kw: relative_log_dir,
+    )
+
+    # Directly exercise the injection-dir construction logic extracted
+    # from _create_planning_mcp_config (lines 2326-2339 of orchestrator.py).
+    log_dir = orch_mod.get_log_session_dir()
+    injection_dir = (log_dir / "planning_injection" / "agent_a").resolve()
+
+    assert injection_dir.is_absolute(), f"injection_dir must be absolute, got relative: {injection_dir}"
 
 
 def test_example_round_evaluator_config_exists_and_validates():

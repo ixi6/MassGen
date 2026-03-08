@@ -482,6 +482,28 @@ class TestSubagentMcpConfigEnv:
         assert payload["subagent_orchestrator"]["enabled"] is True
         assert payload["subagent_orchestrator"]["inherit_spawning_agent_backend"] is True
 
+    def test_subagent_mcp_coordination_config_includes_checklist_inheritance_fields(self, tmp_path):
+        """Checklist/voting settings should be serialized so refine child runs can inherit them."""
+        orch, agent = self._make_orchestrator_and_agent(tmp_path)
+        orch.config.voting_sensitivity = "checklist_gated"
+        orch.config.voting_threshold = 12
+        orch.config.checklist_require_gap_report = True
+        orch.config.gap_report_mode = "separate"
+        orch.config.max_checklist_calls_per_round = 2
+        orch.config.checklist_first_answer = True
+
+        config = orch._create_subagent_mcp_config("test_agent", agent)
+        args = config["args"]
+        coord_file = Path(self._get_arg(args, "--coordination-config-file"))
+        payload = json.loads(coord_file.read_text())
+
+        assert payload["voting_sensitivity"] == "checklist_gated"
+        assert payload["voting_threshold"] == 12
+        assert payload["checklist_require_gap_report"] is True
+        assert payload["gap_report_mode"] == "separate"
+        assert payload["max_checklist_calls_per_round"] == 2
+        assert payload["checklist_first_answer"] is True
+
     def test_subagent_mcp_orchestrator_config_file_includes_inherit_backend(self, tmp_path):
         """Subagent orchestrator settings should be written to a workspace file for robust arg passing."""
         from massgen.subagent.models import SubagentOrchestratorConfig

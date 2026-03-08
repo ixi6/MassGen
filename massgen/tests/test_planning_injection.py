@@ -202,8 +202,8 @@ class TestCheckAndInjectPendingTasks:
         assert added_ids == ["improve_E1"]
         assert plan.tasks[0].id == "improve_E1"
 
-    def test_injection_forwards_subagent_name(self, tmp_path):
-        """Top-level subagent fields are forwarded to task metadata during injection."""
+    def test_injection_forwards_execution(self, tmp_path):
+        """Top-level execution fields are forwarded canonically during injection."""
         plan = TaskPlan(agent_id="test_agent", require_verification=False)
 
         tasks = [
@@ -212,8 +212,11 @@ class TestCheckAndInjectPendingTasks:
                 "description": "[E1] Build hero section",
                 "priority": "high",
                 "verification": "Hero renders correctly",
-                "subagent_name": "builder",
-                "subagent_id": "sub_123",
+                "execution": {
+                    "mode": "delegate",
+                    "subagent_type": "builder",
+                    "subagent_id": "sub_123",
+                },
                 "criterion_id": "E1",
                 "impact": "structural",
                 "sources": ["agent1.1"],
@@ -228,8 +231,11 @@ class TestCheckAndInjectPendingTasks:
         assert added_ids == ["improve_E1"]
 
         task = plan.tasks[0]
-        assert task.metadata["subagent_name"] == "builder"
-        assert task.metadata["subagent_id"] == "sub_123"
+        assert task.metadata["execution"] == {
+            "mode": "delegate",
+            "subagent_type": "builder",
+            "subagent_id": "sub_123",
+        }
         assert task.metadata["criterion_id"] == "E1"
         assert task.metadata["impact"] == "structural"
         assert task.metadata["sources"] == ["agent1.1"]
@@ -545,12 +551,12 @@ class TestVerificationMemoSinksToEnd:
             server._verification_memory_enabled = orig
 
 
-class TestCreateTaskPlanSubagentMetadata:
-    """create_task_plan should preserve subagent delegation metadata."""
+class TestCreateTaskPlanExecutionMetadata:
+    """create_task_plan should preserve canonical task execution metadata."""
 
     @pytest.mark.asyncio
-    async def test_create_task_plan_preserves_top_level_subagent_fields(self, monkeypatch):
-        """Top-level subagent_id/subagent_name should be kept in task metadata."""
+    async def test_create_task_plan_preserves_top_level_execution(self, monkeypatch):
+        """Top-level execution should be kept in task metadata and surfaced on the task."""
         from massgen.mcp_tools.planning import _planning_mcp_server as server
 
         server._task_plans.clear()
@@ -584,8 +590,7 @@ class TestCreateTaskPlanSubagentMetadata:
                     "description": "Run initial evaluation checks",
                     "verification": "Evaluation report is generated",
                     "verification_method": "Review produced report",
-                    "subagent_id": "eval_subagent_1",
-                    "subagent_name": "evaluator",
+                    "execution": {"mode": "delegate", "subagent_type": "evaluator", "subagent_id": "eval_subagent_1"},
                 },
             ],
         )
@@ -593,12 +598,12 @@ class TestCreateTaskPlanSubagentMetadata:
         assert result["success"] is True
         created = result["tasks"][0]
         assert created["id"] == "initial_eval"
-        assert created["metadata"]["subagent_id"] == "eval_subagent_1"
-        assert created["metadata"]["subagent_name"] == "evaluator"
+        assert created["execution"] == {"mode": "delegate", "subagent_type": "evaluator", "subagent_id": "eval_subagent_1"}
+        assert created["metadata"]["execution"] == {"mode": "delegate", "subagent_type": "evaluator", "subagent_id": "eval_subagent_1"}
 
     @pytest.mark.asyncio
-    async def test_create_task_plan_preserves_subagent_fields_from_metadata(self, monkeypatch):
-        """metadata.subagent_id/subagent_name should be honored in create_task_plan."""
+    async def test_create_task_plan_preserves_execution_from_metadata(self, monkeypatch):
+        """metadata.execution should be honored in create_task_plan."""
         from massgen.mcp_tools.planning import _planning_mcp_server as server
 
         server._task_plans.clear()
@@ -634,8 +639,7 @@ class TestCreateTaskPlanSubagentMetadata:
                         "verification": "Evaluation report is generated",
                         "verification_method": "Review produced report",
                         "verification_group": "initial_eval",
-                        "subagent_id": "eval_subagent_2",
-                        "subagent_name": "evaluator",
+                        "execution": {"mode": "delegate", "subagent_type": "evaluator", "subagent_id": "eval_subagent_2"},
                         "custom_tag": "initial-eval",
                     },
                 },
@@ -645,7 +649,7 @@ class TestCreateTaskPlanSubagentMetadata:
         assert result["success"] is True
         created = result["tasks"][0]
         assert created["id"] == "initial_eval_meta"
-        assert created["metadata"]["subagent_id"] == "eval_subagent_2"
-        assert created["metadata"]["subagent_name"] == "evaluator"
+        assert created["execution"] == {"mode": "delegate", "subagent_type": "evaluator", "subagent_id": "eval_subagent_2"}
+        assert created["metadata"]["execution"] == {"mode": "delegate", "subagent_type": "evaluator", "subagent_id": "eval_subagent_2"}
         assert created["metadata"]["verification_group"] == "initial_eval"
         assert created["metadata"]["custom_tag"] == "initial-eval"

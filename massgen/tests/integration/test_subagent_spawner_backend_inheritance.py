@@ -107,8 +107,8 @@ def test_subagent_inherits_backend_from_spawning_parent_in_multi_parent_run(tmp_
     assert backend_b["reasoning"] == {"effort": "medium"}
 
 
-def test_subagent_effective_child_team_uses_shared_common_and_parent_local_sources(tmp_path: Path):
-    """Different parents should resolve shared common agents plus their own local subagent agents."""
+def test_non_round_evaluator_ignores_shared_common_agents_and_uses_parent_local_sources(tmp_path: Path):
+    """Builder-style subagents should ignore the shared evaluator pool and keep per-parent local config."""
     run_root = tmp_path / "run_root"
     run_root.mkdir(parents=True, exist_ok=True)
 
@@ -172,14 +172,171 @@ def test_subagent_effective_child_team_uses_shared_common_and_parent_local_sourc
     Path(manager_a.parent_workspace).mkdir(parents=True, exist_ok=True)
     Path(manager_b.parent_workspace).mkdir(parents=True, exist_ok=True)
 
-    sub_cfg_a = SubagentConfig.create(task="Evaluate draft A", parent_agent_id="agent_a", subagent_id="subagent_from_a")
-    sub_cfg_b = SubagentConfig.create(task="Evaluate draft B", parent_agent_id="agent_b", subagent_id="subagent_from_b")
+    sub_cfg_a = SubagentConfig.create(
+        task="Evaluate draft A",
+        parent_agent_id="agent_a",
+        subagent_id="subagent_from_a",
+        metadata={"subagent_type": "builder"},
+    )
+    sub_cfg_b = SubagentConfig.create(
+        task="Evaluate draft B",
+        parent_agent_id="agent_b",
+        subagent_id="subagent_from_b",
+        metadata={"subagent_type": "builder"},
+    )
 
     yaml_a = manager_a._generate_subagent_yaml_config(sub_cfg_a, manager_a._create_workspace(sub_cfg_a.id), context_paths=[])
     yaml_b = manager_b._generate_subagent_yaml_config(sub_cfg_b, manager_b._create_workspace(sub_cfg_b.id), context_paths=[])
 
-    assert [agent["id"] for agent in yaml_a["agents"]] == ["shared_eval", "a_local"]
-    assert [agent["id"] for agent in yaml_b["agents"]] == ["shared_eval", "b_local"]
+    assert [agent["id"] for agent in yaml_a["agents"]] == ["a_local"]
+    assert [agent["id"] for agent in yaml_b["agents"]] == ["b_local"]
+
+
+def test_round_evaluator_keeps_shared_common_agents(tmp_path: Path):
+    """round_evaluator should keep the shared evaluator pool across parents."""
+    run_root = tmp_path / "run_root"
+    run_root.mkdir(parents=True, exist_ok=True)
+
+    parent_agent_configs = [
+        {
+            "id": "agent_a",
+            "backend": {
+                "type": "gemini",
+                "model": "gemini-3-flash-preview",
+            },
+            "subagent_agents": [
+                {
+                    "id": "a_local",
+                    "backend": {"type": "openrouter", "model": "minimax/minimax-m2.5"},
+                },
+            ],
+        },
+        {
+            "id": "agent_b",
+            "backend": {
+                "type": "openai",
+                "model": "gpt-5-mini",
+            },
+            "subagent_agents": [
+                {
+                    "id": "b_local",
+                    "backend": {"type": "claude", "model": "claude-sonnet-4-20250514"},
+                },
+            ],
+        },
+    ]
+
+    common_agents = [
+        {
+            "id": "shared_eval_a",
+            "backend": {"type": "openai", "model": "gpt-5-mini"},
+        },
+        {
+            "id": "shared_eval_b",
+            "backend": {"type": "gemini", "model": "gemini-3.1-pro-preview"},
+        },
+    ]
+
+    manager_a = SubagentManager(
+        parent_workspace=str(run_root / "agent_a_workspace"),
+        parent_agent_id="agent_a",
+        orchestrator_id="orch-integration",
+        parent_agent_configs=parent_agent_configs,
+        subagent_orchestrator_config=SubagentOrchestratorConfig(
+            enabled=True,
+            agents=common_agents,
+        ),
+    )
+    manager_b = SubagentManager(
+        parent_workspace=str(run_root / "agent_b_workspace"),
+        parent_agent_id="agent_b",
+        orchestrator_id="orch-integration",
+        parent_agent_configs=parent_agent_configs,
+        subagent_orchestrator_config=SubagentOrchestratorConfig(
+            enabled=True,
+            agents=common_agents,
+        ),
+    )
+
+    Path(manager_a.parent_workspace).mkdir(parents=True, exist_ok=True)
+    Path(manager_b.parent_workspace).mkdir(parents=True, exist_ok=True)
+
+    sub_cfg_a = SubagentConfig.create(
+        task="Evaluate draft A",
+        parent_agent_id="agent_a",
+        subagent_id="subagent_from_a",
+        metadata={"subagent_type": "round_evaluator"},
+    )
+    sub_cfg_b = SubagentConfig.create(
+        task="Evaluate draft B",
+        parent_agent_id="agent_b",
+        subagent_id="subagent_from_b",
+        metadata={"subagent_type": "round_evaluator"},
+    )
+
+    yaml_a = manager_a._generate_subagent_yaml_config(sub_cfg_a, manager_a._create_workspace(sub_cfg_a.id), context_paths=[])
+    yaml_b = manager_b._generate_subagent_yaml_config(sub_cfg_b, manager_b._create_workspace(sub_cfg_b.id), context_paths=[])
+
+    assert [agent["id"] for agent in yaml_a["agents"]] == ["shared_eval_a", "shared_eval_b"]
+    assert [agent["id"] for agent in yaml_b["agents"]] == ["shared_eval_a", "shared_eval_b"]
+
+
+def test_shared_child_team_types_can_route_builder_to_shared_common_agents(tmp_path: Path):
+    """shared_child_team_types should make opted-in builder subagents use the shared child team."""
+    run_root = tmp_path / "run_root"
+    run_root.mkdir(parents=True, exist_ok=True)
+
+    parent_agent_configs = [
+        {
+            "id": "agent_a",
+            "backend": {
+                "type": "gemini",
+                "model": "gemini-3-flash-preview",
+            },
+            "subagent_agents": [
+                {
+                    "id": "a_local",
+                    "backend": {"type": "openrouter", "model": "minimax/minimax-m2.5"},
+                },
+            ],
+        },
+    ]
+
+    common_agents = [
+        {
+            "id": "shared_eval_a",
+            "backend": {"type": "openai", "model": "gpt-5-mini"},
+        },
+        {
+            "id": "shared_eval_b",
+            "backend": {"type": "gemini", "model": "gemini-3.1-pro-preview"},
+        },
+    ]
+
+    manager = SubagentManager(
+        parent_workspace=str(run_root / "agent_a_workspace"),
+        parent_agent_id="agent_a",
+        orchestrator_id="orch-integration",
+        parent_agent_configs=parent_agent_configs,
+        subagent_orchestrator_config=SubagentOrchestratorConfig(
+            enabled=True,
+            shared_child_team_types=["round_evaluator", "builder"],
+            agents=common_agents,
+        ),
+    )
+
+    Path(manager.parent_workspace).mkdir(parents=True, exist_ok=True)
+
+    sub_cfg = SubagentConfig.create(
+        task="Build draft A",
+        parent_agent_id="agent_a",
+        subagent_id="subagent_from_a",
+        metadata={"subagent_type": "builder"},
+    )
+
+    yaml_config = manager._generate_subagent_yaml_config(sub_cfg, manager._create_workspace(sub_cfg.id), context_paths=[])
+
+    assert [agent["id"] for agent in yaml_config["agents"]] == ["shared_eval_a", "shared_eval_b"]
 
 
 def test_runtime_injected_keys_excluded_from_inherited_backend(tmp_path: Path):

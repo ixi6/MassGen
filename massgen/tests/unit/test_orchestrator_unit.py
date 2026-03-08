@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -270,6 +271,258 @@ async def test_round_evaluator_rewrites_subagent_types_before_spawn(mock_orchest
 
 
 @pytest.mark.asyncio
+async def test_round_evaluator_auto_injects_when_next_tasks_exist_without_legacy_improvements(
+    mock_orchestrator,
+    monkeypatch,
+    tmp_path,
+):
+    """Valid next_tasks alone should trigger auto-injection and compact handoff."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+
+    orchestrator.config.coordination_config.round_evaluator_before_checklist = True
+    orchestrator.config.coordination_config.orchestrator_managed_round_evaluator = True
+    orchestrator.config.coordination_config.enable_subagents = True
+    orchestrator.config.coordination_config.subagent_types = ["round_evaluator"]
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    temp_root = workspace_root / "temp"
+    temp_root.mkdir()
+
+    fs_mgr = SimpleNamespace(
+        get_workspace_root=lambda: str(workspace_root),
+        get_current_workspace=lambda: str(workspace_root),
+        agent_temporary_workspace=str(temp_root),
+        cwd=str(workspace_root),
+    )
+    orchestrator.agents[agent_id].backend.filesystem_manager = fs_mgr
+
+    orchestrator.agent_states[agent_id].answer = "draft answer v1"
+    orchestrator.coordination_tracker.add_agent_answer(
+        agent_id=agent_id,
+        answer="draft answer v1",
+    )
+
+    packet = """# Critique Packet
+
+```json verdict_block
+{
+  "verdict": "iterate",
+  "scores": {"E1": 4}
+}
+```
+"""
+    eval_workspace = tmp_path / "round-eval-workspace"
+    eval_workspace.mkdir()
+    (eval_workspace / "next_tasks.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "objective": "Refocus the work",
+                "primary_strategy": "angle_first",
+                "why_this_strategy": "It addresses the weakest criteria directly",
+                "deprioritize_or_remove": ["generic closing stanza"],
+                "execution_scope": {"active_chunk": "c1"},
+                "tasks": [
+                    {
+                        "id": "rewrite_core",
+                        "description": "Rewrite the core structure around one governing angle",
+                        "priority": "high",
+                        "depends_on": [],
+                        "chunk": "c1",
+                        "verification": "The new draft has a clear governing angle",
+                        "verification_method": "Read stanza 1 and confirm the angle is visible",
+                    },
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_copy_all_snapshots_to_temp_workspace",
+        AsyncMock(return_value=str(tmp_path / "temp_snapshots")),
+    )
+    monkeypatch.setattr(orchestrator, "_emit_round_evaluator_spawn_event", lambda **_kw: None)
+
+    injected_task_plan: list[dict] = []
+
+    def capture_injection(agent_id_arg: str, task_plan: list[dict]) -> None:
+        assert agent_id_arg == agent_id
+        injected_task_plan.extend(task_plan)
+
+    monkeypatch.setattr(orchestrator, "_write_planning_injection", capture_injection)
+
+    queued_blocks: list[str] = []
+    monkeypatch.setattr(
+        orchestrator,
+        "_queue_round_start_context_block",
+        lambda _agent_id, block: queued_blocks.append(block),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_call_subagent_mcp_tool_async",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "results": [
+                    {
+                        "subagent_id": "round_eval_r2",
+                        "status": "completed",
+                        "success": True,
+                        "answer": packet,
+                        "workspace": str(eval_workspace),
+                    },
+                ],
+            },
+        ),
+    )
+
+    result = await orchestrator._run_round_evaluator_pre_round_if_needed(
+        answers={agent_id: "draft answer v1"},
+    )
+
+    assert result is True
+    assert injected_task_plan and injected_task_plan[0]["id"] == "rewrite_core"
+    assert queued_blocks, "expected a round-start context block to be queued"
+    block = queued_blocks[0]
+    assert "get_task_plan" in block
+    assert str(eval_workspace / "critique_packet.md") in block
+    assert str(eval_workspace / "next_tasks.json") in block
+    assert "submit_checklist" in block and "do not call" in block.lower()
+    assert "propose_improvements" in block and "do not call" in block.lower()
+    assert "<evaluator_packet" not in block
+
+
+@pytest.mark.asyncio
+async def test_round_evaluator_auto_injects_when_next_tasks_exist_only_in_nested_final_artifact(
+    mock_orchestrator,
+    monkeypatch,
+    tmp_path,
+):
+    """Nested final presenter artifacts should still drive auto-injection."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    agent_id = "agent_a"
+
+    orchestrator.config.coordination_config.round_evaluator_before_checklist = True
+    orchestrator.config.coordination_config.orchestrator_managed_round_evaluator = True
+    orchestrator.config.coordination_config.enable_subagents = True
+    orchestrator.config.coordination_config.subagent_types = ["round_evaluator"]
+
+    workspace_root = tmp_path / "workspace"
+    workspace_root.mkdir()
+    temp_root = workspace_root / "temp"
+    temp_root.mkdir()
+
+    fs_mgr = SimpleNamespace(
+        get_workspace_root=lambda: str(workspace_root),
+        get_current_workspace=lambda: str(workspace_root),
+        agent_temporary_workspace=str(temp_root),
+        cwd=str(workspace_root),
+    )
+    orchestrator.agents[agent_id].backend.filesystem_manager = fs_mgr
+
+    orchestrator.agent_states[agent_id].answer = "draft answer v1"
+    orchestrator.coordination_tracker.add_agent_answer(
+        agent_id=agent_id,
+        answer="draft answer v1",
+    )
+
+    packet = """# Critique Packet
+
+```json verdict_block
+{
+  "verdict": "iterate",
+  "scores": {"E1": 4}
+}
+```
+"""
+    eval_workspace = tmp_path / "round-eval-workspace"
+    eval_workspace.mkdir()
+    nested_final = eval_workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
+    nested_final.mkdir(parents=True)
+    (nested_final / "next_tasks.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "objective": "Refocus the work",
+                "primary_strategy": "angle_first",
+                "why_this_strategy": "It addresses the weakest criteria directly",
+                "deprioritize_or_remove": ["generic closing stanza"],
+                "execution_scope": {"active_chunk": "c1"},
+                "tasks": [
+                    {
+                        "id": "rewrite_core",
+                        "description": "Rewrite the core structure around one governing angle",
+                        "priority": "high",
+                        "depends_on": [],
+                        "chunk": "c1",
+                        "verification": "The new draft has a clear governing angle",
+                        "verification_method": "Read stanza 1 and confirm the angle is visible",
+                    },
+                ],
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_copy_all_snapshots_to_temp_workspace",
+        AsyncMock(return_value=str(tmp_path / "temp_snapshots")),
+    )
+    monkeypatch.setattr(orchestrator, "_emit_round_evaluator_spawn_event", lambda **_kw: None)
+
+    injected_task_plan: list[dict] = []
+
+    def capture_injection(agent_id_arg: str, task_plan: list[dict]) -> None:
+        assert agent_id_arg == agent_id
+        injected_task_plan.extend(task_plan)
+
+    monkeypatch.setattr(orchestrator, "_write_planning_injection", capture_injection)
+
+    queued_blocks: list[str] = []
+    monkeypatch.setattr(
+        orchestrator,
+        "_queue_round_start_context_block",
+        lambda _agent_id, block: queued_blocks.append(block),
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_call_subagent_mcp_tool_async",
+        AsyncMock(
+            return_value={
+                "success": True,
+                "results": [
+                    {
+                        "subagent_id": "round_eval_r2",
+                        "status": "completed",
+                        "success": True,
+                        "answer": packet,
+                        "workspace": str(eval_workspace),
+                    },
+                ],
+            },
+        ),
+    )
+
+    result = await orchestrator._run_round_evaluator_pre_round_if_needed(
+        answers={agent_id: "draft answer v1"},
+    )
+
+    assert result is True
+    assert injected_task_plan and injected_task_plan[0]["id"] == "rewrite_core"
+    assert queued_blocks, "expected a round-start context block to be queued"
+    block = queued_blocks[0]
+    assert str(nested_final / "next_tasks.json") in block
+    assert "get_task_plan" in block
+
+
+@pytest.mark.asyncio
 async def test_phase_transitions_initial_to_enforcement(mock_orchestrator, monkeypatch):
     """Agents should move from answer submission to voting in the next iteration."""
     orchestrator = mock_orchestrator(num_agents=2)
@@ -367,6 +620,47 @@ def test_get_coordination_result_includes_timeout_metadata(mock_orchestrator):
 
     assert result["is_orchestrator_timeout"] is True
     assert result["timeout_reason"] == "Time limit exceeded (120.0s/120s)"
+
+
+def test_round_evaluator_task_brief_includes_parent_delegate_targets(mock_orchestrator):
+    """The evaluator should see what the parent can delegate to next round."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Build a product website."
+    orchestrator.config.coordination_config.enable_subagents = True
+    orchestrator.config.coordination_config.subagent_types = [
+        "round_evaluator",
+        "builder",
+        "critic",
+    ]
+
+    task = orchestrator._build_round_evaluator_task(
+        parent_agent_id="agent_a",
+        answers={"agent_a": "answer v1"},
+    )
+
+    assert "PARENT DELEGATION OPTIONS" in task
+    assert "builder" in task
+    assert "critic" in task
+    assert "these specialized subagents: builder, critic" in task
+    assert "Do not emit `round_evaluator` as a delegate target." in task
+    assert "parent can delegate" in task.lower()
+    assert "not by whether you can spawn subagents inside this evaluator run" in task.lower()
+
+
+def test_round_evaluator_task_brief_reports_no_parent_delegate_targets(mock_orchestrator):
+    """When the parent has no usable delegate targets, the evaluator should be told explicitly."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Build a product website."
+    orchestrator.config.coordination_config.enable_subagents = False
+    orchestrator.config.coordination_config.subagent_types = ["round_evaluator", "builder"]
+
+    task = orchestrator._build_round_evaluator_task(
+        parent_agent_id="agent_a",
+        answers={"agent_a": "answer v1"},
+    )
+
+    assert "PARENT DELEGATION OPTIONS" in task
+    assert "No parent-specialized subagents are available for delegation in the next round." in task
 
 
 def test_truncate_enforcement_buffer_content_caps_to_first_segment(mock_orchestrator):

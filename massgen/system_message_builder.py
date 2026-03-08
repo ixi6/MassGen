@@ -267,6 +267,7 @@ class SystemMessageBuilder:
         # PRIORITY 1 (HIGH): Output-First Verification - verify outcomes, not implementations
         is_decomposition = coordination_mode == "decomposition"
         builder.add_section(OutputFirstVerificationSection(decomposition_mode=is_decomposition))
+        enable_subagents = bool(getattr(getattr(self.config, "coordination_config", None), "enable_subagents", False))
 
         # PRIORITY 1 (CRITICAL): MassGen Coordination - vote/new_answer or decomposition primitives
         changedoc_enabled = self._changedoc_enabled
@@ -329,6 +330,7 @@ class SystemMessageBuilder:
                         "orchestrator_managed_round_evaluator",
                         False,
                     ),
+                    specialized_subagents_available=bool(enable_subagents),
                 ),
             )
 

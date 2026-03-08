@@ -860,46 +860,52 @@ class TestVerificationEnforcement:
 # ---------------------------------------------------------------------------
 
 
-class TestAddTaskSubagentMetadata:
-    """Tests for subagent_id and subagent_name params on TaskPlan.add_task."""
+class TestAddTaskExecutionMetadata:
+    """Tests for canonical task execution metadata on TaskPlan.add_task."""
 
-    def test_add_task_with_subagent_metadata(self):
-        """add_task with subagent_id and subagent_name sets metadata correctly."""
+    def test_add_task_defaults_to_inline_execution(self):
+        """Tasks without explicit execution should persist as inline work."""
+        plan = TaskPlan(agent_id="test", require_verification=False)
+        task = plan.add_task(description="Simple task")
+        assert task.metadata["execution"] == {"mode": "inline"}
+        assert task.to_dict()["execution"] == {"mode": "inline"}
+
+    def test_add_task_with_delegate_execution_type(self):
+        """Delegate execution should preserve subagent_type on the task."""
         plan = TaskPlan(agent_id="test", require_verification=False)
         task = plan.add_task(
             description="Research biography",
-            subagent_id="sa_1",
-            subagent_name="researcher",
+            execution={"mode": "delegate", "subagent_type": "researcher"},
         )
-        assert task.metadata["subagent_id"] == "sa_1"
-        assert task.metadata["subagent_name"] == "researcher"
+        assert task.metadata["execution"] == {"mode": "delegate", "subagent_type": "researcher"}
+        assert task.to_dict()["execution"] == {"mode": "delegate", "subagent_type": "researcher"}
 
-    def test_add_task_without_subagent_metadata(self):
-        """add_task without subagent params does not add subagent keys to metadata."""
-        plan = TaskPlan(agent_id="test", require_verification=False)
-        task = plan.add_task(description="Simple task")
-        assert "subagent_id" not in task.metadata
-        assert "subagent_name" not in task.metadata
-
-    def test_add_task_with_only_subagent_id(self):
-        """add_task with only subagent_id (no name) sets just that key."""
+    def test_add_task_with_delegate_execution_id(self):
+        """Delegate execution may target a specific existing subagent by id."""
         plan = TaskPlan(agent_id="test", require_verification=False)
         task = plan.add_task(
-            description="Delegated task",
-            subagent_id="sa_2",
+            description="Continue delegated task",
+            execution={"mode": "delegate", "subagent_id": "sa_2"},
         )
-        assert task.metadata["subagent_id"] == "sa_2"
-        assert "subagent_name" not in task.metadata
+        assert task.metadata["execution"] == {"mode": "delegate", "subagent_id": "sa_2"}
 
-    def test_add_task_with_only_subagent_name(self):
-        """add_task with only subagent_name (no id) sets just that key."""
+    def test_add_task_rejects_inline_with_delegate_target(self):
+        """Inline execution must not include delegation-only fields."""
         plan = TaskPlan(agent_id="test", require_verification=False)
-        task = plan.add_task(
-            description="Named task",
-            subagent_name="writer",
-        )
-        assert "subagent_id" not in task.metadata
-        assert task.metadata["subagent_name"] == "writer"
+        with pytest.raises(ValueError, match="inline"):
+            plan.add_task(
+                description="Invalid inline task",
+                execution={"mode": "inline", "subagent_type": "writer"},
+            )
+
+    def test_add_task_rejects_delegate_without_target(self):
+        """Delegate execution requires a subagent_type or subagent_id."""
+        plan = TaskPlan(agent_id="test", require_verification=False)
+        with pytest.raises(ValueError, match="subagent_type or subagent_id"):
+            plan.add_task(
+                description="Invalid delegated task",
+                execution={"mode": "delegate"},
+            )
 
     def test_plan_serialization_uses_display_id_when_set(self):
         """to_dict should use display_id instead of agent_id when display_id is set."""

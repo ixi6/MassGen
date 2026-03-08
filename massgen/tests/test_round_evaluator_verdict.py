@@ -55,6 +55,75 @@ SAMPLE_VERDICT_JSON = {
     ],
 }
 
+SAMPLE_MINIMAL_VERDICT_JSON = {
+    "verdict": "iterate",
+    "scores": {"E1": 4, "E2": 7, "E3": 8, "E4": 3},
+}
+
+SAMPLE_VERDICT_WITH_OPPORTUNITIES = {
+    **SAMPLE_VERDICT_JSON,
+    "opportunities": [
+        {
+            "idea": "Add a real-time collaborative canvas where visitors draw together",
+            "rationale": "No answer attempted social interaction — this would transform the page from passive to participatory",
+            "impact": "transformative",
+            "relates_to": ["E2", "E8"],
+        },
+        {
+            "idea": "Use WebGPU compute shaders for the neural visualization",
+            "rationale": "Would enable genuinely novel visual effects impossible with Canvas2D",
+            "impact": "structural",
+            "relates_to": ["E5"],
+        },
+    ],
+}
+
+SAMPLE_NEXT_TASKS = {
+    "schema_version": "1",
+    "objective": "Turn the current California brochure into a route-planning experience",
+    "primary_strategy": "interactive_route_map",
+    "why_this_strategy": "Best addresses weak architecture and California-specific distinctiveness together",
+    "deprioritize_or_remove": ["generic destination grid", "repetitive gallery strip"],
+    "execution_scope": {"active_chunk": "c1"},
+    "tasks": [
+        {
+            "id": "reframe_ia",
+            "description": "Replace brochure IA with route and region planning structure",
+            "priority": "high",
+            "depends_on": [],
+            "chunk": "c1",
+            "execution": {"mode": "delegate", "subagent_type": "builder"},
+            "verification": "Page is organized around route and region choices",
+            "verification_method": "Review rendered page and confirm route-first navigation",
+            "metadata": {
+                "impact": "transformative",
+                "relates_to": ["E3", "E7", "E8"],
+                "sources": ["agent3.1"],
+                "contract_first": True,
+            },
+        },
+        {
+            "id": "route_map",
+            "description": "Add a route map explorer that drives trip selection",
+            "priority": "high",
+            "depends_on": ["reframe_ia"],
+            "chunk": "c1",
+            "verification": "Interactive route map works and influences content",
+            "verification_method": "Run app and verify map interaction in browser",
+            "metadata": {
+                "impact": "transformative",
+                "relates_to": ["E5", "E8"],
+                "sources": ["agent2.1", "agent3.1"],
+            },
+        },
+    ],
+}
+
+SAMPLE_VERDICT_WITH_NEXT_TASKS = {
+    **SAMPLE_VERDICT_WITH_OPPORTUNITIES,
+    "next_tasks": SAMPLE_NEXT_TASKS,
+}
+
 
 def _make_packet_with_verdict(critique: str, verdict: dict) -> str:
     """Build a critique packet with a fenced verdict_block."""
@@ -117,6 +186,16 @@ class TestParseVerdictBlock:
         packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, bad_verdict)
         result = RoundEvaluatorResult.parse_verdict_block(packet)
         assert result is None
+
+    def test_parse_verdict_block_includes_next_tasks(self):
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_NEXT_TASKS)
+        result = RoundEvaluatorResult.parse_verdict_block(packet)
+
+        assert result is not None
+        assert result["next_tasks"]["primary_strategy"] == "interactive_route_map"
+        assert result["next_tasks"]["execution_scope"]["active_chunk"] == "c1"
+        assert len(result["next_tasks"]["tasks"]) == 2
+        assert result["next_tasks"]["tasks"][0]["metadata"]["relates_to"] == ["E3", "E7", "E8"]
 
 
 class TestCleanPacketText:
@@ -183,6 +262,107 @@ class TestFromSubagentResultWithVerdict:
         assert result.improvements is None
         assert result.clean_packet_text is None  # no stripping needed
 
+    def test_from_subagent_result_loads_next_tasks_from_artifact(self, tmp_path):
+        from massgen.subagent.models import SubagentResult
+
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        (workspace / "next_tasks.json").write_text(
+            json.dumps(SAMPLE_NEXT_TASKS, indent=2),
+            encoding="utf-8",
+        )
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_MINIMAL_VERDICT_JSON)
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer=packet,
+            workspace_path=str(workspace),
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+
+        assert result.next_tasks is not None
+        assert result.next_tasks["objective"].startswith("Turn the current California brochure")
+        assert result.primary_artifact_path == str(workspace / "critique_packet.md")
+        assert result.next_tasks_artifact_path == str(workspace / "next_tasks.json")
+        assert result.task_plan_source == "next_tasks_artifact"
+
+    def test_from_subagent_result_prefers_next_tasks_artifact_over_inline_next_tasks(self, tmp_path):
+        from massgen.subagent.models import SubagentResult
+
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        artifact_tasks = dict(SAMPLE_NEXT_TASKS)
+        artifact_tasks["objective"] = "Artifact is authoritative"
+        (workspace / "next_tasks.json").write_text(
+            json.dumps(artifact_tasks, indent=2),
+            encoding="utf-8",
+        )
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_NEXT_TASKS)
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer=packet,
+            workspace_path=str(workspace),
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+
+        assert result.next_tasks is not None
+        assert result.next_tasks["objective"] == "Artifact is authoritative"
+        assert result.task_plan_source == "next_tasks_artifact"
+
+    def test_from_subagent_result_loads_next_tasks_from_nested_final_artifact(self, tmp_path):
+        from massgen.subagent.models import SubagentResult
+
+        workspace = tmp_path / "round-evaluator-workspace"
+        nested_final = workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
+        nested_final.mkdir(parents=True)
+        (nested_final / "next_tasks.json").write_text(
+            json.dumps(SAMPLE_NEXT_TASKS, indent=2),
+            encoding="utf-8",
+        )
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_MINIMAL_VERDICT_JSON)
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer=packet,
+            workspace_path=str(workspace),
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+
+        assert result.next_tasks is not None
+        assert result.next_tasks["objective"].startswith("Turn the current California brochure")
+        assert result.next_tasks_artifact_path == str(nested_final / "next_tasks.json")
+        assert result.task_plan_source == "next_tasks_artifact"
+
+    def test_from_subagent_result_falls_back_to_legacy_inline_next_tasks(self):
+        from massgen.subagent.models import SubagentResult
+
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_NEXT_TASKS)
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer=packet,
+            workspace_path="/tmp/round-evaluator-workspace",
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+
+        assert result.next_tasks is not None
+        assert result.next_tasks["objective"].startswith("Turn the current California brochure")
+        assert result.primary_artifact_path == "/tmp/round-evaluator-workspace/critique_packet.md"
+        assert result.task_plan_source == "legacy_verdict"
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator auto-injection
@@ -239,6 +419,62 @@ class TestBuildTaskPlanFromVerdict:
         assert len(preserve_tasks) == 1
         assert len(preserve_tasks[0]["items"]) == 1
         assert preserve_tasks[0]["items"][0]["what"] == "Color palette"
+
+    def test_prefers_structured_next_tasks_over_legacy_improvements(self):
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4, "E4": 3},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Replace hero orb",
+                    "sources": ["agent1.1"],
+                    "impact": "structural",
+                    "verification": "Screenshot check",
+                },
+            ],
+            preserve=[],
+            next_tasks=SAMPLE_NEXT_TASKS,
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        assert len(task_plan) == 2
+        assert task_plan[0]["id"] == "reframe_ia"
+        assert task_plan[0]["description"] == "Replace brochure IA with route and region planning structure"
+        assert "type" not in task_plan[0]
+        assert task_plan[1]["depends_on"] == ["reframe_ia"]
+
+    def test_invalid_structured_next_tasks_falls_back_to_legacy_improvements(self):
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Replace hero orb",
+                    "sources": ["agent1.1"],
+                    "impact": "structural",
+                    "verification": "Screenshot check",
+                },
+            ],
+            preserve=[],
+            next_tasks={"tasks": "not-a-list"},
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        assert len(task_plan) == 1
+        assert task_plan[0]["type"] == "improve"
+        assert task_plan[0]["criterion_id"] == "E1"
 
     def test_builds_empty_plan_for_converged(self):
         from massgen.orchestrator import Orchestrator
@@ -347,6 +583,9 @@ class TestSynthesisSpecificityGuidance:
         assert "concrete" in content.lower()
         # Must warn against abstracting away specifics
         assert "abstract" in content.lower() or "generalize" in content.lower()
+        # Must tell the evaluator to base delegation hints on the parent's capabilities
+        assert "parent can delegate" in content.lower()
+        assert "not on whether you can spawn subagents inside this evaluator run" in content.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -809,3 +1048,305 @@ class TestMultiEvaluatorFlow:
         paths = Orchestrator.extract_evaluator_workspace_paths(str(log_path))
         assert len(paths) == 1
         assert "eval_a" in paths[0]
+
+
+# ---------------------------------------------------------------------------
+# Opportunities parsing and injection
+# ---------------------------------------------------------------------------
+
+
+class TestOpportunitiesParsing:
+    """Tests for parsing opportunities from verdict_block."""
+
+    def test_parse_opportunities_from_verdict_block(self):
+        """verdict_block with opportunities array should be parsed."""
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_OPPORTUNITIES)
+        result = RoundEvaluatorResult.parse_verdict_block(packet)
+
+        assert result is not None
+        assert "opportunities" in result
+        assert len(result["opportunities"]) == 2
+        assert result["opportunities"][0]["idea"] == "Add a real-time collaborative canvas where visitors draw together"
+        assert result["opportunities"][0]["impact"] == "transformative"
+        assert result["opportunities"][1]["relates_to"] == ["E5"]
+
+    def test_opportunities_populated_on_result_object(self):
+        """from_subagent_result should populate opportunities field."""
+        from massgen.subagent.models import SubagentResult
+
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_OPPORTUNITIES)
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer=packet,
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+        assert result.opportunities is not None
+        assert len(result.opportunities) == 2
+        assert result.opportunities[0]["impact"] == "transformative"
+
+    def test_no_opportunities_backward_compat(self):
+        """verdict_block without opportunities should leave field as None."""
+        from massgen.subagent.models import SubagentResult
+
+        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_JSON)
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer=packet,
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+        assert result.opportunities is None
+
+
+class TestTaskPlanOpportunities:
+    """Tests for injecting opportunities into task plan."""
+
+    def test_opportunities_produce_explore_tasks(self):
+        """Opportunities should become type='explore' entries in task plan."""
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Fix hero",
+                    "impact": "structural",
+                    "sources": ["agent1.1"],
+                    "verification": "Screenshot check",
+                },
+            ],
+            preserve=[],
+            opportunities=[
+                {
+                    "idea": "Add collaborative canvas",
+                    "rationale": "Would transform the page",
+                    "impact": "transformative",
+                    "relates_to": ["E2", "E8"],
+                },
+            ],
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        explore_tasks = [t for t in task_plan if t["type"] == "explore"]
+        improve_tasks = [t for t in task_plan if t["type"] == "improve"]
+
+        assert len(explore_tasks) == 1
+        assert explore_tasks[0]["idea"] == "Add collaborative canvas"
+        assert explore_tasks[0]["impact"] == "transformative"
+        assert explore_tasks[0]["relates_to"] == ["E2", "E8"]
+        assert len(improve_tasks) == 1
+
+    def test_no_opportunities_no_explore_tasks(self):
+        """When opportunities is None/empty, no explore tasks should appear."""
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Fix hero",
+                    "impact": "structural",
+                    "sources": [],
+                    "verification": "check",
+                },
+            ],
+            preserve=[],
+            opportunities=None,
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        explore_tasks = [t for t in task_plan if t["type"] == "explore"]
+        assert len(explore_tasks) == 0
+
+    def test_structural_improve_tasks_get_builder_advisory(self):
+        """Structural/transformative improve tasks should get subagent_name='builder'."""
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4, "E4": 3},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Replace hero orb",
+                    "sources": ["agent1.1"],
+                    "impact": "structural",
+                    "verification": "Screenshot check",
+                },
+                {
+                    "criterion_id": "E4",
+                    "plan": "Remove gradient text",
+                    "sources": ["agent1.1"],
+                    "impact": "incremental",
+                    "verification": "Visual check",
+                },
+                {
+                    "criterion_id": "E3",
+                    "plan": "Rebuild navigation from scratch",
+                    "sources": ["agent1.2"],
+                    "impact": "transformative",
+                    "verification": "Nav renders correctly",
+                },
+            ],
+            preserve=[],
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        improve_tasks = [t for t in task_plan if t["type"] == "improve"]
+        assert len(improve_tasks) == 3
+
+        # structural → delegated builder
+        assert improve_tasks[0]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+        # incremental → inline
+        assert improve_tasks[1]["execution"] == {"mode": "inline"}
+        # transformative → delegated builder
+        assert improve_tasks[2]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+
+    def test_explore_tasks_get_builder_execution_hint(self):
+        """Explore tasks (opportunities) should get delegated builder execution hints."""
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Fix hero",
+                    "impact": "incremental",
+                    "sources": [],
+                    "verification": "check",
+                },
+            ],
+            preserve=[],
+            opportunities=[
+                {
+                    "idea": "Try WebGPU shaders",
+                    "rationale": "Novel visuals",
+                    "impact": "transformative",
+                    "relates_to": ["E5"],
+                },
+            ],
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        explore_tasks = [t for t in task_plan if t["type"] == "explore"]
+        assert len(explore_tasks) == 1
+        assert explore_tasks[0]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+
+    def test_builder_execution_flows_through_inject_format(self, tmp_path):
+        """Delegated builder execution should survive conversion to inject format."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        task_plan = [
+            {
+                "type": "improve",
+                "criterion_id": "E1",
+                "plan": "Replace hero",
+                "criterion": "Visually stunning",
+                "impact": "structural",
+                "sources": ["agent1.1"],
+                "execution": {"mode": "delegate", "subagent_type": "builder"},
+            },
+            {
+                "type": "explore",
+                "idea": "Try WebGPU",
+                "rationale": "Novel",
+                "impact": "transformative",
+                "relates_to": ["E5"],
+                "execution": {"mode": "delegate", "subagent_type": "builder"},
+            },
+        ]
+
+        injected = _convert_task_plan_to_inject_format(task_plan)
+
+        # improve task should have delegated builder execution
+        assert injected[1]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+        assert injected[1]["metadata"]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+
+        # explore task should have delegated builder execution
+        assert injected[0]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+        assert injected[0]["metadata"]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+
+    def test_explore_tasks_ordered_before_improve_tasks(self):
+        """Explore tasks should come before improve tasks in the plan."""
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            improvements=[
+                {
+                    "criterion_id": "E1",
+                    "plan": "Fix hero",
+                    "impact": "structural",
+                    "sources": [],
+                    "verification": "check",
+                },
+            ],
+            preserve=[],
+            opportunities=[
+                {
+                    "idea": "Try WebGPU shaders",
+                    "rationale": "Novel visuals",
+                    "impact": "transformative",
+                    "relates_to": ["E5"],
+                },
+            ],
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        # Find indices
+        types = [t["type"] for t in task_plan]
+        explore_indices = [i for i, t in enumerate(types) if t == "explore"]
+        improve_indices = [i for i, t in enumerate(types) if t == "improve"]
+
+        assert len(explore_indices) > 0
+        assert len(improve_indices) > 0
+        assert max(explore_indices) < min(improve_indices), "Explore tasks must come before improve tasks"
+
+    def test_plan_compatible_next_tasks_pass_through_inject_conversion(self):
+        """Structured next_tasks should survive inject-file conversion unchanged."""
+        from massgen.mcp_tools.checklist_tools_server import (
+            _convert_task_plan_to_inject_format,
+        )
+
+        injected = _convert_task_plan_to_inject_format(SAMPLE_NEXT_TASKS["tasks"])
+
+        assert len(injected) == 2
+        assert injected[0]["id"] == "reframe_ia"
+        assert injected[0]["depends_on"] == []
+        assert injected[0]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+        assert injected[0]["metadata"]["injected"] is True
+        assert injected[0]["metadata"]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
+        assert injected[0]["metadata"]["impact"] == "transformative"
+        assert injected[1]["depends_on"] == ["reframe_ia"]
+        assert injected[1]["chunk"] == "c1"

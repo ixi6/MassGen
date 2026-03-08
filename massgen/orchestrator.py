@@ -20,6 +20,7 @@ TODOs:
 import ast
 import asyncio
 import concurrent.futures
+import copy
 import inspect
 import json
 import os
@@ -1013,6 +1014,11 @@ class Orchestrator(ChatAgent):
                 "subagents_enabled": bool(
                     hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents") and self.config.coordination_config.enable_subagents,
                 ),
+                # Post-evaluator task mode: once round_evaluator has already
+                # injected next tasks, the parent should skip checklist loops.
+                "round_evaluator_auto_injected": False,
+                "round_evaluator_primary_artifact_path": "",
+                "round_evaluator_next_tasks_artifact_path": "",
                 "agent_answer_count": (len(tracker.answers_by_agent.get(agent_id, [])) if tracker is not None and hasattr(tracker, "answers_by_agent") else 0),
                 "current_answer_label": (tracker.get_latest_answer_label(agent_id) if tracker is not None else None),
                 "enable_quality_rethink_on_iteration": bool(
@@ -1081,6 +1087,7 @@ class Orchestrator(ChatAgent):
             return
 
         from .mcp_tools.checklist_tools_server import (
+            build_round_evaluator_task_mode_redirect,
             evaluate_checklist_submission,
             evaluate_proposed_improvements,
         )
@@ -1233,6 +1240,12 @@ class Orchestrator(ChatAgent):
             agent_state = _orchestrator.agent_states.get(_agent_id)
             max_calls = getattr(_orchestrator.config, "max_checklist_calls_per_round", 1)
             checklist_first_answer = getattr(_orchestrator.config, "checklist_first_answer", False)
+            redirect_message = build_round_evaluator_task_mode_redirect(_state)
+            if redirect_message:
+                return {
+                    "content": [{"type": "text", "text": redirect_message}],
+                    "isError": True,
+                }
             raw_scores = args.get("scores", {})
             submitted_agent_labels = _orchestrator._extract_submitted_agent_labels(raw_scores)
             state_for_eval = _state
@@ -1364,6 +1377,16 @@ class Orchestrator(ChatAgent):
         async def propose_improvements_handler(args, _state=state):
             import json as _json
 
+            redirect_message = build_round_evaluator_task_mode_redirect(_state)
+            if redirect_message:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": _json.dumps({"valid": False, "error": redirect_message}),
+                        },
+                    ],
+                }
             iterate_action = _state.get("iterate_action", "new_answer")
             last_status = str(_last_checklist_result.get("status", "none"))
             last_verdict = _last_checklist_result.get("verdict")
@@ -1456,7 +1479,8 @@ class Orchestrator(ChatAgent):
                         " Review the pre-populated plan for subagent delegation"
                         " opportunities. Tasks without mutual dependencies can be"
                         " spawned as parallel background subagents. Mark tasks"
-                        " with subagent_id/subagent_name, then spawn."
+                        " with execution.mode='delegate' plus subagent_type/subagent_id,"
+                        " then spawn."
                     )
             return {
                 "content": [
@@ -1739,6 +1763,33 @@ class Orchestrator(ChatAgent):
             _cl_remaining,
             _has_answers,
         )
+
+    def _set_round_evaluator_task_mode(
+        self,
+        agent_id: str,
+        *,
+        enabled: bool,
+        primary_artifact_path: str = "",
+        next_tasks_artifact_path: str = "",
+    ) -> None:
+        """Persist whether an agent is in post-evaluator task mode."""
+        agent = self.agents.get(agent_id)
+        if not agent or not hasattr(agent.backend, "_checklist_state"):
+            return
+
+        state = agent.backend._checklist_state
+        state["round_evaluator_auto_injected"] = bool(enabled)
+        state["round_evaluator_primary_artifact_path"] = primary_artifact_path if enabled else ""
+        state["round_evaluator_next_tasks_artifact_path"] = next_tasks_artifact_path if enabled else ""
+
+        if hasattr(agent.backend, "_checklist_specs_path"):
+            from .mcp_tools.checklist_tools_server import write_checklist_specs
+
+            write_checklist_specs(
+                items=getattr(agent.backend, "_checklist_items", []),
+                state=state,
+                output_path=agent.backend._checklist_specs_path,
+            )
 
     def ensure_workspace_symlinks(self) -> None:
         """Ensure per-agent workspace symlinks exist in the current attempt log directory."""
@@ -2323,13 +2374,16 @@ class Orchestrator(ChatAgent):
 
         # Create injection directory for task injection from propose_improvements
         # Use log session dir (persists for entire run, accessible in Docker)
+        # IMPORTANT: resolve() to absolute path — the planning MCP server runs
+        # as a subprocess whose CWD may differ from the orchestrator's CWD,
+        # so relative paths would resolve to the wrong location.
         log_dir = get_log_session_dir()
         if log_dir:
-            injection_dir = log_dir / "planning_injection" / agent_id
+            injection_dir = (log_dir / "planning_injection" / agent_id).resolve()
         else:
             import tempfile as _tempfile
 
-            injection_dir = Path(_tempfile.mkdtemp(prefix=f"massgen_plan_inject_{agent_id}_"))
+            injection_dir = Path(_tempfile.mkdtemp(prefix=f"massgen_plan_inject_{agent_id}_")).resolve()
         injection_dir.mkdir(parents=True, exist_ok=True)
         if not hasattr(self, "_planning_injection_dirs"):
             self._planning_injection_dirs = {}
@@ -2555,6 +2609,70 @@ class Orchestrator(ChatAgent):
         except Exception as e:
             logger.warning(f"[Orchestrator] Failed to write subagent type dirs: {e}")
 
+    def _build_parent_coordination_config_for_subagents(self) -> dict[str, Any]:
+        """Collect parent coordination fields that child subagent runs may inherit."""
+        parent_coordination_config: dict[str, Any] = {}
+        coord_cfg = getattr(self.config, "coordination_config", None)
+        if not coord_cfg:
+            return parent_coordination_config
+
+        if hasattr(coord_cfg, "enable_agent_task_planning"):
+            parent_coordination_config["enable_agent_task_planning"] = coord_cfg.enable_agent_task_planning
+        if hasattr(coord_cfg, "task_planning_filesystem_mode"):
+            parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
+        if hasattr(coord_cfg, "learning_capture_mode"):
+            parent_coordination_config["learning_capture_mode"] = coord_cfg.learning_capture_mode
+        if hasattr(coord_cfg, "disable_final_only_round_capture_fallback"):
+            parent_coordination_config["disable_final_only_round_capture_fallback"] = coord_cfg.disable_final_only_round_capture_fallback
+        if hasattr(coord_cfg, "subagent_orchestrator"):
+            so_cfg = coord_cfg.subagent_orchestrator
+            if so_cfg:
+                parent_coordination_config["subagent_orchestrator"] = so_cfg.to_dict()
+
+        use_skills = getattr(coord_cfg, "use_skills", False)
+        enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
+        if use_skills or enabled_skill_names is not None:
+            parent_coordination_config["use_skills"] = True
+            parent_coordination_config["massgen_skills"] = getattr(coord_cfg, "massgen_skills", []) or []
+            parent_coordination_config["skills_directory"] = getattr(
+                coord_cfg,
+                "skills_directory",
+                ".agent/skills",
+            )
+            parent_coordination_config["load_previous_session_skills"] = getattr(
+                coord_cfg,
+                "load_previous_session_skills",
+                False,
+            )
+            if enabled_skill_names is not None:
+                parent_coordination_config["enabled_skill_names"] = enabled_skill_names
+
+        if hasattr(coord_cfg, "subagent_round_timeouts") and coord_cfg.subagent_round_timeouts:
+            parent_coordination_config["subagent_round_timeouts"] = coord_cfg.subagent_round_timeouts
+
+        if hasattr(self.config, "timeout_config") and self.config.timeout_config:
+            parent_coordination_config["parent_round_timeouts"] = {
+                "initial_round_timeout_seconds": self.config.timeout_config.initial_round_timeout_seconds,
+                "subsequent_round_timeout_seconds": self.config.timeout_config.subsequent_round_timeout_seconds,
+                "round_timeout_grace_seconds": self.config.timeout_config.round_timeout_grace_seconds,
+            }
+
+        for setting in (
+            "voting_sensitivity",
+            "voting_threshold",
+            "checklist_require_gap_report",
+            "gap_report_mode",
+            "max_checklist_calls_per_round",
+            "checklist_first_answer",
+        ):
+            value = getattr(self.config, setting, None)
+            if setting == "voting_threshold" and value is None:
+                continue
+            if value is not None:
+                parent_coordination_config[setting] = value
+
+        return parent_coordination_config
+
     def _create_subagent_mcp_config(self, agent_id: str, agent: Any) -> dict[str, Any]:
         """
         Create MCP server configuration for subagent tools.
@@ -2636,49 +2754,7 @@ class Orchestrator(ChatAgent):
         # Extract coordination config to pass to subagents for planning tools inheritance
         coordination_config_path = ""
         if hasattr(self.config, "coordination_config") and self.config.coordination_config:
-            coord_cfg = self.config.coordination_config
-            # Extract relevant coordination settings that subagents should inherit
-            parent_coordination_config = {}
-            if hasattr(coord_cfg, "enable_agent_task_planning"):
-                parent_coordination_config["enable_agent_task_planning"] = coord_cfg.enable_agent_task_planning
-            if hasattr(coord_cfg, "task_planning_filesystem_mode"):
-                parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
-            if hasattr(coord_cfg, "learning_capture_mode"):
-                parent_coordination_config["learning_capture_mode"] = coord_cfg.learning_capture_mode
-            if hasattr(coord_cfg, "disable_final_only_round_capture_fallback"):
-                parent_coordination_config["disable_final_only_round_capture_fallback"] = coord_cfg.disable_final_only_round_capture_fallback
-            if hasattr(coord_cfg, "subagent_orchestrator"):
-                so_cfg = coord_cfg.subagent_orchestrator
-                if so_cfg:
-                    parent_coordination_config["subagent_orchestrator"] = so_cfg.to_dict()
-            use_skills = getattr(coord_cfg, "use_skills", False)
-            enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
-            if use_skills or enabled_skill_names is not None:
-                parent_coordination_config["use_skills"] = True
-                parent_coordination_config["massgen_skills"] = getattr(coord_cfg, "massgen_skills", []) or []
-                parent_coordination_config["skills_directory"] = getattr(
-                    coord_cfg,
-                    "skills_directory",
-                    ".agent/skills",
-                )
-                parent_coordination_config["load_previous_session_skills"] = getattr(
-                    coord_cfg,
-                    "load_previous_session_skills",
-                    False,
-                )
-                if enabled_skill_names is not None:
-                    parent_coordination_config["enabled_skill_names"] = enabled_skill_names
-            if hasattr(coord_cfg, "subagent_round_timeouts") and coord_cfg.subagent_round_timeouts:
-                parent_coordination_config["subagent_round_timeouts"] = coord_cfg.subagent_round_timeouts
-
-            # Include parent round timeouts for inheritance if subagent settings are omitted
-            if hasattr(self.config, "timeout_config") and self.config.timeout_config:
-                parent_coordination_config["parent_round_timeouts"] = {
-                    "initial_round_timeout_seconds": self.config.timeout_config.initial_round_timeout_seconds,
-                    "subsequent_round_timeout_seconds": self.config.timeout_config.subsequent_round_timeout_seconds,
-                    "round_timeout_grace_seconds": self.config.timeout_config.round_timeout_grace_seconds,
-                }
-
+            parent_coordination_config = self._build_parent_coordination_config_for_subagents()
             if parent_coordination_config:
                 coordination_config_path = str(mcp_temp_dir / f"{agent_id}_coordination_config.json")
                 with open(coordination_config_path, "w") as f:
@@ -6111,6 +6187,11 @@ Your answer:"""
                             dst = dest / rel
                             dst.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(str(src_file), str(dst))
+                    # Clear stale task plan so agent starts with a fresh plan
+                    stale_plan = dest / "tasks" / "plan.json"
+                    if stale_plan.exists():
+                        stale_plan.unlink()
+                        logger.info(f"[Orchestrator] Cleared stale task plan from restored workspace for {agent_id}")
 
             logger.info(
                 f"[Orchestrator] Restored {label}: agent={agent_id}, "
@@ -6126,6 +6207,7 @@ Your answer:"""
             answers = self.coordination_tracker.answers_by_agent.get(agent_id, [])
             if answers and agent_id in self.agent_states:
                 self.agent_states[agent_id].answer = answers[-1].content
+                self.agent_states[agent_id].answer_count = len(answers)
 
         # Load generated evaluation criteria from the log if no inline criteria override
         inline = getattr(
@@ -10288,18 +10370,7 @@ Your answer:"""
             # coordination_config.json
             coord_cfg = getattr(self.config, "coordination_config", None)
             if coord_cfg:
-                parent_coordination_config: dict[str, Any] = {}
-                for attr in (
-                    "enable_agent_task_planning",
-                    "task_planning_filesystem_mode",
-                    "learning_capture_mode",
-                    "disable_final_only_round_capture_fallback",
-                ):
-                    if hasattr(coord_cfg, attr):
-                        parent_coordination_config[attr] = getattr(coord_cfg, attr)
-                so_cfg = getattr(coord_cfg, "subagent_orchestrator", None)
-                if so_cfg:
-                    parent_coordination_config["subagent_orchestrator"] = so_cfg.to_dict()
+                parent_coordination_config = self._build_parent_coordination_config_for_subagents()
                 if parent_coordination_config:
                     with open(mcp_temp_dir / f"{agent_id}_coordination_config.json", "w") as f:
                         json.dump(parent_coordination_config, f)
@@ -10377,16 +10448,57 @@ Your answer:"""
             )
 
         answer_block = "\n\n".join(answer_sections) if answer_sections else "No answers available."
+        delegate_targets = self._get_parent_round_evaluator_delegate_targets()
+        if delegate_targets:
+            delegation_block = (
+                "PARENT DELEGATION OPTIONS:\n"
+                f"- The parent can delegate next-round work to these specialized subagents: {', '.join(delegate_targets)}.\n"
+                "- These execution hints are for the parent's next round, not for this evaluator child runtime.\n"
+                "- Base `execution` in `next_tasks.json` on what the parent can delegate, not by whether you can spawn subagents inside this evaluator run.\n"
+                "- Do not emit `round_evaluator` as a delegate target.\n\n"
+            )
+        else:
+            delegation_block = (
+                "PARENT DELEGATION OPTIONS:\n"
+                "- No parent-specialized subagents are available for delegation in the next round.\n"
+                "- Keep execution hints inline unless the task brief explicitly provides a reusable subagent_id.\n\n"
+            )
         return (
             "Produce one very critical cross-answer critique packet for the parent agent.\n\n"
             f"ORIGINAL TASK:\n{self.current_task or 'Task coordination'}\n\n"
             "EVALUATION CRITERIA:\n"
             f"{criteria_block}\n\n"
+            f"{delegation_block}"
             "CANDIDATE ANSWERS:\n"
             f"{answer_block}\n\n"
             "Return critique/spec content only. Do not provide checklist payloads, numeric scores, "
             "or parent workflow recommendations."
         )
+
+    def _get_parent_round_evaluator_delegate_targets(self) -> list[str]:
+        """Return specialized subagent types the parent can delegate to next round."""
+        coord = getattr(self.config, "coordination_config", None)
+        if not coord or not getattr(coord, "enable_subagents", False):
+            return []
+
+        from massgen.subagent.type_scanner import DEFAULT_SUBAGENT_TYPES
+
+        active_types = getattr(coord, "subagent_types", None)
+        if active_types is None:
+            active_types = DEFAULT_SUBAGENT_TYPES
+
+        targets: list[str] = []
+        seen: set[str] = set()
+        for raw_type in active_types or []:
+            type_name = str(raw_type or "").strip()
+            if not type_name:
+                continue
+            lowered = type_name.lower()
+            if lowered == "round_evaluator" or lowered in seen:
+                continue
+            seen.add(lowered)
+            targets.append(type_name)
+        return targets
 
     def _get_round_evaluator_context_paths(
         self,
@@ -10499,11 +10611,30 @@ Your answer:"""
         packet_text = evaluator_result.clean_packet_text or evaluator_result.packet_text or "(no packet produced)"
 
         if auto_injected:
-            instructions = (
-                "The evaluator has scored your work and improvement tasks have been\n"
-                "auto-injected into your task plan. Call `get_task_plan` to see them.\n"
-                "Implement each task, then call `new_answer` when done.\n"
-                "Do NOT call `submit_checklist` or `propose_improvements` — already handled.\n"
+            critique_path = evaluator_result.primary_artifact_path or "(path unavailable)"
+            next_tasks_path = evaluator_result.next_tasks_artifact_path or "(path unavailable)"
+            return (
+                "============================================================\n"
+                f"ROUND EVALUATOR RESULT (status: {status})\n"
+                "============================================================\n"
+                "The orchestrator ran one blocking `round_evaluator` before this round.\n\n"
+                "The evaluator is finished and its next-step tasks have already been\n"
+                "auto-injected into your task plan. `get_task_plan` is the source\n"
+                "of truth for what to do next.\n\n"
+                f"Reference critique packet: {critique_path}\n"
+                f"Reference next-task handoff: {next_tasks_path}\n\n"
+                "Workflow:\n"
+                "1. Call `get_task_plan`.\n"
+                "2. Optionally open the evaluator files above for rationale.\n"
+                "3. Implement and verify each injected task.\n"
+                "4. If the deliverable is a pure text artifact, put the final\n"
+                "   artifact body directly in `new_answer.content`.\n"
+                "5. Otherwise, call `new_answer` with your usual concise summary.\n\n"
+                "Do NOT call `submit_checklist`.\n"
+                "Do NOT call `propose_improvements`.\n"
+                "Do NOT write a second diagnostic report.\n"
+                "Do NOT spawn another `round_evaluator`.\n"
+                "============================================================"
             )
         else:
             instructions = (
@@ -10694,10 +10825,36 @@ Your answer:"""
         Returns a list in the same format as ``evaluate_proposed_improvements()``
         output, ready for ``_write_inject_file()``.
         """
-        if evaluator_result.verdict != "iterate" or not evaluator_result.improvements:
+        if evaluator_result.verdict != "iterate":
+            return []
+
+        structured_next_tasks = evaluator_result.normalize_next_tasks_payload(
+            evaluator_result.next_tasks,
+        )
+        if structured_next_tasks:
+            return copy.deepcopy(structured_next_tasks.get("tasks", []))
+
+        if not evaluator_result.improvements:
             return []
 
         task_plan: list[dict] = []
+
+        # Opportunities (explore tasks) come first — they represent independent
+        # ideas the evaluator identified that could be a leap forward, not just
+        # corrections.  Placing them before improve tasks encourages the parent
+        # to consider creative directions before falling back to patching.
+        if evaluator_result.opportunities:
+            for opp in evaluator_result.opportunities:
+                task_plan.append(
+                    {
+                        "type": "explore",
+                        "idea": opp.get("idea", ""),
+                        "rationale": opp.get("rationale", ""),
+                        "impact": opp.get("impact", "transformative"),
+                        "relates_to": opp.get("relates_to", []),
+                        "execution": {"mode": "delegate", "subagent_type": "builder"},
+                    },
+                )
 
         for imp in evaluator_result.improvements:
             entry: dict = {
@@ -10711,6 +10868,10 @@ Your answer:"""
             detail = imp.get("detail", "")
             if detail:
                 entry["detail"] = detail
+            if entry["impact"] in ("structural", "transformative"):
+                entry["execution"] = {"mode": "delegate", "subagent_type": "builder"}
+            else:
+                entry["execution"] = {"mode": "inline"}
             task_plan.append(entry)
 
         if evaluator_result.preserve:
@@ -10718,6 +10879,7 @@ Your answer:"""
                 {
                     "type": "verify_preserve",
                     "description": "Verify preserved strengths haven't regressed",
+                    "execution": {"mode": "inline"},
                     "items": [
                         {
                             "criterion_id": p.get("criterion_id", ""),
@@ -10810,6 +10972,7 @@ Your answer:"""
 
         upcoming_round = self._get_round_evaluator_upcoming_round(parent_agent_id)
         display_round = self._get_round_evaluator_display_round(parent_agent_id)
+        self._set_round_evaluator_task_mode(parent_agent_id, enabled=False)
 
         # Re-write subagent type dirs and CONTEXT.md to the workspace — the
         # workspace may have been cleared between rounds, and the MCP server
@@ -10827,6 +10990,8 @@ Your answer:"""
                     self._ensure_context_md_for_round_evaluator(ws_root, parent_agent_id)
 
         temp_workspace_path = await self._copy_all_snapshots_to_temp_workspace(parent_agent_id)
+        coord_cfg = getattr(self.config, "coordination_config", None)
+        evaluator_refine = bool(coord_cfg and getattr(coord_cfg, "round_evaluator_refine", False))
         spawn_args: dict[str, Any] = {
             "tasks": [
                 {
@@ -10840,7 +11005,7 @@ Your answer:"""
                 },
             ],
             "background": False,
-            "refine": False,
+            "refine": evaluator_refine,
         }
 
         tool_call_id = f"round_evaluator_pre_round_{parent_agent_id}_r{upcoming_round}_{int(time.time() * 1000)}"
@@ -10963,11 +11128,17 @@ Your answer:"""
         # raw critiques the parent must read all of them and decide itself.
         auto_injected = False
         if not use_multi_evaluator:
-            if evaluator_result.verdict == "iterate" and evaluator_result.improvements:
+            if evaluator_result.verdict == "iterate":
                 task_plan = self.build_task_plan_from_evaluator_verdict(evaluator_result)
                 if task_plan:
                     self._write_planning_injection(parent_agent_id, task_plan)
                     auto_injected = True
+                    self._set_round_evaluator_task_mode(
+                        parent_agent_id,
+                        enabled=True,
+                        primary_artifact_path=evaluator_result.primary_artifact_path or "",
+                        next_tasks_artifact_path=evaluator_result.next_tasks_artifact_path or "",
+                    )
                     logger.info(
                         "[Orchestrator] Auto-injected %d tasks from evaluator verdict for %s",
                         len(task_plan),

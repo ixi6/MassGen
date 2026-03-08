@@ -777,6 +777,7 @@ def _build_checklist_gated_decision(
     score_current_work_only: bool = False,
     round_evaluator_before_checklist: bool = False,
     orchestrator_managed_round_evaluator: bool = False,
+    specialized_subagents_available: bool = True,
 ) -> str:
     """Build checklist_gated decision section (tool-gated, hidden threshold).
 
@@ -1096,10 +1097,46 @@ read the full report. Do NOT skip a thin answer.
 **When the evaluator auto-injected tasks** (you will see "tasks have been
 auto-injected into your task plan" in the evaluator result header): the
 evaluator has already scored your work, decided iteration is needed, and
-populated your task plan with specific improvement tasks. Call `get_task_plan`
-to see them and start implementing immediately. Do NOT call `submit_checklist`
-or `propose_improvements` — this has been handled automatically. After
-implementing all tasks, call `new_answer` to submit your improved work.
+populated your task plan with specific tasks. Call `get_task_plan` to see
+them and start implementing immediately. The evaluator result header will
+also point you to the exact `critique_packet.md` and `next_tasks.json`
+paths. Treat those files as reference-only rationale, not as something you
+need to rewrite or copy. do not call `submit_checklist`. do not call `propose_improvements`.
+Do NOT write a second diagnostic report. After
+implementing all tasks, verify them and call `new_answer` to submit your
+improved work. If the deliverable is a pure text artifact, place the final
+artifact body directly in `new_answer.content`.
+
+Your task plan may have two categories:
+1. **OPPORTUNITIES** (explore tasks) — independent ideas the evaluator identified
+   that could represent a leap forward. Review these first. If adopting an
+   opportunity would naturally address multiple correction tasks, pursue the
+   opportunity instead of patching individually.
+2. **CORRECTIONS** (improve tasks) — specific weaknesses to fix.
+
+Do not treat opportunities as optional extras. They represent unexplored
+approaches that could produce a fundamentally better result than incremental
+fixes alone.
+
+"""
+            if specialized_subagents_available:
+                _phase1_scope += """
+**Builder delegation for structural/transformative tasks**: Tasks marked with
+`execution: {"mode": "delegate", "subagent_type": "builder"}` are too large
+or ambitious to do inline safely. Inline means you execute the task yourself
+in the parent agent without spawning a helper. Delegate each builder task to a
+separate builder subagent — spawn all independent builder tasks in a single
+`spawn_subagents()` call so they run in parallel. Incremental tasks marked with
+`execution: {"mode": "inline"}` stay with you.
+"""
+            else:
+                _phase1_scope += """
+**Execution mode in this run**: All injected tasks are inline in this run.
+Inline means you execute the task yourself in the parent agent. Do not add
+delegate execution hints or try to spawn builder/evaluator helpers here.
+"""
+
+            _phase1_scope += """
 
 **When no auto-injection occurred** (you will see instructions about
 `submit_checklist` in the evaluator result header): use the critique packet(s)
@@ -3245,18 +3282,20 @@ class TaskPlanningSection(SystemPromptSection):
             "- **Do inline** — quality judgment, synthesis, architectural decisions, anything "
             "needing your full reasoning, tasks with live dependencies on in-flight work\n"
             "\n"
+            "Inline means you execute the task yourself in the parent agent without spawning a helper.\n"
+            "\n"
             f"Available subagent types: {types_str}\n"
             "\n"
-            "Label each delegated task using `subagent_name` when creating tasks "
-            "(`create_task_plan`, `add_task`) or later with `edit_task`:\n"
-            '- `subagent_name` — e.g., `"builder"`, `"evaluator"`, `"novelty"`\n'
-            "- `subagent_id` — the ID of a specific already-spawned subagent\n"
+            "Mark execution explicitly when creating tasks (`create_task_plan`, `add_task`):\n"
+            '- `{"execution": {"mode": "inline"}}` — keep the task with yourself\n'
+            '- `{"execution": {"mode": "delegate", "subagent_type": "builder"}}` — delegate by role/type\n'
+            '- `{"execution": {"mode": "delegate", "subagent_id": "sub_123"}}` — delegate to a specific running subagent\n'
             "\n"
             "**Spawn all independent delegated tasks in a single call** — they run in parallel. "
             "While they run, execute your inline tasks.\n"
             "\n"
             "When tasks come from `propose_improvements`, structural and transformative criteria "
-            'are pre-filled with `subagent_name: "builder"` as an advisory signal. '
+            'are pre-filled with `execution: {"mode": "delegate", "subagent_type": "builder"}` as an advisory signal. '
             "Scope each builder to exactly one task. Never bundle multiple criteria into one "
             "builder spec.\n"
             "\n"
@@ -3269,6 +3308,15 @@ class TaskPlanningSection(SystemPromptSection):
     def build_content(self) -> str:
         subagent_step = self._build_subagent_classification_step()
         has_subagents = bool(self.specialized_subagents)
+        implementation_example = (
+            '- `{{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], '
+            '"priority": "high", "execution": {{"mode": "delegate", "subagent_type": "builder"}}, '
+            '"verification": "Endpoints return 200", "verification_method": "curl test each endpoint"}}`'
+            if has_subagents
+            else '- `{{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], '
+            '"priority": "high", "execution": {{"mode": "inline"}}, '
+            '"verification": "Endpoints return 200", "verification_method": "curl test each endpoint"}}`'
+        )
         # Execution step number shifts depending on whether subagent step is present
         execute_step = "STEP 3" if has_subagents else "STEP 2"
         summary_step = "STEP 4" if has_subagents else "STEP 3"
@@ -3318,9 +3366,7 @@ BEFORE making any changes or writing any files.
 Create tasks with verification criteria:
 - `{{"id": "research", "description": "Research OAuth providers", "verification": "Comparison table with 3+ providers", "verification_method": "Review output table"}}`
 - `{{"id": "design", "description": "Design auth flow", "depends_on": ["research"], "verification": "Flow diagram renders correctly", "verification_method": "Screenshot and visual check"}}`
-- `{{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], \
-"priority": "high", "subagent_name": "builder", "verification": "Endpoints return 200", \
-"verification_method": "curl test each endpoint"}}`
+{implementation_example}
 
 **Dependency formats:**
 - **By index** (0-based): `{{"description": "Task 2", "depends_on": [0]}}` — depends on the first task
@@ -3433,6 +3479,7 @@ class EvaluationSection(SystemPromptSection):
         improvements_cfg: dict | None = None,
         round_evaluator_before_checklist: bool = False,
         orchestrator_managed_round_evaluator: bool = False,
+        specialized_subagents_available: bool = True,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -3457,6 +3504,7 @@ class EvaluationSection(SystemPromptSection):
         self.improvements_cfg = improvements_cfg
         self.round_evaluator_before_checklist = round_evaluator_before_checklist
         self.orchestrator_managed_round_evaluator = orchestrator_managed_round_evaluator
+        self.specialized_subagents_available = specialized_subagents_available
 
     def build_content(self) -> str:
         # Vote-only mode: agent has exhausted their answer limit
@@ -3610,6 +3658,7 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                     improvements_cfg=self.improvements_cfg,
                     round_evaluator_before_checklist=self.round_evaluator_before_checklist,
                     orchestrator_managed_round_evaluator=self.orchestrator_managed_round_evaluator,
+                    specialized_subagents_available=self.specialized_subagents_available,
                 )
                 evaluation_section = f"""{analysis}
 
@@ -4695,9 +4744,10 @@ judgment throughout. Size alone is not the criterion — nature of the work is.
 
 **PLANNING SUBAGENT DELEGATION IN YOUR TASK PLAN:**
 After `propose_improvements` pre-populates your task plan, review each independent task:
-- Does it have documentation-heavy discovery or mechanical execution? → Mark with `subagent_id`
-  and `subagent_name` via `update_task` to flag it for delegation
-- Does it require your judgment, synthesis, or live context? → Keep inline
+- Does it have documentation-heavy discovery or mechanical execution? → Mark with
+  `execution: {{"mode": "delegate", "subagent_type": "..."}}` or a specific `subagent_id`
+- Does it require your judgment, synthesis, or live context? → Mark with
+  `execution: {{"mode": "inline"}}`
 - Can it be split into smaller independent deliverables? → Consider splitting first
 
 Tasks that share dependencies (or have none) are parallelizable:

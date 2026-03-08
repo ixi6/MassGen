@@ -913,6 +913,7 @@ class ConfigValidator:
                     "enable_changedoc",
                     "round_evaluator_before_checklist",
                     "orchestrator_managed_round_evaluator",
+                    "round_evaluator_refine",
                 ]
                 for field_name in boolean_fields:
                     if field_name in coordination:
@@ -1206,6 +1207,22 @@ class ConfigValidator:
                                     f"{location}.coordination.subagent_orchestrator.inherit_spawning_agent_backend",
                                     "Use true or false",
                                 )
+                            shared_child_team_types = subagent_orchestrator.get("shared_child_team_types")
+                            if shared_child_team_types is not None:
+                                if not isinstance(shared_child_team_types, list):
+                                    result.add_error(
+                                        "'shared_child_team_types' must be a list of non-empty strings",
+                                        f"{location}.coordination.subagent_orchestrator.shared_child_team_types",
+                                        "Use a list like: [round_evaluator, builder]",
+                                    )
+                                else:
+                                    for i, child_type in enumerate(shared_child_team_types):
+                                        if not isinstance(child_type, str) or not child_type.strip():
+                                            result.add_error(
+                                                "'shared_child_team_types' entries must be non-empty strings",
+                                                f"{location}.coordination.subagent_orchestrator.shared_child_team_types[{i}]",
+                                                "Use a list like: [round_evaluator, builder]",
+                                            )
                             child_final_answer_strategy = subagent_orchestrator.get("final_answer_strategy")
                             if child_final_answer_strategy is not None and child_final_answer_strategy not in self.VALID_FINAL_ANSWER_STRATEGIES:
                                 valid_values = ", ".join(sorted(self.VALID_FINAL_ANSWER_STRATEGIES))
@@ -1797,6 +1814,13 @@ class ConfigValidator:
                         "orchestrator_managed_round_evaluator requires round_evaluator_before_checklist: true",
                         "orchestrator.coordination.orchestrator_managed_round_evaluator",
                         "Enable round_evaluator_before_checklist or remove orchestrator_managed_round_evaluator",
+                    )
+                round_evaluator_refine = coordination.get("round_evaluator_refine", False)
+                if round_evaluator_refine and not orchestrator_managed_round_evaluator:
+                    result.add_error(
+                        "round_evaluator_refine requires orchestrator_managed_round_evaluator: true",
+                        "orchestrator.coordination.round_evaluator_refine",
+                        "Enable orchestrator_managed_round_evaluator or remove round_evaluator_refine",
                     )
                 if round_eval_before_checklist:
                     if voting_sens != "checklist_gated":

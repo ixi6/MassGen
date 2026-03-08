@@ -14,6 +14,53 @@ if TYPE_CHECKING:
     pass
 
 
+TaskExecutionMode = Literal["inline", "delegate"]
+
+
+def normalize_task_execution(
+    execution: dict[str, Any] | None = None,
+    *,
+    subagent_id: str | None = None,
+    subagent_name: str | None = None,
+    default_mode: TaskExecutionMode = "inline",
+) -> dict[str, Any]:
+    """Normalize task execution into the canonical inline/delegate shape.
+
+    Legacy `subagent_name` / `subagent_id` inputs are accepted as aliases for
+    the canonical execution object during the pre-release migration period.
+    """
+    raw = execution.copy() if isinstance(execution, dict) else {}
+
+    legacy_subagent_type = raw.get("subagent_type") or raw.get("subagent_name") or subagent_name
+    legacy_subagent_id = raw.get("subagent_id") or subagent_id
+
+    mode = raw.get("mode")
+    if not mode:
+        if legacy_subagent_type or legacy_subagent_id:
+            mode = "delegate"
+        else:
+            mode = default_mode
+
+    if mode not in ("inline", "delegate"):
+        raise ValueError("execution.mode must be either 'inline' or 'delegate'")
+
+    if mode == "inline":
+        if legacy_subagent_type or legacy_subagent_id:
+            raise ValueError("inline execution cannot include subagent_type or subagent_id")
+        return {"mode": "inline"}
+
+    if not legacy_subagent_type and not legacy_subagent_id:
+        raise ValueError("Delegate execution requires subagent_type or subagent_id")
+
+    normalized = {k: v for k, v in raw.items() if k not in {"subagent_name", "subagent_type", "subagent_id", "mode"}}
+    normalized["mode"] = "delegate"
+    if legacy_subagent_type:
+        normalized["subagent_type"] = str(legacy_subagent_type)
+    if legacy_subagent_id:
+        normalized["subagent_id"] = str(legacy_subagent_id)
+    return normalized
+
+
 @dataclass
 class Task:
     """
@@ -43,7 +90,7 @@ class Task:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert task to dictionary for serialization."""
-        return {
+        data = {
             "id": self.id,
             "description": self.description,
             "status": self.status,
@@ -54,10 +101,21 @@ class Task:
             "dependencies": self.dependencies.copy(),
             "metadata": self.metadata.copy(),
         }
+        execution = self.metadata.get("execution")
+        if isinstance(execution, dict):
+            data["execution"] = execution.copy()
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Task":
         """Create task from dictionary."""
+        metadata = data.get("metadata", {}).copy()
+        if "execution" in metadata or "execution" in data or metadata.get("subagent_id") or metadata.get("subagent_name"):
+            metadata["execution"] = normalize_task_execution(
+                metadata.get("execution") or data.get("execution"),
+                subagent_id=metadata.get("subagent_id"),
+                subagent_name=metadata.get("subagent_name"),
+            )
         return cls(
             id=data["id"],
             description=data["description"],
@@ -67,7 +125,7 @@ class Task:
             completed_at=datetime.fromisoformat(data["completed_at"]) if data.get("completed_at") else None,
             verified_at=datetime.fromisoformat(data["verified_at"]) if data.get("verified_at") else None,
             dependencies=data.get("dependencies", []),
-            metadata=data.get("metadata", {}),
+            metadata=metadata,
         )
 
 
@@ -233,6 +291,7 @@ class TaskPlan:
         verification: str | None = None,
         verification_method: str | None = None,
         skip_verification: bool = False,
+        execution: dict[str, Any] | None = None,
         subagent_id: str | None = None,
         subagent_name: str | None = None,
     ) -> Task:
@@ -281,10 +340,11 @@ class TaskPlan:
             metadata["verification"] = verification
         if verification_method:
             metadata["verification_method"] = verification_method
-        if subagent_id:
-            metadata["subagent_id"] = subagent_id
-        if subagent_name:
-            metadata["subagent_name"] = subagent_name
+        metadata["execution"] = normalize_task_execution(
+            execution,
+            subagent_id=subagent_id,
+            subagent_name=subagent_name,
+        )
 
         # Create task
         task = Task(

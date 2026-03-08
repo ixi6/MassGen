@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
@@ -19,7 +18,6 @@ class CloudJobRequest:
     prompt: str
     config_yaml: str
     timeout_seconds: int
-    env: Dict[str, str]
     output_filename: str = "final_answer.txt"
     cloud_job_id: str = ""
 
@@ -39,22 +37,6 @@ class CloudJobLauncher:
     """Interface for launching cloud jobs."""
 
     RESULT_MARKER = "__MASSGEN_CLOUD_JOB_RESULT__"
-    _DEFAULT_ENV_KEYS = (
-        "OPENAI_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "GOOGLE_API_KEY",
-        "GEMINI_API_KEY",
-        "XAI_API_KEY",
-        "OPENROUTER_API_KEY",
-        "TOGETHER_API_KEY",
-        "FIREWORKS_API_KEY",
-        "GROQ_API_KEY",
-        "NEBIUS_API_KEY",
-        "CEREBRAS_API_KEY",
-        "POE_API_KEY",
-        "QWEN_API_KEY",
-        "AZURE_OPENAI_API_KEY",
-    )
 
     def __init__(self, workspace_root: Optional[Path] = None):
         base = workspace_root or (Path.cwd() / ".massgen" / "cloud_jobs")
@@ -71,13 +53,3 @@ class CloudJobLauncher:
                 raw = line[len(cls.RESULT_MARKER) :].strip()
                 return json.loads(raw)
         return None
-
-    @classmethod
-    def collect_cloud_env(cls) -> Dict[str, str]:
-        """Collect API-key style env vars for forwarding to cloud runtime."""
-        env: Dict[str, str] = {}
-        for key in cls._DEFAULT_ENV_KEYS:
-            value = os.getenv(key)
-            if value:
-                env[key] = value
-        return env

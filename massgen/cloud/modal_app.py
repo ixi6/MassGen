@@ -5,7 +5,6 @@
 import base64
 import io
 import json
-import os
 import re
 import shutil
 import subprocess
@@ -58,7 +57,12 @@ image = (
 context_vol = modal.Volume.from_name(CONTEXT_VOLUME_NAME, create_if_missing=True)
 
 
-@app.function(image=image, timeout=60 * 60, volumes={CONTEXT_MOUNT_PATH: context_vol})
+@app.function(
+    image=image,
+    timeout=60 * 60,
+    volumes={CONTEXT_MOUNT_PATH: context_vol},
+    secrets=[modal.Secret.from_name("massgen-env")],
+)
 def run_massgen_job(payload_b64: str) -> dict:
     """Local entrypoint for Modal job."""
     payload: Dict[str, object] = json.loads(base64.b64decode(payload_b64).decode("utf-8"))
@@ -66,13 +70,6 @@ def run_massgen_job(payload_b64: str) -> dict:
     prompt = str(payload["prompt"])
     config_yaml = str(payload["config_yaml"])
     output_filename = str(payload.get("output_filename", "final_answer.txt"))
-    forwarded_env = payload.get("env", {}) or {}
-
-    for key, value in forwarded_env.items():
-        os.environ[str(key)] = str(value)
-    # Note: A better way to handle is using Modal secrets
-    # But this requires user to run
-    # `modal secret create massgen-env --from-dotenv .env`
 
     workspace = Path("/tmp/massgen_cloud_job")
     if workspace.exists():

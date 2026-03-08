@@ -379,7 +379,6 @@ def _run_cloud_job(args: argparse.Namespace, config: Dict[str, Any], config_path
         prompt=args.question,
         config_yaml=yaml.safe_dump(config_copy, sort_keys=False),
         timeout_seconds=args.cloud_timeout,
-        env=ModalCloudJobLauncher.collect_cloud_env(),
         cloud_job_id=cloud_job_id,
     )
     result = launcher.launch(request)

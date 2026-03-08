@@ -18,6 +18,7 @@ To start using MassGen Cloud, you need to have a Modal account and install the M
 
    pip install modal
    modal setup
+   modal secret create massgen-env --from-dotenv .env
 
 To run a MassGen job in the cloud, use the ``--cloud`` flag:
 

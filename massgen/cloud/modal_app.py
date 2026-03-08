@@ -4,7 +4,6 @@
 import base64
 import io
 import json
-import re
 import shutil
 import subprocess
 import tarfile
@@ -14,21 +13,6 @@ from pathlib import Path
 import modal
 
 APP_NAME = "massgen-cloud-job"
-
-
-def parse_automation_value(label: str, text: str) -> str | None:
-    """Parse an extracted automation value from stderr text.
-
-    Args:
-        label: The automation key to look for (e.g., "LOG_DIR").
-        text: The stderr text to parse.
-
-    Returns:
-        The extracted automation value if found, else None.
-    """
-    pattern = re.compile(rf"^{re.escape(label)}:\s*(.+)$", re.MULTILINE)
-    match = pattern.search(text)
-    return match.group(1).strip() if match else None
 
 
 def make_tar_gz_b64(source_dir: Path) -> str:
@@ -151,10 +135,13 @@ def run_massgen_job(payload_b64: str) -> dict:
     (artifact_root / "stderr.log").write_text(stderr_text, encoding="utf-8")
     (artifact_root / "events.jsonl").write_text(stdout_text, encoding="utf-8")
 
-    log_dir = parse_automation_value("LOG_DIR", stderr_text)
-    if log_dir:
-        src_log_dir = Path(log_dir)
-        if src_log_dir.exists():
+    log_dir = None
+    logs_base = workspace / ".massgen" / "massgen_logs"
+    if logs_base.exists():
+        log_dirs = [d for d in logs_base.iterdir() if d.is_dir() and d.name.startswith("log_")]
+        if log_dirs:
+            src_log_dir = max(log_dirs, key=lambda d: d.stat().st_mtime)
+            log_dir = str(src_log_dir.relative_to(workspace))
             shutil.copytree(src_log_dir, artifact_root / "log_dir", dirs_exist_ok=True)
 
     final_answer = output_file.read_text(encoding="utf-8") if output_file.exists() else ""

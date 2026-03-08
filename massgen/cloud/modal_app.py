@@ -112,6 +112,7 @@ def run_massgen_job(payload_b64: str) -> dict:
         assert proc.stderr is not None
         for line in proc.stderr:
             stderr_lines.append(line)
+            print(f"[stderr] {line}", end="", flush=True)
 
     stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
     stderr_thread.start()

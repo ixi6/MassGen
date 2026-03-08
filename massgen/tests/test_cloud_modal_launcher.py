@@ -58,7 +58,6 @@ def test_modal_launcher_extracts_result_and_artifacts(tmp_path: Path, monkeypatc
             prompt="solve fizzbuzz",
             config_yaml="agent: {}",
             timeout_seconds=60,
-            env={},
             cloud_job_id="test_job_123",
         ),
     )
@@ -92,7 +91,6 @@ def test_modal_launcher_streams_progress(tmp_path: Path, monkeypatch, capsys):
             prompt="hello",
             config_yaml="agent: {}",
             timeout_seconds=60,
-            env={},
         ),
     )
 

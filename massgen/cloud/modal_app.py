@@ -106,6 +106,7 @@ def run_massgen_job(payload_b64: str) -> dict:
     # Stream stdout line-by-line so `modal run` can forward it in real time.
     stdout_lines: list[str] = []
     stderr_lines: list[str] = []
+    event_lines: list[str] = []
 
     def _drain_stderr():
         assert proc.stderr is not None
@@ -120,12 +121,22 @@ def run_massgen_job(payload_b64: str) -> dict:
     for line in proc.stdout:
         stdout_lines.append(line)
         print(line, end="", flush=True)
+        line_stripped = line.strip()
+        if not line_stripped:
+            continue
+        try:
+            parsed = json.loads(line_stripped)
+            if isinstance(parsed, dict):
+                event_lines.append(line)
+        except json.JSONDecodeError:
+            pass
 
     proc.wait()
     stderr_thread.join(timeout=5)
 
     stdout_text = "".join(stdout_lines)
     stderr_text = "".join(stderr_lines)
+    events_text = "".join(event_lines)
     returncode = proc.returncode
 
     artifact_root = workspace / "artifacts"
@@ -133,7 +144,7 @@ def run_massgen_job(payload_b64: str) -> dict:
 
     (artifact_root / "stdout.log").write_text(stdout_text, encoding="utf-8")
     (artifact_root / "stderr.log").write_text(stderr_text, encoding="utf-8")
-    (artifact_root / "events.jsonl").write_text(stdout_text, encoding="utf-8")
+    (artifact_root / "events.jsonl").write_text(events_text, encoding="utf-8")
 
     log_dir = None
     logs_base = workspace / ".massgen" / "massgen_logs"

@@ -31,10 +31,11 @@ class ModalCloudJobLauncher(CloudJobLauncher):
         }
         payload_b64 = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
 
+        modal_entrypoint = Path(__file__).parent / "modal_app.py"
         cmd = [
             "modal",
             "run",
-            "massgen/cloud/modal_app.py::run_massgen_job",
+            f"{modal_entrypoint}::run_massgen_job",
             "--payload-b64",
             payload_b64,
         ]

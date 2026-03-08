@@ -7,7 +7,7 @@ import io
 import json
 import tarfile
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from massgen.cloud.modal_launcher import CloudJobRequest, ModalCloudJobLauncher
 from massgen.cloud.utils import process_context_paths
@@ -104,13 +104,22 @@ def test_modal_launcher_streams_progress(tmp_path: Path, monkeypatch, capsys):
     assert "RESULT" not in captured.out
 
 
-@patch("modal.Volume.from_name")
-def test_process_context_paths_files_and_directories(mock_volume_from_name, tmp_path):
+def test_process_context_paths_files_and_directories(tmp_path, monkeypatch):
     """process_context_paths should accurately upload inputs and rewrite paths."""
     mock_volume = MagicMock()
-    mock_volume_from_name.return_value = mock_volume
     mock_batch = MagicMock()
     mock_volume.batch_upload.return_value.__enter__.return_value = mock_batch
+
+    class FakeVolume:
+        @classmethod
+        def from_name(cls, name, create_if_missing=False):
+            return mock_volume
+
+    fake_modal = type("FakeModal", (), {"Volume": FakeVolume})
+
+    import sys
+
+    monkeypatch.setitem(sys.modules, "modal", fake_modal)
 
     file1 = tmp_path / "file1.txt"
     file1.write_text("file1_test")

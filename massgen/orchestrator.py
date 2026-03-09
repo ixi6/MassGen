@@ -2405,7 +2405,7 @@ class Orchestrator(ChatAgent):
         else:
             import tempfile as _tempfile
 
-            injection_dir = Path(_tempfile.mkdtemp(prefix=f"massgen_plan_inject_{agent_id}_")).resolve()
+            injection_dir = Path(_tempfile.mkdtemp(prefix=f"massgen_plan_inject_{agent_id}_"))
         injection_dir.mkdir(parents=True, exist_ok=True)
         if not hasattr(self, "_planning_injection_dirs"):
             self._planning_injection_dirs = {}
@@ -6211,9 +6211,11 @@ Your answer:"""
                             shutil.copy2(str(src_file), str(dst))
                     # Clear stale task plan so agent starts with a fresh plan
                     stale_plan = dest / "tasks" / "plan.json"
-                    if stale_plan.exists():
+                    try:
                         stale_plan.unlink()
                         logger.info(f"[Orchestrator] Cleared stale task plan from restored workspace for {agent_id}")
+                    except FileNotFoundError:
+                        pass
 
             logger.info(
                 f"[Orchestrator] Restored {label}: agent={agent_id}, "

@@ -244,7 +244,7 @@ def test_round_evaluator_prompt_returns_file_authoritative_critique_and_spec_gui
 
 
 def test_round_evaluator_prompt_keeps_parent_workflow_out_of_returned_packet():
-    """round_evaluator may use inner workflow machinery, but should not direct the parent's workflow."""
+    """round_evaluator should stay file-authoritative instead of acting as a workflow proxy."""
     from massgen.subagent.type_scanner import scan_subagent_types
 
     builtin_dir = Path(__file__).parent.parent / "subagent_types"
@@ -256,11 +256,13 @@ def test_round_evaluator_prompt_keeps_parent_workflow_out_of_returned_packet():
     config = types[0]
     lower = config.system_prompt.lower()
 
-    assert "parent-owned workflow steps" in lower
-    assert "do not tell the parent" in lower
+    assert "workflow proxy" in lower
     assert "internal massgen workflow machinery" in lower
-    assert "submit_checklist" in config.system_prompt
     assert "new_answer" in config.system_prompt
+    assert "concise summary" in lower
+    assert "do not paste the full critique packet into your answer" in lower
+    assert "submit_checklist" not in config.system_prompt
+    assert "propose_improvements" not in config.system_prompt
 
 
 def test_round_evaluator_prompt_saves_files_and_concise_answer():

@@ -32,12 +32,13 @@ See also: [Backend Registration Checklist in CLAUDE.md Memory](../../CLAUDE.md)
 ```text
 base.py (abstract interface)
     +-- base_with_custom_tool_and_mcp.py (tool + MCP support)
-            |-- response.py (OpenAI Response API)
-            |-- chat_completions.py (generic OpenAI-compatible)
-            |-- claude.py (Anthropic)
-            |-- claude_code.py (Claude Code SDK)
-            |-- gemini.py (Google)
-            +-- grok.py (xAI)
+    |       |-- response.py (OpenAI Response API)
+    |       |-- chat_completions.py (generic OpenAI-compatible)
+    |       |-- claude.py (Anthropic)
+    |       |-- gemini.py (Google)
+    |       +-- grok.py (xAI)
+    +-- claude_code.py (Claude Code SDK; native tools + SDK MCP path)
+    +-- codex.py (OpenAI Codex CLI; native tools + workspace .codex MCP path)
 ```
 
 ## Coordination as Evolutionary Search

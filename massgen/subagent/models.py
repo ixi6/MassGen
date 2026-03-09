@@ -914,19 +914,6 @@ class RoundEvaluatorResult:
         return None, None
 
     @classmethod
-    def load_next_tasks_artifact(
-        cls,
-        workspace_path: str | None,
-        log_path: str | None = None,
-    ) -> dict[str, Any] | None:
-        """Load and validate ``next_tasks.json`` from a round_evaluator workspace."""
-        next_tasks, _ = cls.resolve_next_tasks_artifact(
-            workspace_path=workspace_path,
-            log_path=log_path,
-        )
-        return next_tasks
-
-    @classmethod
     def from_subagent_result(
         cls,
         result: "SubagentResult",

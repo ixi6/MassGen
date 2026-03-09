@@ -19,6 +19,9 @@ Standard terminology used throughout MassGen documentation.
    Claude Code
       Anthropic's development-focused AI assistant with native file operation tools (Read, Write, Edit, Bash, Grep, Glob). Backend type: ``claude_code``.
 
+   Codex
+      OpenAI's Codex CLI with native shell, file editing, web search, and workspace-scoped MCP integration. Backend type: ``codex``.
+
    Consensus
       Agreement among agents on the best solution. Agents reach consensus through voting and refinement during coordination phases.
 
@@ -188,6 +191,9 @@ Backend-Specific Terms
 
    Chat Completions API
       Generic OpenAI-compatible API format. Backend type: ``chatcompletion``.
+
+   Codex CLI
+      OpenAI's native-tool coding assistant. Backend type: ``codex``.
 
    Gemini
       Google's AI models (Flash, Pro). Backend type: ``gemini``.

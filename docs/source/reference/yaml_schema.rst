@@ -78,6 +78,8 @@ MassGen supports multiple backend types with varying capabilities:
      - Anthropic's Claude API with full tool support and MCP integration
    * - ``claude_code``
      - Claude Code SDK with native dev tools (Read, Write, Edit, Bash, etc.)
+   * - ``codex``
+     - OpenAI Codex CLI with native shell, file editing, web search, and MCP integration
    * - ``gemini``
      - Google's Gemini API with planning mode and MCP support
    * - ``openai``
@@ -634,7 +636,7 @@ Backend
      - string
      - Yes
      - All
-     - Backend type: ``claude``, ``claude_code``, ``gemini``, ``openai``, ``grok``, ``azure_openai``, ``zai``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``, ``ag2``
+     - Backend type: ``claude``, ``claude_code``, ``codex``, ``gemini``, ``openai``, ``grok``, ``azure_openai``, ``zai``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``, ``ag2``
    * - ``model``
      - string
      - Yes
@@ -653,7 +655,7 @@ Backend
    * - ``cwd``
      - string
      - No
-     - ``claude_code``
+     - ``claude_code``, ``codex``
      - Working directory for file operations. **Use** ``"workspace"`` **as the value** - MassGen automatically adds a unique suffix per agent at runtime (e.g., ``workspace_f7a3b2c1``). Avoid numbered names like ``workspace1`` as they can leak agent identity during voting.
    * - ``exclude_file_operation_mcps``
      - boolean
@@ -1037,7 +1039,7 @@ Coordination Configuration
 
 .. note::
 
-   **Planning Mode Support:** Planning mode works with all backends that support MCP integration (``claude``, ``claude_code``, ``gemini``, ``openai``, ``grok``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``). It does NOT work with ``ag2`` or ``azure_openai``.
+   **Planning Mode Support:** Planning mode works with all backends that support MCP integration (``claude``, ``claude_code``, ``codex``, ``gemini``, ``openai``, ``grok``, ``chatcompletion``, ``lmstudio``, ``vllm``, ``sglang``). It does NOT work with ``ag2`` or ``azure_openai``.
 
    **When to Use Planning Mode:**
 

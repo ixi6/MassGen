@@ -642,7 +642,22 @@ class SystemMessageBuilder:
             from massgen.system_prompt_sections import ChangedocSection
 
             has_prior_answers = bool(answers)
-            builder.add_section(ChangedocSection(has_prior_answers=has_prior_answers, gap_report_mode=gap_report_mode))
+            builder.add_section(
+                ChangedocSection(
+                    has_prior_answers=has_prior_answers,
+                    gap_report_mode=gap_report_mode,
+                    round_evaluator_before_checklist=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "round_evaluator_before_checklist",
+                        False,
+                    ),
+                    orchestrator_managed_round_evaluator=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "orchestrator_managed_round_evaluator",
+                        False,
+                    ),
+                ),
+            )
             logger.info(f"[SystemMessageBuilder] Added changedoc instructions for {agent_id} (prior_answers={has_prior_answers})")
 
         # Build and return the complete structured system prompt

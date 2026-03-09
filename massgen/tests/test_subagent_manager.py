@@ -1859,9 +1859,19 @@ class TestSubagentConfigInheritance:
             metadata={"refine": False, "subagent_type": "round_evaluator"},
         )
         workspace = manager._create_workspace(config.id)
+        nested_final = workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
+        nested_final.mkdir(parents=True)
+        (nested_final / "critique_packet.md").write_text(
+            "# merged critique packet\n\nFull synthesized report",
+            encoding="utf-8",
+        )
+        (nested_final / "verdict.json").write_text(
+            json.dumps({"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}, indent=2),
+            encoding="utf-8",
+        )
         result = SubagentResult.create_success(
             subagent_id=config.id,
-            answer="# merged critique packet\n\nFull synthesized report",
+            answer="Short summary only.",
             workspace_path=str(workspace),
             execution_time_seconds=1.5,
         )
@@ -1871,6 +1881,50 @@ class TestSubagentConfigInheritance:
         packet_path = workspace / "critique_packet.md"
         assert packet_path.exists()
         assert packet_path.read_text(encoding="utf-8") == "# merged critique packet\n\nFull synthesized report"
+
+    def test_round_evaluator_result_persists_verdict_json(self, tmp_path):
+        """Canonical verdict metadata should be hoisted to verdict.json at the workspace root."""
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentResult
+
+        parent_workspace = tmp_path / "workspace"
+        parent_workspace.mkdir()
+
+        manager = SubagentManager(
+            parent_workspace=str(parent_workspace),
+            parent_agent_id="parent-agent",
+            orchestrator_id="orch",
+            parent_agent_configs=[
+                {"id": "agent_1", "backend": {"type": "openai", "model": "gpt-4o"}},
+            ],
+        )
+
+        config = SubagentConfig.create(
+            task="Critique all candidate answers and produce a detailed improvement spec.",
+            parent_agent_id="parent-agent",
+            subagent_id="round-eval",
+            metadata={"refine": False, "subagent_type": "round_evaluator"},
+        )
+        workspace = manager._create_workspace(config.id)
+        nested_final = workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
+        nested_final.mkdir(parents=True)
+        verdict_payload = {"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}
+        (nested_final / "verdict.json").write_text(
+            json.dumps(verdict_payload, indent=2),
+            encoding="utf-8",
+        )
+        result = SubagentResult.create_success(
+            subagent_id=config.id,
+            answer="Short summary only.",
+            workspace_path=str(workspace),
+            execution_time_seconds=1.5,
+        )
+
+        manager._persist_round_evaluator_packet_if_needed(config, workspace, result)
+
+        verdict_path = workspace / "verdict.json"
+        assert verdict_path.exists()
+        assert json.loads(verdict_path.read_text(encoding="utf-8")) == verdict_payload
 
     def test_round_evaluator_result_persists_next_tasks_json(self, tmp_path):
         """Structured next_tasks should be materialized next to critique_packet.md."""
@@ -1896,40 +1950,45 @@ class TestSubagentConfigInheritance:
             metadata={"refine": False, "subagent_type": "round_evaluator"},
         )
         workspace = manager._create_workspace(config.id)
-        packet = (
-            "# merged critique packet\n\n"
-            "```json verdict_block\n"
-            "{\n"
-            '  "verdict": "iterate",\n'
-            '  "scores": {"E1": 4},\n'
-            '  "improvements": [],\n'
-            '  "preserve": [],\n'
-            '  "next_tasks": {\n'
-            '    "schema_version": "1",\n'
-            '    "objective": "Reframe the page",\n'
-            '    "primary_strategy": "interactive_route_map",\n'
-            '    "why_this_strategy": "Most directly addresses weak architecture",\n'
-            '    "deprioritize_or_remove": ["generic grid"],\n'
-            '    "execution_scope": {"active_chunk": "c1"},\n'
-            '    "tasks": [\n'
-            "      {\n"
-            '        "id": "reframe_ia",\n'
-            '        "description": "Replace brochure IA with route planning structure",\n'
-            '        "priority": "high",\n'
-            '        "depends_on": [],\n'
-            '        "chunk": "c1",\n'
-            '        "verification": "Page is route-first",\n'
-            '        "verification_method": "Review rendered page",\n'
-            '        "execution": {"mode": "delegate", "subagent_type": "builder"}\n'
-            "      }\n"
-            "    ]\n"
-            "  }\n"
-            "}\n"
-            "```\n"
+        nested_final = workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
+        nested_final.mkdir(parents=True)
+        (nested_final / "critique_packet.md").write_text(
+            "# merged critique packet\n\nFull synthesized report",
+            encoding="utf-8",
+        )
+        (nested_final / "verdict.json").write_text(
+            json.dumps({"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}, indent=2),
+            encoding="utf-8",
+        )
+        (nested_final / "next_tasks.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": "1",
+                    "objective": "Reframe the page",
+                    "primary_strategy": "interactive_route_map",
+                    "why_this_strategy": "Most directly addresses weak architecture",
+                    "deprioritize_or_remove": ["generic grid"],
+                    "execution_scope": {"active_chunk": "c1"},
+                    "tasks": [
+                        {
+                            "id": "reframe_ia",
+                            "description": "Replace brochure IA with route planning structure",
+                            "priority": "high",
+                            "depends_on": [],
+                            "chunk": "c1",
+                            "verification": "Page is route-first",
+                            "verification_method": "Review rendered page",
+                            "execution": {"mode": "delegate", "subagent_type": "builder"},
+                        },
+                    ],
+                },
+                indent=2,
+            ),
+            encoding="utf-8",
         )
         result = SubagentResult.create_success(
             subagent_id=config.id,
-            answer=packet,
+            answer="Short summary only.",
             workspace_path=str(workspace),
             execution_time_seconds=1.5,
         )
@@ -1964,6 +2023,14 @@ class TestSubagentConfigInheritance:
             metadata={"refine": False, "subagent_type": "round_evaluator"},
         )
         workspace = manager._create_workspace(config.id)
+        (workspace / "critique_packet.md").write_text(
+            "# merged critique packet\n\nFull synthesized report",
+            encoding="utf-8",
+        )
+        (workspace / "verdict.json").write_text(
+            json.dumps({"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}, indent=2),
+            encoding="utf-8",
+        )
         next_tasks_path = workspace / "next_tasks.json"
         next_tasks_path.write_text(
             json.dumps(
@@ -1990,10 +2057,9 @@ class TestSubagentConfigInheritance:
             ),
             encoding="utf-8",
         )
-        packet = "# merged critique packet\n\n" "```json verdict_block\n" "{\n" '  "verdict": "iterate",\n' '  "scores": {"E1": 4}\n' "}\n" "```\n"
         result = SubagentResult.create_success(
             subagent_id=config.id,
-            answer=packet,
+            answer="Short summary only.",
             workspace_path=str(workspace),
             execution_time_seconds=1.5,
         )
@@ -2029,6 +2095,14 @@ class TestSubagentConfigInheritance:
         workspace = manager._create_workspace(config.id)
         nested_final = workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
         nested_final.mkdir(parents=True)
+        (nested_final / "critique_packet.md").write_text(
+            "# merged critique packet\n\nFull synthesized report",
+            encoding="utf-8",
+        )
+        (nested_final / "verdict.json").write_text(
+            json.dumps({"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}, indent=2),
+            encoding="utf-8",
+        )
         (nested_final / "next_tasks.json").write_text(
             json.dumps(
                 {
@@ -2054,10 +2128,9 @@ class TestSubagentConfigInheritance:
             ),
             encoding="utf-8",
         )
-        packet = "# merged critique packet\n\n" "```json verdict_block\n" "{\n" '  "verdict": "iterate",\n' '  "scores": {"E1": 4}\n' "}\n" "```\n"
         result = SubagentResult.create_success(
             subagent_id=config.id,
-            answer=packet,
+            answer="Short summary only.",
             workspace_path=str(workspace),
             execution_time_seconds=1.5,
         )

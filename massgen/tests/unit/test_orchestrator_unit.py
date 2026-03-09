@@ -305,17 +305,16 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_without_legacy
         answer="draft answer v1",
     )
 
-    packet = """# Critique Packet
-
-```json verdict_block
-{
-  "verdict": "iterate",
-  "scores": {"E1": 4}
-}
-```
-"""
     eval_workspace = tmp_path / "round-eval-workspace"
     eval_workspace.mkdir()
+    (eval_workspace / "critique_packet.md").write_text(
+        "# Critique Packet\n\nAuthoritative evaluator packet.",
+        encoding="utf-8",
+    )
+    (eval_workspace / "verdict.json").write_text(
+        json.dumps({"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}, indent=2),
+        encoding="utf-8",
+    )
     (eval_workspace / "next_tasks.json").write_text(
         json.dumps(
             {
@@ -374,7 +373,7 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_without_legacy
                         "subagent_id": "round_eval_r2",
                         "status": "completed",
                         "success": True,
-                        "answer": packet,
+                        "answer": "Short summary only.",
                         "workspace": str(eval_workspace),
                     },
                 ],
@@ -391,11 +390,13 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_without_legacy
     assert queued_blocks, "expected a round-start context block to be queued"
     block = queued_blocks[0]
     assert "get_task_plan" in block
-    assert "Critique Packet" in block  # answer text is included
+    assert "Critique Packet" in block
     assert "<evaluator_summary" in block
     assert "submit_checklist" in block and "do not call" in block.lower()
     assert "propose_improvements" in block and "do not call" in block.lower()
-    assert "critique_packet.md" in block
+    assert str(eval_workspace / "critique_packet.md") in block
+    assert str(eval_workspace / "verdict.json") in block
+    assert str(eval_workspace / "next_tasks.json") in block
 
 
 @pytest.mark.asyncio
@@ -432,17 +433,16 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_only_in_nested
         answer="draft answer v1",
     )
 
-    packet = """# Critique Packet
-
-```json verdict_block
-{
-  "verdict": "iterate",
-  "scores": {"E1": 4}
-}
-```
-"""
     eval_workspace = tmp_path / "round-eval-workspace"
     eval_workspace.mkdir()
+    (eval_workspace / "critique_packet.md").write_text(
+        "# Critique Packet\n\nAuthoritative evaluator packet.",
+        encoding="utf-8",
+    )
+    (eval_workspace / "verdict.json").write_text(
+        json.dumps({"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}, indent=2),
+        encoding="utf-8",
+    )
     nested_final = eval_workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
     nested_final.mkdir(parents=True)
     (nested_final / "next_tasks.json").write_text(
@@ -503,7 +503,7 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_only_in_nested
                         "subagent_id": "round_eval_r2",
                         "status": "completed",
                         "success": True,
-                        "answer": packet,
+                        "answer": "Short summary only.",
                         "workspace": str(eval_workspace),
                     },
                 ],
@@ -520,7 +520,7 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_only_in_nested
     assert queued_blocks, "expected a round-start context block to be queued"
     block = queued_blocks[0]
     assert "get_task_plan" in block
-    assert "Critique Packet" in block  # answer text is included
+    assert "Critique Packet" in block
     assert "<evaluator_summary" in block
 
 
@@ -779,6 +779,7 @@ async def test_new_answer_triggers_round_end_background_cleanup(mock_orchestrato
 async def test_round_evaluator_launches_between_round_one_and_round_two_and_injects_packet(
     mock_orchestrator,
     monkeypatch,
+    tmp_path,
 ):
     """Orchestrator should launch round_evaluator after round 1 and inject its packet into round 2."""
     orchestrator = mock_orchestrator(num_agents=1)
@@ -828,6 +829,16 @@ async def test_round_evaluator_launches_between_round_one_and_round_two_and_inje
     monkeypatch.setattr(backend, "stream_with_tools", wrapped_stream_with_tools)
 
     captured_subagent_calls: list[tuple[str, dict[str, object], int]] = []
+    eval_workspace = tmp_path / "round-eval-workspace"
+    eval_workspace.mkdir()
+    (eval_workspace / "critique_packet.md").write_text(
+        "ROUND_EVAL_PACKET: critical improvement spec",
+        encoding="utf-8",
+    )
+    (eval_workspace / "verdict.json").write_text(
+        json.dumps({"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}, indent=2),
+        encoding="utf-8",
+    )
 
     async def fake_subagent_call(
         parent_agent_id: str,
@@ -847,8 +858,8 @@ async def test_round_evaluator_launches_between_round_one_and_round_two_and_inje
                         "subagent_id": "round_eval",
                         "status": "completed",
                         "success": True,
-                        "answer": "ROUND_EVAL_PACKET: critical improvement spec",
-                        "workspace": "/tmp/round_eval",
+                        "answer": "Short summary only.",
+                        "workspace": str(eval_workspace),
                         "execution_time_seconds": 1.25,
                         "token_usage": {"input_tokens": 10, "output_tokens": 20},
                     },

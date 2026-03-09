@@ -81,7 +81,7 @@ def test_config_validator_rejects_orchestrator_managed_round_evaluator_without_p
     assert any("orchestrator_managed_round_evaluator" in e.location for e in result.errors)
 
 
-def test_config_validator_accepts_round_evaluator_loop_for_multi_parent_runs():
+def test_config_validator_rejects_round_evaluator_loop_for_multi_parent_runs():
     config = _make_round_evaluator_config()
     config["agents"].append(
         {
@@ -92,7 +92,18 @@ def test_config_validator_accepts_round_evaluator_loop_for_multi_parent_runs():
 
     result = ConfigValidator().validate_config(config)
 
-    assert result.is_valid(), result.format_errors()
+    assert not result.is_valid()
+    assert any("single-parent" in e.message.lower() for e in result.errors)
+
+
+def test_config_validator_rejects_round_evaluator_skip_synthesis_in_managed_flow():
+    config = _make_round_evaluator_config()
+    config["orchestrator"]["coordination"]["round_evaluator_skip_synthesis"] = True
+
+    result = ConfigValidator().validate_config(config)
+
+    assert not result.is_valid()
+    assert any("skip_synthesis" in e.message.lower() for e in result.errors)
 
 
 def test_config_validator_rejects_round_evaluator_loop_without_subagent_support():
@@ -127,19 +138,27 @@ def test_config_validator_rejects_round_evaluator_loop_without_enabled_subagent_
 # ---------------------------------------------------------------------------
 
 
-def test_round_evaluator_result_from_successful_subagent():
+def test_round_evaluator_result_from_successful_subagent(tmp_path):
     from massgen.subagent.models import RoundEvaluatorResult, SubagentResult
 
+    workspace = tmp_path / "round-evaluator-workspace"
+    workspace.mkdir()
+    (workspace / "critique_packet.md").write_text("# Critique Packet\n\nFull synthesized report", encoding="utf-8")
+    (workspace / "verdict.json").write_text(
+        '{"schema_version": "1", "verdict": "iterate", "scores": {"E1": 4}}',
+        encoding="utf-8",
+    )
     raw = SubagentResult.create_success(
         subagent_id="round_eval_r2",
-        answer="# Critique Packet\n\nFull synthesized report",
-        workspace_path="/tmp/ws",
+        answer="Short summary only.",
+        workspace_path=str(workspace),
         execution_time_seconds=45.0,
     )
     result = RoundEvaluatorResult.from_subagent_result(raw, elapsed=50.0)
 
     assert result.status == "success"
     assert result.packet_text == "# Critique Packet\n\nFull synthesized report"
+    assert result.primary_artifact_path == str(workspace / "critique_packet.md")
     assert result.degraded_fallback_used is False
     assert result.execution_time_seconds == 50.0
     assert result.subagent_id == "round_eval_r2"
@@ -172,13 +191,23 @@ def test_round_evaluator_result_serialization_roundtrip():
         subagent_id="eval_1",
         log_path="/tmp/logs",
         primary_artifact_path="/tmp/ws/critique_packet.md",
+        verdict_artifact_path="/tmp/ws/verdict.json",
         next_tasks_artifact_path="/tmp/ws/next_tasks.json",
         task_plan_source="next_tasks_artifact",
         next_tasks={
             "schema_version": "1",
+            "objective": "Turn it into a route planner",
+            "primary_strategy": "interactive_route_map",
+            "why_this_strategy": "One architectural move fixes the weakest criteria",
+            "deprioritize_or_remove": ["generic grid"],
             "execution_scope": {"active_chunk": "c1"},
             "tasks": [{"id": "t1", "description": "Do work", "verification": "done"}],
         },
+        next_tasks_objective="Turn it into a route planner",
+        next_tasks_primary_strategy="interactive_route_map",
+        next_tasks_why_this_strategy="One architectural move fixes the weakest criteria",
+        next_tasks_deprioritize_or_remove=["generic grid"],
+        next_tasks_execution_scope={"active_chunk": "c1"},
     )
     restored = RoundEvaluatorResult.from_dict(original.to_dict())
 
@@ -189,9 +218,11 @@ def test_round_evaluator_result_serialization_roundtrip():
     assert restored.subagent_id == original.subagent_id
     assert restored.log_path == original.log_path
     assert restored.primary_artifact_path == original.primary_artifact_path
+    assert restored.verdict_artifact_path == original.verdict_artifact_path
     assert restored.next_tasks_artifact_path == original.next_tasks_artifact_path
     assert restored.task_plan_source == "next_tasks_artifact"
     assert restored.next_tasks == original.next_tasks
+    assert restored.next_tasks_primary_strategy == original.next_tasks_primary_strategy
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +238,7 @@ def test_evaluator_result_block_contains_packet_only_instruction():
         packet_text="Critique findings here",
         status="success",
         subagent_id="eval_r2",
+        primary_artifact_path="/tmp/eval/critique_packet.md",
     )
     # Import the formatter from orchestrator — it's a standalone method.
     # We test the output string directly.
@@ -218,6 +250,9 @@ def test_evaluator_result_block_contains_packet_only_instruction():
     )
     assert "sole diagnostic basis" in block.lower() or "sole diagnostic" in block.lower()
     assert "do not run a separate self-evaluation" in block.lower() or "do NOT run a separate" in block
+    assert "report_path" in block
+    assert "/tmp/eval/critique_packet.md" in block
+    assert "save it to your workspace" not in block.lower()
 
 
 def test_evaluator_result_block_includes_status():
@@ -249,7 +284,12 @@ def test_auto_injected_evaluator_result_block_includes_summary():
         status="success",
         subagent_id="eval_r2",
         primary_artifact_path="/tmp/eval/critique_packet.md",
+        verdict_artifact_path="/tmp/eval/verdict.json",
         next_tasks_artifact_path="/tmp/eval/next_tasks.json",
+        next_tasks_objective="Turn the brochure into a route planner",
+        next_tasks_primary_strategy="interactive_route_map",
+        next_tasks_why_this_strategy="One architectural move fixes the weak IA",
+        next_tasks_deprioritize_or_remove=["generic destination grid", "gallery strip"],
     )
 
     block = Orchestrator._format_round_evaluator_result_block_static(
@@ -265,8 +305,71 @@ def test_auto_injected_evaluator_result_block_includes_summary():
     assert "propose_improvements" in block and "do not call" in block.lower()
     assert "diagnostic report" in block.lower()
     assert "pure text artifact" in block.lower()
-    assert "critique_packet.md" in block
     assert "implementation_guidance" in block
+    assert "interactive_route_map" in block
+    assert "Turn the brochure into a route planner" in block
+    assert "generic destination grid" in block
+    assert "/tmp/eval/critique_packet.md" in block
+    assert "/tmp/eval/verdict.json" in block
+    assert "/tmp/eval/next_tasks.json" in block
+
+
+def test_auto_injected_block_strips_absolute_workspace_paths():
+    """Absolute workspace paths in packet text should be replaced with filenames."""
+    from massgen.orchestrator import Orchestrator
+    from massgen.subagent.models import RoundEvaluatorResult
+
+    packet_with_paths = (
+        "Files created for the parent to read:\n"
+        "- /Users/foo/MassGen/.massgen/workspaces/workspace_abc/subagents/round_eval_r1/"
+        "workspace/agent_1_xyz/critique_packet.md\n"
+        "- /Users/foo/MassGen/.massgen/workspaces/workspace_abc/subagents/round_eval_r1/"
+        "workspace/agent_1_xyz/next_tasks.json\n"
+        "Rendered PNG: /Users/foo/MassGen/.massgen/workspaces/workspace_abc/subagents/"
+        "round_eval_r1/workspace/agent_1_xyz/.massgen_scratch/verification/render.png\n"
+    )
+    evaluator_result = RoundEvaluatorResult(
+        packet_text=packet_with_paths,
+        clean_packet_text=packet_with_paths,
+        status="success",
+        subagent_id="eval_r2",
+    )
+
+    block = Orchestrator._format_round_evaluator_result_block_static(
+        subagent_id="eval_r2",
+        evaluator_result=evaluator_result,
+        auto_injected=True,
+    )
+
+    # Absolute paths should be replaced with backtick-wrapped filenames
+    assert "/Users/foo/" not in block
+    assert "workspace_abc" not in block
+    assert "`critique_packet.md`" in block
+    assert "`next_tasks.json`" in block
+    assert "`render.png`" in block
+
+
+def test_strip_absolute_workspace_paths_unit():
+    """Unit test for _strip_absolute_workspace_paths."""
+    from massgen.orchestrator import Orchestrator
+
+    text = (
+        "See /home/user/.massgen/workspaces/ws_123/subagents/eval/workspace/agent_1/critique_packet.md " "and /tmp/workspace/foo/next_tasks.json for details. " "Also check plain_text without paths."
+    )
+    result = Orchestrator._strip_absolute_workspace_paths(text)
+    assert "/home/user/" not in result
+    assert "`critique_packet.md`" in result
+    assert "`next_tasks.json`" in result
+    assert "plain_text without paths" in result
+
+
+def test_strip_absolute_workspace_paths_preserves_relative_refs():
+    """Relative file references like 'critique_packet.md' should be untouched."""
+    from massgen.orchestrator import Orchestrator
+
+    text = "See critique_packet.md for details. Also tasks/plan.json is relevant."
+    result = Orchestrator._strip_absolute_workspace_paths(text)
+    assert result == text  # No changes
 
 
 # ---------------------------------------------------------------------------

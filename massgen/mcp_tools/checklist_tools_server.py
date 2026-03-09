@@ -120,7 +120,13 @@ def build_round_evaluator_task_mode_redirect(state: dict[str, Any]) -> str | Non
         return None
 
     critique_path = str(state.get("round_evaluator_primary_artifact_path") or "").strip()
+    verdict_path = str(state.get("round_evaluator_verdict_artifact_path") or "").strip()
     next_tasks_path = str(state.get("round_evaluator_next_tasks_artifact_path") or "").strip()
+    objective = str(state.get("round_evaluator_objective") or "").strip()
+    primary_strategy = str(state.get("round_evaluator_primary_strategy") or "").strip()
+    why_this_strategy = str(state.get("round_evaluator_why_this_strategy") or "").strip()
+    deprioritize_raw = state.get("round_evaluator_deprioritize_or_remove")
+    deprioritize = [str(item).strip() for item in deprioritize_raw or [] if str(item).strip()] if isinstance(deprioritize_raw, list) else []
 
     parts = [
         "The round evaluator has already finished and auto-injected your next tasks.",
@@ -129,8 +135,18 @@ def build_round_evaluator_task_mode_redirect(state: dict[str, Any]) -> str | Non
         "Do not call `submit_checklist` or `propose_improvements` here.",
         "Do not write a second diagnostic report.",
     ]
+    if objective:
+        parts.append(f"Chosen objective: {objective}.")
+    if primary_strategy:
+        parts.append(f"Chosen strategy: {primary_strategy}.")
+    if why_this_strategy:
+        parts.append(f"Why this strategy: {why_this_strategy}.")
+    if deprioritize:
+        parts.append(f"Deprioritize or remove: {', '.join(deprioritize)}.")
     if critique_path:
         parts.append(f"Reference critique packet: {critique_path}.")
+    if verdict_path:
+        parts.append(f"Reference verdict metadata: {verdict_path}.")
     if next_tasks_path:
         parts.append(f"Reference next-task handoff: {next_tasks_path}.")
     return " ".join(parts)
@@ -505,8 +521,27 @@ def evaluate_proposed_improvements(
     return result
 
 
+def _resolve_allowed_external_report_paths(state: dict[str, Any]) -> set[Path]:
+    """Return exact external report paths the checklist server may accept."""
+    allowed: set[Path] = set()
+
+    explicit = state.get("allowed_external_report_paths")
+    if isinstance(explicit, list):
+        for path_value in explicit:
+            path_text = str(path_value or "").strip()
+            if not path_text:
+                continue
+            allowed.add(Path(path_text).resolve())
+
+    critique_path = str(state.get("round_evaluator_primary_artifact_path") or "").strip()
+    if critique_path:
+        allowed.add(Path(critique_path).resolve())
+
+    return allowed
+
+
 def _resolve_report_file(report_path: str, state: dict[str, Any]) -> tuple[Path | None, str | None]:
-    """Resolve report path to a workspace-local absolute path."""
+    """Resolve report path to an allowed absolute path."""
     if report_path is None:
         raw_path = ""
     elif isinstance(report_path, str):
@@ -528,7 +563,9 @@ def _resolve_report_file(report_path: str, state: dict[str, Any]) -> tuple[Path 
     try:
         candidate.relative_to(workspace)
     except ValueError:
-        return None, f"Report path must stay inside workspace ({workspace})."
+        if candidate in _resolve_allowed_external_report_paths(state):
+            return candidate, None
+        return None, f"Report path must stay inside workspace ({workspace}) unless it is an allowed external evaluator artifact."
 
     return candidate, None
 

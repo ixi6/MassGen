@@ -68,8 +68,8 @@ def test_checklist_gated_decision_requires_blocking_evaluator_execution():
     assert "required before scoring" in lower
 
 
-def test_checklist_gated_decision_round_evaluator_mode_requires_packet_before_submit():
-    """Round evaluator mode should require a manual blocking critique packet before checklist submission by default."""
+def test_checklist_gated_decision_round_evaluator_mode_requires_managed_packet_before_submit():
+    """Round evaluator mode should consistently describe the orchestrator-managed packet workflow."""
     content = _build_checklist_gated_decision(
         checklist_items=_CHECKLIST_ITEMS,
         round_evaluator_before_checklist=True,
@@ -81,10 +81,11 @@ def test_checklist_gated_decision_round_evaluator_mode_requires_packet_before_su
     assert "very critical" in lower
     assert "sole diagnostic basis" in lower
     assert "before round 2" in lower
-    assert "blocking `round_evaluator` subagent yourself" in lower
-    assert "wait for its packet before" in lower
+    assert "orchestrator" in lower
+    assert "do not spawn another round_evaluator yourself" in lower
     assert "do not run a separate self-evaluation pass" in lower
-    assert "save or copy that round-evaluator report into your workspace" in lower
+    assert "report_path" in content
+    assert "save or copy that round-evaluator report into your workspace" not in lower
     assert "spawn_subagents" not in content
     assert "submit_checklist_args" not in content
     assert "expected_verdict" not in content
@@ -103,7 +104,8 @@ def test_checklist_gated_decision_orchestrator_managed_round_evaluator_mode_requ
     assert "orchestrator" in lower
     assert "do not spawn another round_evaluator yourself" in lower
     assert "do not run a separate self-evaluation pass" in lower
-    assert "save or copy that round-evaluator report into your workspace" in lower
+    assert "pass that exact path as report_path" in lower
+    assert "save or copy that round-evaluator report into your workspace" not in lower
 
 
 def test_checklist_gated_decision_orchestrator_managed_auto_injection_is_task_driven():
@@ -120,6 +122,7 @@ def test_checklist_gated_decision_orchestrator_managed_auto_injection_is_task_dr
     assert "do not call `propose_improvements`" in content
     assert "do not write a second diagnostic report" in lower
     assert "pure text artifact" in lower
+    assert "multiple independent critiques" not in lower
 
 
 def test_checklist_gated_decision_includes_peer_build_copy_guidance():

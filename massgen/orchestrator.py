@@ -1018,7 +1018,13 @@ class Orchestrator(ChatAgent):
                 # injected next tasks, the parent should skip checklist loops.
                 "round_evaluator_auto_injected": False,
                 "round_evaluator_primary_artifact_path": "",
+                "round_evaluator_verdict_artifact_path": "",
                 "round_evaluator_next_tasks_artifact_path": "",
+                "round_evaluator_objective": "",
+                "round_evaluator_primary_strategy": "",
+                "round_evaluator_why_this_strategy": "",
+                "round_evaluator_deprioritize_or_remove": [],
+                "allowed_external_report_paths": [],
                 "agent_answer_count": (len(tracker.answers_by_agent.get(agent_id, [])) if tracker is not None and hasattr(tracker, "answers_by_agent") else 0),
                 "current_answer_label": (tracker.get_latest_answer_label(agent_id) if tracker is not None else None),
                 "enable_quality_rethink_on_iteration": bool(
@@ -1745,6 +1751,11 @@ class Orchestrator(ChatAgent):
                     self.coordination_tracker.get_agent_context_labels(agent_id),
                 ),
                 "pending_checklist_recheck_labels": pending_recheck_labels,
+                "round_evaluator_auto_injected": state.get("round_evaluator_auto_injected", False),
+                "round_evaluator_primary_artifact_path": state.get("round_evaluator_primary_artifact_path", ""),
+                "round_evaluator_verdict_artifact_path": state.get("round_evaluator_verdict_artifact_path", ""),
+                "round_evaluator_next_tasks_artifact_path": state.get("round_evaluator_next_tasks_artifact_path", ""),
+                "allowed_external_report_paths": list(state.get("allowed_external_report_paths", []) or []),
             },
         )
         # Re-write specs file for stdio backends so the MCP server sees updated state
@@ -1770,7 +1781,12 @@ class Orchestrator(ChatAgent):
         *,
         enabled: bool,
         primary_artifact_path: str = "",
+        verdict_artifact_path: str = "",
         next_tasks_artifact_path: str = "",
+        objective: str = "",
+        primary_strategy: str = "",
+        why_this_strategy: str = "",
+        deprioritize_or_remove: list[str] | None = None,
     ) -> None:
         """Persist whether an agent is in post-evaluator task mode."""
         agent = self.agents.get(agent_id)
@@ -1779,8 +1795,14 @@ class Orchestrator(ChatAgent):
 
         state = agent.backend._checklist_state
         state["round_evaluator_auto_injected"] = bool(enabled)
-        state["round_evaluator_primary_artifact_path"] = primary_artifact_path if enabled else ""
-        state["round_evaluator_next_tasks_artifact_path"] = next_tasks_artifact_path if enabled else ""
+        state["round_evaluator_primary_artifact_path"] = primary_artifact_path or ""
+        state["round_evaluator_verdict_artifact_path"] = verdict_artifact_path or ""
+        state["round_evaluator_next_tasks_artifact_path"] = next_tasks_artifact_path or ""
+        state["round_evaluator_objective"] = objective or ""
+        state["round_evaluator_primary_strategy"] = primary_strategy or ""
+        state["round_evaluator_why_this_strategy"] = why_this_strategy or ""
+        state["round_evaluator_deprioritize_or_remove"] = list(deprioritize_or_remove or [])
+        state["allowed_external_report_paths"] = [primary_artifact_path] if primary_artifact_path else []
 
         if hasattr(agent.backend, "_checklist_specs_path"):
             from .mcp_tools.checklist_tools_server import write_checklist_specs
@@ -10471,8 +10493,10 @@ Your answer:"""
             f"{delegation_block}"
             "CANDIDATE ANSWERS:\n"
             f"{answer_block}\n\n"
-            "Return critique/spec content only. Do not provide checklist payloads, numeric scores, "
-            "or parent workflow recommendations."
+            "Write the authoritative critique packet to `critique_packet.md`. "
+            "Write machine-readable verdict metadata to `verdict.json`. "
+            "When iteration is needed, write the implementation handoff to `next_tasks.json`. "
+            "Keep your `answer` minimal and do not provide parent workflow recommendations."
         )
 
     def _get_parent_round_evaluator_delegate_targets(self) -> list[str]:
@@ -10600,6 +10624,27 @@ Your answer:"""
         )
 
     @staticmethod
+    def _strip_absolute_workspace_paths(text: str) -> str:
+        """Replace absolute workspace paths with relative basenames.
+
+        Evaluator packet text often contains deep absolute paths like
+        ``/Users/.../workspace_abc/subagents/.../agent_1_xyz/critique_packet.md``.
+        When the packet is injected into the parent's context, these paths
+        cause the agent to waste many tool calls navigating the eval's
+        internal directory tree.  Replace them with just the filename so
+        the prose is still readable without triggering path-chasing.
+        """
+        import re
+
+        # Match paths starting with / that contain /workspace and end with
+        # a filename (letters, digits, dots, hyphens, underscores).
+        return re.sub(
+            r"/\S*?/(?:workspace|workspaces|subagents)/\S*?/([A-Za-z0-9_.-]+\.(?:md|json|txt|py|png|svg|yaml|yml))\b",
+            r"`\1`",
+            text,
+        )
+
+    @staticmethod
     def _format_round_evaluator_result_block_static(
         subagent_id: str,
         evaluator_result: "RoundEvaluatorResult",
@@ -10607,10 +10652,25 @@ Your answer:"""
     ) -> str:
         """Format the blocking round_evaluator result for next-round prompt injection."""
         status = evaluator_result.status
-        # Use clean text (verdict_block stripped) when available
         packet_text = evaluator_result.clean_packet_text or evaluator_result.packet_text or "(no packet produced)"
+        critique_path = evaluator_result.primary_artifact_path or "(missing critique_packet.md path)"
+        verdict_path = evaluator_result.verdict_artifact_path or "(missing verdict.json path)"
+        next_tasks_path = evaluator_result.next_tasks_artifact_path or "(missing next_tasks.json path)"
 
         if auto_injected:
+            sanitized_packet = Orchestrator._strip_absolute_workspace_paths(packet_text)
+            strategy_lines: list[str] = []
+            if evaluator_result.next_tasks_objective:
+                strategy_lines.append(f"Chosen objective: {evaluator_result.next_tasks_objective}")
+            if evaluator_result.next_tasks_primary_strategy:
+                strategy_lines.append(f"Chosen strategy: {evaluator_result.next_tasks_primary_strategy}")
+            if evaluator_result.next_tasks_why_this_strategy:
+                strategy_lines.append(f"Why this strategy: {evaluator_result.next_tasks_why_this_strategy}")
+            if evaluator_result.next_tasks_deprioritize_or_remove:
+                strategy_lines.append(
+                    "Deprioritize or remove: " + ", ".join(evaluator_result.next_tasks_deprioritize_or_remove),
+                )
+            strategy_block = ("\n".join(strategy_lines) + "\n\n") if strategy_lines else ""
             return (
                 "============================================================\n"
                 f"ROUND EVALUATOR RESULT (status: {status})\n"
@@ -10618,13 +10678,16 @@ Your answer:"""
                 "The orchestrator ran one blocking `round_evaluator` before this round.\n"
                 "The evaluator's tasks have been auto-injected into your task plan.\n\n"
                 f'<evaluator_summary subagent_id="{subagent_id}" status="{status}">\n'
-                f"{packet_text}\n"
+                f"{sanitized_packet}\n"
                 "</evaluator_summary>\n\n"
+                f"{strategy_block}"
                 "Workflow:\n"
                 "1. Call `get_task_plan` — the evaluator's tasks are already there.\n"
-                "2. Read `critique_packet.md` from the evaluator workspace for full\n"
-                "   diagnostic detail. Follow `implementation_guidance` on each task.\n"
-                "3. Implement and verify each injected task.\n"
+                "2. Reference the authoritative evaluator artifacts when needed:\n"
+                f"   - critique_packet.md: {critique_path}\n"
+                f"   - verdict.json: {verdict_path}\n"
+                f"   - next_tasks.json: {next_tasks_path}\n"
+                "3. Follow `implementation_guidance` on each task, then implement and verify.\n"
                 "4. If the deliverable is a pure text artifact, put the final\n"
                 "   artifact body directly in `new_answer.content`.\n"
                 "5. Otherwise, call `new_answer` with your usual concise summary.\n\n"
@@ -10637,9 +10700,9 @@ Your answer:"""
         else:
             instructions = (
                 "IMPORTANT: This evaluator packet is your sole diagnostic basis for\n"
-                "submit_checklist. Save it to your workspace (e.g., tasks/diagnostic_report.md)\n"
-                "and pass the path as report_path. Do NOT run a separate self-evaluation or\n"
-                "author a second diagnostic report from scratch.\n"
+                f"submit_checklist. Pass this exact path as report_path: {critique_path}\n"
+                "Do NOT run a separate self-evaluation or author a second diagnostic\n"
+                "report from scratch.\n"
             )
 
         return (
@@ -10830,7 +10893,24 @@ Your answer:"""
             evaluator_result.next_tasks,
         )
         if structured_next_tasks:
-            return copy.deepcopy(structured_next_tasks.get("tasks", []))
+            task_plan = copy.deepcopy(structured_next_tasks.get("tasks", []))
+            if evaluator_result.preserve:
+                task_plan.append(
+                    {
+                        "type": "verify_preserve",
+                        "description": "Verify preserved strengths haven't regressed",
+                        "execution": {"mode": "inline"},
+                        "items": [
+                            {
+                                "criterion_id": p.get("criterion_id", ""),
+                                "what": p.get("what", ""),
+                                "source": p.get("source", ""),
+                            }
+                            for p in evaluator_result.preserve
+                        ],
+                    },
+                )
+            return task_plan
 
         if not evaluator_result.improvements:
             return []
@@ -11124,112 +11204,65 @@ Your answer:"""
                 },
             )
 
-        # Check if skip_synthesis mode is enabled — when True, pass all raw
-        # critiques to the parent instead of using the synthesized single answer.
-        coord = getattr(self.config, "coordination_config", None)
-        skip_synthesis = bool(
-            coord and getattr(coord, "round_evaluator_skip_synthesis", False),
+        auto_injected = False
+        if evaluator_result.verdict == "iterate" and evaluator_result.task_plan_source == "next_tasks_artifact":
+            task_plan = self.build_task_plan_from_evaluator_verdict(evaluator_result)
+            if task_plan:
+                self._write_planning_injection(parent_agent_id, task_plan)
+                auto_injected = True
+                logger.info(
+                    f"[Orchestrator] Auto-injected {len(task_plan)} tasks from evaluator next_tasks artifact for {parent_agent_id}",
+                )
+        elif evaluator_result.verdict == "iterate":
+            logger.info(
+                "[Orchestrator] Evaluator requested iteration for %s without a valid next_tasks.json artifact; using checklist fallback",
+                parent_agent_id,
+            )
+        elif evaluator_result.verdict == "converged":
+            logger.info(
+                "[Orchestrator] Evaluator verdict: converged for %s",
+                parent_agent_id,
+            )
+        else:
+            logger.debug(
+                "[Orchestrator] Missing or invalid verdict.json for %s; using checklist fallback",
+                parent_agent_id,
+            )
+
+        self._set_round_evaluator_task_mode(
+            parent_agent_id,
+            enabled=auto_injected,
+            primary_artifact_path=evaluator_result.primary_artifact_path or "",
+            verdict_artifact_path=evaluator_result.verdict_artifact_path or "",
+            next_tasks_artifact_path=evaluator_result.next_tasks_artifact_path or "",
+            objective=evaluator_result.next_tasks_objective or "",
+            primary_strategy=evaluator_result.next_tasks_primary_strategy or "",
+            why_this_strategy=evaluator_result.next_tasks_why_this_strategy or "",
+            deprioritize_or_remove=evaluator_result.next_tasks_deprioritize_or_remove or [],
         )
 
-        all_eval_answers = None
-        use_multi_evaluator = False
-        if skip_synthesis:
-            all_eval_answers = self.extract_all_evaluator_answers(
-                log_path=first_result.log_path or "",
-                workspace_path=first_result.workspace_path or "",
-            )
-            use_multi_evaluator = bool(all_eval_answers and len(all_eval_answers) > 1)
+        self._queue_round_start_context_block(
+            parent_agent_id,
+            self._format_round_evaluator_result_block(
+                first_result.subagent_id,
+                evaluator_result,
+                auto_injected=auto_injected,
+            ),
+        )
 
-        # Auto-inject tasks from structured verdict block — only when we
-        # have a single merged answer (legacy/fallback path). With multiple
-        # raw critiques the parent must read all of them and decide itself.
-        auto_injected = False
-        if not use_multi_evaluator:
-            if evaluator_result.verdict == "iterate":
-                task_plan = self.build_task_plan_from_evaluator_verdict(evaluator_result)
-                if task_plan:
-                    self._write_planning_injection(parent_agent_id, task_plan)
-                    auto_injected = True
-                    self._set_round_evaluator_task_mode(
-                        parent_agent_id,
-                        enabled=True,
-                        primary_artifact_path=evaluator_result.primary_artifact_path or "",
-                        next_tasks_artifact_path=evaluator_result.next_tasks_artifact_path or "",
-                    )
-                    logger.info(
-                        "[Orchestrator] Auto-injected %d tasks from evaluator verdict for %s",
-                        len(task_plan),
-                        parent_agent_id,
-                    )
-            elif evaluator_result.verdict == "converged":
-                logger.info(
-                    "[Orchestrator] Evaluator verdict: converged for %s",
-                    parent_agent_id,
-                )
-            elif evaluator_result.verdict is None:
-                logger.debug(
-                    "[Orchestrator] No verdict_block in evaluator packet for %s, " "using manual checklist flow",
-                    parent_agent_id,
-                )
-
-        if use_multi_evaluator:
-            logger.info(
-                "[Orchestrator] Multi-evaluator: injecting %d independent critiques for %s",
-                len(all_eval_answers),
-                parent_agent_id,
-            )
-            self._queue_round_start_context_block(
-                parent_agent_id,
-                self.format_multi_evaluator_result_block(
-                    all_eval_answers,
-                    auto_injected=False,  # Never auto-inject with multi-eval
-                ),
-            )
-
-            # Add evaluator workspaces as read-only context paths so the
-            # parent can browse artifacts (screenshots, scripts, etc.)
-            eval_ws_paths = self.extract_evaluator_workspace_paths(
-                first_result.log_path or "",
-            )
-            if eval_ws_paths:
-                parent_agent = self.agents.get(parent_agent_id)
-                if parent_agent and hasattr(parent_agent, "backend"):
-                    fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
-                    if fs_mgr:
-                        ppm = getattr(fs_mgr, "path_permission_manager", None)
-                        if ppm:
-                            ppm.add_context_paths([{"path": p, "permission": "read"} for p in eval_ws_paths])
-                            logger.info(
-                                "[Orchestrator] Added %d evaluator workspace paths as " "read-only context for %s",
-                                len(eval_ws_paths),
-                                parent_agent_id,
-                            )
-        else:
-            # Single evaluator answer — use existing flow
-            self._queue_round_start_context_block(
-                parent_agent_id,
-                self._format_round_evaluator_result_block(
-                    first_result.subagent_id,
-                    evaluator_result,
-                    auto_injected=auto_injected,
-                ),
-            )
-
-            # Add evaluator workspace as read-only context path so the
-            # parent can read critique_packet.md and next_tasks.json.
-            if first_result.workspace_path:
-                parent_agent = self.agents.get(parent_agent_id)
-                if parent_agent and hasattr(parent_agent, "backend"):
-                    fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
-                    if fs_mgr:
-                        ppm = getattr(fs_mgr, "path_permission_manager", None)
-                        if ppm:
-                            ppm.add_context_paths([{"path": first_result.workspace_path, "permission": "read"}])
-                            logger.info(
-                                "[Orchestrator] Added evaluator workspace as read-only context for %s: %s",
-                                parent_agent_id,
-                                first_result.workspace_path,
-                            )
+        # Add evaluator workspace as read-only context path so the
+        # parent can read critique_packet.md / verdict.json / next_tasks.json.
+        if first_result.workspace_path:
+            parent_agent = self.agents.get(parent_agent_id)
+            if parent_agent and hasattr(parent_agent, "backend"):
+                fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
+                if fs_mgr:
+                    ppm = getattr(fs_mgr, "path_permission_manager", None)
+                    if ppm:
+                        ppm.add_context_paths([{"path": first_result.workspace_path, "permission": "read"}])
+                        logger.info(
+                            f"[Orchestrator] Added evaluator workspace as read-only context for {parent_agent_id}: {first_result.workspace_path}",
+                        )
 
         if emitter:
             emitter.emit_raw(
@@ -12131,6 +12164,10 @@ Your answer:"""
                 conversation["user_message"] = restart_context + "\n\n" + conversation["user_message"]
 
             round_start_context = self._consume_round_start_context_block(agent_id)
+            if round_start_context:
+                logger.info(
+                    f"[Orchestrator] Injecting round_start_context_block for {agent_id}" f" ({len(round_start_context)} chars," f" first 300: {round_start_context[:300]!r})",
+                )
             runtime_user_instructions = self._build_runtime_user_instructions_context(agent_id)
             conversation["user_message"] = self._insert_runtime_context_blocks_after_original_message(
                 conversation["user_message"],

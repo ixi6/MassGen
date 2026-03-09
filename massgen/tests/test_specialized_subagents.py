@@ -215,8 +215,8 @@ def test_builtin_prompts_include_actionable_sections():
         assert "do not" in prompt
 
 
-def test_round_evaluator_prompt_returns_critique_and_spec_only():
-    """round_evaluator should return critique/spec guidance without checklist or terminal workflow language."""
+def test_round_evaluator_prompt_returns_file_authoritative_critique_and_spec_guidance():
+    """round_evaluator should write authoritative artifacts and keep parent workflow out of the prose packet."""
     from massgen.subagent.type_scanner import scan_subagent_types
 
     builtin_dir = Path(__file__).parent.parent / "subagent_types"
@@ -234,6 +234,8 @@ def test_round_evaluator_prompt_returns_critique_and_spec_only():
     assert "verification_plan" in config.system_prompt
     assert "spec writer" in lower
     assert "very critical" in lower
+    assert "verdict.json" in config.system_prompt
+    assert "next_tasks.json" in config.system_prompt
     assert "submit_checklist_args" not in config.system_prompt
     assert "propose_improvements_args" not in config.system_prompt
     assert "expected_verdict" not in config.system_prompt
@@ -275,9 +277,49 @@ def test_round_evaluator_prompt_saves_files_and_concise_answer():
     lower = config.system_prompt.lower()
 
     assert "critique_packet.md" in config.system_prompt
+    assert "verdict.json" in config.system_prompt
     assert "next_tasks.json" in config.system_prompt
     assert "concise summary" in lower
     assert "do not paste the full critique packet into your answer" in lower
+    assert "do not include machine-readable verdict json in your answer" in lower
+
+
+def test_round_evaluator_prompt_treats_unexplored_approaches_as_informational_until_elevated():
+    """Unexplored approaches should stay informational unless promoted into next_tasks.json."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "unexplored_approaches" in config.system_prompt
+    assert "informational" in lower
+    assert "elevate" in lower
+    assert "next_tasks.json" in config.system_prompt
+    assert "zero, one, or many" in lower
+
+
+def test_round_evaluator_prompt_allows_machine_readable_preserve_metadata():
+    """Preserve invariants should be available in verdict metadata for guardrail task generation."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "verdict.json" in config.system_prompt
+    assert "preserve" in lower
+    assert "machine-readable" in lower
 
 
 def test_scanner_project_overrides_builtin(tmp_path):
@@ -560,8 +602,8 @@ def test_subagent_section_reserves_round_evaluator_for_orchestrator_when_gate_en
     assert '"subagent_type": "round_evaluator"' not in content
 
 
-def test_subagent_section_round_evaluator_defaults_to_manual_spawn_guidance():
-    """Prompt-guidance mode should still teach the parent how to launch round_evaluator manually."""
+def test_subagent_section_round_evaluator_is_reserved_when_gate_enabled():
+    """The gate should not teach manual round_evaluator spawning once the stage is enabled."""
     from massgen.subagent.models import SpecializedSubagentConfig
     from massgen.system_prompt_sections import SubagentSection
 
@@ -577,8 +619,8 @@ def test_subagent_section_round_evaluator_defaults_to_manual_spawn_guidance():
     content = section.build_content().lower()
 
     assert "round_evaluator" in content
-    assert '"subagent_type": "round_evaluator"' in content
-    assert "reserved for orchestrator-managed launches" not in content
+    assert "reserved for orchestrator-managed launches" in content
+    assert '"subagent_type": "round_evaluator"' not in content
 
 
 def test_subagent_section_evaluator_uses_blocking_mode():

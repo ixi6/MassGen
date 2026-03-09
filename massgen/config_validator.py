@@ -1815,6 +1815,12 @@ class ConfigValidator:
                         "orchestrator.coordination.orchestrator_managed_round_evaluator",
                         "Enable round_evaluator_before_checklist or remove orchestrator_managed_round_evaluator",
                     )
+                if round_eval_before_checklist and not orchestrator_managed_round_evaluator:
+                    result.add_error(
+                        "round_evaluator_before_checklist requires orchestrator_managed_round_evaluator: true",
+                        "orchestrator.coordination.round_evaluator_before_checklist",
+                        "Enable orchestrator_managed_round_evaluator so the evaluator stage is orchestrator-managed",
+                    )
                 round_evaluator_refine = coordination.get("round_evaluator_refine", False)
                 if round_evaluator_refine and not orchestrator_managed_round_evaluator:
                     result.add_error(
@@ -1823,6 +1829,12 @@ class ConfigValidator:
                         "Enable orchestrator_managed_round_evaluator or remove round_evaluator_refine",
                     )
                 if round_eval_before_checklist:
+                    if len(agents) != 1:
+                        result.add_error(
+                            "round_evaluator_before_checklist currently supports single-parent runs only",
+                            "orchestrator.coordination.round_evaluator_before_checklist",
+                            "Use exactly one top-level agent when enabling the round evaluator stage",
+                        )
                     if voting_sens != "checklist_gated":
                         result.add_error(
                             "round_evaluator_before_checklist requires orchestrator.voting_sensitivity: checklist_gated",
@@ -1848,6 +1860,12 @@ class ConfigValidator:
                             "round_evaluator_before_checklist requires subagent_types to include 'round_evaluator'",
                             "orchestrator.coordination.subagent_types",
                             "Set coordination.subagent_types to a list containing 'round_evaluator'",
+                        )
+                    if coordination.get("round_evaluator_skip_synthesis") is True:
+                        result.add_error(
+                            "round_evaluator_skip_synthesis is incompatible with the managed round evaluator stage",
+                            "orchestrator.coordination.round_evaluator_skip_synthesis",
+                            "Remove round_evaluator_skip_synthesis so the parent receives one synthesized evaluator packet",
                         )
 
         # Cross-validation: decomposition mode

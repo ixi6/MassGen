@@ -125,6 +125,28 @@ SAMPLE_VERDICT_WITH_NEXT_TASKS = {
 }
 
 
+def _write_round_evaluator_artifacts(
+    workspace,
+    *,
+    critique: str = SAMPLE_CRITIQUE,
+    verdict: dict | None = None,
+    next_tasks: dict | None = None,
+) -> None:
+    """Materialize the canonical round-evaluator artifacts in a workspace."""
+    (workspace / "critique_packet.md").write_text(critique, encoding="utf-8")
+    if verdict is not None:
+        verdict_payload = {"schema_version": "1", **verdict}
+        (workspace / "verdict.json").write_text(
+            json.dumps(verdict_payload, indent=2),
+            encoding="utf-8",
+        )
+    if next_tasks is not None:
+        (workspace / "next_tasks.json").write_text(
+            json.dumps(next_tasks, indent=2),
+            encoding="utf-8",
+        )
+
+
 def _make_packet_with_verdict(critique: str, verdict: dict) -> str:
     """Build a critique packet with a fenced verdict_block."""
     return f"{critique}\n```json verdict_block\n{json.dumps(verdict, indent=2)}\n```\n"
@@ -222,61 +244,127 @@ class TestCleanPacketText:
 class TestFromSubagentResultWithVerdict:
     """Tests that from_subagent_result populates verdict fields."""
 
-    def test_from_subagent_result_populates_verdict_fields(self):
+    def test_from_subagent_result_populates_verdict_fields_from_verdict_artifact(self, tmp_path):
         from massgen.subagent.models import SubagentResult
 
-        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_JSON)
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict=SAMPLE_VERDICT_JSON,
+        )
         sub_result = SubagentResult(
             subagent_id="eval-123",
             success=True,
             status="completed",
-            answer=packet,
+            answer="Minimal summary only.",
+            workspace_path=str(workspace),
             execution_time_seconds=60.0,
         )
 
         result = RoundEvaluatorResult.from_subagent_result(sub_result)
 
         assert result.status == "success"
+        assert result.packet_text == SAMPLE_CRITIQUE
         assert result.verdict == "iterate"
         assert result.scores == {"E1": 4, "E2": 7, "E3": 8, "E4": 3}
         assert len(result.improvements) == 2
         assert len(result.preserve) == 1
-        assert result.clean_packet_text is not None
-        assert "verdict_block" not in result.clean_packet_text
+        assert result.clean_packet_text == SAMPLE_CRITIQUE
 
-    def test_from_subagent_result_no_verdict_block(self):
+    def test_from_subagent_result_uses_packet_artifact_not_answer_text(self, tmp_path):
         from massgen.subagent.models import SubagentResult
+
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        _write_round_evaluator_artifacts(
+            workspace,
+            critique="# Artifact packet\n\nAuthoritative critique.",
+            verdict=SAMPLE_MINIMAL_VERDICT_JSON,
+        )
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer="# Wrong packet\n\nThis should be ignored.",
+            workspace_path=str(workspace),
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+
+        assert result.status == "success"
+        assert result.packet_text == "# Artifact packet\n\nAuthoritative critique."
+        assert result.clean_packet_text == "# Artifact packet\n\nAuthoritative critique."
+
+    def test_from_subagent_result_missing_packet_artifact_degrades_even_with_answer(self, tmp_path):
+        from massgen.subagent.models import SubagentResult
+
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        (workspace / "verdict.json").write_text(
+            json.dumps({"schema_version": "1", **SAMPLE_MINIMAL_VERDICT_JSON}, indent=2),
+            encoding="utf-8",
+        )
 
         sub_result = SubagentResult(
             subagent_id="eval-123",
             success=True,
             status="completed",
             answer=SAMPLE_CRITIQUE,
+            workspace_path=str(workspace),
+            execution_time_seconds=60.0,
+        )
+
+        result = RoundEvaluatorResult.from_subagent_result(sub_result)
+
+        assert result.status == "degraded"
+        assert result.packet_text is None
+        assert "critique_packet.md" in (result.error or "")
+
+    def test_from_subagent_result_missing_verdict_artifact_keeps_packet_but_disables_structured_metadata(self, tmp_path):
+        from massgen.subagent.models import SubagentResult
+
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict=None,
+        )
+
+        sub_result = SubagentResult(
+            subagent_id="eval-123",
+            success=True,
+            status="completed",
+            answer="Concise summary.",
+            workspace_path=str(workspace),
             execution_time_seconds=60.0,
         )
 
         result = RoundEvaluatorResult.from_subagent_result(sub_result)
 
         assert result.status == "success"
+        assert result.packet_text == SAMPLE_CRITIQUE
         assert result.verdict is None
-        assert result.improvements is None
-        assert result.clean_packet_text is None  # no stripping needed
+        assert result.scores is None
+        assert result.next_tasks is None
+        assert result.task_plan_source is None
 
     def test_from_subagent_result_loads_next_tasks_from_artifact(self, tmp_path):
         from massgen.subagent.models import SubagentResult
 
         workspace = tmp_path / "round-evaluator-workspace"
         workspace.mkdir()
-        (workspace / "next_tasks.json").write_text(
-            json.dumps(SAMPLE_NEXT_TASKS, indent=2),
-            encoding="utf-8",
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict=SAMPLE_MINIMAL_VERDICT_JSON,
+            next_tasks=SAMPLE_NEXT_TASKS,
         )
-        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_MINIMAL_VERDICT_JSON)
         sub_result = SubagentResult(
             subagent_id="eval-123",
             success=True,
             status="completed",
-            answer=packet,
+            answer="Minimal summary only.",
             workspace_path=str(workspace),
             execution_time_seconds=60.0,
         )
@@ -285,20 +373,23 @@ class TestFromSubagentResultWithVerdict:
 
         assert result.next_tasks is not None
         assert result.next_tasks["objective"].startswith("Turn the current California brochure")
+        assert result.next_tasks_objective == SAMPLE_NEXT_TASKS["objective"]
+        assert result.next_tasks_primary_strategy == SAMPLE_NEXT_TASKS["primary_strategy"]
+        assert result.next_tasks_why_this_strategy == SAMPLE_NEXT_TASKS["why_this_strategy"]
+        assert result.next_tasks_deprioritize_or_remove == SAMPLE_NEXT_TASKS["deprioritize_or_remove"]
+        assert result.next_tasks_execution_scope == SAMPLE_NEXT_TASKS["execution_scope"]
         assert result.primary_artifact_path == str(workspace / "critique_packet.md")
         assert result.next_tasks_artifact_path == str(workspace / "next_tasks.json")
         assert result.task_plan_source == "next_tasks_artifact"
 
-    def test_from_subagent_result_prefers_next_tasks_artifact_over_inline_next_tasks(self, tmp_path):
+    def test_from_subagent_result_ignores_inline_next_tasks_in_answer(self, tmp_path):
         from massgen.subagent.models import SubagentResult
 
         workspace = tmp_path / "round-evaluator-workspace"
         workspace.mkdir()
-        artifact_tasks = dict(SAMPLE_NEXT_TASKS)
-        artifact_tasks["objective"] = "Artifact is authoritative"
-        (workspace / "next_tasks.json").write_text(
-            json.dumps(artifact_tasks, indent=2),
-            encoding="utf-8",
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict=SAMPLE_MINIMAL_VERDICT_JSON,
         )
         packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_NEXT_TASKS)
         sub_result = SubagentResult(
@@ -312,26 +403,29 @@ class TestFromSubagentResultWithVerdict:
 
         result = RoundEvaluatorResult.from_subagent_result(sub_result)
 
-        assert result.next_tasks is not None
-        assert result.next_tasks["objective"] == "Artifact is authoritative"
-        assert result.task_plan_source == "next_tasks_artifact"
+        assert result.next_tasks is None
+        assert result.task_plan_source is None
 
     def test_from_subagent_result_loads_next_tasks_from_nested_final_artifact(self, tmp_path):
         from massgen.subagent.models import SubagentResult
 
         workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict=SAMPLE_MINIMAL_VERDICT_JSON,
+        )
         nested_final = workspace / ".massgen" / "massgen_logs" / "log_123" / "turn_1" / "final" / "eval_codex" / "workspace"
         nested_final.mkdir(parents=True)
         (nested_final / "next_tasks.json").write_text(
             json.dumps(SAMPLE_NEXT_TASKS, indent=2),
             encoding="utf-8",
         )
-        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_MINIMAL_VERDICT_JSON)
         sub_result = SubagentResult(
             subagent_id="eval-123",
             success=True,
             status="completed",
-            answer=packet,
+            answer="Minimal summary only.",
             workspace_path=str(workspace),
             execution_time_seconds=60.0,
         )
@@ -343,25 +437,31 @@ class TestFromSubagentResultWithVerdict:
         assert result.next_tasks_artifact_path == str(nested_final / "next_tasks.json")
         assert result.task_plan_source == "next_tasks_artifact"
 
-    def test_from_subagent_result_falls_back_to_legacy_inline_next_tasks(self):
+    def test_from_subagent_result_ignores_next_tasks_when_verdict_is_converged(self, tmp_path):
         from massgen.subagent.models import SubagentResult
 
-        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_NEXT_TASKS)
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict={"verdict": "converged", "scores": {"E1": 9, "E2": 9}},
+            next_tasks=SAMPLE_NEXT_TASKS,
+        )
         sub_result = SubagentResult(
             subagent_id="eval-123",
             success=True,
             status="completed",
-            answer=packet,
-            workspace_path="/tmp/round-evaluator-workspace",
+            answer="Minimal summary only.",
+            workspace_path=str(workspace),
             execution_time_seconds=60.0,
         )
 
         result = RoundEvaluatorResult.from_subagent_result(sub_result)
 
-        assert result.next_tasks is not None
-        assert result.next_tasks["objective"].startswith("Turn the current California brochure")
-        assert result.primary_artifact_path == "/tmp/round-evaluator-workspace/critique_packet.md"
-        assert result.task_plan_source == "legacy_verdict"
+        assert result.verdict == "converged"
+        assert result.next_tasks is None
+        assert result.next_tasks_primary_strategy is None
+        assert result.task_plan_source is None
 
 
 # ---------------------------------------------------------------------------
@@ -444,6 +544,33 @@ class TestBuildTaskPlanFromVerdict:
         task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
 
         assert len(task_plan) == 2
+        assert all(task.get("type") not in {"improve", "explore"} for task in task_plan)
+        assert task_plan[0]["id"] == "reframe_ia"
+        assert task_plan[1]["id"] == "route_map"
+
+    def test_structured_next_tasks_still_append_verify_preserve(self):
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            preserve=[
+                {
+                    "criterion_id": "E2",
+                    "what": "Three-color brand palette",
+                    "source": "agent1.1",
+                },
+            ],
+            next_tasks=SAMPLE_NEXT_TASKS,
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        assert [task["id"] for task in task_plan[:-1]] == ["reframe_ia", "route_map"]
+        assert task_plan[-1]["type"] == "verify_preserve"
+        assert task_plan[-1]["items"][0]["what"] == "Three-color brand palette"
         assert task_plan[0]["id"] == "reframe_ia"
         assert task_plan[0]["description"] == "Replace brochure IA with route and region planning structure"
         assert "type" not in task_plan[0]
@@ -1134,16 +1261,21 @@ class TestOpportunitiesParsing:
         assert result["opportunities"][0]["impact"] == "transformative"
         assert result["opportunities"][1]["relates_to"] == ["E5"]
 
-    def test_opportunities_populated_on_result_object(self):
-        """from_subagent_result should populate opportunities field."""
+    def test_opportunities_populated_on_result_object_from_verdict_artifact(self, tmp_path):
         from massgen.subagent.models import SubagentResult
 
-        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_WITH_OPPORTUNITIES)
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict=SAMPLE_VERDICT_WITH_OPPORTUNITIES,
+        )
         sub_result = SubagentResult(
             subagent_id="eval-123",
             success=True,
             status="completed",
-            answer=packet,
+            answer="Short summary only.",
+            workspace_path=str(workspace),
             execution_time_seconds=60.0,
         )
 
@@ -1152,16 +1284,22 @@ class TestOpportunitiesParsing:
         assert len(result.opportunities) == 2
         assert result.opportunities[0]["impact"] == "transformative"
 
-    def test_no_opportunities_backward_compat(self):
-        """verdict_block without opportunities should leave field as None."""
+    def test_no_opportunities_when_verdict_artifact_omits_them(self, tmp_path):
+        """verdict.json without opportunities should leave field as None."""
         from massgen.subagent.models import SubagentResult
 
-        packet = _make_packet_with_verdict(SAMPLE_CRITIQUE, SAMPLE_VERDICT_JSON)
+        workspace = tmp_path / "round-evaluator-workspace"
+        workspace.mkdir()
+        _write_round_evaluator_artifacts(
+            workspace,
+            verdict=SAMPLE_VERDICT_JSON,
+        )
         sub_result = SubagentResult(
             subagent_id="eval-123",
             success=True,
             status="completed",
-            answer=packet,
+            answer="Short summary only.",
+            workspace_path=str(workspace),
             execution_time_seconds=60.0,
         )
 
@@ -1211,6 +1349,31 @@ class TestTaskPlanOpportunities:
         assert explore_tasks[0]["impact"] == "transformative"
         assert explore_tasks[0]["relates_to"] == ["E2", "E8"]
         assert len(improve_tasks) == 1
+
+    def test_structured_next_tasks_ignore_opportunities_for_injection(self):
+        from massgen.orchestrator import Orchestrator
+
+        result = RoundEvaluatorResult(
+            packet_text="test",
+            status="success",
+            verdict="iterate",
+            scores={"E1": 4},
+            preserve=[],
+            opportunities=[
+                {
+                    "idea": "Add collaborative canvas",
+                    "rationale": "Would transform the page",
+                    "impact": "transformative",
+                    "relates_to": ["E2", "E8"],
+                },
+            ],
+            next_tasks=SAMPLE_NEXT_TASKS,
+        )
+
+        task_plan = Orchestrator.build_task_plan_from_evaluator_verdict(result)
+
+        assert all(task.get("type") != "explore" for task in task_plan)
+        assert [task["id"] for task in task_plan] == ["reframe_ia", "route_map"]
 
     def test_no_opportunities_no_explore_tasks(self):
         """When opportunities is None/empty, no explore tasks should appear."""

@@ -972,32 +972,50 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
     ) -> None:
         """Persist a stable synthesized critique packet for round_evaluator subagents."""
         subagent_type = str((config.metadata or {}).get("subagent_type") or "").strip().lower()
-        if subagent_type != "round_evaluator" or not result.answer:
+        if subagent_type != "round_evaluator":
             return
 
-        packet_path = workspace / "critique_packet.md"
-        try:
-            packet_path.write_text(result.answer, encoding="utf-8")
-        except OSError as exc:
-            logger.warning(
-                "[SubagentManager] Failed to persist canonical round_evaluator packet for %s: %s",
-                config.id,
-                exc,
-            )
-
         from .models import RoundEvaluatorResult
+
+        packet_path = workspace / "critique_packet.md"
+        packet_text, packet_source = RoundEvaluatorResult.resolve_packet_artifact(
+            workspace_path=str(workspace),
+            log_path=result.log_path,
+        )
+        if packet_text and packet_source and not packet_path.exists():
+            try:
+                packet_path.write_text(packet_text, encoding="utf-8")
+            except OSError as exc:
+                logger.warning(
+                    "[SubagentManager] Failed to persist canonical round_evaluator packet for %s: %s",
+                    config.id,
+                    exc,
+                )
+
+        verdict_path = workspace / "verdict.json"
+        verdict_data, _verdict_source = RoundEvaluatorResult.resolve_verdict_artifact(
+            workspace_path=str(workspace),
+            log_path=result.log_path,
+        )
+        if verdict_data and not verdict_path.exists():
+            try:
+                verdict_path.write_text(
+                    json.dumps(verdict_data, indent=2),
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                logger.warning(
+                    "[SubagentManager] Failed to persist canonical verdict artifact for %s: %s",
+                    config.id,
+                    exc,
+                )
 
         next_tasks_path = workspace / "next_tasks.json"
         next_tasks, _artifact_path = RoundEvaluatorResult.resolve_next_tasks_artifact(
             workspace_path=str(workspace),
             log_path=result.log_path,
         )
-        if next_tasks is None:
-            verdict_data = RoundEvaluatorResult.parse_verdict_block(result.answer)
-            next_tasks = RoundEvaluatorResult.normalize_next_tasks_payload(
-                verdict_data.get("next_tasks") if isinstance(verdict_data, dict) else None,
-            )
-        if not next_tasks:
+        if not next_tasks or next_tasks_path.exists():
             return
 
         try:

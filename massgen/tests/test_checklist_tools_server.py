@@ -23,6 +23,7 @@ from massgen.mcp_tools.checklist_tools_server import (
     _extract_score,
     _find_plateaued_criteria,
     _read_specs,
+    _resolve_report_file,
     build_server_config,
     evaluate_checklist_submission,
     evaluate_proposed_improvements,
@@ -2933,6 +2934,51 @@ class TestDiagnosticReportGate:
             state=state,
         )
         assert result["report_gate_triggered"] is True
+
+    def test_external_round_evaluator_packet_path_allowed_when_whitelisted(self, tmp_path):
+        """Fallback checklist mode should accept the exact evaluator packet path directly."""
+        parent_workspace = tmp_path / "parent"
+        parent_workspace.mkdir()
+        evaluator_workspace = tmp_path / "evaluator"
+        evaluator_workspace.mkdir()
+        report = evaluator_workspace / "critique_packet.md"
+        report.write_text(
+            "## Failure Patterns\n\nThe hero is generic and the mobile layout breaks.\n\n"
+            "## Root Causes\n\nThe current structure is brochure-first instead of route-first.\n\n"
+            "## Goal Alignment\n\nThe work still misses the experience bar on clarity and distinctiveness.\n",
+            encoding="utf-8",
+        )
+        state = self._make_state(parent_workspace)
+        state["allowed_external_report_paths"] = [str(report)]
+
+        resolved, error = _resolve_report_file(str(report), state)
+
+        assert error is None
+        assert resolved == report.resolve()
+
+        result = evaluate_checklist_submission(
+            scores=self._passing_scores(),
+            report_path=str(report),
+            items=["Check 1", "Check 2"],
+            state=state,
+        )
+
+        assert result["report_gate_triggered"] is False
+        assert result["report"]["resolved_path"] == str(report.resolve())
+
+    def test_external_report_path_still_rejected_without_whitelist(self, tmp_path):
+        """Arbitrary paths outside the workspace should remain blocked."""
+        parent_workspace = tmp_path / "parent"
+        parent_workspace.mkdir()
+        external_report = tmp_path / "elsewhere" / "diagnostic_report.md"
+        external_report.parent.mkdir()
+        external_report.write_text("diagnostic content that should not be allowed", encoding="utf-8")
+        state = self._make_state(parent_workspace)
+
+        resolved, error = _resolve_report_file(str(external_report), state)
+
+        assert resolved is None
+        assert "workspace" in (error or "").lower()
 
 
 # ---------------------------------------------------------------------------

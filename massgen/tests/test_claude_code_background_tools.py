@@ -755,3 +755,79 @@ async def test_claude_code_start_background_tool_subagent_target_routes_to_direc
     assert captured["tool_name"] == "mcp__subagent_agent_a__spawn_subagents"
     assert isinstance(captured["arguments"], dict)
     assert captured["arguments"]["background"] is True
+
+
+@pytest.mark.asyncio
+async def test_background_mcp_client_timeout_derived_from_server_configs(tmp_path, monkeypatch):
+    """Background MCP client timeout should derive from tool_timeout_sec in server configs, not be hardcoded."""
+    backend = ClaudeCodeBackend(cwd=str(tmp_path))
+
+    # Simulate subagent MCP server configs with a custom tool_timeout_sec
+    # (e.g. subagent_default_timeout=2000 + 60 = 2060)
+    backend.config["mcp_servers"] = [
+        {
+            "name": "subagent_agent_a",
+            "type": "stdio",
+            "command": "fastmcp",
+            "args": ["run", "server.py"],
+            "tool_timeout_sec": 2060,
+        },
+        {
+            "name": "command_line",
+            "type": "stdio",
+            "command": "fastmcp",
+            "args": ["run", "cmd.py"],
+            "tool_timeout_sec": 120,
+        },
+    ]
+
+    captured_timeout = {}
+
+    async def capture_setup_mcp_client(*, servers, timeout_seconds, **kwargs):
+        captured_timeout["timeout_seconds"] = timeout_seconds
+        # Return None to short-circuit (we only care about the timeout value passed)
+        raise RuntimeError("intercepted")
+
+    from massgen.mcp_tools import backend_utils
+
+    monkeypatch.setattr(backend_utils.MCPResourceManager, "setup_mcp_client", staticmethod(capture_setup_mcp_client))
+
+    # Should fail because we raise RuntimeError, but the timeout should have been captured
+    result = await backend._get_background_mcp_client()
+    assert result is None  # Failed init returns None
+
+    # The timeout should be at least the max tool_timeout_sec from server configs
+    assert "timeout_seconds" in captured_timeout
+    assert captured_timeout["timeout_seconds"] >= 2060
+
+
+@pytest.mark.asyncio
+async def test_background_mcp_client_timeout_fallback_when_no_tool_timeout_sec(tmp_path, monkeypatch):
+    """When server configs lack tool_timeout_sec, should use a sensible default."""
+    backend = ClaudeCodeBackend(cwd=str(tmp_path))
+
+    backend.config["mcp_servers"] = [
+        {
+            "name": "command_line",
+            "type": "stdio",
+            "command": "fastmcp",
+            "args": ["run", "cmd.py"],
+            # No tool_timeout_sec
+        },
+    ]
+
+    captured_timeout = {}
+
+    async def capture_setup_mcp_client(*, servers, timeout_seconds, **kwargs):
+        captured_timeout["timeout_seconds"] = timeout_seconds
+        raise RuntimeError("intercepted")
+
+    from massgen.mcp_tools import backend_utils
+
+    monkeypatch.setattr(backend_utils.MCPResourceManager, "setup_mcp_client", staticmethod(capture_setup_mcp_client))
+
+    await backend._get_background_mcp_client()
+
+    # Should still have a reasonable default (at least 300s)
+    assert "timeout_seconds" in captured_timeout
+    assert captured_timeout["timeout_seconds"] >= 300

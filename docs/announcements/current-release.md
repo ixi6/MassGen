@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.61 — Round Evaluator Paradigm! 🚀 New specialized subagent type that delegates evaluation to dedicated evaluator subagents for more thorough quality assessment. Major orchestrator refactoring with improved evaluation prompts, task plan injection, and subagent fixes.
+We're excited to release MassGen v0.1.61 — Round Evaluator Paradigm! 🚀 New specialized subagent type that automatically spawns evaluator subagents after each new answer to provide detailed feedback as input to the next round. Major orchestrator refactoring with improved evaluation prompts, task plan injection, and subagent fixes.
 
 ## Install
 
@@ -29,7 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.61 — Round Evaluator Paradigm! 🚀 New specialized subagent type that delegates evaluation to dedicated evaluator subagents for more thorough quality assessment. Major orchestrator refactoring with improved evaluation prompts, task plan injection, and subagent fixes.
+We're excited to release MassGen v0.1.61 — Round Evaluator Paradigm! 🚀 New specialized subagent type that automatically spawns evaluator subagents after each new answer to provide detailed feedback as input to the next round. Major orchestrator refactoring with improved evaluation prompts, task plan injection, and subagent fixes.
 
 **Key Improvements:**
 

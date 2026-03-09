@@ -45,7 +45,6 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 | **v0.1.62** | 03/11/26 | Improve Skill Use and Exploration | @ncrispino | Local skill execution, skill registry, and lifecycle management ([#873](https://github.com/massgen/MassGen/issues/873)) |
 | **v0.1.62** | 03/11/26 | Gemini CLI Backend | @ncrispino | Gemini CLI backend support ([#952](https://github.com/massgen/MassGen/issues/952)) |
 | **v0.1.63** | 03/13/26 | Image/Video Edit Capabilities | @ncrispino | Check and support img/video editing capabilities ([#959](https://github.com/massgen/MassGen/issues/959)) |
-| **v0.1.63** | 03/13/26 | Update Backend Docs for Codex | @ncrispino | Update backend documentation for Codex ([#981](https://github.com/massgen/MassGen/issues/981)) |
 | **v0.1.64** | 03/16/26 | OpenAI Audio API | @ncrispino | Support OpenAI audio API for audio understanding ([#960](https://github.com/massgen/MassGen/issues/960)) |
 
 *All releases ship on MWF @ 9am PT when ready*
@@ -116,7 +115,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.63 - Image/Video Edit Capabilities + Backend Docs
+## 📋 v0.1.63 - Image/Video Edit Capabilities
 
 ### Features
 
@@ -126,15 +125,9 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Multi-turn editing workflows with continuation IDs
 - **Use Case**: Enable iterative media editing within multi-agent workflows
 
-**2. Update Backend Docs for Codex** (@ncrispino)
-- Issue: [#981](https://github.com/massgen/MassGen/issues/981)
-- Update backend documentation for Codex backend
-- **Use Case**: Ensure Codex backend documentation is accurate and up-to-date
-
 ### Success Criteria
 - ✅ Image editing capabilities documented and tested
 - ✅ Video editing capabilities documented and tested
-- ✅ Codex backend documentation updated
 
 ---
 

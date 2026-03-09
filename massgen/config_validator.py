@@ -914,6 +914,7 @@ class ConfigValidator:
                     "round_evaluator_before_checklist",
                     "orchestrator_managed_round_evaluator",
                     "round_evaluator_refine",
+                    "round_evaluator_skip_synthesis",
                 ]
                 for field_name in boolean_fields:
                     if field_name in coordination:

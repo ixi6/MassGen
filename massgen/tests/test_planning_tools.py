@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from massgen.mcp_tools.planning.planning_dataclasses import Task, TaskPlan
+from massgen.mcp_tools.planning.planning_dataclasses import (
+    Task,
+    TaskPlan,
+    normalize_task_execution,
+)
 
 
 class TestTask:
@@ -919,3 +923,71 @@ class TestAddTaskExecutionMetadata:
         plan = TaskPlan(agent_id="orchestrator:agent_a")
         d = plan.to_dict()
         assert d["agent_id"] == "orchestrator:agent_a"
+
+
+class TestNormalizeTaskExecution:
+    """Tests for the normalize_task_execution utility."""
+
+    def test_none_input_returns_inline(self):
+        assert normalize_task_execution(None) == {"mode": "inline"}
+
+    def test_empty_dict_returns_inline(self):
+        assert normalize_task_execution({}) == {"mode": "inline"}
+
+    def test_explicit_inline_mode(self):
+        assert normalize_task_execution({"mode": "inline"}) == {"mode": "inline"}
+
+    def test_explicit_delegate_with_subagent_type(self):
+        result = normalize_task_execution({"mode": "delegate", "subagent_type": "builder"})
+        assert result == {"mode": "delegate", "subagent_type": "builder"}
+
+    def test_legacy_subagent_name_promoted_to_delegate(self):
+        result = normalize_task_execution({"subagent_name": "round_evaluator"})
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "round_evaluator"
+
+    def test_legacy_subagent_type_in_dict_promoted(self):
+        result = normalize_task_execution({"subagent_type": "builder"})
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "builder"
+
+    def test_subagent_name_kwarg_promoted(self):
+        result = normalize_task_execution(None, subagent_name="builder")
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "builder"
+
+    def test_subagent_id_kwarg_promoted(self):
+        result = normalize_task_execution(None, subagent_id="eval-123")
+        assert result["mode"] == "delegate"
+        assert result["subagent_id"] == "eval-123"
+
+    def test_default_mode_delegate_without_subagent_raises(self):
+        # default_mode="delegate" with no subagent info still requires a subagent
+        with pytest.raises(ValueError, match="Delegate execution requires"):
+            normalize_task_execution({}, default_mode="delegate")
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="mode must be either"):
+            normalize_task_execution({"mode": "parallel"})
+
+    def test_inline_with_subagent_type_raises(self):
+        with pytest.raises(ValueError, match="inline execution cannot include"):
+            normalize_task_execution({"mode": "inline", "subagent_type": "builder"})
+
+    def test_inline_with_subagent_id_raises(self):
+        with pytest.raises(ValueError, match="inline execution cannot include"):
+            normalize_task_execution({"mode": "inline"}, subagent_id="eval-1")
+
+    def test_delegate_without_subagent_raises(self):
+        with pytest.raises(ValueError, match="Delegate execution requires"):
+            normalize_task_execution({"mode": "delegate"})
+
+    def test_extra_fields_preserved_in_delegate(self):
+        result = normalize_task_execution({"mode": "delegate", "subagent_type": "builder", "priority": "high"})
+        assert result["priority"] == "high"
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "builder"
+
+    def test_subagent_name_key_stripped_from_output(self):
+        result = normalize_task_execution({"subagent_name": "builder"})
+        assert "subagent_name" not in result

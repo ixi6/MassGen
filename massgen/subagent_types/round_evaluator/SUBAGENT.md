@@ -327,7 +327,7 @@ Save the full structured critique packet as `critique_packet.md` in your
 workspace root. Save verdict metadata as `verdict.json` in your workspace root.
 When `verdict` is `iterate`, also save the task handoff as `next_tasks.json`
 in your workspace root. These files are the canonical deliverables — the
-the implementing agent reads them directly from your workspace.
+implementing agent reads them directly from your workspace.
 
 Your `new_answer` should be a **concise summary** (not the full packet).
 Include:

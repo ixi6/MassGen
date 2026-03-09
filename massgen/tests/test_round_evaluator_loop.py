@@ -449,7 +449,7 @@ def test_planning_injection_dir_is_absolute(tmp_path, monkeypatch):
 
 
 def test_example_round_evaluator_config_exists_and_validates():
-    config_path = Path(__file__).resolve().parents[2] / ".massgen" / "config_beatles_round_evaluator.yaml"
+    config_path = Path(__file__).resolve().parents[2] / "massgen" / "configs" / "features" / "round_evaluator_example.yaml"
     assert config_path.exists()
 
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))

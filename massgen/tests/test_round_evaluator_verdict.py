@@ -270,7 +270,7 @@ class TestFromSubagentResultWithVerdict:
         assert result.scores == {"E1": 4, "E2": 7, "E3": 8, "E4": 3}
         assert len(result.improvements) == 2
         assert len(result.preserve) == 1
-        assert result.clean_packet_text == SAMPLE_CRITIQUE
+        assert result.clean_packet_text == SAMPLE_CRITIQUE.strip()
 
     def test_from_subagent_result_uses_packet_artifact_not_answer_text(self, tmp_path):
         from massgen.subagent.models import SubagentResult

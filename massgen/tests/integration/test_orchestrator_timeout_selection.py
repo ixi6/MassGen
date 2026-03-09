@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 
 from massgen.backend.base import StreamChunk
@@ -36,45 +38,57 @@ async def test_timeout_with_votes_selects_most_voted_agent(mock_orchestrator, mo
     orchestrator.agent_states["agent_b"].answer = "Answer B"
     orchestrator.agent_states["agent_a"].votes = {"agent_id": "agent_b", "reason": "better"}
     orchestrator.agent_states["agent_b"].votes = {"agent_id": "agent_b", "reason": "self"}
+    orchestrator._save_agent_snapshot = AsyncMock(return_value="final")
 
-    seen = {"selected": None}
+    async def show_modal():
+        return None
 
-    async def fake_final_presentation(selected_agent_id, vote_results):
-        seen["selected"] = selected_agent_id
-        _ = vote_results
-        yield StreamChunk(type="content", content="presented")
-        yield StreamChunk(type="done")
+    async def should_not_be_called(*_args, **_kwargs):
+        raise AssertionError("get_final_presentation should be skipped after timeout salvage")
 
-    monkeypatch.setattr(orchestrator, "get_final_presentation", fake_final_presentation)
+    monkeypatch.setattr(orchestrator, "_show_workspace_modal_if_needed", show_modal)
+    monkeypatch.setattr(orchestrator, "save_coordination_logs", lambda: None)
+    monkeypatch.setattr(orchestrator, "get_final_presentation", should_not_be_called)
 
     chunks = await _collect_chunks(orchestrator._handle_orchestrator_timeout())
     contents = [getattr(c, "content", "") for c in chunks if getattr(c, "type", None) == "content"]
 
-    assert seen["selected"] == "agent_b"
     assert orchestrator._selected_agent == "agent_b"
-    assert any("Jumping to final presentation with agent_b" in c for c in contents)
-    assert any("presented" in c for c in contents)
+    assert any("Orchestrator Timeout" in c for c in contents)
+    assert any("Answer B" in c for c in contents)
+    assert not any("Jumping to final presentation" in c for c in contents)
+    assert chunks[-1].type == "done"
+    orchestrator._save_agent_snapshot.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_timeout_with_answers_but_no_votes_selects_first_answer_agent(mock_orchestrator, monkeypatch):
+async def test_timeout_with_answers_but_no_votes_uses_latest_answer_without_presentation(mock_orchestrator, monkeypatch):
     orchestrator = mock_orchestrator(num_agents=2)
     orchestrator.timeout_reason = "Time limit exceeded"
     orchestrator.agent_states["agent_a"].answer = "First answer"
     orchestrator.agent_states["agent_b"].answer = "Second answer"
+    orchestrator.coordination_tracker.add_agent_answer("agent_a", "First answer")
+    orchestrator.coordination_tracker.add_agent_answer("agent_b", "Second answer")
+    orchestrator._save_agent_snapshot = AsyncMock(return_value="final")
 
-    seen = {"selected": None}
+    async def show_modal():
+        return None
 
-    async def fake_final_presentation(selected_agent_id, vote_results):
-        seen["selected"] = selected_agent_id
-        _ = vote_results
-        yield StreamChunk(type="done")
+    async def should_not_be_called(*_args, **_kwargs):
+        raise AssertionError("get_final_presentation should be skipped after timeout salvage")
 
-    monkeypatch.setattr(orchestrator, "get_final_presentation", fake_final_presentation)
+    monkeypatch.setattr(orchestrator, "_show_workspace_modal_if_needed", show_modal)
+    monkeypatch.setattr(orchestrator, "save_coordination_logs", lambda: None)
+    monkeypatch.setattr(orchestrator, "get_final_presentation", should_not_be_called)
 
-    await _collect_chunks(orchestrator._handle_orchestrator_timeout())
-    assert seen["selected"] == "agent_a"
-    assert orchestrator._selected_agent == "agent_a"
+    chunks = await _collect_chunks(orchestrator._handle_orchestrator_timeout())
+    contents = [getattr(c, "content", "") for c in chunks if getattr(c, "type", None) == "content"]
+
+    assert orchestrator._selected_agent == "agent_b"
+    assert any("Second answer" in c for c in contents)
+    assert not any("Jumping to final presentation" in c for c in contents)
+    assert chunks[-1].type == "done"
+    orchestrator._save_agent_snapshot.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -84,18 +98,21 @@ async def test_timeout_ignores_killed_agents(mock_orchestrator, monkeypatch):
     orchestrator.agent_states["agent_a"].answer = "Killed answer"
     orchestrator.agent_states["agent_a"].is_killed = True
     orchestrator.agent_states["agent_b"].answer = "Live answer"
+    orchestrator._save_agent_snapshot = AsyncMock(return_value="final")
 
-    seen = {"selected": None}
+    async def show_modal():
+        return None
 
-    async def fake_final_presentation(selected_agent_id, vote_results):
-        seen["selected"] = selected_agent_id
-        _ = vote_results
-        yield StreamChunk(type="done")
+    async def should_not_be_called(*_args, **_kwargs):
+        raise AssertionError("get_final_presentation should be skipped after timeout salvage")
 
-    monkeypatch.setattr(orchestrator, "get_final_presentation", fake_final_presentation)
+    monkeypatch.setattr(orchestrator, "_show_workspace_modal_if_needed", show_modal)
+    monkeypatch.setattr(orchestrator, "save_coordination_logs", lambda: None)
+    monkeypatch.setattr(orchestrator, "get_final_presentation", should_not_be_called)
 
-    await _collect_chunks(orchestrator._handle_orchestrator_timeout())
-    assert seen["selected"] == "agent_b"
+    chunks = await _collect_chunks(orchestrator._handle_orchestrator_timeout())
+    assert orchestrator._selected_agent == "agent_b"
+    assert chunks[-1].type == "done"
 
 
 def test_determine_final_agent_from_votes_returns_none_without_answers(mock_orchestrator):

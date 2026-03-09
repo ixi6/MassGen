@@ -11146,7 +11146,11 @@ Your answer:"""
                         )
                         salvaged = True
                 except Exception:
-                    pass
+                    logger.warning(
+                        "[Orchestrator] Failed to parse salvage result for %s",
+                        parent_agent_id,
+                        exc_info=True,
+                    )
 
             if not salvaged:
                 return self._handle_round_evaluator_gate_failure(
@@ -13908,6 +13912,76 @@ Your answer:"""
                 ppm.clear_context_path_writes()
                 logger.debug(f"[Orchestrator] Cleared context path write tracking for {agent_id}")
 
+    async def _yield_existing_answer_finalization(
+        self,
+        *,
+        selected_agent_id: str,
+        vote_results: dict[str, Any],
+        force_workspace_snapshot: bool = False,
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Finalize by reusing an already-available answer without a presenter pass."""
+        existing_answer = self.agent_states[selected_agent_id].answer
+        if not existing_answer:
+            return
+
+        agent = self.agents.get(selected_agent_id)
+
+        _emitter = get_event_emitter()
+        if _emitter:
+            _emitter.emit_winner_selected(
+                winner_id=selected_agent_id,
+                vote_results=vote_results,
+            )
+            _emitter.emit_answer_locked(
+                agent_id=selected_agent_id,
+            )
+
+        log_stream_chunk(
+            "orchestrator",
+            "content",
+            f"\n{existing_answer}\n",
+            selected_agent_id,
+        )
+        yield StreamChunk(
+            type="content",
+            content=f"\n{existing_answer}\n",
+            source=selected_agent_id,
+        )
+        self._final_presentation_content = existing_answer
+
+        if force_workspace_snapshot and agent and hasattr(agent, "backend") and agent.backend:
+            filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+            if filesystem_manager:
+                await filesystem_manager.save_snapshot(
+                    timestamp=None,
+                    is_final=True,
+                )
+
+        final_context = self.get_last_context(selected_agent_id)
+        await self._save_agent_snapshot(
+            selected_agent_id,
+            answer_content=existing_answer,
+            is_final=True,
+            context_data=final_context,
+        )
+
+        self.coordination_tracker.set_final_answer(
+            selected_agent_id,
+            existing_answer,
+            snapshot_timestamp="final",
+        )
+
+        if agent and agent.backend.filesystem_manager:
+            agent.backend.filesystem_manager.path_permission_manager.compute_context_path_writes()
+
+        self.add_to_history("assistant", existing_answer)
+        self.save_coordination_logs()
+        self.workflow_phase = "presenting"
+        await self._show_workspace_modal_if_needed()
+
+        log_stream_chunk("orchestrator", "done", None, selected_agent_id)
+        yield StreamChunk(type="done", source=selected_agent_id)
+
     async def _present_final_answer(self) -> AsyncGenerator[StreamChunk, None]:
         """Present the final coordinated answer with optional post-evaluation and restart loop."""
 
@@ -13990,79 +14064,14 @@ Your answer:"""
                 )
 
             if should_skip_presentation:
-                # Use existing answer directly without an additional LLM call
-                existing_answer = self.agent_states[self._selected_agent].answer
-                if existing_answer:
-                    # Emit to events.jsonl for unified pipeline
-
-                    _emitter = get_event_emitter()
-                    if _emitter:
-                        _emitter.emit_winner_selected(
-                            winner_id=self._selected_agent,
-                            vote_results=vote_results,
-                        )
-                        _emitter.emit_answer_locked(
-                            agent_id=self._selected_agent,
-                        )
-
-                    log_stream_chunk(
-                        "orchestrator",
-                        "content",
-                        f"\n{existing_answer}\n",
-                        self._selected_agent,
-                    )
-                    yield StreamChunk(
-                        type="content",
-                        content=f"\n{existing_answer}\n",
-                        source=self._selected_agent,
-                    )
-                    self._final_presentation_content = existing_answer
-
-                    # Force a workspace snapshot before final answer saving in single-agent skip mode
-                    if is_single_agent_mode and agent and hasattr(agent, "backend") and agent.backend:
-                        filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
-                        if filesystem_manager:
-                            await filesystem_manager.save_snapshot(
-                                timestamp=None,  # Use None for final snapshots
-                                is_final=True,
-                            )
-
-                    # Save the final snapshot (creates final/ directory with answer.txt)
-                    # This copies the agent's workspace to the final directory
-                    final_context = self.get_last_context(self._selected_agent)
-                    await self._save_agent_snapshot(
-                        self._selected_agent,
-                        answer_content=existing_answer,
-                        is_final=True,
-                        context_data=final_context,
-                    )
-
-                    # Track the final answer in coordination tracker
-                    self.coordination_tracker.set_final_answer(
-                        self._selected_agent,
-                        existing_answer,
-                        snapshot_timestamp="final",
-                    )
-
-                    # Compute context path writes (compare current state to snapshot taken at start)
-                    if agent.backend.filesystem_manager:
-                        agent.backend.filesystem_manager.path_permission_manager.compute_context_path_writes()
-
-                    # Add to conversation history
-                    self.add_to_history("assistant", existing_answer)
-
-                    # Save coordination logs
-                    self.save_coordination_logs()
-
-                    # Update workflow phase
-                    self.workflow_phase = "presenting"
-
-                    # Show workspace modal in no-git mode before returning
-                    await self._show_workspace_modal_if_needed()
-
-                    log_stream_chunk("orchestrator", "done", None, self._selected_agent)
-                    yield StreamChunk(type="done", source=self._selected_agent)
-                    return  # Skip post-evaluation and all remaining logic
+                if self.agent_states[self._selected_agent].answer:
+                    async for chunk in self._yield_existing_answer_finalization(
+                        selected_agent_id=self._selected_agent,
+                        vote_results=vote_results,
+                        force_workspace_snapshot=is_single_agent_mode,
+                    ):
+                        yield chunk
+                    return
                 else:
                     # No existing answer - fall through to normal presentation
                     logger.warning(
@@ -14203,7 +14212,7 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         yield StreamChunk(type="done")
 
     async def _handle_orchestrator_timeout(self) -> AsyncGenerator[StreamChunk, None]:
-        """Handle orchestrator timeout by jumping directly to get_final_presentation."""
+        """Handle orchestrator timeout by salvaging the best available answer."""
         # Count available answers
         available_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer and not state.is_killed}
 
@@ -14213,14 +14222,17 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         selection_reason = "no answers available"
 
         if available_answers:
-            selected_agent = self._determine_final_agent_from_votes(
-                current_votes,
-                available_answers,
-            )
             if current_votes:
+                selected_agent = self._determine_final_agent_from_votes(
+                    current_votes,
+                    available_answers,
+                )
                 selection_reason = "most votes"
             else:
-                selection_reason = "first with answer"
+                selected_agent = self._determine_final_agent_from_states()
+                if selected_agent not in available_answers:
+                    selected_agent = next(iter(available_answers))
+                selection_reason = "latest answer"
 
         # Build per-agent summary
         agent_answer_summary = {}
@@ -14282,23 +14294,22 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
         self._selected_agent = selected_agent
 
-        # Jump directly to get_final_presentation
         vote_results = self._get_vote_results()
         log_stream_chunk(
             "orchestrator",
             "content",
-            f"🎯 Jumping to final presentation with {self._selected_agent} (selected despite timeout)\n",
+            f"🎯 Using available answer from {self._selected_agent} (selected despite timeout)\n",
             self.orchestrator_id,
         )
         yield StreamChunk(
             type="content",
-            content=f"🎯 Jumping to final presentation with {self._selected_agent} (selected despite timeout)\n",
+            content=f"🎯 Using available answer from {self._selected_agent} (selected despite timeout)\n",
             source=self.orchestrator_id,
         )
 
-        async for chunk in self.get_final_presentation(
-            self._selected_agent,
-            vote_results,
+        async for chunk in self._yield_existing_answer_finalization(
+            selected_agent_id=self._selected_agent,
+            vote_results=vote_results,
         ):
             yield chunk
 

@@ -609,8 +609,8 @@ class RoundEvaluatorResult:
     - ``verdict.json`` for machine-readable verdict metadata
     - ``next_tasks.json`` for iterate-only implementation handoff
 
-    ``answer`` is intentionally non-authoritative and may be only a concise
-    summary.
+    ``packet_text`` is the authoritative source loaded from ``critique_packet.md``,
+    not from the subagent's answer field.
     """
 
     packet_text: str | None = None
@@ -623,9 +623,9 @@ class RoundEvaluatorResult:
     primary_artifact_path: str | None = None
     verdict_artifact_path: str | None = None
     next_tasks_artifact_path: str | None = None
-    task_plan_source: str | None = None  # "next_tasks_artifact" | None
+    task_plan_source: Literal["next_tasks_artifact"] | None = None
     # Structured verdict fields (populated from verdict.json)
-    verdict: str | None = None  # "iterate" | "converged"
+    verdict: Literal["iterate", "converged"] | None = None
     scores: dict[str, int] | None = None
     improvements: list[dict] | None = None
     preserve: list[dict] | None = None
@@ -656,7 +656,7 @@ class RoundEvaluatorResult:
         try:
             data = json.loads(match.group(1))
         except (json.JSONDecodeError, TypeError):
-            logger.warning("[RoundEvaluatorResult] Malformed JSON in verdict_block, falling back to manual flow")
+            logger.warning("[RoundEvaluatorResult] Malformed JSON in verdict_block — skipped; orchestrator will fall back to verdict.json artifact")
             return None
         if not isinstance(data, dict) or "verdict" not in data:
             logger.warning("[RoundEvaluatorResult] verdict_block missing required 'verdict' key")
@@ -989,7 +989,7 @@ class RoundEvaluatorResult:
             next_tasks_why_this_strategy=next_tasks_strategy.get("why_this_strategy"),
             next_tasks_deprioritize_or_remove=next_tasks_strategy.get("deprioritize_or_remove"),
             next_tasks_execution_scope=next_tasks_strategy.get("execution_scope"),
-            clean_packet_text=packet_text,
+            clean_packet_text=cls.strip_verdict_block(packet_text) if packet_text else None,
         )
 
     def to_dict(self) -> dict[str, Any]:

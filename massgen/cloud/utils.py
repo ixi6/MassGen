@@ -1,10 +1,9 @@
-# -*- coding: utf-8 -*-
 import base64
 import io
 import re
 import tarfile
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 
 def parse_automation_value(label: str, stderr_text: str) -> str | None:
@@ -35,14 +34,14 @@ CONTEXT_MOUNT_PATH = "/context"
 
 
 def process_context_paths(
-    context_paths: List[Dict[str, Any]],
+    context_paths: list[dict[str, Any]],
     mount_point: str = CONTEXT_MOUNT_PATH,
     cloud_job_id: str = "",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     import modal
 
     vol = modal.Volume.from_name(CONTEXT_VOLUME_NAME, create_if_missing=True)
-    rewritten: List[Dict[str, Any]] = []
+    rewritten: list[dict[str, Any]] = []
 
     with vol.batch_upload(force=True) as batch:
         for idx, entry in enumerate(context_paths):

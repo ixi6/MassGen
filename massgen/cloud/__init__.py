@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Cloud execution utilities for MassGen."""
 
 from massgen.cloud.cloud_job import (

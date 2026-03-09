@@ -167,6 +167,6 @@ def run_massgen_job(payload_b64: str) -> dict:
         "remote_log_dir": log_dir,
         "artifacts_tar_gz_b64": make_tar_gz_b64(artifact_root),
     }
-    result_marker = f"__MASSGEN_CLOUD_JOB_RESULT_{cloud_job_id}__"
+    result_marker = f"__MASSGEN_CLOUD_JOB_RESULT__{cloud_job_id}_"
     print(f"{result_marker}{json.dumps(result)}")
     return result

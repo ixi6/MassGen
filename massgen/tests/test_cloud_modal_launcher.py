@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Tests for Modal cloud launcher MVP and utils."""
 
 import base64
@@ -36,6 +35,7 @@ def _make_mock_popen(stdout_lines: list[str], stderr_lines: list[str], returncod
 
 def test_modal_launcher_extracts_result_and_artifacts(tmp_path: Path, monkeypatch):
     """Launcher should parse result marker and extract artifact archive."""
+    cloud_job_id = "test_job_123"
     launcher = ModalCloudJobLauncher(workspace_root=tmp_path)
     marker_payload = {
         "status": "ok",
@@ -45,8 +45,9 @@ def test_modal_launcher_extracts_result_and_artifacts(tmp_path: Path, monkeypatc
     }
     stdout_lines = [
         "some logs\n",
-        f"{ModalCloudJobLauncher.RESULT_MARKER}{json.dumps(marker_payload)}\n",
+        f"{ModalCloudJobLauncher.RESULT_MARKER}{cloud_job_id}_{json.dumps(marker_payload)}\n",
     ]
+    print(stdout_lines)
     mock_proc = _make_mock_popen(stdout_lines, [], returncode=0)
     monkeypatch.setattr(
         "massgen.cloud.modal_launcher.subprocess.Popen",
@@ -58,17 +59,18 @@ def test_modal_launcher_extracts_result_and_artifacts(tmp_path: Path, monkeypatc
             prompt="solve fizzbuzz",
             config_yaml="agent: {}",
             timeout_seconds=60,
-            cloud_job_id="test_job_123",
+            cloud_job_id=cloud_job_id,
         ),
     )
 
     assert result.final_answer == "Cloud answer"
     assert result.artifacts_dir.exists()
     assert (result.artifacts_dir / "events.jsonl").read_text(encoding="utf-8") == "hello from cloud"
-    assert result.artifacts_dir.parent.name == "job_test_job_123"
+    assert result.artifacts_dir.parent.name == f"job_{cloud_job_id}"
 
 
 def test_modal_launcher_streams_progress(tmp_path: Path, monkeypatch, capsys):
+    cloud_job_id = "test_job_123"
     launcher = ModalCloudJobLauncher(workspace_root=tmp_path)
     marker_payload = {
         "status": "ok",
@@ -78,7 +80,7 @@ def test_modal_launcher_streams_progress(tmp_path: Path, monkeypatch, capsys):
     stdout_lines = [
         "Setting up workspace...\n",
         "Running agent...\n",
-        f"{ModalCloudJobLauncher.RESULT_MARKER}{json.dumps(marker_payload)}\n",
+        f"{ModalCloudJobLauncher.RESULT_MARKER}{cloud_job_id}_{json.dumps(marker_payload)}\n",
     ]
     mock_proc = _make_mock_popen(stdout_lines, [], returncode=0)
     monkeypatch.setattr(
@@ -91,6 +93,7 @@ def test_modal_launcher_streams_progress(tmp_path: Path, monkeypatch, capsys):
             prompt="hello",
             config_yaml="agent: {}",
             timeout_seconds=60,
+            cloud_job_id=cloud_job_id,
         ),
     )
 

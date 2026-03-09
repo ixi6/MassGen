@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,11 +41,3 @@ class CloudJobLauncher:
 
     def launch(self, request: CloudJobRequest) -> CloudJobResult:
         raise NotImplementedError
-
-    @classmethod
-    def _extract_marker_payload(cls, stdout: str) -> dict[str, object] | None:
-        for line in reversed(stdout.splitlines()):
-            if line.startswith(cls.RESULT_MARKER):
-                raw = line[len(cls.RESULT_MARKER) :].strip()
-                return json.loads(raw)
-        return None

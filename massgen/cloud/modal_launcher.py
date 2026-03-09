@@ -61,7 +61,7 @@ class ModalCloudJobLauncher(CloudJobLauncher):
         stdout_lines: list[str] = []
         marker_payload = None
         assert proc.stdout is not None
-        result_marker = f"__MASSGEN_CLOUD_JOB_RESULT_{request.cloud_job_id}__"
+        result_marker = f"{CloudJobLauncher.RESULT_MARKER}{request.cloud_job_id}_"
         for line in proc.stdout:
             stdout_lines.append(line)
             stripped = line.strip()

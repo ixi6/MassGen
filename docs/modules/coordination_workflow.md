@@ -569,6 +569,55 @@ orchestrator:
   checklist_first_answer: false
 ```
 
+## Self-Improvement and Evaluator Rescue Cycle
+
+MassGen agents self-improve iteratively within each round, then submit their best answer. This cycle is by design — agents should push themselves to plateau before asking for external feedback. The round evaluator exists to rescue agents from plateaus they cannot break through alone.
+
+### The plateau problem
+
+Agents get stuck in two distinct ways:
+
+1. **Blind spots**: The agent cannot identify remaining problems. It believes its answer is strong, but hidden requirement misses, verification gaps, or ambition ceilings persist. The agent's self-evaluation converges prematurely.
+
+2. **Implementation ceiling**: The agent can identify problems (via checklist, self-critique, or prior evaluator feedback) but fails to fix them. It sees the gap, attempts a fix, and the fix either doesn't land or creates new problems. The agent loops without progress.
+
+### Evaluator as rescue, not just critic
+
+The round evaluator addresses both failure modes:
+
+- **For blind spots**: Fresh-eyes critique with cross-answer synthesis reveals weaknesses the agent cannot see in its own work. Multiple evaluator agents with different strengths (code analysis, visual inspection, domain expertise) catch different blind spots.
+
+- **For implementation ceilings**: This is where the evaluator's `implementation_guidance` field in `next_tasks.json` is critical. High-level task descriptions ("fix the animation") are not enough when the agent already tried and failed. The evaluator must provide concrete HOW-to specs: specific techniques, code patterns, step-by-step approaches, and — crucially — a diagnosis of why the agent's previous approach likely failed.
+
+### The escalation pattern
+
+```text
+Agent self-improves (checklist, self-critique, tool use)
+    │
+    ├─ Makes progress → continues iterating
+    │
+    └─ Plateaus (can't improve further) → submits new_answer
+                                              │
+                                              ▼
+                                    Round evaluator runs
+                                    (fresh critique + implementation specs)
+                                              │
+                                              ▼
+                                    Agent receives:
+                                    - What's still wrong (blind spot rescue)
+                                    - HOW to fix it (implementation rescue)
+                                    - What NOT to break (preserve list)
+                                              │
+                                              ▼
+                                    Agent tries fundamentally different approach
+                                              │
+                                    Repeat until quality bar met or plateau acknowledged
+```
+
+### When to accept a plateau
+
+Not every criterion can be driven to 10/10. If evaluator scores remain flat across 3+ rounds despite genuinely different `implementation_guidance` each time, the criterion may be at the limit of what the current agent configuration can achieve. The evaluator should acknowledge this explicitly in its critique rather than prescribing yet another approach — this signal lets the orchestrator make informed convergence decisions rather than burning rounds on diminishing returns.
+
 ## Related Docs
 
 - `docs/modules/architecture.md` - core system architecture and backend hierarchy

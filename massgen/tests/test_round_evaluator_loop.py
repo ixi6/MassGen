@@ -238,14 +238,14 @@ def test_evaluator_result_block_includes_status():
     assert "degraded" in block.lower()
 
 
-def test_auto_injected_evaluator_result_block_is_path_driven():
-    """Auto-injected mode should inject a compact header with exact artifact paths."""
+def test_auto_injected_evaluator_result_block_includes_summary():
+    """Auto-injected mode should include evaluator answer text and workflow instructions."""
     from massgen.orchestrator import Orchestrator
     from massgen.subagent.models import RoundEvaluatorResult
 
     evaluator_result = RoundEvaluatorResult(
-        packet_text="Full critique packet body that should not be injected here",
-        clean_packet_text="Clean critique packet body that should not be injected here",
+        packet_text="Key findings: E1=4, E3=7. See critique_packet.md for details.",
+        clean_packet_text="Key findings: E1=4, E3=7. See critique_packet.md for details.",
         status="success",
         subagent_id="eval_r2",
         primary_artifact_path="/tmp/eval/critique_packet.md",
@@ -259,14 +259,14 @@ def test_auto_injected_evaluator_result_block_is_path_driven():
     )
 
     assert "get_task_plan" in block
-    assert "/tmp/eval/critique_packet.md" in block
-    assert "/tmp/eval/next_tasks.json" in block
+    assert "Key findings: E1=4, E3=7" in block
+    assert "<evaluator_summary" in block
     assert "submit_checklist" in block and "do not call" in block.lower()
     assert "propose_improvements" in block and "do not call" in block.lower()
     assert "diagnostic report" in block.lower()
     assert "pure text artifact" in block.lower()
-    assert "Full critique packet body" not in block
-    assert "<evaluator_packet" not in block
+    assert "critique_packet.md" in block
+    assert "implementation_guidance" in block
 
 
 # ---------------------------------------------------------------------------

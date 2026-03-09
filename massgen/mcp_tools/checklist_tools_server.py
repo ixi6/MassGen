@@ -1102,7 +1102,7 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
             normalized_metadata["execution"] = normalized_execution.copy()
             normalized_item.pop("subagent_name", None)
             normalized_item.pop("subagent_id", None)
-            for key in ("verification", "verification_method", "impact", "relates_to", "sources", "chunk"):
+            for key in ("verification", "verification_method", "impact", "relates_to", "sources", "chunk", "implementation_guidance"):
                 if key in normalized_item:
                     normalized_metadata.setdefault(key, normalized_item[key])
             tasks.append(normalized_item)

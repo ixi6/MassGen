@@ -307,7 +307,7 @@ def _check_and_inject_pending_tasks(plan: TaskPlan, injection_dir: Path | None =
             )
             # Merge extra metadata (criterion_id, type, sources, etc.)
             task.metadata.update(t.get("metadata", {}))
-            for key in ("criterion_id", "impact", "sources", "type"):
+            for key in ("criterion_id", "impact", "sources", "type", "implementation_guidance"):
                 if key in t and key not in task.metadata:
                     task.metadata[key] = t[key]
             added_ids.append(task.id)

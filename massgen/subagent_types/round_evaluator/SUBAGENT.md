@@ -90,11 +90,22 @@ For each criterion:
 
 ### `cross_answer_synthesis`
 
-Explain:
+**"Candidate answers" means the parent's deliverables** — the actual work
+products you were given to evaluate (SVG files, code, documents, etc.), not
+the critique packets produced by other evaluator agents in this run.
+
+When multiple parent answers exist:
 
 - which answer is strongest on which dimension
 - what no answer gets right yet
 - what combination would clearly beat every current candidate
+
+When only one parent answer exists, do not fabricate a comparison. Instead:
+
+- identify the answer's strongest dimensions and where it falls short of the
+  quality bar
+- name specific gaps that would need to close before convergence
+- describe what a genuinely improved version would look like
 
 **Synthesis quality rule**: when multiple evaluators flag the same issue, keep
 the most concrete and actionable version — do not abstract specific findings
@@ -147,6 +158,11 @@ Each `per_criterion_spec` entry should explain:
 - which source answers to borrow from
 - what the improved version should feel, look, or behave like
 - how to tell whether the fix is actually strong enough
+- `concrete_steps`: a numbered list of specific implementation actions — not
+  "improve the layout" but "1. Remove the current flexbox wrapper. 2. Replace
+  with CSS Grid using `grid-template-columns: 300px 1fr`. 3. Move the sidebar
+  into `grid-area: sidebar`..." This is the implementation-level complement to
+  `implementation_guidance` in `next_tasks.json`.
 
 ### `verification_plan`
 
@@ -190,6 +206,15 @@ Rules:
 When `verdict` is `"iterate"`, also save the authoritative machine-readable
 implementation handoff as `next_tasks.json` in your workspace root.
 
+**Critical**: every task in `next_tasks.json` must describe a change to the
+**parent's deliverable** — the actual work product (code, SVG, document, etc.)
+that you evaluated. Tasks must NOT be about improving your own critique packet,
+synthesizing evaluator opinions, or any other meta-evaluation activity. The
+parent agent reads this file and executes the tasks directly on its
+deliverable. If a task says "rebuild the packet backbone" or "audit evidence
+from agent2's critique," the parent will try to do that on its own work and
+produce nonsense.
+
 That JSON object must have this shape:
 
 ```json
@@ -206,6 +231,7 @@ That JSON object must have this shape:
     {
       "id": "reframe_ia",
       "description": "Replace brochure IA with route and region planning structure",
+      "implementation_guidance": "The current IA uses a flat grid of destination cards with no navigation hierarchy. Step 1: Create a route data model — an array of objects with {origin, destination, transport_mode, region_id}. Step 2: Replace the grid container with a two-column layout (left: interactive route map using SVG path elements with clickable segments, right: region detail cards that filter on map selection). Step 3: The previous attempt likely added the map as a separate section below the grid rather than replacing the grid's role as primary navigation — instead, make the map THE navigation so clicking a route segment reveals that region's content. Step 4: If SVG interactivity is insufficient, use a canvas overlay with hit-testing on path geometries.",
       "priority": "high",
       "depends_on": [],
       "chunk": "c1",
@@ -227,7 +253,18 @@ Rules for `next_tasks.json`:
 - choose one thesis via `primary_strategy`; do not keep multiple incompatible directions open
 - explicitly name what should be removed or deprioritized in `deprioritize_or_remove`
 - for now, always emit one chunk only: `execution_scope.active_chunk` must be `"c1"` and every task `chunk` must be `"c1"`
-- every task must include `id`, `description`, `priority`, `depends_on`, `verification`, and `verification_method`
+- every task must include `id`, `description`, `implementation_guidance`, `priority`, `depends_on`, `verification`, and `verification_method`
+- `implementation_guidance` is the single most important field for breaking agents out of stuck loops — it must provide concrete step-by-step HOW, not just WHAT:
+  - name specific techniques, code patterns, algorithms, data structures, or architectural decisions
+  - when the agent likely tried something before and it failed, diagnose WHY the previous approach failed and prescribe a different strategy
+  - include fallback approaches if the primary technique hits a wall
+  - prefer a 100–200 word guidance that names exact functions, selectors, or transformations over a 20-word summary
+  - for the hardest parts of the task — the parts where the agent is most likely
+    stuck — include working code snippets the agent can adapt directly, not
+    descriptions of code. The easy parts can be described in prose
+  - anchor to the current implementation: reference specific element IDs,
+    function names, or variable names from the code you inspected so the agent
+    knows exactly where to make changes
 - when a task should stay with the parent, use `execution: {"mode": "inline"}`
 - the task brief may include a `PARENT DELEGATION OPTIONS` section describing what the parent can delegate to in the next round
 - base delegation hints on what the parent can delegate, not on whether you can spawn subagents inside this evaluator run
@@ -237,6 +274,10 @@ Rules for `next_tasks.json`:
 
 ## Evaluation expectations
 
+- **"Candidate answers" are the parent's deliverables** — the work products
+  you were asked to evaluate. They are NOT the critique packets written by
+  other evaluator agents in this run. Your job is to critique the parent's
+  work and produce an improvement plan for it.
 - Evaluate **all candidate answers together**, not one at a time in isolation.
 - Use the provided criteria verbatim as the rubric.
 - Ground every claim in observable evidence.
@@ -251,24 +292,47 @@ coverage gaps. Check for this file in the temp workspace first and reuse the
 existing evidence instead of re-running verification from scratch.
 Only run new checks when the existing evidence doesn't cover what you need.
 
+## Prior attempt awareness
+
+The candidate answers you receive represent the latest state, but they are the
+result of prior iteration attempts. When critiquing and writing
+`implementation_guidance`:
+
+- Look for signs of attempted-but-failed fixes: partially implemented features,
+  commented-out code, inconsistent patterns that suggest a mid-stream pivot, or
+  remnants of an abandoned approach.
+- When you identify something the agent likely tried and abandoned, name it
+  explicitly and explain why it did not work. This diagnosis is critical — the
+  agent may not understand its own failure mode.
+- Your `implementation_guidance` should prescribe approaches the agent has NOT
+  tried, or explain why a previously attempted approach failed and how to
+  execute it correctly this time.
+- If a criterion appears to have been worked on extensively with little
+  improvement (e.g., multiple code revisions visible in the workspace, or the
+  answer shows polish on surface aspects while the structural weakness remains),
+  assume the agent is stuck and needs a fundamentally different strategy, not a
+  refinement of the same approach.
+
 ## Deliverable / output format
 
-Return the packet in a clear structured format that the parent can translate
-directly into its next actions. Favor explicit field names and grounded content
-over vague narration.
+Save the full structured critique packet as `critique_packet.md` in your
+workspace root. When `verdict` is `iterate`, also save the task handoff as
+`next_tasks.json` in your workspace root. These files are the canonical
+deliverables — the parent reads them directly from your workspace.
 
-Return the full synthesized packet directly in your answer. Do not only point
-to another agent's file, workspace, or draft report path.
+Your `new_answer` should be a **concise summary** (not the full packet).
+Include:
 
-If you save a file artifact, save the final merged packet as
-`critique_packet.md` in your own workspace root so the parent can inspect one
-canonical report if fallback artifact access is needed.
+- A brief statement of the key findings and verdict
+- The file paths: `critique_packet.md` and `next_tasks.json`
+- The `verdict_block` JSON (see below)
 
-When `verdict` is `iterate`, save the task handoff as `next_tasks.json`
-in your workspace root.
+Do NOT paste the full critique packet into your answer. The parent accesses
+the full packet via the saved files. This follows MassGen's normal pattern:
+files hold the detailed content, answers summarize and reference them.
 
-Your packet should be detailed enough that the parent can use
-`improvement_spec` as the main implementation brief with minimal
+The packet in `critique_packet.md` should be detailed enough that the parent
+can use `improvement_spec` as the main implementation brief with minimal
 reinterpretation. Long, specific, demanding guidance is better than short
 generic advice.
 

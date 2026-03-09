@@ -4212,7 +4212,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         Follows the same selection logic as the orchestrator's graceful timeout:
         1. If winner_agent_id is set, use that agent's answer
         2. If votes exist, select agent with most votes (ties broken by registration order)
-        3. Fall back to first registered agent with an answer
+        3. Fall back to agent with most recent answer by timestamp
         4. Check answer.txt if no agent workspaces
 
         Args:
@@ -4271,9 +4271,18 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         selected_agent = agent_id
                         break
 
-        # Fall back to first agent in registration order
+        # Fall back to most recent answer by timestamp (most context from iterations)
         if not selected_agent and historical_workspaces:
-            selected_agent = next(iter(historical_workspaces.keys()))
+            if historical_workspaces_raw:
+                best_ts = ""
+                for ws_info in historical_workspaces_raw:
+                    ts = ws_info.get("timestamp", "")
+                    candidate = ws_info.get("answerLabel") or ws_info.get("agentId")
+                    if ts > best_ts and candidate and candidate in historical_workspaces:
+                        best_ts = ts
+                        selected_agent = candidate
+            if not selected_agent:
+                selected_agent = list(historical_workspaces.keys())[-1]
 
         if not selected_agent:
             return None

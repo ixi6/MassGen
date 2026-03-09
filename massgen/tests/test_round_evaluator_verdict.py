@@ -515,6 +515,70 @@ class TestBuildTaskPlanFromVerdict:
         assert tasks[0]["criterion_id"] == "E1"
 
 
+class TestImplementationGuidancePassthrough:
+    """Tests that implementation_guidance flows through normalization and injection."""
+
+    def test_normalize_preserves_implementation_guidance(self):
+        """implementation_guidance should survive normalize_next_tasks_payload."""
+        payload = {
+            "schema_version": "1",
+            "objective": "Fix the animation system",
+            "primary_strategy": "shared_timebase",
+            "tasks": [
+                {
+                    "id": "rebuild_timebase",
+                    "description": "Rebuild panels around a single shared time axis",
+                    "implementation_guidance": (
+                        "Step 1: Define a single time domain [0, 2T]. "
+                        "Step 2: Map to shared pixel range x=100..1300. "
+                        "The previous approach used per-row animateTransform — "
+                        "replace with requestAnimationFrame and a shared clock."
+                    ),
+                    "priority": "high",
+                    "verification": "Identical x-positions correspond to same time",
+                    "verification_method": "Render to PNG and inspect alignment",
+                },
+            ],
+        }
+
+        normalized = RoundEvaluatorResult.normalize_next_tasks_payload(payload)
+
+        assert normalized is not None
+        assert normalized["tasks"][0]["implementation_guidance"].startswith("Step 1:")
+
+    def test_inject_file_preserves_implementation_guidance(self, tmp_path):
+        """implementation_guidance should survive _write_inject_file and reach Task metadata."""
+        from massgen.mcp_tools.checklist_tools_server import _write_inject_file
+        from massgen.mcp_tools.planning._planning_mcp_server import (
+            _check_and_inject_pending_tasks,
+        )
+        from massgen.mcp_tools.planning.planning_dataclasses import TaskPlan
+
+        task_plan = [
+            {
+                "id": "fix_animation",
+                "description": "Replace SMIL with CSS keyframes",
+                "implementation_guidance": (
+                    "The current code uses animateTransform type=translate. " "Replace with @keyframes that oscillates translateY. " "Use duration proportional to 1/frequency for each harmonic."
+                ),
+                "priority": "high",
+                "verification": "Animation uses CSS keyframes",
+                "verification_method": "Grep source for @keyframes",
+                "metadata": {"relates_to": ["E3"]},
+            },
+        ]
+
+        _write_inject_file(tmp_path, task_plan)
+
+        plan = TaskPlan(agent_id="test_agent", require_verification=False)
+        added_ids = _check_and_inject_pending_tasks(plan, injection_dir=tmp_path)
+
+        assert len(added_ids) == 1
+        task = plan.tasks[0]
+        assert "implementation_guidance" in task.metadata
+        assert task.metadata["implementation_guidance"].startswith("The current code uses")
+
+
 class TestVerdictSerialization:
     """Tests for to_dict/from_dict with verdict fields."""
 

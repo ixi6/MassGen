@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from massgen.backend.base import StreamChunk
+from massgen.coordination_tracker import AgentAnswer
 from massgen.events import EventEmitter, EventType
 
 
@@ -390,11 +391,11 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_without_legacy
     assert queued_blocks, "expected a round-start context block to be queued"
     block = queued_blocks[0]
     assert "get_task_plan" in block
-    assert str(eval_workspace / "critique_packet.md") in block
-    assert str(eval_workspace / "next_tasks.json") in block
+    assert "Critique Packet" in block  # answer text is included
+    assert "<evaluator_summary" in block
     assert "submit_checklist" in block and "do not call" in block.lower()
     assert "propose_improvements" in block and "do not call" in block.lower()
-    assert "<evaluator_packet" not in block
+    assert "critique_packet.md" in block
 
 
 @pytest.mark.asyncio
@@ -518,8 +519,9 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_only_in_nested
     assert injected_task_plan and injected_task_plan[0]["id"] == "rewrite_core"
     assert queued_blocks, "expected a round-start context block to be queued"
     block = queued_blocks[0]
-    assert str(nested_final / "next_tasks.json") in block
     assert "get_task_plan" in block
+    assert "Critique Packet" in block  # answer text is included
+    assert "<evaluator_summary" in block
 
 
 @pytest.mark.asyncio
@@ -1123,3 +1125,187 @@ async def test_round_evaluator_gate_runs_between_first_and_second_round(mock_orc
         ("stream", {agent_id: "answer v1"}),
     ]
     assert gate.await_count == 2
+
+
+class TestDetermineFinalAgentSelectsMostRecent:
+    """Fallback agent selection should pick the agent with the latest timestamp."""
+
+    def test_selects_agent_with_latest_timestamp(self, mock_orchestrator):
+        """When no winner/votes, pick the agent whose most recent answer has the latest timestamp."""
+        orchestrator = mock_orchestrator(num_agents=2)
+
+        # Give both agents answers in agent_states
+        orchestrator.agent_states["agent_a"].answer = "Answer from A"
+        orchestrator.agent_states["agent_b"].answer = "Answer from B"
+
+        # Register answers in coordination_tracker with different timestamps
+        # agent_a answered first (earlier timestamp)
+        answer_a = AgentAnswer(agent_id="agent_a", content="Answer from A", timestamp=1000.0)
+        answer_a.label = "A1.1"
+        orchestrator.coordination_tracker.answers_by_agent["agent_a"] = [answer_a]
+
+        # agent_b answered later (later timestamp) — should be selected
+        answer_b = AgentAnswer(agent_id="agent_b", content="Answer from B", timestamp=2000.0)
+        answer_b.label = "B1.1"
+        orchestrator.coordination_tracker.answers_by_agent["agent_b"] = [answer_b]
+
+        result = orchestrator._determine_final_agent_from_states()
+        assert result == "agent_b"
+
+    def test_selects_agent_with_latest_among_multiple_answers(self, mock_orchestrator):
+        """When agents have multiple answers, compare their most recent timestamps."""
+        orchestrator = mock_orchestrator(num_agents=2)
+
+        orchestrator.agent_states["agent_a"].answer = "Answer A v2"
+        orchestrator.agent_states["agent_b"].answer = "Answer B v1"
+
+        # agent_a has two answers, latest at t=3000
+        a1 = AgentAnswer(agent_id="agent_a", content="A v1", timestamp=1000.0)
+        a1.label = "A1.1"
+        a2 = AgentAnswer(agent_id="agent_a", content="A v2", timestamp=3000.0)
+        a2.label = "A1.2"
+        orchestrator.coordination_tracker.answers_by_agent["agent_a"] = [a1, a2]
+
+        # agent_b has one answer at t=2000 — earlier than agent_a's latest
+        b1 = AgentAnswer(agent_id="agent_b", content="B v1", timestamp=2000.0)
+        b1.label = "B1.1"
+        orchestrator.coordination_tracker.answers_by_agent["agent_b"] = [b1]
+
+        result = orchestrator._determine_final_agent_from_states()
+        assert result == "agent_a"
+
+    def test_falls_back_when_no_tracker_answers(self, mock_orchestrator):
+        """When coordination_tracker has no answers, fall back to first agent with answer."""
+        orchestrator = mock_orchestrator(num_agents=2)
+
+        orchestrator.agent_states["agent_a"].answer = "Answer from A"
+        orchestrator.agent_states["agent_b"].answer = "Answer from B"
+        # Don't register any answers in coordination_tracker
+        orchestrator.coordination_tracker.answers_by_agent = {}
+
+        result = orchestrator._determine_final_agent_from_states()
+        # Should still return something (first agent as fallback)
+        assert result is not None
+
+
+class TestEnsureFinalDirectoryOnShutdown:
+    """On SIGTERM/timeout, the orchestrator should create a final/ directory."""
+
+    def test_creates_final_directory_from_snapshot_storage(self, mock_orchestrator, tmp_path):
+        """When an agent has snapshot_storage with content, final/ should be created."""
+        from unittest.mock import patch
+
+        orchestrator = mock_orchestrator(num_agents=1)
+        agent_id = "agent_a"
+
+        # Set up agent state with an answer
+        orchestrator.agent_states[agent_id].answer = "Test answer"
+        # Also register in coordination tracker so _determine_final_agent works
+        answer_a = AgentAnswer(agent_id=agent_id, content="Test answer", timestamp=1000.0)
+        answer_a.label = "A1.1"
+        orchestrator.coordination_tracker.answers_by_agent[agent_id] = [answer_a]
+
+        # Set up snapshot_storage with content
+        snapshot_dir = tmp_path / "snapshot_storage"
+        snapshot_dir.mkdir()
+        (snapshot_dir / "next_tasks.json").write_text('{"tasks": []}')
+        (snapshot_dir / "critique_packet.md").write_text("# Critique")
+
+        # Create a mock filesystem_manager with snapshot_storage
+        fm = SimpleNamespace(
+            snapshot_storage=snapshot_dir,
+            cwd=str(tmp_path / "workspace"),
+            get_current_workspace=lambda: str(tmp_path / "workspace"),
+        )
+        orchestrator.agents[agent_id].backend.filesystem_manager = fm
+
+        # Set up log session dir
+        log_dir = tmp_path / "logs" / "turn_1" / "attempt_1"
+        log_dir.mkdir(parents=True)
+
+        answers = {agent_id: {"answer": "Test answer"}}
+        workspaces = {agent_id: str(tmp_path / "workspace")}
+
+        with patch("massgen.orchestrator.get_log_session_dir", return_value=log_dir):
+            orchestrator._ensure_final_directory_on_shutdown(answers, workspaces)
+
+        final_workspace = log_dir / "final" / agent_id / "workspace"
+        assert final_workspace.exists()
+        assert (final_workspace / "next_tasks.json").exists()
+        assert (final_workspace / "critique_packet.md").exists()
+        assert (log_dir / "final" / agent_id / "answer.txt").read_text() == "Test answer"
+
+    def test_skips_if_final_already_exists(self, mock_orchestrator, tmp_path):
+        """Don't overwrite an existing final/ directory."""
+        from unittest.mock import patch
+
+        orchestrator = mock_orchestrator(num_agents=1)
+        agent_id = "agent_a"
+        orchestrator.agent_states[agent_id].answer = "Test answer"
+
+        log_dir = tmp_path / "logs" / "turn_1" / "attempt_1"
+        final_dir = log_dir / "final" / agent_id
+        final_dir.mkdir(parents=True)
+        (final_dir / "marker.txt").write_text("existing")
+
+        answers = {agent_id: {"answer": "Test answer"}}
+        workspaces = {agent_id: str(tmp_path / "workspace")}
+
+        with patch("massgen.orchestrator.get_log_session_dir", return_value=log_dir):
+            orchestrator._ensure_final_directory_on_shutdown(answers, workspaces)
+
+        # Should not have created workspace/ subdir since final/ already existed
+        assert not (final_dir / "workspace").exists()
+        assert (final_dir / "marker.txt").read_text() == "existing"
+
+    def test_skips_when_no_answers(self, mock_orchestrator, tmp_path):
+        """No final/ created when there are no answers."""
+        from unittest.mock import patch
+
+        orchestrator = mock_orchestrator(num_agents=1)
+        log_dir = tmp_path / "logs" / "turn_1" / "attempt_1"
+        log_dir.mkdir(parents=True)
+
+        with patch("massgen.orchestrator.get_log_session_dir", return_value=log_dir):
+            orchestrator._ensure_final_directory_on_shutdown({}, {})
+
+        assert not (log_dir / "final").exists()
+
+
+class TestCancellationManagerSigterm:
+    """CancellationManager should handle SIGTERM alongside SIGINT."""
+
+    def test_registers_sigterm_handler(self):
+        """SIGTERM handler should be registered during register()."""
+        import signal
+
+        from massgen.cancellation import CancellationManager
+
+        mgr = CancellationManager()
+        original_sigterm = signal.getsignal(signal.SIGTERM)
+
+        mock_orch = SimpleNamespace(cancellation_manager=None)
+        try:
+            mgr.register(mock_orch, lambda r: None, multi_turn=False)
+            current_sigterm = signal.getsignal(signal.SIGTERM)
+            assert current_sigterm == mgr._handle_signal
+        finally:
+            mgr.unregister()
+
+        # Verify original handler restored
+        assert signal.getsignal(signal.SIGTERM) == original_sigterm
+
+    def test_unregister_restores_sigterm(self):
+        """unregister() should restore the original SIGTERM handler."""
+        import signal
+
+        from massgen.cancellation import CancellationManager
+
+        mgr = CancellationManager()
+        original_sigterm = signal.getsignal(signal.SIGTERM)
+
+        mock_orch = SimpleNamespace(cancellation_manager=None)
+        mgr.register(mock_orch, lambda r: None, multi_turn=False)
+        mgr.unregister()
+
+        assert signal.getsignal(signal.SIGTERM) == original_sigterm

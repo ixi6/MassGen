@@ -10611,21 +10611,19 @@ Your answer:"""
         packet_text = evaluator_result.clean_packet_text or evaluator_result.packet_text or "(no packet produced)"
 
         if auto_injected:
-            critique_path = evaluator_result.primary_artifact_path or "(path unavailable)"
-            next_tasks_path = evaluator_result.next_tasks_artifact_path or "(path unavailable)"
             return (
                 "============================================================\n"
                 f"ROUND EVALUATOR RESULT (status: {status})\n"
                 "============================================================\n"
-                "The orchestrator ran one blocking `round_evaluator` before this round.\n\n"
-                "The evaluator is finished and its next-step tasks have already been\n"
-                "auto-injected into your task plan. `get_task_plan` is the source\n"
-                "of truth for what to do next.\n\n"
-                f"Reference critique packet: {critique_path}\n"
-                f"Reference next-task handoff: {next_tasks_path}\n\n"
+                "The orchestrator ran one blocking `round_evaluator` before this round.\n"
+                "The evaluator's tasks have been auto-injected into your task plan.\n\n"
+                f'<evaluator_summary subagent_id="{subagent_id}" status="{status}">\n'
+                f"{packet_text}\n"
+                "</evaluator_summary>\n\n"
                 "Workflow:\n"
-                "1. Call `get_task_plan`.\n"
-                "2. Optionally open the evaluator files above for rationale.\n"
+                "1. Call `get_task_plan` — the evaluator's tasks are already there.\n"
+                "2. Read `critique_packet.md` from the evaluator workspace for full\n"
+                "   diagnostic detail. Follow `implementation_guidance` on each task.\n"
                 "3. Implement and verify each injected task.\n"
                 "4. If the deliverable is a pure text artifact, put the final\n"
                 "   artifact body directly in `new_answer.content`.\n"
@@ -11045,19 +11043,38 @@ Your answer:"""
             status="success" if success else "error",
         )
 
-        if not success:
-            return self._handle_round_evaluator_gate_failure(
-                parent_agent_id=parent_agent_id,
-                latest_labels=latest_labels,
-                display_round=display_round,
-                emitter=emitter,
-                elapsed_seconds=elapsed_seconds,
-                failure_payload=normalized_result,
-            )
-
         from .subagent.models import RoundEvaluatorResult, SubagentResult
 
         results = normalized_result.get("results")
+
+        if not success:
+            # Graceful degradation: the child MassGen run may have failed or
+            # timed out, but the canonical recovery path (completed_but_timeout
+            # / partial) may have salvaged an answer from the most recent
+            # evaluator agent.  Check results before giving up.
+            salvaged = False
+            if isinstance(results, list) and results:
+                try:
+                    first = SubagentResult.from_dict(results[0])
+                    if first.answer:
+                        logger.info(
+                            "[Orchestrator] round_evaluator spawn reported " "failure (status=%s) but first result has a " "recovered answer — using it for %s",
+                            first.status,
+                            parent_agent_id,
+                        )
+                        salvaged = True
+                except Exception:
+                    pass
+
+            if not salvaged:
+                return self._handle_round_evaluator_gate_failure(
+                    parent_agent_id=parent_agent_id,
+                    latest_labels=latest_labels,
+                    display_round=display_round,
+                    emitter=emitter,
+                    elapsed_seconds=elapsed_seconds,
+                    failure_payload=normalized_result,
+                )
         if not isinstance(results, list) or not results:
             return self._handle_round_evaluator_gate_failure(
                 parent_agent_id=parent_agent_id,
@@ -11188,7 +11205,7 @@ Your answer:"""
                                 parent_agent_id,
                             )
         else:
-            # Fallback: single answer — use existing flow
+            # Single evaluator answer — use existing flow
             self._queue_round_start_context_block(
                 parent_agent_id,
                 self._format_round_evaluator_result_block(
@@ -11197,6 +11214,22 @@ Your answer:"""
                     auto_injected=auto_injected,
                 ),
             )
+
+            # Add evaluator workspace as read-only context path so the
+            # parent can read critique_packet.md and next_tasks.json.
+            if first_result.workspace_path:
+                parent_agent = self.agents.get(parent_agent_id)
+                if parent_agent and hasattr(parent_agent, "backend"):
+                    fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
+                    if fs_mgr:
+                        ppm = getattr(fs_mgr, "path_permission_manager", None)
+                        if ppm:
+                            ppm.add_context_paths([{"path": first_result.workspace_path, "permission": "read"}])
+                            logger.info(
+                                "[Orchestrator] Added evaluator workspace as read-only context for %s: %s",
+                                parent_agent_id,
+                                first_result.workspace_path,
+                            )
 
         if emitter:
             emitter.emit_raw(
@@ -16221,15 +16254,30 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         }
 
     def _determine_final_agent_from_states(self) -> str | None:
-        """Determine final agent based on current agent states."""
+        """Determine final agent based on current agent states.
+
+        When no winner or votes exist, selects the agent whose most recent
+        answer has the latest timestamp — that agent has the most context
+        from prior iterations.
+        """
         # Find agents with answers
         agents_with_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
 
         if not agents_with_answers:
             return None
 
-        # Return the first agent with an answer (by order in agent_states)
-        return next(iter(agents_with_answers))
+        # Select agent with the most recent answer by timestamp
+        latest_agent = None
+        latest_ts = -1.0
+        for aid in agents_with_answers:
+            agent_answers = self.coordination_tracker.answers_by_agent.get(aid, [])
+            if agent_answers:
+                last_answer = agent_answers[-1]
+                if last_answer.timestamp > latest_ts:
+                    latest_ts = last_answer.timestamp
+                    latest_agent = aid
+
+        return latest_agent or next(iter(agents_with_answers))
 
     async def _handle_followup(
         self,
@@ -16420,7 +16468,98 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                 # Don't fail if tracker serialization fails
                 pass
 
+        # Best-effort: create the final/ directory so downstream consumers
+        # (e.g., resolve_next_tasks_artifact for round_evaluator auto-injection)
+        # find artifacts at the standard path. Normally the presentation phase
+        # creates this, but on SIGTERM/timeout the process is killed before
+        # presentation runs.
+        self._ensure_final_directory_on_shutdown(answers, workspaces_with_content)
+
         return result
+
+    def _ensure_final_directory_on_shutdown(
+        self,
+        answers: dict[str, Any],
+        workspaces: dict[str, str],
+    ) -> None:
+        """Best-effort creation of final/ directory during shutdown.
+
+        When the process is terminated (SIGTERM) before the presentation phase,
+        the normal final snapshot path never runs.  This method creates a
+        minimal final/ directory from the winning agent's snapshot_storage so
+        that downstream consumers (resolve_next_tasks_artifact, session
+        persistence) find artifacts at the standard path.
+        """
+        log_session_dir = get_log_session_dir()
+        if not log_session_dir:
+            return
+
+        # Determine the best agent to use for the final snapshot
+        selected = self._selected_agent or self._determine_final_agent_from_states()
+        if not selected:
+            return
+
+        # Skip if final/ already exists (presentation phase already ran)
+        final_dir = log_session_dir / "final" / selected
+        if final_dir.exists():
+            return
+
+        # Find the agent's snapshot source — prefer snapshot_storage, then
+        # live workspace
+        agent = self.agents.get(selected)
+        if not agent:
+            return
+        fm = getattr(agent.backend, "filesystem_manager", None) if hasattr(agent, "backend") else None
+        if not fm:
+            return
+
+        source: Path | None = None
+        snapshot_storage = getattr(fm, "snapshot_storage", None)
+        if snapshot_storage and Path(snapshot_storage).exists():
+            from .filesystem_manager._filesystem_manager import has_meaningful_content
+
+            if has_meaningful_content(Path(snapshot_storage)):
+                source = Path(snapshot_storage)
+        if source is None:
+            ws = fm.get_current_workspace() if hasattr(fm, "get_current_workspace") else getattr(fm, "cwd", None)
+            if ws and Path(ws).exists():
+                source = Path(ws)
+        if source is None:
+            return
+
+        try:
+            import shutil
+
+            workspace_dest = final_dir / "workspace"
+            workspace_dest.mkdir(parents=True, exist_ok=True)
+            for item in source.iterdir():
+                if item.is_symlink():
+                    continue
+                if item.is_file():
+                    shutil.copy2(item, workspace_dest / item.name)
+                elif item.is_dir():
+                    shutil.copytree(
+                        item,
+                        workspace_dest / item.name,
+                        symlinks=True,
+                        ignore_dangling_symlinks=True,
+                    )
+
+            # Write answer.txt alongside workspace
+            answer_data = answers.get(selected)
+            if answer_data and answer_data.get("answer"):
+                (final_dir / "answer.txt").write_text(answer_data["answer"])
+
+            logger.info(
+                "[Orchestrator] Created final/ directory on shutdown for %s at %s",
+                selected,
+                final_dir,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Orchestrator] Failed to create final/ directory on shutdown: %s",
+                exc,
+            )
 
     def get_all_agent_workspaces(self) -> dict[str, str | None]:
         """Get workspace paths for all agents.

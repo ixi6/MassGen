@@ -319,24 +319,12 @@ class TestAnswerExtraction:
 
             assert "agent_1" in answer
 
-    def test_extract_answer_falls_back_to_first_agent(self):
-        """Test answer selection falls back to first registered agent."""
+    def test_extract_answer_falls_back_to_most_recent_by_timestamp(self):
+        """Test answer selection falls back to most recent answer by timestamp."""
         from massgen.subagent.manager import SubagentManager
 
         with tempfile.TemporaryDirectory() as tmpdir:
             workspace = Path(tmpdir)
-            logs_dir = workspace / "full_logs"
-            logs_dir.mkdir(parents=True)
-
-            # Status with no votes
-            status_data = {
-                "coordination.phase": "initial_answer",
-                "historical_workspaces": {
-                    "agent_1": str(workspace / "workspaces" / "agent_1"),
-                    "agent_2": str(workspace / "workspaces" / "agent_2"),
-                },
-            }
-            (logs_dir / "status.json").write_text(json.dumps(status_data))
 
             # Create agent workspaces with answers
             for agent_id in ["agent_1", "agent_2"]:
@@ -344,11 +332,59 @@ class TestAnswerExtraction:
                 agent_ws.mkdir(parents=True)
                 (agent_ws / "answer.md").write_text(f"Answer from {agent_id}")
 
-            manager = SubagentManager.__new__(SubagentManager)
-            # Should select first agent in registration order
-            answer = manager._extract_answer_from_workspace(workspace, winner_agent_id=None, votes={})
+            # historical_workspaces_raw with timestamps — agent_2 is more recent
+            raw = [
+                {"agentId": "agent_1", "answerLabel": "agent_1", "timestamp": "20260308_100000_000000"},
+                {"agentId": "agent_2", "answerLabel": "agent_2", "timestamp": "20260308_110000_000000"},
+            ]
 
-            assert "agent_1" in answer  # First in dict order
+            manager = SubagentManager.__new__(SubagentManager)
+            # Should select agent_2 (latest timestamp)
+            answer = manager._extract_answer_from_workspace(
+                workspace,
+                winner_agent_id=None,
+                votes={},
+                historical_workspaces={
+                    "agent_1": str(workspace / "workspaces" / "agent_1"),
+                    "agent_2": str(workspace / "workspaces" / "agent_2"),
+                },
+                historical_workspaces_raw=raw,
+            )
+
+            assert "agent_2" in answer
+
+    def test_extract_answer_fallback_picks_latest_not_first(self):
+        """When agent_1 is registered first but agent_2 has a later timestamp, pick agent_2."""
+        from massgen.subagent.manager import SubagentManager
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workspace = Path(tmpdir)
+
+            # Create agent workspaces — agent_1 first in dict order
+            for agent_id in ["agent_1", "agent_2"]:
+                agent_ws = workspace / "workspaces" / agent_id
+                agent_ws.mkdir(parents=True)
+                (agent_ws / "answer.md").write_text(f"Answer from {agent_id}")
+
+            # agent_1 answered earlier, agent_2 answered later
+            raw = [
+                {"agentId": "agent_1", "answerLabel": "agent_1", "timestamp": "20260308_090000_000000"},
+                {"agentId": "agent_2", "answerLabel": "agent_2", "timestamp": "20260308_100000_000000"},
+            ]
+
+            manager = SubagentManager.__new__(SubagentManager)
+            answer = manager._extract_answer_from_workspace(
+                workspace,
+                winner_agent_id=None,
+                votes={},
+                historical_workspaces={
+                    "agent_1": str(workspace / "workspaces" / "agent_1"),
+                    "agent_2": str(workspace / "workspaces" / "agent_2"),
+                },
+                historical_workspaces_raw=raw,
+            )
+
+            assert "agent_2" in answer  # Latest timestamp, NOT first registered
 
     def test_extract_answer_returns_none_when_no_answers(self):
         """Test answer extraction returns None when no answers available."""

@@ -261,8 +261,8 @@ def test_round_evaluator_prompt_keeps_parent_workflow_out_of_returned_packet():
     assert "new_answer" in config.system_prompt
 
 
-def test_round_evaluator_prompt_requires_returning_full_synthesized_packet():
-    """round_evaluator should return the merged packet directly, not only point at a child artifact."""
+def test_round_evaluator_prompt_saves_files_and_concise_answer():
+    """round_evaluator should save files to workspace and submit a concise answer."""
     from massgen.subagent.type_scanner import scan_subagent_types
 
     builtin_dir = Path(__file__).parent.parent / "subagent_types"
@@ -274,10 +274,10 @@ def test_round_evaluator_prompt_requires_returning_full_synthesized_packet():
     config = types[0]
     lower = config.system_prompt.lower()
 
-    assert "return the full synthesized packet directly in your answer" in lower
-    assert "do not only point" in lower
-    assert "another agent's file" in lower
     assert "critique_packet.md" in config.system_prompt
+    assert "next_tasks.json" in config.system_prompt
+    assert "concise summary" in lower
+    assert "do not paste the full critique packet into your answer" in lower
 
 
 def test_scanner_project_overrides_builtin(tmp_path):

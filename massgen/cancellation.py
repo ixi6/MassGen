@@ -64,6 +64,7 @@ class CancellationManager:
         self._cancelled = False
         self._orchestrator: Optional["Orchestrator"] = None
         self._original_handler = None
+        self._original_sigterm_handler = None
         self._save_callback: Callable[[dict[str, Any]], None] | None = None
         self._multi_turn = False
         self._partial_saved = False
@@ -93,6 +94,10 @@ class CancellationManager:
         self._partial_saved = False
         self._multi_turn = multi_turn
         self._original_handler = signal.signal(signal.SIGINT, self._handle_signal)
+        # Also handle SIGTERM so child MassGen processes (spawned by the
+        # subagent manager) get a chance for graceful shutdown — including
+        # creating the final/ directory — before being killed.
+        self._original_sigterm_handler = signal.signal(signal.SIGTERM, self._handle_signal)
         # Set reference on orchestrator so coordination UI can check cancellation status
         if orchestrator is not None:
             orchestrator.cancellation_manager = self
@@ -167,16 +172,19 @@ class CancellationManager:
             raise KeyboardInterrupt
 
     def unregister(self) -> None:
-        """Restore original signal handler.
+        """Restore original signal handlers.
 
         Should be called in a finally block to ensure cleanup.
         """
         if self._original_handler is not None:
             signal.signal(signal.SIGINT, self._original_handler)
-            logger.debug("CancellationManager unregistered, original handler restored")
+        if self._original_sigterm_handler is not None:
+            signal.signal(signal.SIGTERM, self._original_sigterm_handler)
+            logger.debug("CancellationManager unregistered, original handlers restored")
         self._orchestrator = None
         self._save_callback = None
         self._original_handler = None
+        self._original_sigterm_handler = None
 
     @property
     def is_cancelled(self) -> bool:

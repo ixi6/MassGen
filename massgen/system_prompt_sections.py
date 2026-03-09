@@ -1107,6 +1107,18 @@ implementing all tasks, verify them and call `new_answer` to submit your
 improved work. If the deliverable is a pure text artifact, place the final
 artifact body directly in `new_answer.content`.
 
+**Injected tasks are mandatory, not advisory.** The evaluator has access to
+all candidate answers, cross-answer analysis, and the full evaluation criteria.
+Its task plan reflects where your work genuinely falls short — even when you
+believe you have already addressed an issue. You must implement every injected
+task. Do not skip tasks because you think they are already done, do not
+reinterpret the evaluator's intent, and do not substitute your own lighter
+version of a requested change. If the evaluator says to rebuild a component
+using a different approach, that means your current approach is inadequate
+even if it appears to work. Follow the `implementation_guidance` on each task
+closely — it contains specific techniques and code patterns chosen because
+the evaluator determined your prior approach is insufficient.
+
 Your task plan may have two categories:
 1. **OPPORTUNITIES** (explore tasks) — independent ideas the evaluator identified
    that could represent a leap forward. Review these first. If adopting an
@@ -1119,14 +1131,22 @@ approaches that could produce a fundamentally better result than incremental
 fixes alone.
 
 """
-            if specialized_subagents_available:
+            if specialized_subagents_available and builder_enabled:
                 _phase1_scope += """
 **Builder delegation for structural/transformative tasks**: Tasks marked with
-`execution: {"mode": "delegate", "subagent_type": "builder"}` are too large
-or ambitious to do inline safely. Inline means you execute the task yourself
-in the parent agent without spawning a helper. Delegate each builder task to a
-separate builder subagent — spawn all independent builder tasks in a single
-`spawn_subagents()` call so they run in parallel. Incremental tasks marked with
+`execution: {"mode": "delegate", "subagent_type": "builder"}` must be
+delegated to builder subagents. Do not implement them inline — the evaluator
+marked them as delegate because they require fresh context, deep focus, or a
+fundamentally different approach that benefits from isolation. Delegate each
+builder task to a separate builder subagent. Spawn all independent builder
+tasks in a single `spawn_subagents()` call so they run in parallel.
+Incremental tasks marked with `execution: {"mode": "inline"}` stay with you.
+"""
+            elif specialized_subagents_available:
+                _phase1_scope += """
+**Delegation for specialized tasks**: Tasks marked with
+`execution: {"mode": "delegate"}` should be delegated to the appropriate
+subagent type when available. Incremental tasks marked with
 `execution: {"mode": "inline"}` stay with you.
 """
             else:
@@ -5417,20 +5437,20 @@ This is an **improvement loop**, not just a verification step:
 
 ### Dynamic Verification: Think Like a User
 
-A single static observation (screenshot, one test run) is often not sufficient. Users don't just look at artifacts - they interact with them:
+A single static observation (screenshot, one test run) is often not sufficient. Users don't just look at artifacts - they interact with them.
 
-| Artifact Type | Shallow Check (incomplete) | Full Check (required) |
-|--------------|---------------------------|--------------------------|
-| Website/App | Screenshot looks good | Click all buttons, navigate all pages, test forms, verify links work |
-| Game | Screenshot shows UI | Play the game - test controls, scoring, game over states, restart |
-| Animation/transition | Single frame looks correct | Record and review the full motion sequence |
-| Interactive tool | Interface renders | Use every feature, test edge cases, verify all interactions |
-| Script/Code | No errors on run | Test with various inputs, edge cases, invalid data |
-| API | Single call works | Test all endpoints, error states, authentication flows |
-| Audio output | File exists | Listen/analyze the actual audio content — play it, don't just check the file exists |
-| Data pipeline | Output exists | Validate accuracy, test with edge case inputs |
-| Visual document / static artifact | File generates without error | Render to image(s) and **view each page/slide** — does layout, imagery, colors, and content actually look right? \
-Render to images using available tools, then read_media each one. |
+Don't classify by file extension — classify by **what happens when a user opens it**. \
+An SVG can be static or animated. An HTML file can be a document or an app. \
+Check the source for motion/interaction before choosing your verification method.
+
+| What does it do? | Shallow Check (incomplete) | Full Check (required) |
+|-----------------|---------------------------|--------------------------|
+| **Stays still** (static image, PDF, document, diagram) | File generates without error | Render and **view** every page/section with \
+read_media — does layout, imagery, colors, and content actually look right? |
+| **Moves** (animation, transition, video, ticking UI) | Single frame looks correct | Open in browser/player, **record video**, review the full motion sequence |
+| **Responds to input** (website, app, game, form, interactive tool) | Screenshot looks good | **Use it** — click all buttons, navigate all pages, test controls/forms/states, try to break it |
+| **Produces output** (script, API, data pipeline) | Runs without error | Test with varied and edge-case inputs, validate output accuracy |
+| **Makes sound** (audio, music, TTS) | File exists | **Listen** to the actual audio content — play it, don't just check the file exists |
 
 ### Coverage Check Before Diagnosis
 

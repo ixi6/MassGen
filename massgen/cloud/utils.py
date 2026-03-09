@@ -5,6 +5,8 @@ import tarfile
 from pathlib import Path
 from typing import Any
 
+from .modal_app import CONTEXT_MOUNT_PATH, CONTEXT_VOLUME_NAME
+
 
 def parse_automation_value(label: str, stderr_text: str) -> str | None:
     pattern = re.compile(rf"^{re.escape(label)}:\s*(.+)$", re.MULTILINE)
@@ -28,9 +30,6 @@ def extract_artifacts(tar_b64: str, out_dir: Path) -> None:
 
 
 # ── Modal Volume helpers for context path upload ──
-
-CONTEXT_VOLUME_NAME = "massgen-context"
-CONTEXT_MOUNT_PATH = "/context"
 
 
 def process_context_paths(

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
 
@@ -415,30 +418,46 @@ async def test_stream_agent_execution_inserts_runtime_user_instructions_after_or
 @pytest.mark.asyncio
 async def test_stream_agent_execution_inserts_round_evaluator_context_before_current_answers(
     mock_orchestrator,
+    tmp_path: Path,
 ):
     """Orchestrator-provided round-evaluator artifacts should be surfaced in the next round's user message."""
-    from massgen.subagent.models import SubagentResult
+    from massgen.subagent.models import RoundEvaluatorResult, SubagentResult
 
     orchestrator = mock_orchestrator(num_agents=1)
     orchestrator.current_task = "Revise the draft using evaluator critique."
     agent_id = "agent_a"
 
     orchestrator.agent_states[agent_id].answer = "answer v1"
+    evaluator_workspace = tmp_path / "round_evaluator"
+    evaluator_workspace.mkdir()
+    critique_path = evaluator_workspace / "critique_packet.md"
+    critique_path.write_text(
+        "Detailed critique packet\n\nTop weakness: tighten the evidence trail.",
+        encoding="utf-8",
+    )
+    (evaluator_workspace / "verdict.json").write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "verdict": "converged",
+                "scores": {"E1": 9},
+            },
+        ),
+        encoding="utf-8",
+    )
+    evaluator_result = RoundEvaluatorResult.from_subagent_result(
+        SubagentResult.create_success(
+            subagent_id="round_eval",
+            answer="Short evaluator summary",
+            workspace_path=str(evaluator_workspace),
+            execution_time_seconds=1.0,
+        ),
+    )
     orchestrator._queue_round_start_context_block(
         agent_id,
         orchestrator._format_round_evaluator_result_block(
             "round_eval",
-            SubagentResult.create_success(
-                subagent_id="round_eval",
-                answer=(
-                    "Answer label: agent1.1\n"
-                    "Workspace path: /tmp/temp_workspaces/agent1/round_evaluator\n"
-                    "Answer path: /tmp/temp_workspaces/agent1/round_evaluator/answer.txt\n"
-                    "Detailed critique packet"
-                ),
-                workspace_path="/tmp/temp_workspaces/agent1/round_evaluator",
-                execution_time_seconds=1.0,
-            ),
+            evaluator_result,
         ),
     )
 
@@ -474,8 +493,8 @@ async def test_stream_agent_execution_inserts_round_evaluator_context_before_cur
         "",
     )
     assert "ROUND EVALUATOR RESULT" in first_user_message
-    assert "agent1.1" in first_user_message
-    assert "/tmp/temp_workspaces/agent1/round_evaluator/answer.txt" in first_user_message
+    assert '<evaluator_packet subagent_id="round_eval" status="success">' in first_user_message
+    assert str(critique_path) in first_user_message
     assert "Detailed critique packet" in first_user_message
     assert "<CURRENT ANSWERS from the agents>" in first_user_message
     assert first_user_message.index("ROUND EVALUATOR RESULT") < first_user_message.index(

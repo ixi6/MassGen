@@ -249,6 +249,14 @@ class TestPresetContentSanity:
         assert categories.count("must") == 3
         assert categories.count("should") == 1 and categories.count("could") == 1
 
+    def test_round_evaluator_preset_exists(self):
+        criteria = get_criteria_for_preset("round_evaluator")
+        categories = [c.category for c in criteria]
+        assert len(criteria) == 7
+        assert categories.count("must") == 4
+        assert categories.count("should") == 2
+        assert categories.count("could") == 1
+
 
 # ---------------------------------------------------------------------------
 # Inline criteria tests

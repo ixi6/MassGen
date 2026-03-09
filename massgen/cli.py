@@ -268,6 +268,7 @@ def _apply_orchestrator_runtime_params(
         "defer_voting_until_all_answered",
         "coordination_mode",
         "presenter_agent",
+        "final_answer_strategy",
     )
     for field_name in direct_fields:
         if field_name in orchestrator_cfg:
@@ -280,16 +281,12 @@ def _apply_orchestrator_runtime_params(
     elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
         orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
 
-    if orchestrator_cfg.get("skip_coordination_rounds", False):
-        orchestrator_config.skip_coordination_rounds = True
     if orchestrator_cfg.get("debug_final_answer"):
         orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
-    if orchestrator_cfg.get("skip_final_presentation", False):
-        orchestrator_config.skip_final_presentation = True
-    if orchestrator_cfg.get("skip_voting", False):
-        orchestrator_config.skip_voting = True
-    if orchestrator_cfg.get("disable_injection", False):
-        orchestrator_config.disable_injection = True
+
+    for bool_field in ("skip_final_presentation", "skip_voting", "disable_injection", "skip_coordination_rounds"):
+        if bool_field in orchestrator_cfg:
+            setattr(orchestrator_config, bool_field, bool(orchestrator_cfg[bool_field]))
 
 
 def _is_planning_turn(
@@ -3172,6 +3169,8 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         subagent_types=coord_cfg.get("subagent_types"),
         round_evaluator_before_checklist=coord_cfg.get("round_evaluator_before_checklist", False),
         orchestrator_managed_round_evaluator=coord_cfg.get("orchestrator_managed_round_evaluator", False),
+        round_evaluator_skip_synthesis=coord_cfg.get("round_evaluator_skip_synthesis", False),
+        round_evaluator_refine=coord_cfg.get("round_evaluator_refine", False),
         enable_quality_rethink_on_iteration=coord_cfg.get("enable_quality_rethink_on_iteration", False),
         enable_novelty_on_iteration=coord_cfg.get("enable_novelty_on_iteration", False),
         novelty_injection=coord_cfg.get("novelty_injection", "none"),

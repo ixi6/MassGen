@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.61 (March 9, 2026)** - Round Evaluator Paradigm
+New round evaluator subagent type that delegates evaluation to specialized evaluator subagents for deeper quality assessment. Major orchestrator refactoring with improved evaluation prompts, task plan injection, and subagent fixes.
+
 **v0.1.60 (March 6, 2026)** - Multimodal Tools, Subagent Enhancements & GPT-5.4
 Rewritten read_media with clearer schema and MediaCallLedgerHook for media call tracking. Subagent enhancements: inherit_spawning_agent_backend, final_answer_strategy, per-agent subagent_agents. GPT-5.4 as default OpenAI flagship. Decomp mode cooperates with checklist workflow. Codex prompt caching calculation fix for pricing accuracy.
 
@@ -18,10 +21,28 @@ Planning improvements with auto-added improvements to task plan and plan review 
 **v0.1.58 (March 2, 2026)** - Multimodal Revamp, Nvidia NIM Backend & Quality Rethinking
 Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image generation, and Grok multimedia. Nvidia NIM backend for NVIDIA Inference Microservices. Quality rethinking subagent for per-element craft improvements. Smarter checklists with improve/preserve listings. Logging architecture refactor and CLI mode flags.
 
-**v0.1.57 (February 27, 2026)** - Delegated Subagent Protocol & Builder Subagent
-File-based delegation protocol for container-to-host subagent spawning. New builder subagent type for large artifact generation with fresh context. Claude Code reasoning parameters for updated SDK. Smarter convergence with substantiveness tracking and diagnostic report gating.
-
 ---
+
+## [0.1.61] - 2026-03-09
+
+### Added
+- **Round Evaluator Subagent Type** ([#986](https://github.com/massgen/MassGen/pull/986)): New `round_evaluator` subagent type that delegates evaluation to specialized evaluator subagents for deeper quality assessment
+- **`round_evaluator_example.yaml` Config** ([#986](https://github.com/massgen/MassGen/pull/986)): New example config for the round evaluator paradigm
+
+### Changed
+- **Orchestrator Refactoring** ([#986](https://github.com/massgen/MassGen/pull/986)): Major orchestrator refactoring (+1,189 lines) to support the round evaluation workflow
+- **Evaluation Prompts** ([#986](https://github.com/massgen/MassGen/pull/986)): Improved evaluation prompts for clearer, more actionable feedback with task plan injection
+- **Simplified Config** ([#986](https://github.com/massgen/MassGen/pull/986)): Simplified config handling for evaluation parameters
+- **SUBAGENT.md Generality** ([#986](https://github.com/massgen/MassGen/pull/986)): Improved SUBAGENT.md for broader subagent compatibility
+
+### Fixed
+- **Session Resumption** ([#986](https://github.com/massgen/MassGen/pull/986)): Fixed resumption from already-resumed logs
+- **Round Evaluation Prompts** ([#986](https://github.com/massgen/MassGen/pull/986)): Improved round evaluation prompt clarity
+
+### Technical Details
+- **Major Focus**: Round evaluator paradigm — delegated evaluation to specialized subagents
+- **PRs Merged**: [#986](https://github.com/massgen/MassGen/pull/986) (improve_verification_time)
+- **Contributors**: @ncrispino (8 commits), @HenryQi (1 commit)
 
 ## [0.1.60] - 2026-03-06
 

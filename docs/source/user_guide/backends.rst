@@ -37,6 +37,9 @@ MassGen supports these backend types (configured via ``type`` field in YAML):
    * - ``claude_code``
      - Anthropic (SDK)
      - Claude Sonnet 4, Claude Opus 4 (with dev tools)
+   * - ``codex``
+     - OpenAI (CLI)
+     - GPT-5.4, GPT-5.3-Codex, GPT-5.2-Codex, GPT-5.1-Codex
    * - ``gemini``
      - Google
      - Gemini 2.5 Flash, Gemini 2.5 Pro
@@ -108,6 +111,16 @@ Different backends support different built-in tools:
      - 🔧
      - 🔧
      - 🔧
+     - ✅
+     - ⭐
+     - ✅
+   * - ``codex``
+     - ⭐
+     - ❌
+     - ⭐
+     - ⭐
+     - ❌
+     - ❌
      - ✅
      - ⭐
      - ✅
@@ -204,7 +217,7 @@ Different backends support different built-in tools:
 * **Custom Tools:**
 
   * Custom tools allow you to give agents access to your own Python functions
-  * Most backends support custom tools (OpenAI, Claude, Claude Code, Gemini, Grok, Chat Completions, LM Studio, Inference)
+  * Most backends support custom tools (OpenAI, Claude, Claude Code, Codex, Gemini, Grok, Chat Completions, LM Studio, Inference)
   * **Azure OpenAI** and **AG2** do not support custom tools as they inherit from the base backend class without the custom tools layer
   * Custom tools are essential for multimodal understanding features (``understand_image``, ``understand_video``, ``understand_audio``, ``understand_file``)
   * See :doc:`tools/custom_tools` for complete documentation on creating and using custom tools
@@ -225,7 +238,7 @@ Different backends support different built-in tools:
 
   * **Bash/Shell**: MassGen-level feature with **direct workspace access**
 
-    * ⭐ (``claude_code`` only): Native Bash tool built into Claude Code
+    * ⭐ (``claude_code``, ``codex``): Native shell tools built into Claude Code and Codex
     * ✅ (all MCP-enabled backends): Universal bash/shell via ``enable_mcp_command_line: true``
     * **When to use**: Code that needs to interact with your project files, run tests, execute scripts
     * See :doc:`tools/code_execution` for detailed setup and comparison
@@ -234,7 +247,9 @@ Different backends support different built-in tools:
 
 * **Filesystem:**
 
-  * ⭐ (``claude_code`` only): Native filesystem tools (Read, Write, Edit, Bash, Grep, Glob)
+  * ⭐ (``claude_code``, ``codex``): Native filesystem tools provided by the backend
+  * ``claude_code``: Read, Write, Edit, Bash, Grep, Glob
+  * ``codex``: shell, file_read, file_write, file_edit
   * ✅ (all backends with ``cwd`` parameter): Filesystem operations handled automatically through workspace configuration
   * See :doc:`files/file_operations` for detailed filesystem configuration
 

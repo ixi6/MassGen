@@ -12,7 +12,7 @@ cli.py -> orchestrator.py -> chat_agent.py -> backend/*.py
 
 ## Key Components
 
-**Orchestrator** (`orchestrator.py`): Central coordinator managing parallel agent execution, voting, and consensus detection. Handles coordination phases: initial_answer -> enforcement (voting) -> presentation.
+**Orchestrator** (`orchestrator.py`): Central coordinator managing parallel agent execution, voting, and consensus detection. Handles coordination phases: initial_answer -> enforcement (voting) -> presentation. When an orchestrator timeout fires after agents have already produced answers, it salvages the best available existing answer directly instead of starting a new presenter pass.
 
 **Backends** (`backend/`): Provider-specific implementations. All inherit from `base.py`. Add new backends by:
 1. Create `backend/new_provider.py` inheriting from base
@@ -32,12 +32,13 @@ See also: [Backend Registration Checklist in CLAUDE.md Memory](../../CLAUDE.md)
 ```text
 base.py (abstract interface)
     +-- base_with_custom_tool_and_mcp.py (tool + MCP support)
-            |-- response.py (OpenAI Response API)
-            |-- chat_completions.py (generic OpenAI-compatible)
-            |-- claude.py (Anthropic)
-            |-- claude_code.py (Claude Code SDK)
-            |-- gemini.py (Google)
-            +-- grok.py (xAI)
+    |       |-- response.py (OpenAI Response API)
+    |       |-- chat_completions.py (generic OpenAI-compatible)
+    |       |-- claude.py (Anthropic)
+    |       |-- gemini.py (Google)
+    |       +-- grok.py (xAI)
+    +-- claude_code.py (Claude Code SDK; native tools + SDK MCP path)
+    +-- codex.py (OpenAI Codex CLI; native tools + workspace .codex MCP path)
 ```
 
 ## Coordination as Evolutionary Search

@@ -328,7 +328,7 @@ Supported Backends:
 * **API-based**: OpenAI, Claude, Gemini, Grok, Azure OpenAI
 * **Local**: LM Studio, vLLM, SGLang
 * **External**: AG2 framework agents
-* **Custom**: Claude Code CLI with filesystem access
+* **Native tool backends**: Claude Code SDK and Codex CLI with filesystem and shell access
 
 Implementation: ``massgen/backend/``
 
@@ -388,6 +388,7 @@ Code Organization
    │   ├── response.py          # OpenAI
    │   ├── grok.py              # xAI Grok
    │   ├── claude_code.py       # Claude Code CLI
+   │   ├── codex.py            # OpenAI Codex CLI
    │   ├── external.py          # External frameworks (AG2)
    │   └── ...
    ├── frontend/                 # UI components

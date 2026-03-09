@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.59 Features](#-latest-features-v0159)
+- [v0.1.61 Features](#-latest-features-v0161)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.59)](#recent-achievements-v0159)
-- [Previous Achievements (v0.0.3 - v0.1.58)](#previous-achievements-v003---v0158)
+- [Recent Achievements (v0.1.61)](#recent-achievements-v0161)
+- [Previous Achievements (v0.0.3 - v0.1.60)](#previous-achievements-v003---v0160)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.60 Roadmap](#v0160-roadmap)
+- [v0.1.62 Roadmap](#v0162-roadmap)
 </details>
 
 <details open>
@@ -155,23 +155,22 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.60)
+## 🆕 Latest Features (v0.1.61)
 
-**🎉 Released: March 6, 2026**
+**🎉 Released: March 9, 2026**
 
-**What's New in v0.1.60:**
-- **🛠️ Multimodal Tool Improvements** - Rewritten `read_media` with clearer schema and `MediaCallLedgerHook` for tracking media calls.
-- **🤖 Subagent Enhancements** - `inherit_spawning_agent_backend` for automatic backend inheritance, `final_answer_strategy` for child orchestrator policy, per-agent `subagent_agents` override.
-- **🧠 GPT-5.4** - New default OpenAI flagship model across all coordination modes.
-- **🔄 Decomp + Checklist Cooperation** - Decomp mode works with checklist workflow for quality-gated subtask iteration.
+**What's New in v0.1.61:**
+- **🔄 Round Evaluator Paradigm** - New `round_evaluator` subagent type that delegates evaluation to specialized evaluator subagents for deeper quality assessment.
+- **📝 Evaluation Improvements** - Improved evaluation prompts with task plan injection for context-aware assessment.
+- **🔧 Orchestrator Refactoring** - Major orchestrator refactoring (+1,189 lines) to support the round evaluation workflow.
 
-**Try v0.1.60 Features:**
+**Try v0.1.61 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Choose backend 'openai' with model 'gpt-5.4' in the setup wizard to start using GPT-5.4
-uv run massgen --quickstart
+# Try the round evaluator paradigm
+uv run massgen --config @examples/features/round_evaluator_example.yaml "Create a website for an AI startup with polished visuals and interactive elements"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1233,31 +1232,27 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.60)
+### Recent Achievements (v0.1.61)
 
-**🎉 Released: March 6, 2026**
+**🎉 Released: March 9, 2026**
 
-#### Multimodal Tools
-- **Rewritten `read_media` Tool** ([#978](https://github.com/massgen/MassGen/pull/978)): Clearer schema, better error handling, and improved naming
-- **`MediaCallLedgerHook`**: New hook for tracking `read_media` and `generate_media` tool calls
+#### Round Evaluator Paradigm
+- **Round Evaluator Subagent Type** ([#986](https://github.com/massgen/MassGen/pull/986)): New `round_evaluator` subagent type that delegates evaluation to specialized evaluator subagents for deeper quality assessment
+- **Orchestrator Refactoring**: Major orchestrator refactoring (+1,189 lines) to support the round evaluation workflow
+- **New Config**: `round_evaluator_example.yaml` for easy adoption
 
-#### Subagent Enhancements
-- **`inherit_spawning_agent_backend`** ([#978](https://github.com/massgen/MassGen/pull/978)): Subagents automatically inherit the spawning agent's backend configuration
-- **`final_answer_strategy`**: Configurable child orchestrator final-answer policy (winner_reuse, winner_present, synthesize)
-- **Per-Agent `subagent_agents`**: Per-agent override for subagent agent configs; orchestrator config file support with robust JSON parsing
-
-#### Model & Coordination
-- **GPT-5.4 Support** ([#978](https://github.com/massgen/MassGen/pull/978)): New default OpenAI flagship model added to the model registry
-- **Decomp + Checklist Cooperation**: Decomposition mode works with the checklist workflow for quality-gated subtask iteration
-- **Improved Verification Round Time**: Better `verification_latest` prompts for faster verification rounds
+#### Evaluation Improvements
+- **Improved Evaluation Prompts** ([#986](https://github.com/massgen/MassGen/pull/986)): Clearer, more actionable feedback with task plan injection
+- **Simplified Config**: Simplified config handling for evaluation parameters
+- **SUBAGENT.md Generality**: Improved SUBAGENT.md for broader subagent compatibility
 
 #### Fixes
-- **Checklist & Proposal Injections**: More reliable checklist behavior with improved proposal injection
-- **Codex Prompt Caching**: Fixed prompt caching calculation for pricing accuracy
-- **Task Plan Refresh**: Fixed task plan refresh during quality rounds
-- **Skill Prefix Handling**: Fixed edge cases in skill prefix resolution
+- **Session Resumption** ([#986](https://github.com/massgen/MassGen/pull/986)): Fixed resumption from already-resumed logs
+- **Round Evaluation Prompts**: Improved round evaluation prompt clarity
 
-### Previous Achievements (v0.0.3 - v0.1.59)
+### Previous Achievements (v0.0.3 - v0.1.60)
+
+✅ **Multimodal Tools, Subagent Enhancements & GPT-5.4 (v0.1.60)**: Rewritten read_media with clearer schema and MediaCallLedgerHook. Subagent enhancements with inherit_spawning_agent_backend, final_answer_strategy, per-agent subagent_agents. GPT-5.4 as default OpenAI flagship. Decomp mode cooperates with checklist workflow. Codex prompt caching fix.
 
 ✅ **Quality Round Improvements (v0.1.59)**: Auto-add improvements to task plan, plan review enhancements. Better eval gen config, checklist fixes, Gemini tool name normalization for MCP. Subagent behavior adjustments, Docker skill write access fixes. Video gen skill adjustments and impact metric restoration.
 
@@ -1522,9 +1517,9 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.60 Roadmap
+### v0.1.62 Roadmap
 
-Version 0.1.60 focuses on improving skill use and exploration:
+Version 0.1.62 focuses on improving skill use and exploration:
 
 #### Planned Features
 - **Improve Skill Use and Exploration** ([#873](https://github.com/massgen/MassGen/issues/873)): Local skill execution, skill registry with hierarchical organization, and skill consolidation workflow

@@ -362,6 +362,7 @@ class TestSubagentOrchestratorConfig:
         assert config.coordination == {}
         assert config.parse_at_references is False
         assert config.inherit_spawning_agent_backend is False
+        assert config.shared_child_team_types == ["round_evaluator"]
         assert config.final_answer_strategy is None
 
     def test_enabled_with_custom_agents(self):
@@ -410,6 +411,7 @@ class TestSubagentOrchestratorConfig:
             "coordination": {"voting": {"enabled": True}},
             "parse_at_references": False,
             "inherit_spawning_agent_backend": False,
+            "shared_child_team_types": ["round_evaluator", "builder"],
             "final_answer_strategy": "synthesize",
         }
         config = SubagentOrchestratorConfig.from_dict(data)
@@ -420,6 +422,7 @@ class TestSubagentOrchestratorConfig:
         assert config.coordination == {"voting": {"enabled": True}}
         assert config.parse_at_references is False
         assert config.inherit_spawning_agent_backend is False
+        assert config.shared_child_team_types == ["round_evaluator", "builder"]
         assert config.final_answer_strategy == "synthesize"
 
     def test_from_dict_with_defaults(self):
@@ -442,6 +445,7 @@ class TestSubagentOrchestratorConfig:
             coordination={"planning": True},
             parse_at_references=False,
             inherit_spawning_agent_backend=False,
+            shared_child_team_types=["round_evaluator", "builder"],
             final_answer_strategy="winner_present",
         )
         data = config.to_dict()
@@ -450,6 +454,7 @@ class TestSubagentOrchestratorConfig:
         assert data["coordination"] == {"planning": True}
         assert data["parse_at_references"] is False
         assert data["inherit_spawning_agent_backend"] is False
+        assert data["shared_child_team_types"] == ["round_evaluator", "builder"]
         assert data["final_answer_strategy"] == "winner_present"
 
     def test_roundtrip_serialization(self):
@@ -475,7 +480,19 @@ class TestSubagentOrchestratorConfig:
         assert restored.coordination == original.coordination
         assert restored.parse_at_references == original.parse_at_references
         assert restored.inherit_spawning_agent_backend == original.inherit_spawning_agent_backend
+        assert restored.shared_child_team_types == original.shared_child_team_types
         assert restored.final_answer_strategy == original.final_answer_strategy
+
+    def test_shared_child_team_types_from_dict(self):
+        """shared_child_team_types should parse from YAML dicts."""
+        config = SubagentOrchestratorConfig.from_dict(
+            {
+                "enabled": True,
+                "shared_child_team_types": ["round_evaluator", "builder"],
+            },
+        )
+        assert config.enabled is True
+        assert config.shared_child_team_types == ["round_evaluator", "builder"]
 
     def test_inherit_spawning_agent_backend_from_dict(self):
         """inherit_spawning_agent_backend should parse from YAML dicts."""

@@ -32,7 +32,7 @@ response = backend.generate(
 
 ### Stateful Backends
 
-**Examples:** `Claude Code CLI`, Interactive CLI sessions
+**Examples:** `Claude Code CLI`, `Codex CLI`, interactive CLI sessions
 
 **Characteristics:**
 - Maintains conversation context across interactions
@@ -105,6 +105,7 @@ def reset_conversation(self):
 - `base.py` - Base backend interface with `LLMBackend` abstract class
 - `chat_completions.py` - Stateless ChatCompletion backends (OpenAI-compatible)
 - `claude_code.py` - **Stateful** Claude Code backend with streaming support
+- `codex.py` - **Stateful** Codex backend with native tools and session resumption
 - `cli_base.py` - Base CLI backend functionality
 
 ## Benefits of Proper Implementation

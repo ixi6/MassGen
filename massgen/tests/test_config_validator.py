@@ -1048,6 +1048,74 @@ class TestCommonBadConfigs:
         assert not result.is_valid()
         assert any("inherit_spawning_agent_backend" in error.location for error in result.errors)
 
+    def test_subagent_orchestrator_shared_child_team_types_accepts_string_lists(self):
+        """shared_child_team_types should accept non-empty string lists."""
+        config = {
+            "agents": [
+                {"id": "agent_a", "backend": {"type": "gemini", "model": "gemini-3-flash-preview"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "enable_subagents": True,
+                    "subagent_orchestrator": {
+                        "enabled": True,
+                        "shared_child_team_types": ["round_evaluator", "builder"],
+                    },
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert result.is_valid(), [error.message for error in result.errors]
+
+    def test_subagent_orchestrator_shared_child_team_types_rejects_non_list(self):
+        """shared_child_team_types should reject non-list values."""
+        config = {
+            "agents": [
+                {"id": "agent_a", "backend": {"type": "gemini", "model": "gemini-3-flash-preview"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "enable_subagents": True,
+                    "subagent_orchestrator": {
+                        "enabled": True,
+                        "shared_child_team_types": "builder",
+                    },
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("shared_child_team_types" in error.location for error in result.errors)
+
+    def test_subagent_orchestrator_shared_child_team_types_rejects_empty_entries(self):
+        """shared_child_team_types should reject empty or whitespace entries."""
+        config = {
+            "agents": [
+                {"id": "agent_a", "backend": {"type": "gemini", "model": "gemini-3-flash-preview"}},
+            ],
+            "orchestrator": {
+                "coordination": {
+                    "enable_subagents": True,
+                    "subagent_orchestrator": {
+                        "enabled": True,
+                        "shared_child_team_types": ["round_evaluator", "  "],
+                    },
+                },
+            },
+        }
+
+        validator = ConfigValidator()
+        result = validator.validate_config(config)
+
+        assert not result.is_valid()
+        assert any("shared_child_team_types" in error.location for error in result.errors)
+
     def test_agent_subagent_agents_must_be_a_list(self):
         """Top-level per-agent subagent_agents should reject non-list values."""
         config = {

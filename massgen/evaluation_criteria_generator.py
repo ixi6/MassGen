@@ -318,6 +318,54 @@ _CRITERIA_PRESETS: dict[str, list[tuple[str, str]]] = {
             "could",
         ),
     ],
+    "round_evaluator": [
+        (
+            "The evaluator packet fully follows the round_evaluator contract."
+            " Required sections are present, the output stays critique-only, and"
+            " it does not drift into checklist payload drafting, parent workflow"
+            " tool instructions, or terminal outcome recommendations.",
+            "must",
+        ),
+        (
+            "criteria_interpretation is rigorous for every active criterion."
+            " It explains what the criterion truly demands, what excellent work"
+            " would look like, and which false positives or shallow passes might"
+            " otherwise slip through.",
+            "must",
+        ),
+        (
+            "criterion_findings are evidence-grounded and criterion-specific."
+            " They cite concrete details from the candidate answers, identify"
+            " hidden risks, and clearly separate weak spots from source-answer"
+            " strengths worth carrying forward.",
+            "must",
+        ),
+        (
+            "cross_answer_synthesis and preserve guidance are decisive and"
+            " lossless. The packet makes clear which answer is strongest on"
+            " which dimension, what no answer gets right yet, and what strengths"
+            " must not regress in the next revision.",
+            "must",
+        ),
+        (
+            "improvement_spec is actionable, prioritized, and concrete enough"
+            " that the parent can implement it with minimal reinterpretation."
+            " It should describe what to change and how to change it, not just"
+            " restate the problem.",
+            "should",
+        ),
+        (
+            "verification_plan and evidence_gaps are specific and useful."
+            " They name what still needs to be checked, what evidence is"
+            " missing, and how the parent can close those gaps instead of"
+            " falling back to generic 'test more' guidance.",
+            "should",
+        ),
+        (
+            "unexplored_approaches includes at least one grounded, non-obvious" " direction that could beat every current answer rather than merely" " patching the current weaknesses.",
+            "could",
+        ),
+    ],
 }
 
 # Public constant for validation (used by config_validator and tests)
@@ -391,8 +439,7 @@ def get_criteria_for_preset(preset: str) -> list[GeneratedCriterion]:
     """Return domain-specific criteria for a named preset.
 
     Args:
-        preset: One of the known preset names (persona, decomposition,
-                evaluation, prompt, analysis).
+        preset: One of the known preset names.
 
     Returns:
         List of GeneratedCriterion with E1..E5 IDs.
@@ -886,18 +933,20 @@ Generate evaluation criteria now for the task above."""
             simplified = []
             for i, config in enumerate(agent_configs):
                 backend = config.get("backend", {})
+                backend_cfg: dict = {
+                    "type": backend.get("type", "openai"),
+                    "model": backend.get("model"),
+                    "enable_mcp_command_line": False,
+                    "enable_code_based_tools": False,
+                    # Without command-line MCP execution, keep file-operation MCPs available.
+                    "exclude_file_operation_mcps": False,
+                }
+                if backend.get("base_url"):
+                    backend_cfg["base_url"] = backend["base_url"]
                 simplified.append(
                     {
                         "id": config.get("id", f"criteria_agent_{i}"),
-                        "backend": {
-                            "type": backend.get("type", "openai"),
-                            "model": backend.get("model"),
-                            "base_url": backend.get("base_url"),
-                            "enable_mcp_command_line": False,
-                            "enable_code_based_tools": False,
-                            # Without command-line MCP execution, keep file-operation MCPs available.
-                            "exclude_file_operation_mcps": False,
-                        },
+                        "backend": backend_cfg,
                     },
                 )
 

@@ -4,12 +4,19 @@ Subagent Data Models for MassGen
 Provides dataclasses for configuring, tracking, and returning results from subagents.
 """
 
+import copy
 import json
+import logging
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
+
+DEFAULT_SHARED_CHILD_TEAM_TYPES = ["round_evaluator"]
 
 # Subagent timeout defaults (in seconds)
 # These are defaults; actual min/max are configurable via YAML
@@ -211,12 +218,20 @@ class SubagentOrchestratorConfig:
     Attributes:
         enabled: Whether orchestrator mode is enabled (default False = single agent)
         agents: Shared common agent configurations for the subagent orchestrator.
+                These are primarily used as the default child team for
+                `round_evaluator`. Other subagent types prefer per-parent
+                child-team config or spawning-parent backend inheritance.
                 Each agent config can have: id (optional, auto-generated if missing),
                 backend (with type, model, base_url, etc.)
                 If empty/None, no shared common agents are added.
         inherit_spawning_agent_backend: If True, synthesize a parent-local subagent
                 agent from the spawning parent's backend when that parent has no
                 explicit `subagent_agents` configured.
+        shared_child_team_types: Subagent types that should use the shared
+                `subagent_orchestrator.agents` pool when configured. Defaults to
+                `["round_evaluator"]`. Leave out a type to keep it anchored to the
+                spawning parent's own child-team config by default. Use `["*"]`
+                to apply the shared pool to every subagent type.
         coordination: Optional coordination config subset (broadcast, planning, etc.)
         max_new_answers: Maximum new answers per agent before forcing consensus.
                         Default 3 for subagents to prevent runaway iterations.
@@ -237,6 +252,7 @@ class SubagentOrchestratorConfig:
     enabled: bool = False
     agents: list[dict[str, Any]] = field(default_factory=list)
     inherit_spawning_agent_backend: bool = False
+    shared_child_team_types: list[str] = field(default_factory=lambda: DEFAULT_SHARED_CHILD_TEAM_TYPES.copy())
     coordination: dict[str, Any] = field(default_factory=dict)
     max_new_answers: int = 3  # Conservative default for subagents
     enable_web_search: bool | None = None  # None = inherit from parent
@@ -252,6 +268,11 @@ class SubagentOrchestratorConfig:
         """Validate configuration after initialization."""
         if self.agents and len(self.agents) > 10:
             raise ValueError("Cannot have more than 10 agents for subagents")
+        if not isinstance(self.shared_child_team_types, list) or any(not isinstance(item, str) or not item.strip() for item in self.shared_child_team_types):
+            raise ValueError(
+                "Invalid shared_child_team_types: expected a list of non-empty strings",
+            )
+        self.shared_child_team_types = [item.strip() for item in self.shared_child_team_types]
 
     def get_agent_config(self, agent_index: int, subagent_id: str) -> dict[str, Any]:
         """
@@ -280,6 +301,7 @@ class SubagentOrchestratorConfig:
             enabled=data.get("enabled", False),
             agents=data.get("agents", []),
             inherit_spawning_agent_backend=data.get("inherit_spawning_agent_backend", False),
+            shared_child_team_types=data.get("shared_child_team_types", DEFAULT_SHARED_CHILD_TEAM_TYPES.copy()),
             coordination=data.get("coordination", {}),
             max_new_answers=data.get("max_new_answers", 3),
             enable_web_search=data.get("enable_web_search"),
@@ -293,6 +315,7 @@ class SubagentOrchestratorConfig:
             "enabled": self.enabled,
             "agents": [a.copy() for a in self.agents] if self.agents else [],
             "inherit_spawning_agent_backend": self.inherit_spawning_agent_backend,
+            "shared_child_team_types": self.shared_child_team_types.copy(),
             "coordination": self.coordination.copy() if self.coordination else {},
             "max_new_answers": self.max_new_answers,
             "parse_at_references": self.parse_at_references,
@@ -569,6 +592,461 @@ class SubagentResult:
             log_path=log_path,
             completion_percentage=completion_percentage,
             warning=warning,
+        )
+
+
+@dataclass
+class RoundEvaluatorResult:
+    """Typed result contract for blocking round_evaluator runs.
+
+    The parent receives this from the evaluator stage and uses ``packet_text``
+    as the human-readable critique packet.
+
+    On the normal path, the parent reads authoritative artifacts from the
+    evaluator workspace:
+
+    - ``critique_packet.md`` for the human-readable packet
+    - ``verdict.json`` for machine-readable verdict metadata
+    - ``next_tasks.json`` for iterate-only implementation handoff
+
+    ``packet_text`` is the authoritative source loaded from ``critique_packet.md``,
+    not from the subagent's answer field.
+    """
+
+    packet_text: str | None = None
+    status: Literal["success", "degraded", "error"] = "error"
+    degraded_fallback_used: bool = False
+    execution_time_seconds: float = 0.0
+    error: str | None = None
+    subagent_id: str = ""
+    log_path: str | None = None
+    primary_artifact_path: str | None = None
+    verdict_artifact_path: str | None = None
+    next_tasks_artifact_path: str | None = None
+    task_plan_source: Literal["next_tasks_artifact"] | None = None
+    # Structured verdict fields (populated from verdict.json)
+    verdict: Literal["iterate", "converged"] | None = None
+    scores: dict[str, int] | None = None
+    improvements: list[dict] | None = None
+    preserve: list[dict] | None = None
+    opportunities: list[dict] | None = None  # Independent ideas, not corrections
+    next_tasks: dict[str, Any] | None = None
+    next_tasks_objective: str | None = None
+    next_tasks_primary_strategy: str | None = None
+    next_tasks_why_this_strategy: str | None = None
+    next_tasks_deprioritize_or_remove: list[str] | None = None
+    next_tasks_execution_scope: dict[str, Any] | None = None
+    clean_packet_text: str | None = None  # packet_text with verdict_block stripped
+
+    _VERDICT_BLOCK_RE = re.compile(
+        r"(?:```|~~~)json\s+verdict_block\s*\n(.*?)\n(?:```|~~~)",
+        re.DOTALL,
+    )
+
+    @staticmethod
+    def parse_verdict_block(packet_text: str) -> dict | None:
+        """Extract and parse a structured verdict_block from critique text.
+
+        Returns the parsed dict if a valid verdict_block is found with the
+        required ``verdict`` key, otherwise returns None.
+        """
+        match = RoundEvaluatorResult._VERDICT_BLOCK_RE.search(packet_text)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(1))
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("[RoundEvaluatorResult] Malformed JSON in verdict_block — skipped; orchestrator will fall back to verdict.json artifact")
+            return None
+        if not isinstance(data, dict) or "verdict" not in data:
+            logger.warning("[RoundEvaluatorResult] verdict_block missing required 'verdict' key")
+            return None
+        return data
+
+    @staticmethod
+    def strip_verdict_block(packet_text: str) -> str:
+        """Return packet_text with the verdict_block fence removed."""
+        return RoundEvaluatorResult._VERDICT_BLOCK_RE.sub("", packet_text).strip()
+
+    @staticmethod
+    def normalize_verdict_payload(verdict_payload: Any) -> dict[str, Any] | None:
+        """Return a validated verdict payload or None."""
+        if not isinstance(verdict_payload, dict):
+            return None
+
+        verdict = str(verdict_payload.get("verdict") or "").strip().lower()
+        if verdict not in {"iterate", "converged"}:
+            return None
+
+        raw_scores = verdict_payload.get("scores")
+        if not isinstance(raw_scores, dict) or not raw_scores:
+            return None
+
+        scores: dict[str, int] = {}
+        for key, value in raw_scores.items():
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return None
+            scores[str(key)] = int(value)
+
+        normalized = copy.deepcopy(verdict_payload)
+        normalized["schema_version"] = str(normalized.get("schema_version") or "1")
+        normalized["verdict"] = verdict
+        normalized["scores"] = scores
+        return normalized
+
+    @staticmethod
+    def normalize_next_tasks_payload(next_tasks: Any) -> dict[str, Any] | None:
+        """Return a validated next_tasks payload or None."""
+        if not isinstance(next_tasks, dict):
+            return None
+
+        tasks = next_tasks.get("tasks")
+        if not isinstance(tasks, list) or not tasks:
+            return None
+
+        normalized = copy.deepcopy(next_tasks)
+        for task in normalized.get("tasks", []):
+            if not isinstance(task, dict):
+                return None
+            description = str(task.get("description") or "").strip()
+            verification = str(task.get("verification") or "").strip()
+            metadata = task.get("metadata")
+            if not description:
+                return None
+            if not verification:
+                if not isinstance(metadata, dict):
+                    return None
+                metadata_verification = str(metadata.get("verification") or "").strip()
+                if not metadata_verification:
+                    return None
+
+        return normalized
+
+    @staticmethod
+    def extract_next_tasks_strategy(next_tasks: dict[str, Any] | None) -> dict[str, Any]:
+        """Extract the top-level strategy fields from a normalized next_tasks payload."""
+        if not isinstance(next_tasks, dict):
+            return {
+                "objective": None,
+                "primary_strategy": None,
+                "why_this_strategy": None,
+                "deprioritize_or_remove": None,
+                "execution_scope": None,
+            }
+
+        objective = str(next_tasks.get("objective") or "").strip() or None
+        primary_strategy = str(next_tasks.get("primary_strategy") or "").strip() or None
+        why_this_strategy = str(next_tasks.get("why_this_strategy") or "").strip() or None
+
+        deprioritize_raw = next_tasks.get("deprioritize_or_remove")
+        deprioritize_or_remove = None
+        if isinstance(deprioritize_raw, list):
+            normalized_items = [str(item).strip() for item in deprioritize_raw if str(item).strip()]
+            if normalized_items:
+                deprioritize_or_remove = normalized_items
+
+        execution_scope = next_tasks.get("execution_scope")
+        normalized_execution_scope = copy.deepcopy(execution_scope) if isinstance(execution_scope, dict) else None
+
+        return {
+            "objective": objective,
+            "primary_strategy": primary_strategy,
+            "why_this_strategy": why_this_strategy,
+            "deprioritize_or_remove": deprioritize_or_remove,
+            "execution_scope": normalized_execution_scope,
+        }
+
+    @classmethod
+    def _candidate_next_tasks_artifact_paths(
+        cls,
+        workspace_path: str | None,
+        log_path: str | None = None,
+    ) -> list[Path]:
+        """Return likely locations for ``next_tasks.json`` in priority order."""
+        return cls._candidate_artifact_paths(
+            "next_tasks.json",
+            workspace_path=workspace_path,
+            log_path=log_path,
+        )
+
+    @classmethod
+    def _candidate_artifact_paths(
+        cls,
+        artifact_name: str,
+        workspace_path: str | None,
+        log_path: str | None = None,
+    ) -> list[Path]:
+        """Return likely locations for a round_evaluator artifact in priority order."""
+        candidates: list[tuple[int, float, Path]] = []
+        seen: set[str] = set()
+
+        def _add_candidate(path: Path, priority: int) -> None:
+            if not path.exists():
+                return
+            key = str(path.resolve())
+            if key in seen:
+                return
+            seen.add(key)
+            try:
+                mtime = path.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            candidates.append((priority, -mtime, path))
+
+        if workspace_path:
+            workspace = Path(workspace_path)
+            _add_candidate(workspace / artifact_name, priority=0)
+            for pattern in (
+                f".massgen/sessions/*/turn_*/workspace/{artifact_name}",
+                f".massgen/massgen_logs/*/turn_*/final/*/workspace/{artifact_name}",
+                f".massgen/massgen_logs/*/turn_*/attempt_*/final/*/workspace/{artifact_name}",
+            ):
+                for candidate in workspace.glob(pattern):
+                    _add_candidate(candidate, priority=10)
+
+        if log_path:
+            log_file = Path(log_path)
+            search_roots = [log_file.parent, *list(log_file.parents[:4])]
+            for root in search_roots:
+                for pattern in (
+                    f"full_logs/final/*/workspace/{artifact_name}",
+                    f"live_logs/*/turn_*/final/*/workspace/{artifact_name}",
+                ):
+                    for candidate in root.glob(pattern):
+                        _add_candidate(candidate, priority=20)
+
+        candidates.sort(key=lambda item: (item[0], item[1], str(item[2])))
+        return [path for _, _, path in candidates]
+
+    @classmethod
+    def resolve_packet_artifact(
+        cls,
+        workspace_path: str | None,
+        log_path: str | None = None,
+    ) -> tuple[str | None, Path | None]:
+        """Load the best available ``critique_packet.md`` artifact."""
+        for packet_path in cls._candidate_artifact_paths(
+            "critique_packet.md",
+            workspace_path=workspace_path,
+            log_path=log_path,
+        ):
+            try:
+                packet_text = packet_path.read_text(encoding="utf-8")
+            except OSError as exc:
+                logger.warning(
+                    "[RoundEvaluatorResult] Failed to read critique packet from %s: %s",
+                    packet_path,
+                    exc,
+                )
+                continue
+            if not packet_text.strip():
+                logger.warning(
+                    "[RoundEvaluatorResult] critique_packet.md at %s is empty",
+                    packet_path,
+                )
+                continue
+            return packet_text, packet_path
+        return None, None
+
+    @classmethod
+    def resolve_verdict_artifact(
+        cls,
+        workspace_path: str | None,
+        log_path: str | None = None,
+    ) -> tuple[dict[str, Any] | None, Path | None]:
+        """Load and validate the best available ``verdict.json`` artifact."""
+        for verdict_path in cls._candidate_artifact_paths(
+            "verdict.json",
+            workspace_path=workspace_path,
+            log_path=log_path,
+        ):
+            try:
+                raw_payload = json.loads(verdict_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                logger.warning(
+                    "[RoundEvaluatorResult] Failed to read verdict artifact from %s: %s",
+                    verdict_path,
+                    exc,
+                )
+                continue
+
+            normalized = cls.normalize_verdict_payload(raw_payload)
+            if normalized is None:
+                logger.warning(
+                    "[RoundEvaluatorResult] Invalid verdict artifact at %s",
+                    verdict_path,
+                )
+                continue
+            return normalized, verdict_path
+
+        return None, None
+
+    @classmethod
+    def resolve_next_tasks_artifact(
+        cls,
+        workspace_path: str | None,
+        log_path: str | None = None,
+    ) -> tuple[dict[str, Any] | None, Path | None]:
+        """Load and validate the best available ``next_tasks.json`` artifact."""
+        for next_tasks_path in cls._candidate_next_tasks_artifact_paths(
+            workspace_path=workspace_path,
+            log_path=log_path,
+        ):
+            try:
+                raw_payload = json.loads(next_tasks_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, TypeError) as exc:
+                logger.warning(
+                    "[RoundEvaluatorResult] Failed to read next_tasks artifact from %s: %s",
+                    next_tasks_path,
+                    exc,
+                )
+                continue
+
+            normalized = cls.normalize_next_tasks_payload(raw_payload)
+            if normalized is None:
+                logger.warning(
+                    "[RoundEvaluatorResult] Invalid next_tasks artifact at %s",
+                    next_tasks_path,
+                )
+                continue
+            return normalized, next_tasks_path
+
+        return None, None
+
+    @classmethod
+    def from_subagent_result(
+        cls,
+        result: "SubagentResult",
+        elapsed: float = 0.0,
+    ) -> "RoundEvaluatorResult":
+        """Build from a raw ``SubagentResult``."""
+        packet_text, packet_path = cls.resolve_packet_artifact(
+            workspace_path=result.workspace_path,
+            log_path=result.log_path,
+        )
+        if packet_text is None:
+            return cls(
+                status="degraded",
+                degraded_fallback_used=True,
+                execution_time_seconds=elapsed or result.execution_time_seconds,
+                error=result.error or "No evaluator critique_packet.md artifact produced",
+                subagent_id=result.subagent_id,
+                log_path=result.log_path,
+            )
+
+        verdict_data, verdict_path = cls.resolve_verdict_artifact(
+            workspace_path=result.workspace_path,
+            log_path=result.log_path,
+        )
+
+        verdict = None
+        scores = None
+        improvements = None
+        preserve = None
+        opportunities = None
+        next_tasks = None
+        next_tasks_artifact_path = None
+        task_plan_source = None
+        next_tasks_strategy = cls.extract_next_tasks_strategy(None)
+
+        if verdict_data:
+            verdict = verdict_data.get("verdict")
+            scores = verdict_data.get("scores")
+            improvements = verdict_data.get("improvements")
+            preserve = verdict_data.get("preserve")
+            opportunities = verdict_data.get("opportunities")
+
+        if verdict == "iterate":
+            artifact_next_tasks, artifact_path = cls.resolve_next_tasks_artifact(
+                workspace_path=result.workspace_path,
+                log_path=result.log_path,
+            )
+            if artifact_next_tasks:
+                next_tasks = artifact_next_tasks
+                next_tasks_artifact_path = str(artifact_path) if artifact_path else None
+                task_plan_source = "next_tasks_artifact"
+                next_tasks_strategy = cls.extract_next_tasks_strategy(artifact_next_tasks)
+
+        return cls(
+            packet_text=packet_text,
+            status="success",
+            degraded_fallback_used=False,
+            execution_time_seconds=elapsed or result.execution_time_seconds,
+            subagent_id=result.subagent_id,
+            log_path=result.log_path,
+            primary_artifact_path=str(packet_path) if packet_path else None,
+            verdict_artifact_path=str(verdict_path) if verdict_path else None,
+            next_tasks_artifact_path=next_tasks_artifact_path,
+            task_plan_source=task_plan_source,
+            verdict=verdict,
+            scores=scores,
+            improvements=improvements,
+            preserve=preserve,
+            opportunities=opportunities,
+            next_tasks=next_tasks,
+            next_tasks_objective=next_tasks_strategy.get("objective"),
+            next_tasks_primary_strategy=next_tasks_strategy.get("primary_strategy"),
+            next_tasks_why_this_strategy=next_tasks_strategy.get("why_this_strategy"),
+            next_tasks_deprioritize_or_remove=next_tasks_strategy.get("deprioritize_or_remove"),
+            next_tasks_execution_scope=next_tasks_strategy.get("execution_scope"),
+            clean_packet_text=cls.strip_verdict_block(packet_text) if packet_text else None,
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize to dictionary."""
+        return {
+            "packet_text": self.packet_text,
+            "status": self.status,
+            "degraded_fallback_used": self.degraded_fallback_used,
+            "execution_time_seconds": self.execution_time_seconds,
+            "error": self.error,
+            "subagent_id": self.subagent_id,
+            "log_path": self.log_path,
+            "primary_artifact_path": self.primary_artifact_path,
+            "verdict_artifact_path": self.verdict_artifact_path,
+            "next_tasks_artifact_path": self.next_tasks_artifact_path,
+            "task_plan_source": self.task_plan_source,
+            "verdict": self.verdict,
+            "scores": self.scores,
+            "improvements": self.improvements,
+            "preserve": self.preserve,
+            "opportunities": self.opportunities,
+            "next_tasks": self.next_tasks,
+            "next_tasks_objective": self.next_tasks_objective,
+            "next_tasks_primary_strategy": self.next_tasks_primary_strategy,
+            "next_tasks_why_this_strategy": self.next_tasks_why_this_strategy,
+            "next_tasks_deprioritize_or_remove": self.next_tasks_deprioritize_or_remove,
+            "next_tasks_execution_scope": self.next_tasks_execution_scope,
+            "clean_packet_text": self.clean_packet_text,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RoundEvaluatorResult":
+        """Deserialize from dictionary."""
+        return cls(
+            packet_text=data.get("packet_text"),
+            status=data.get("status", "error"),
+            degraded_fallback_used=data.get("degraded_fallback_used", False),
+            execution_time_seconds=data.get("execution_time_seconds", 0.0),
+            error=data.get("error"),
+            subagent_id=data.get("subagent_id", ""),
+            log_path=data.get("log_path"),
+            primary_artifact_path=data.get("primary_artifact_path"),
+            verdict_artifact_path=data.get("verdict_artifact_path"),
+            next_tasks_artifact_path=data.get("next_tasks_artifact_path"),
+            task_plan_source=data.get("task_plan_source"),
+            verdict=data.get("verdict"),
+            scores=data.get("scores"),
+            improvements=data.get("improvements"),
+            preserve=data.get("preserve"),
+            opportunities=data.get("opportunities"),
+            next_tasks=data.get("next_tasks"),
+            next_tasks_objective=data.get("next_tasks_objective"),
+            next_tasks_primary_strategy=data.get("next_tasks_primary_strategy"),
+            next_tasks_why_this_strategy=data.get("next_tasks_why_this_strategy"),
+            next_tasks_deprioritize_or_remove=data.get("next_tasks_deprioritize_or_remove"),
+            next_tasks_execution_scope=data.get("next_tasks_execution_scope"),
+            clean_packet_text=data.get("clean_packet_text"),
         )
 
 

@@ -107,14 +107,36 @@ to them. Correct pattern:
 
 ## Subagent Backend Inheritance
 
-Subagent child teams resolve from up to three sources:
+Subagent child teams resolve differently for `round_evaluator` vs other subagent types.
+
+`round_evaluator` defaults to the shared evaluator pool from `subagent_orchestrator.agents`
+when configured. Other subagent types default to the spawning parent's own child-team config.
+
+Use `subagent_orchestrator.shared_child_team_types` to choose which subagent types use
+that shared pool:
+
+- default: `["round_evaluator"]`
+- targeted opt-in: `["round_evaluator", "builder"]`
+- all subagent types: `["*"]`
+
+Non-`round_evaluator` subagents resolve from:
+
+- parent-local agents from `agents[].subagent_agents` on the spawning parent agent
+- synthesized parent-local inheritance from the spawning parent's backend when no
+  explicit `subagent_agents` exist
+- shared common agents from `subagent_orchestrator.agents` only as a last resort if
+  no parent-local source can be resolved
+
+`round_evaluator` resolves from:
 
 - shared common agents from `subagent_orchestrator.agents`
-- parent-local agents from `agents[].subagent_agents` on the spawning parent agent
+- parent-local agents from `agents[].subagent_agents` only when no shared evaluator
+  pool is configured
 - synthesized parent-local inheritance when `inherit_spawning_agent_backend: true`
+  and no shared evaluator pool or parent-local child team exists
 
-Legacy fallback to inheriting all parent agent backends only applies when none of the above
-sources are configured.
+Legacy fallback to inheriting all parent agent backends only applies when none of the
+above sources are configured.
 
 `subagent_orchestrator.inherit_spawning_agent_backend: true` is a fill-in rule for missing
 parent-local config:
@@ -127,10 +149,15 @@ parent-local config:
 
 Effective resolution order:
 
-1. shared common agents from `subagent_orchestrator.agents`
-2. spawning parent agent's `subagent_agents` when present
-3. synthesized parent-local inherited agent when inherit mode is on and local config is absent
-4. legacy fallback to all parent agent backends only when none of the above exist
+1. `round_evaluator`: shared common agents from `subagent_orchestrator.agents`
+2. non-`round_evaluator`: spawning parent agent's `subagent_agents` when present
+3. non-`round_evaluator`: synthesized parent-local inherited agent copied from the
+   spawning parent's backend when local config is absent
+4. `round_evaluator`: spawning parent agent's `subagent_agents` when no shared pool exists
+5. shared common agents for non-`round_evaluator` only when no parent-local source exists
+6. legacy fallback to all parent agent backends only when none of the above exist
+
+If `shared_child_team_types` contains a subagent type, step 1 applies to that type.
 
 ## Specialized Subagent Profiles
 
@@ -168,7 +195,15 @@ manual/prompt-guided v1 flow:
 - the parent does not run a second full self-evaluation pass; additional
   verification is only for explicit `evidence_gaps`
 - the parent still owns `submit_checklist`, `propose_improvements`, `new_answer`, and `vote`
-- generated child YAML for `round_evaluator` omits checklist-gated child settings, always mounts the shared temp-workspace root read-only, and keeps `skip_final_presentation: false` when the child run is using presenter-stage `synthesize`/`winner_present`
+- generated child YAML for `round_evaluator` always mounts the shared
+  temp-workspace root read-only
+- with `refine: false`, `round_evaluator` remains a quick critique-only child
+  run and omits checklist-gated child settings
+- with `refine: true`, `round_evaluator` may inherit the parent checklist gate;
+  when no child-specific criteria are configured, it falls back to a built-in
+  `round_evaluator` criteria preset for judging the critique packet itself
+- when the child run is using presenter-stage `synthesize`/`winner_present`, it
+  keeps `skip_final_presentation: false`
 
 `coordination.orchestrator_managed_round_evaluator: true` is a separate,
 currently gated mode that lets the orchestrator launch that same blocking

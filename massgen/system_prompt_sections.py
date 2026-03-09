@@ -611,8 +611,10 @@ def _build_checklist_decision(
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
 - `{iterate_action}`: build a new answer, drawing the strongest elements from
-  each existing answer. Identify what each answer does well before you start —
-  do not anchor to any single answer as your base.
+  each existing answer. Existing answers are **reference material**, not starting
+  points — you are free to rebuild or discard entire sections rather than patching
+  what exists. Identify what each answer does well before you start — do not anchor
+  to any single answer as your base.
 - `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
@@ -681,8 +683,10 @@ def _build_checklist_scored_decision(
 Now decide: call `{iterate_action}` or `{terminate_action}`.
 
 - `{iterate_action}`: build a new answer, drawing the strongest elements from
-  each existing answer. Identify what each answer does well before you start —
-  do not anchor to any single answer as your base.
+  each existing answer. Existing answers are **reference material**, not starting
+  points — you are free to rebuild or discard entire sections rather than patching
+  what exists. Identify what each answer does well before you start — do not anchor
+  to any single answer as your base.
 - `{terminate_action}`: select the answer with the strongest overall scores and stop.
 
 The default is `{iterate_action}`. To justify `{terminate_action}`, you must demonstrate that
@@ -773,6 +777,7 @@ def _build_checklist_gated_decision(
     score_current_work_only: bool = False,
     round_evaluator_before_checklist: bool = False,
     orchestrator_managed_round_evaluator: bool = False,
+    specialized_subagents_available: bool = True,
 ) -> str:
     """Build checklist_gated decision section (tool-gated, hidden threshold).
 
@@ -798,13 +803,11 @@ def _build_checklist_gated_decision(
     if round_evaluator_before_checklist:
         _diagnostic_report_section = (
             "### Diagnostic Report (REQUIRED)\n\n"
-            "In round-evaluator mode, the delegated round-evaluator report is your\n"
-            "diagnostic basis. Before submitting scores, save or copy that round-evaluator report "
-            "into your workspace (e.g., `tasks/diagnostic_report.md`). This is\n"
-            "still separate from your changedoc.\n\n"
-            "Do not run a separate self-evaluation pass or author a second diagnostic\n"
-            "report from scratch. If needed, lightly normalize the delegated report so it\n"
-            "is a clean markdown artifact for `report_path`, but preserve its findings.\n\n"
+            "In round-evaluator mode, the orchestrator-supplied `critique_packet.md`\n"
+            "file is your diagnostic basis. Before submitting scores, pass that exact\n"
+            "artifact path as `report_path`. This stays separate from your changedoc.\n\n"
+            "Do not run a separate self-evaluation pass, and do not write, copy, or\n"
+            "normalize a second diagnostic report.\n\n"
             "The saved report MUST stay anchored to the E-criteria above:\n\n"
             "1. **Failure Patterns** — map each failure to the E-criterion it violates\n"
             '   (e.g., "E1: missing mobile nav = requirement unmet")\n'
@@ -814,7 +817,7 @@ def _build_checklist_gated_decision(
             "Optional but valuable: Success Patterns, Cross-Answer Synthesis.\n\n"
             "Only gather additional evidence when the packet's `evidence_gaps` identify a\n"
             "specific missing fact required for grounded checklist submission.\n\n"
-            "Pass the saved report path via `report_path` when calling `submit_checklist`.\n"
+            "Pass that exact path as report_path when calling `submit_checklist`.\n"
             "Submission will be rejected if no diagnostic report is provided.\n"
         )
     else:
@@ -938,6 +941,10 @@ def _build_checklist_gated_decision(
     if score_current_work_only:
         _decision_intro = (
             f"- `{iterate_action}`: improve your current work against the criteria. "
+            "Your previous answer is **reference material**, not a starting point — "
+            "you are free to rebuild, discard, or replace entire sections if the "
+            "evaluator's critique calls for it. Do not limit yourself to patching "
+            "what exists. "
             "Use useful ideas from other agents for adjacent integration, but score "
             "your own current work rather than ranking peers.\n"
             f"- `{terminate_action}`: stop only when your current work already clears "
@@ -979,8 +986,10 @@ Use this to fill in the `sources` and `preserve` fields accurately."""
     else:
         _decision_intro = (
             f"- `{iterate_action}`: build a new answer, drawing the strongest elements from\n"
-            "  each existing answer. Identify what each answer does well before you start —\n"
-            "  do not anchor to any single answer as your base.\n"
+            "  each existing answer. Existing answers are **reference material**, not starting\n"
+            "  points — you are free to rebuild, discard, or replace entire sections rather\n"
+            "  than patching what exists. Identify what each answer does well before you\n"
+            "  start, but do not anchor to any single answer as your base.\n"
             f"- `{terminate_action}`: select the answer with the strongest overall scores and stop."
         )
         _submit_scores_intro = "Call `submit_checklist` with per-item reasoning and a report path."
@@ -1065,18 +1074,94 @@ include:
 - `verification_plan` — concrete post-implementation checks
 - `evidence_gaps` — what uncertainty still remains
 
-Use that critique packet as evidence when you assign scores and call
-`submit_checklist`. Save or copy that round-evaluator report into your workspace
-and use it as the diagnostic report you pass via `report_path`.
+You receive one canonical synthesized evaluator packet in normal operation.
+Use the file paths surfaced in the evaluator result header as the authoritative
+artifacts. Treat `critique_packet.md` as the human-readable rationale,
+`verdict.json` as verdict metadata, and `next_tasks.json` as the iterate-only
+implementation handoff when it exists.
+
+**When the evaluator auto-injected tasks** (you will see "tasks have been
+auto-injected into your task plan" in the evaluator result header): the
+evaluator has already scored your work, decided iteration is needed, and
+chosen the implementation strategy. It populated your task plan with specific
+tasks that execute that strategy. Call `get_task_plan` to see them and start
+implementing immediately. The evaluator result header will also point you to
+the exact `critique_packet.md`, `verdict.json`, and
+`next_tasks.json` paths. Treat those files as authoritative reference
+artifacts, not as something you need to rewrite or copy. do not call `submit_checklist`.
+do not call `propose_improvements`. do not write a second diagnostic report.
+After implementing all tasks, verify them and call `new_answer` to submit your
+improved work. If the deliverable is a pure text artifact, place the final
+artifact body directly in `new_answer.content`.
+
+**Injected tasks are mandatory, not advisory.** The evaluator has access to
+all candidate answers, cross-answer analysis, and the full evaluation criteria.
+Its task plan reflects where your work genuinely falls short — even when you
+believe you have already addressed an issue. You must implement every injected
+task. Do not skip tasks because you think they are already done, do not
+reinterpret the evaluator's intent, and do not substitute your own lighter
+version of a requested change. If the evaluator says to rebuild a component
+using a different approach, that means your current approach is inadequate
+even if it appears to work. Follow the `implementation_guidance` on each task
+closely — it contains specific techniques and code patterns chosen because
+the evaluator determined your prior approach is insufficient.
+
+Treat any alternative ideas left only in `critique_packet.md` as reference
+material, not as open architectural decisions for you to resolve. If the
+evaluator wanted an alternative pursued now, it would have elevated that
+direction into `next_tasks.json` and the injected tasks already reflect it.
+
+Your task plan may have two categories:
+1. **OPPORTUNITIES** (explore tasks) — independent ideas the evaluator identified
+   that could represent a leap forward. Review these first. If adopting an
+   opportunity would naturally address multiple correction tasks, pursue the
+   opportunity instead of patching individually.
+2. **CORRECTIONS** (improve tasks) — specific weaknesses to fix.
+
+Do not treat opportunities as optional extras. They represent unexplored
+approaches that could produce a fundamentally better result than incremental
+fixes alone.
+
+"""
+            if specialized_subagents_available and builder_enabled:
+                _phase1_scope += """
+**Builder delegation for structural/transformative tasks**: Tasks marked with
+`execution: {"mode": "delegate", "subagent_type": "builder"}` must be
+delegated to builder subagents. Do not implement them inline — the evaluator
+marked them as delegate because they require fresh context, deep focus, or a
+fundamentally different approach that benefits from isolation. Delegate each
+builder task to a separate builder subagent. Spawn all independent builder
+tasks in a single `spawn_subagents()` call so they run in parallel.
+Incremental tasks marked with `execution: {"mode": "inline"}` stay with you.
+"""
+            elif specialized_subagents_available:
+                _phase1_scope += """
+**Delegation for specialized tasks**: Tasks marked with
+`execution: {"mode": "delegate"}` should be delegated to the appropriate
+subagent type when available. Incremental tasks marked with
+`execution: {"mode": "inline"}` stay with you.
+"""
+            else:
+                _phase1_scope += """
+**Execution mode in this run**: All injected tasks are inline in this run.
+Inline means you execute the task yourself in the parent agent. Do not add
+delegate execution hints or try to spawn builder/evaluator helpers here.
+"""
+
+            _phase1_scope += """
+
+**When no auto-injection occurred** (you will see instructions about
+`submit_checklist` in the evaluator result header): use the critique packet(s)
+as the sole diagnostic basis for your scores when you call `submit_checklist`.
+Your scores MUST reflect the evaluator's findings. Pass that exact path as
+report_path using the `critique_packet.md` path from the evaluator result header.
+If iteration is required, translate the critique(s)
+into your own `propose_improvements` call and use `improvement_spec` as the
+richer build brief while implementing.
+
 Do not run a separate self-evaluation pass, fresh interactive verification
 sweep, or second report-writing cycle unless the packet's `evidence_gaps`
 identify a concrete missing fact that blocks grounded checklist submission.
-The round evaluator is not a workflow proxy and does not decide your parent
-workflow for you.
-
-If iteration is required, translate the critique into your own
-`propose_improvements` call and use `improvement_spec` as the richer build brief
-while implementing.
 
 If no specialized subagents are available: do all evidence gathering and
 qualitative analysis inline, but keep the same parent-owned checklist flow.
@@ -1086,13 +1171,9 @@ round evaluator packet is present and use it in your reasoning. Round-evaluator
 evidence and packet fields directly affect your scores. Do NOT score without
 this evidence."""
         elif round_evaluator_before_checklist:
-            _phase1_scope = """Before round 2 and later checklist-gated rounds, run one
-blocking `round_evaluator` subagent yourself and wait for its packet before
-scoring or calling `submit_checklist`.
-
-Give that `round_evaluator` the full evaluation criteria verbatim, all current
-candidate answers together, and the available peer/temp-workspace paths so it
-can inspect snapshots directly.
+            _phase1_scope = """Before round 2 and later checklist-gated rounds, the
+orchestrator supplies one blocking `round_evaluator` packet before scoring or
+calling `submit_checklist`. Do not spawn another round_evaluator yourself.
 
 The round evaluator is a **very critical** critic/spec writer. Its packet will
 include:
@@ -1104,9 +1185,10 @@ include:
 - `verification_plan` — concrete post-implementation checks
 - `evidence_gaps` — what uncertainty still remains
 
-Use that critique packet as evidence when you assign scores and call
-`submit_checklist`. Save or copy that round-evaluator report into your workspace
-and use it as the diagnostic report you pass via `report_path`.
+Use that critique packet as the **sole diagnostic basis** for your scores when
+you call `submit_checklist`. Your scores MUST reflect the evaluator's findings.
+Pass that exact path as report_path using the `critique_packet.md` path from
+the evaluator result header.
 Do not run a separate self-evaluation pass, fresh interactive verification
 sweep, or second report-writing cycle unless the packet's `evidence_gaps`
 identify a concrete missing fact that blocks grounded checklist submission.
@@ -1145,7 +1227,8 @@ Classify each planned change as:
   experience) counts as structural even when keeping the same theme, approach, or structure.
   *Quick test: would a demanding user say "much better"? → structural. "Nice touch, barely
   noticed"? → incremental.*
-  Examples: adding real-time collaboration to a single-user editor, introducing a caching
+  Examples: rebuilding a section from scratch because the current version cannot be fixed
+  incrementally, adding real-time collaboration to a single-user editor, introducing a caching
   layer that changes perceived performance, redesigning navigation to support a new workflow,
   adding offline support, building a new visualization that reveals patterns previously hidden,
   a rewrite that is dramatically more vivid, persuasive, or correct than the prior version.
@@ -3207,18 +3290,20 @@ class TaskPlanningSection(SystemPromptSection):
             "- **Do inline** — quality judgment, synthesis, architectural decisions, anything "
             "needing your full reasoning, tasks with live dependencies on in-flight work\n"
             "\n"
+            "Inline means you execute the task yourself in the parent agent without spawning a helper.\n"
+            "\n"
             f"Available subagent types: {types_str}\n"
             "\n"
-            "Label each delegated task using `subagent_name` when creating tasks "
-            "(`create_task_plan`, `add_task`) or later with `edit_task`:\n"
-            '- `subagent_name` — e.g., `"builder"`, `"evaluator"`, `"novelty"`\n'
-            "- `subagent_id` — the ID of a specific already-spawned subagent\n"
+            "Mark execution explicitly when creating tasks (`create_task_plan`, `add_task`):\n"
+            '- `{"execution": {"mode": "inline"}}` — keep the task with yourself\n'
+            '- `{"execution": {"mode": "delegate", "subagent_type": "builder"}}` — delegate by role/type\n'
+            '- `{"execution": {"mode": "delegate", "subagent_id": "sub_123"}}` — delegate to a specific running subagent\n'
             "\n"
             "**Spawn all independent delegated tasks in a single call** — they run in parallel. "
             "While they run, execute your inline tasks.\n"
             "\n"
             "When tasks come from `propose_improvements`, structural and transformative criteria "
-            'are pre-filled with `subagent_name: "builder"` as an advisory signal. '
+            'are pre-filled with `execution: {"mode": "delegate", "subagent_type": "builder"}` as an advisory signal. '
             "Scope each builder to exactly one task. Never bundle multiple criteria into one "
             "builder spec.\n"
             "\n"
@@ -3231,6 +3316,15 @@ class TaskPlanningSection(SystemPromptSection):
     def build_content(self) -> str:
         subagent_step = self._build_subagent_classification_step()
         has_subagents = bool(self.specialized_subagents)
+        implementation_example = (
+            '- `{{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], '
+            '"priority": "high", "execution": {{"mode": "delegate", "subagent_type": "builder"}}, '
+            '"verification": "Endpoints return 200", "verification_method": "curl test each endpoint"}}`'
+            if has_subagents
+            else '- `{{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], '
+            '"priority": "high", "execution": {{"mode": "inline"}}, '
+            '"verification": "Endpoints return 200", "verification_method": "curl test each endpoint"}}`'
+        )
         # Execution step number shifts depending on whether subagent step is present
         execute_step = "STEP 3" if has_subagents else "STEP 2"
         summary_step = "STEP 4" if has_subagents else "STEP 3"
@@ -3280,9 +3374,7 @@ BEFORE making any changes or writing any files.
 Create tasks with verification criteria:
 - `{{"id": "research", "description": "Research OAuth providers", "verification": "Comparison table with 3+ providers", "verification_method": "Review output table"}}`
 - `{{"id": "design", "description": "Design auth flow", "depends_on": ["research"], "verification": "Flow diagram renders correctly", "verification_method": "Screenshot and visual check"}}`
-- `{{"id": "implement", "description": "Implement endpoints", "depends_on": ["design"], \
-"priority": "high", "subagent_name": "builder", "verification": "Endpoints return 200", \
-"verification_method": "curl test each endpoint"}}`
+{implementation_example}
 
 **Dependency formats:**
 - **By index** (0-based): `{{"description": "Task 2", "depends_on": [0]}}` — depends on the first task
@@ -3395,6 +3487,7 @@ class EvaluationSection(SystemPromptSection):
         improvements_cfg: dict | None = None,
         round_evaluator_before_checklist: bool = False,
         orchestrator_managed_round_evaluator: bool = False,
+        specialized_subagents_available: bool = True,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -3419,6 +3512,7 @@ class EvaluationSection(SystemPromptSection):
         self.improvements_cfg = improvements_cfg
         self.round_evaluator_before_checklist = round_evaluator_before_checklist
         self.orchestrator_managed_round_evaluator = orchestrator_managed_round_evaluator
+        self.specialized_subagents_available = specialized_subagents_available
 
     def build_content(self) -> str:
         # Vote-only mode: agent has exhausted their answer limit
@@ -3572,6 +3666,7 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                     improvements_cfg=self.improvements_cfg,
                     round_evaluator_before_checklist=self.round_evaluator_before_checklist,
                     orchestrator_managed_round_evaluator=self.orchestrator_managed_round_evaluator,
+                    specialized_subagents_available=self.specialized_subagents_available,
                 )
                 evaluation_section = f"""{analysis}
 
@@ -4071,14 +4166,12 @@ existing ideas.
 Write concisely — explain your thinking to a colleague who will pick up your work."""
 
 
-def _build_changedoc_subsequent_round_prompt(gap_report_mode: str = "changedoc") -> str:
-    """Build subsequent-round changedoc instructions.
-
-    Args:
-        gap_report_mode: Controls Open Gaps placement.
-            "changedoc" appends Open Gaps section to the template.
-            "separate" / "none" omit it.
-    """
+def _build_changedoc_subsequent_round_prompt(
+    gap_report_mode: str = "changedoc",
+    round_evaluator_before_checklist: bool = False,
+    orchestrator_managed_round_evaluator: bool = False,
+) -> str:
+    """Build subsequent-round changedoc instructions."""
     quality_assessment = ""
     if gap_report_mode == "changedoc":
         quality_assessment = """
@@ -4088,6 +4181,25 @@ def _build_changedoc_subsequent_round_prompt(gap_report_mode: str = "changedoc")
 not directives — the next agent should form their OWN assessment of what matters, not
 treat this as a todo list.]
 - [Gap]: [why not addressed — e.g., "incremental", "out of scope", "insufficient time"]"""
+
+    gate_step = (
+        "2. **Run the checklist evaluation before you start building.** Evaluate the existing answers,\n"
+        "identify gaps and improvements, then `submit_checklist` with your scores. Do NOT make edits\n"
+        'to the deliverable before the checklist verdict — work done before a "vote" verdict is wasted\n'
+        "because changes are only locked in when you call `new_answer`."
+    )
+    if round_evaluator_before_checklist and orchestrator_managed_round_evaluator:
+        gate_step = (
+            "2. **Choose the correct gate before you start building.**\n"
+            "   - If the round-evaluator header says tasks were auto-injected into your task plan:\n"
+            "     call `get_task_plan`, implement those tasks, verify them, and do NOT call\n"
+            "     `submit_checklist` or `propose_improvements`.\n"
+            "   - Otherwise, run the checklist evaluation before you start building: evaluate the\n"
+            "     existing answers, identify gaps and improvements, then `submit_checklist` with\n"
+            "     your scores. Do NOT make edits to the deliverable before the checklist verdict —\n"
+            '     work done before a "vote" verdict is wasted because changes are only locked in\n'
+            "     when you call `new_answer`."
+        )
 
     return f"""## Change Document (Decision Journal)
 
@@ -4102,10 +4214,7 @@ end up in the repository. Build it by evaluating ALL prior answers' changedocs
 1. **Create `tasks/changedoc.md` immediately** when you begin working. Review ALL prior
 changedocs to understand what decisions exist across answers, then draft YOUR changedoc
 by selecting, modifying, or replacing decisions — do not just copy one changedoc wholesale.
-2. **Run the checklist evaluation before you start building.** Evaluate the existing answers,
-identify gaps and improvements, then `submit_checklist` with your scores. Do NOT make edits
-to the deliverable before the checklist verdict — work done before a "vote" verdict is wasted
-because changes are only locked in when you call `new_answer`.
+{gate_step}
 3. **If the verdict says iterate**: implement your planned improvements. Log each decision in
 the changedoc as you make it. Update the Implementation fields to reference YOUR code locations.
 4. **Verify before submitting**: Confirm that every Implementation field describes what
@@ -4385,7 +4494,13 @@ class ChangedocSection(SystemPromptSection):
         has_prior_answers: Whether other agents' answers are visible.
     """
 
-    def __init__(self, has_prior_answers: bool = False, gap_report_mode: str = "changedoc"):
+    def __init__(
+        self,
+        has_prior_answers: bool = False,
+        gap_report_mode: str = "changedoc",
+        round_evaluator_before_checklist: bool = False,
+        orchestrator_managed_round_evaluator: bool = False,
+    ):
         super().__init__(
             title="Change Document",
             priority=Priority.MEDIUM,
@@ -4393,10 +4508,16 @@ class ChangedocSection(SystemPromptSection):
         )
         self.has_prior_answers = has_prior_answers
         self.gap_report_mode = gap_report_mode
+        self.round_evaluator_before_checklist = round_evaluator_before_checklist
+        self.orchestrator_managed_round_evaluator = orchestrator_managed_round_evaluator
 
     def build_content(self) -> str:
         if self.has_prior_answers:
-            return _build_changedoc_subsequent_round_prompt(gap_report_mode=self.gap_report_mode)
+            return _build_changedoc_subsequent_round_prompt(
+                gap_report_mode=self.gap_report_mode,
+                round_evaluator_before_checklist=self.round_evaluator_before_checklist,
+                orchestrator_managed_round_evaluator=self.orchestrator_managed_round_evaluator,
+            )
         return _CHANGEDOC_FIRST_ROUND_PROMPT
 
 
@@ -4457,7 +4578,7 @@ class SubagentSection(SystemPromptSection):
             background_default = background_by_type.get(t.name.lower(), True)
             background_str = "True" if background_default else "False"
             lines.append(f"**{t.name}** — {t.description}")
-            if t.name.lower() == "round_evaluator" and self.round_evaluator_before_checklist and self.orchestrator_managed_round_evaluator:
+            if t.name.lower() == "round_evaluator" and self.round_evaluator_before_checklist:
                 lines.append(
                     "Reserved for orchestrator-managed launches before round 2+ " "checklist decisions. Use the returned critique packet; do not " "spawn this type manually in that mode.",
                 )
@@ -4477,20 +4598,12 @@ class SubagentSection(SystemPromptSection):
                     "only for tasks with no workspace file dependencies.",
                 )
             if t.name.lower() == "round_evaluator":
-                if self.round_evaluator_before_checklist and self.orchestrator_managed_round_evaluator:
+                if self.round_evaluator_before_checklist:
                     lines.append(
                         "In this run, the orchestrator launches `round_evaluator` "
                         "automatically before round 2+ checklist reasoning. You "
                         "still read and use its packet, but you do not launch it "
                         "yourself.",
-                    )
-                elif self.round_evaluator_before_checklist:
-                    lines.append(
-                        "In this run, use `round_evaluator` manually before round 2+ "
-                        "checklist reasoning. Launch it in blocking mode, wait for "
-                        "its critique packet, then use that report as the "
-                        "diagnostic basis for your parent-owned checklist "
-                        "submission.",
                     )
                 else:
                     lines.append(
@@ -4640,9 +4753,10 @@ judgment throughout. Size alone is not the criterion — nature of the work is.
 
 **PLANNING SUBAGENT DELEGATION IN YOUR TASK PLAN:**
 After `propose_improvements` pre-populates your task plan, review each independent task:
-- Does it have documentation-heavy discovery or mechanical execution? → Mark with `subagent_id`
-  and `subagent_name` via `update_task` to flag it for delegation
-- Does it require your judgment, synthesis, or live context? → Keep inline
+- Does it have documentation-heavy discovery or mechanical execution? → Mark with
+  `execution: {{"mode": "delegate", "subagent_type": "..."}}` or a specific `subagent_id`
+- Does it require your judgment, synthesis, or live context? → Mark with
+  `execution: {{"mode": "inline"}}`
 - Can it be split into smaller independent deliverables? → Consider splitting first
 
 Tasks that share dependencies (or have none) are parallelizable:
@@ -5312,20 +5426,20 @@ This is an **improvement loop**, not just a verification step:
 
 ### Dynamic Verification: Think Like a User
 
-A single static observation (screenshot, one test run) is often not sufficient. Users don't just look at artifacts - they interact with them:
+A single static observation (screenshot, one test run) is often not sufficient. Users don't just look at artifacts - they interact with them.
 
-| Artifact Type | Shallow Check (incomplete) | Full Check (required) |
-|--------------|---------------------------|--------------------------|
-| Website/App | Screenshot looks good | Click all buttons, navigate all pages, test forms, verify links work |
-| Game | Screenshot shows UI | Play the game - test controls, scoring, game over states, restart |
-| Animation/transition | Single frame looks correct | Record and review the full motion sequence |
-| Interactive tool | Interface renders | Use every feature, test edge cases, verify all interactions |
-| Script/Code | No errors on run | Test with various inputs, edge cases, invalid data |
-| API | Single call works | Test all endpoints, error states, authentication flows |
-| Audio output | File exists | Listen/analyze the actual audio content — play it, don't just check the file exists |
-| Data pipeline | Output exists | Validate accuracy, test with edge case inputs |
-| Visual document / static artifact | File generates without error | Render to image(s) and **view each page/slide** — does layout, imagery, colors, and content actually look right? \
-Render to images using available tools, then read_media each one. |
+Don't classify by file extension — classify by **what happens when a user opens it**. \
+An SVG can be static or animated. An HTML file can be a document or an app. \
+Check the source for motion/interaction before choosing your verification method.
+
+| What does it do? | Shallow Check (incomplete) | Full Check (required) |
+|-----------------|---------------------------|--------------------------|
+| **Stays still** (static image, PDF, document, diagram) | File generates without error | Render and **view** every page/section with \
+read_media — does layout, imagery, colors, and content actually look right? |
+| **Moves** (animation, transition, video, ticking UI) | Single frame looks correct | Open in browser/player, **record video**, review the full motion sequence |
+| **Responds to input** (website, app, game, form, interactive tool) | Screenshot looks good | **Use it** — click all buttons, navigate all pages, test controls/forms/states, try to break it |
+| **Produces output** (script, API, data pipeline) | Runs without error | Test with varied and edge-case inputs, validate output accuracy |
+| **Makes sound** (audio, music, TTS) | File exists | **Listen** to the actual audio content — play it, don't just check the file exists |
 
 ### Coverage Check Before Diagnosis
 

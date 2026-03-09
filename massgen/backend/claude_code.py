@@ -1857,22 +1857,40 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         servers_to_use = self._get_background_mcp_servers()
         if not servers_to_use:
             self._background_mcp_initialized = True
+            self._background_mcp_init_error = None
             return None
 
         try:
+            # Derive timeout from server configs' tool_timeout_sec (set by the
+            # orchestrator to subagent_default_timeout + 60).  This ensures the
+            # MCP session read timeout is long enough for blocking
+            # spawn_subagents calls whose duration scales with the configured
+            # subagent timeout — rather than a hardcoded value that silently
+            # caps long-running subagents.
+            max_tool_timeout = max(
+                (s.get("tool_timeout_sec", 0) for s in servers_to_use),
+                default=0,
+            )
+            # Use the max tool_timeout_sec if available, otherwise fall back to
+            # a sensible default.  The +60 buffer accounts for MCP overhead
+            # beyond the tool execution itself.
+            mcp_session_timeout = max(max_tool_timeout + 60, 1800)
+
             self._background_mcp_client = await MCPResourceManager.setup_mcp_client(
                 servers=servers_to_use,
                 allowed_tools=getattr(self, "allowed_tools", None),
                 exclude_tools=getattr(self, "exclude_tools", None),
                 circuit_breaker=getattr(self, "_mcp_tools_circuit_breaker", None),
-                timeout_seconds=400,
+                timeout_seconds=mcp_session_timeout,
                 backend_name=self.get_provider_name(),
                 agent_id=getattr(self, "agent_id", None),
             )
             self._background_mcp_initialized = True
+            self._background_mcp_init_error = None
             return self._background_mcp_client
         except Exception as e:  # noqa: BLE001
             self._background_mcp_initialized = True
+            self._background_mcp_init_error = str(e)
             logger.warning(
                 "[ClaudeCodeBackend] Failed to initialize background MCP client: %s",
                 e,

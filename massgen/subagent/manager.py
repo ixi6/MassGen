@@ -118,6 +118,13 @@ class SubagentManager:
         self.default_timeout = default_timeout
         self.min_timeout = min_timeout
         self.max_timeout = max_timeout
+        # Auto-raise max_timeout when default_timeout exceeds it to avoid
+        # silent capping (e.g. subagent_default_timeout: 900 capped to 600).
+        if self.default_timeout > self.max_timeout:
+            logger.info(
+                f"[SubagentManager] default_timeout ({self.default_timeout}s) > " f"max_timeout ({self.max_timeout}s), raising max_timeout to match",
+            )
+            self.max_timeout = self.default_timeout
         self._subagent_orchestrator_config = subagent_orchestrator_config
         self._parent_context_paths = self._normalize_parent_context_paths(parent_context_paths)
         self._parent_coordination_config = parent_coordination_config or {}
@@ -916,26 +923,26 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
         try:
             if runtime_mode == "delegated":
-                return await self._execute_delegated(
+                result = await self._execute_delegated(
+                    config,
+                    workspace,
+                    start_time,
+                    context_warning,
+                )
+            else:
+                # Always use orchestrator mode for non-delegated execution
+                result = await self._execute_with_orchestrator(
                     config,
                     workspace,
                     start_time,
                     context_warning,
                 )
 
-            # Always use orchestrator mode for non-delegated execution
-            return await self._execute_with_orchestrator(
-                config,
-                workspace,
-                start_time,
-                context_warning,
-            )
-
         except TimeoutError:
             execution_time = time.time() - start_time
             log_dir = self._get_subagent_log_dir(config.id)
             # Attempt to recover completed work from workspace
-            return self._create_timeout_result_with_recovery(
+            result = self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
                 workspace=workspace,
                 timeout_seconds=execution_time,
@@ -946,12 +953,81 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         except Exception as e:
             execution_time = time.time() - start_time
             logger.error(f"[SubagentManager] Error executing subagent {config.id}: {e}")
-            return SubagentResult.create_error(
+            result = SubagentResult.create_error(
                 subagent_id=config.id,
                 error=str(e),
                 workspace_path=str(workspace),
                 execution_time_seconds=execution_time,
                 warning=context_warning,
+            )
+
+        self._persist_round_evaluator_packet_if_needed(config, workspace, result)
+        return result
+
+    def _persist_round_evaluator_packet_if_needed(
+        self,
+        config: SubagentConfig,
+        workspace: Path,
+        result: SubagentResult,
+    ) -> None:
+        """Persist a stable synthesized critique packet for round_evaluator subagents."""
+        subagent_type = str((config.metadata or {}).get("subagent_type") or "").strip().lower()
+        if subagent_type != "round_evaluator":
+            return
+
+        from .models import RoundEvaluatorResult
+
+        packet_path = workspace / "critique_packet.md"
+        packet_text, packet_source = RoundEvaluatorResult.resolve_packet_artifact(
+            workspace_path=str(workspace),
+            log_path=result.log_path,
+        )
+        if packet_text and packet_source and not packet_path.exists():
+            try:
+                packet_path.write_text(packet_text, encoding="utf-8")
+            except OSError as exc:
+                logger.warning(
+                    "[SubagentManager] Failed to persist canonical round_evaluator packet for %s: %s",
+                    config.id,
+                    exc,
+                )
+
+        verdict_path = workspace / "verdict.json"
+        verdict_data, _verdict_source = RoundEvaluatorResult.resolve_verdict_artifact(
+            workspace_path=str(workspace),
+            log_path=result.log_path,
+        )
+        if verdict_data and not verdict_path.exists():
+            try:
+                verdict_path.write_text(
+                    json.dumps(verdict_data, indent=2),
+                    encoding="utf-8",
+                )
+            except OSError as exc:
+                logger.warning(
+                    "[SubagentManager] Failed to persist canonical verdict artifact for %s: %s",
+                    config.id,
+                    exc,
+                )
+
+        next_tasks_path = workspace / "next_tasks.json"
+        next_tasks, _artifact_path = RoundEvaluatorResult.resolve_next_tasks_artifact(
+            workspace_path=str(workspace),
+            log_path=result.log_path,
+        )
+        if not next_tasks or next_tasks_path.exists():
+            return
+
+        try:
+            next_tasks_path.write_text(
+                json.dumps(next_tasks, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning(
+                "[SubagentManager] Failed to persist canonical next_tasks payload for %s: %s",
+                config.id,
+                exc,
             )
 
     async def _execute_with_orchestrator(
@@ -1705,9 +1781,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         """
         orch_config = self._subagent_orchestrator_config
         refine = config.metadata.get("refine", True)
+        subagent_type = str(config.metadata.get("subagent_type") or "").strip()
         inherit_spawning_agent_backend = bool(
             orch_config and getattr(orch_config, "inherit_spawning_agent_backend", False),
         )
+        shared_child_team_types = list(getattr(orch_config, "shared_child_team_types", ["round_evaluator"])) if orch_config is not None else ["round_evaluator"]
+        use_shared_common_agents_for_type = "*" in shared_child_team_types or subagent_type in shared_child_team_types
         matched_parent = next(
             (a for a in self.parent_agent_configs if str(a.get("id", "")).strip() == self.parent_agent_id),
             None,
@@ -1720,24 +1799,33 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         if matched_parent is not None:
             local_agents = list(matched_parent.get("subagent_agents") or [])
 
-        if not local_agents and inherit_spawning_agent_backend:
+        # Only types listed in shared_child_team_types default to the shared child
+        # team. Other subagent types stay anchored to the spawning parent's backend
+        # unless the parent explicitly defines its own child-team overrides.
+        should_default_to_spawning_parent_backend = not use_shared_common_agents_for_type
+        if not local_agents and (inherit_spawning_agent_backend or should_default_to_spawning_parent_backend):
             if matched_parent is None:
-                raise ValueError(
-                    "Unable to inherit backend for spawning parent agent " f"'{self.parent_agent_id}': parent agent config not found",
-                )
-            local_agents = [
-                {
-                    "id": matched_parent.get("id", self.parent_agent_id),
-                    "backend": dict(matched_parent.get("backend", {})),
-                },
-            ]
-            synthetic_local = True
+                if inherit_spawning_agent_backend:
+                    raise ValueError(
+                        "Unable to inherit backend for spawning parent agent " f"'{self.parent_agent_id}': parent agent config not found",
+                    )
+            else:
+                local_agents = [
+                    {
+                        "id": matched_parent.get("id", self.parent_agent_id),
+                        "backend": dict(matched_parent.get("backend", {})),
+                    },
+                ]
+                synthetic_local = True
 
         source_agents_with_origin: list[tuple[dict[str, Any], str]]
-        if common_agents or local_agents:
-            local_origin = "synthetic" if synthetic_local else "local"
+        if common_agents and use_shared_common_agents_for_type:
             source_agents_with_origin = [(agent_cfg, "common") for agent_cfg in common_agents]
-            source_agents_with_origin.extend((agent_cfg, local_origin) for agent_cfg in local_agents)
+        elif local_agents:
+            local_origin = "synthetic" if synthetic_local else "local"
+            source_agents_with_origin = [(agent_cfg, local_origin) for agent_cfg in local_agents]
+        elif common_agents:
+            source_agents_with_origin = [(agent_cfg, "common") for agent_cfg in common_agents]
         else:
             source_agents_with_origin = [(agent_cfg, "legacy") for agent_cfg in self.parent_agent_configs]
 
@@ -1792,7 +1880,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             elif "enable_web_search" in fallback_backend:
                 backend_config["enable_web_search"] = fallback_backend["enable_web_search"]
 
-            # Inherit Docker settings if using docker mode
+            # Inherit Docker settings if using docker mode.
+            # Prefer source_backend (explicit child config) over fallback_backend (parent).
             if backend_config.get("command_line_execution_mode") == "docker":
                 docker_settings = [
                     "command_line_docker_image",
@@ -1801,7 +1890,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     "command_line_docker_credentials",
                 ]
                 for setting in docker_settings:
-                    if setting in fallback_backend:
+                    if setting in source_backend:
+                        backend_config[setting] = source_backend[setting]
+                    elif setting in fallback_backend:
                         backend_config[setting] = fallback_backend[setting]
 
             # Inherit code-based tools settings
@@ -1854,6 +1945,16 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     "model",
                     "enable_mcp_command_line",
                     "command_line_execution_mode",
+                    # Runtime-injected keys that must not leak from parent
+                    # to child configs (they are re-computed by the CLI for
+                    # each subagent run).  `agent_id` in particular causes
+                    # "got multiple values for keyword argument 'agent_id'"
+                    # in create_backend() when it is also passed explicitly.
+                    "agent_id",
+                    "instance_id",
+                    "filesystem_session_id",
+                    "session_storage_base",
+                    "agent_temporary_workspace",
                 }
                 for setting, value in source_backend.items():
                     if setting in passthrough_exclusions:
@@ -1872,14 +1973,24 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         explicit_coord_settings = set(coord_settings.keys())
         subagent_type = str((config.metadata or {}).get("subagent_type") or "").strip().lower()
         is_round_evaluator = subagent_type == "round_evaluator"
-        if is_round_evaluator:
-            # round_evaluator should critique only; do not expose checklist-gated
-            # child orchestration or checklist MCP tools inside the subagent run.
+        checklist_top_level_settings = (
+            "voting_sensitivity",
+            "voting_threshold",
+            "checklist_require_gap_report",
+            "gap_report_mode",
+            "max_checklist_calls_per_round",
+            "checklist_first_answer",
+        )
+        if is_round_evaluator and not refine:
+            # Quick round_evaluator runs are critique-only and should not expose
+            # checklist-gated child orchestration inside the subagent run.
             for setting in (
                 "voting_sensitivity",
                 "voting_threshold",
                 "checklist_require_gap_report",
                 "gap_report_mode",
+                "max_checklist_calls_per_round",
+                "checklist_first_answer",
             ):
                 coord_settings.pop(setting, None)
                 explicit_coord_settings.discard(setting)
@@ -1927,9 +2038,32 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             "voting_threshold",
             "checklist_require_gap_report",
             "gap_report_mode",
+            "max_checklist_calls_per_round",
+            "checklist_first_answer",
         ):
             if setting in explicit_coord_settings and setting in coord_settings:
                 orchestrator_config[setting] = coord_settings.pop(setting)
+
+        if refine:
+            for setting in checklist_top_level_settings:
+                if setting in orchestrator_config:
+                    continue
+                if setting not in self._parent_coordination_config:
+                    continue
+                value = self._parent_coordination_config[setting]
+                if setting == "voting_threshold" and value is None:
+                    continue
+                orchestrator_config[setting] = value
+
+        effective_child_voting_sensitivity = orchestrator_config.get("voting_sensitivity")
+        if (
+            is_round_evaluator
+            and refine
+            and effective_child_voting_sensitivity == "checklist_gated"
+            and not coord_settings.get("checklist_criteria_inline")
+            and "checklist_criteria_preset" not in coord_settings
+        ):
+            coord_settings["checklist_criteria_preset"] = "round_evaluator"
 
         # Apply max_new_answers limit to prevent runaway iterations
         # This must be at the top level of orchestrator config (not inside coordination)
@@ -1949,10 +2083,38 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 orchestrator_config["defer_voting_until_all_answered"] = True
                 if "final_answer_strategy" not in orchestrator_config:
                     orchestrator_config["final_answer_strategy"] = "synthesize"
-                effective_final_answer_strategy = orchestrator_config.get("final_answer_strategy")
-                # round_evaluator packets are expected to come from an explicit
-                # presenter-stage merge when child synthesis/presentation is enabled.
-                orchestrator_config["skip_final_presentation"] = not (is_round_evaluator and effective_final_answer_strategy in {"winner_present", "synthesize"})
+                # round_evaluator: optionally skip synthesis so the parent
+                # reads all raw critiques directly (no lossy merge step).
+                skip_synthesis = self._parent_coordination_config.get(
+                    "round_evaluator_skip_synthesis",
+                    False,
+                )
+                if is_round_evaluator and skip_synthesis:
+                    orchestrator_config["skip_final_presentation"] = True
+                    orchestrator_config["skip_voting"] = True
+                elif is_round_evaluator:
+                    # Synthesize mode: presenter merges all critiques
+                    orchestrator_config["final_answer_strategy"] = "synthesize"
+                    orchestrator_config["skip_final_presentation"] = False
+                else:
+                    # Non-round-evaluator multi-agent quick subagents skip presentation
+                    orchestrator_config["skip_final_presentation"] = True
+
+        # Round evaluator defaults that apply regardless of refine mode.
+        # When refine=True the block above is skipped, but round_evaluator
+        # still needs synthesize strategy and skip_synthesis handling.
+        if is_round_evaluator and refine:
+            if "final_answer_strategy" not in orchestrator_config:
+                orchestrator_config["final_answer_strategy"] = "synthesize"
+            skip_synthesis = self._parent_coordination_config.get(
+                "round_evaluator_skip_synthesis",
+                False,
+            )
+            if skip_synthesis:
+                orchestrator_config["skip_final_presentation"] = True
+                orchestrator_config["skip_voting"] = True
+            elif "skip_final_presentation" not in orchestrator_config:
+                orchestrator_config["skip_final_presentation"] = False
 
         # Merge context paths: parent context paths + task-specific context paths
         # Parent context paths are always read-only (subagents can read the codebase)
@@ -4068,7 +4230,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         Follows the same selection logic as the orchestrator's graceful timeout:
         1. If winner_agent_id is set, use that agent's answer
         2. If votes exist, select agent with most votes (ties broken by registration order)
-        3. Fall back to first registered agent with an answer
+        3. Fall back to agent with most recent answer by timestamp
         4. Check answer.txt if no agent workspaces
 
         Args:
@@ -4127,9 +4289,18 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         selected_agent = agent_id
                         break
 
-        # Fall back to first agent in registration order
+        # Fall back to most recent answer by timestamp (most context from iterations)
         if not selected_agent and historical_workspaces:
-            selected_agent = next(iter(historical_workspaces.keys()))
+            if historical_workspaces_raw:
+                best_ts = ""
+                for ws_info in historical_workspaces_raw:
+                    ts = ws_info.get("timestamp", "")
+                    candidate = ws_info.get("answerLabel") or ws_info.get("agentId")
+                    if ts > best_ts and candidate and candidate in historical_workspaces:
+                        best_ts = ts
+                        selected_agent = candidate
+            if not selected_agent:
+                selected_agent = list(historical_workspaces.keys())[-1]
 
         if not selected_agent:
             return None

@@ -65,6 +65,14 @@ ClaudeCodeBackend
    :undoc-members:
    :show-inheritance:
 
+CodexBackend
+~~~~~~~~~~~~
+
+.. autoclass:: massgen.backend.codex.CodexBackend
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 Base Classes
 ------------
 
@@ -76,10 +84,10 @@ LLMBackend
    :undoc-members:
    :show-inheritance:
 
-MCPBackend
-~~~~~~~~~~
+CustomToolAndMCPBackend
+~~~~~~~~~~~~~~~~~~~~~~~
 
-.. autoclass:: massgen.backend.base_with_mcp.MCPBackend
+.. autoclass:: massgen.backend.base_with_custom_tool_and_mcp.CustomToolAndMCPBackend
    :members:
    :undoc-members:
    :show-inheritance:

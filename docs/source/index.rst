@@ -190,6 +190,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.61 (March 9, 2026)** - Round Evaluator Paradigm
+
+New round evaluator subagent type that delegates evaluation to specialized evaluator subagents for deeper quality assessment. Major orchestrator refactoring with improved evaluation prompts, task plan injection, and subagent fixes.
+
 **v0.1.60 (March 6, 2026)** - Multimodal Tools, Subagent Enhancements & GPT-5.4
 
 Rewritten read_media tool with clearer schema and new MediaCallLedgerHook for media call tracking. Subagent enhancements with inherit_spawning_agent_backend and final_answer_strategy options. GPT-5.4 as default OpenAI flagship. Decomp mode cooperates with checklist workflow. Codex prompt caching calculation fix for pricing accuracy.
@@ -197,10 +201,6 @@ Rewritten read_media tool with clearer schema and new MediaCallLedgerHook for me
 **v0.1.59 (March 4, 2026)** - Quality Round Improvements
 
 Planning improvements with auto-added improvements to task plan and plan review enhancements. Checklist and evaluation enhancements with better eval gen config and Gemini tool name normalization. Subagent behavior adjustments and Docker skill write access fixes. Media generation fixes for video gen skills and impact metric restoration.
-
-**v0.1.58 (March 2, 2026)** - Multimodal Revamp, Nvidia NIM Backend & Quality Rethinking
-
-Comprehensive multimodal revamp with ElevenLabs TTS/STT, Nano Banana 2 image generation, and Grok multimedia. Nvidia NIM backend for NVIDIA Inference Microservices. Quality rethinking subagent for per-element craft improvements. Smarter checklists with improve/preserve listings and evaluation criteria defaults.
 
 :doc:`Full changelog → <changelog>`
 

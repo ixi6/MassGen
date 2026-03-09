@@ -428,6 +428,76 @@ class TestExecuteDelegatedSuccess:
         assert result.status == "completed"
         assert result.answer == "A beautiful poem here."
 
+    @pytest.mark.asyncio
+    async def test_delegated_round_evaluator_request_synthesizes_by_default(self, tmp_path):
+        """Delegated round_evaluator runs use synthesis by default (no skip_synthesis flag)."""
+        from massgen.subagent.manager import SubagentManager
+        from massgen.subagent.models import SubagentConfig, SubagentOrchestratorConfig
+
+        delegation_dir = tmp_path / "_delegation"
+        delegation_dir.mkdir()
+
+        with patch("massgen.subagent.manager.os.path.exists", return_value=True):
+            mgr = SubagentManager(
+                parent_workspace=str(tmp_path),
+                parent_agent_id="parent",
+                orchestrator_id="orch",
+                parent_agent_configs=[{"id": "parent", "backend": {"type": "codex", "model": "gpt-5.4"}}],
+                subagent_runtime_mode="delegated",
+                delegation_directory=str(delegation_dir),
+                subagent_orchestrator_config=SubagentOrchestratorConfig(
+                    enabled=True,
+                    agents=[
+                        {"id": "eval_codex", "backend": {"type": "codex", "model": "gpt-5.4"}},
+                        {"id": "eval_claude", "backend": {"type": "claude_code", "model": "claude-sonnet-4-6"}},
+                        {"id": "eval_gemini", "backend": {"type": "gemini", "model": "gemini-3.1-pro-preview"}},
+                    ],
+                ),
+            )
+
+        config = SubagentConfig.create(
+            task="Produce one critique packet.",
+            parent_agent_id="parent",
+            subagent_id="round-eval",
+            metadata={"refine": False, "subagent_type": "round_evaluator"},
+        )
+        workspace = mgr._create_workspace(config.id)
+        (workspace / "CONTEXT.md").write_text("Round evaluator integration context.")
+
+        captured_request: dict[str, object] = {}
+        original_to_file = DelegationRequest.to_file
+
+        def tracking_to_file(self_req, target_dir):
+            captured_request["yaml_config"] = self_req.yaml_config
+            return original_to_file(self_req, target_dir)
+
+        async def respond_quickly():
+            await asyncio.sleep(0.2)
+            (workspace / "answer.txt").write_text("Synthesized critique packet")
+            DelegationResponse(
+                version=DELEGATION_PROTOCOL_VERSION,
+                subagent_id=config.id,
+                request_id=f"req-{config.id}",
+                status="completed",
+                exit_code=0,
+            ).to_file(delegation_dir)
+
+        with (
+            patch.object(DelegationRequest, "to_file", tracking_to_file),
+            patch.object(mgr, "_build_subagent_system_prompt", return_value=("Round evaluator prompt", None)),
+        ):
+            responder = asyncio.create_task(respond_quickly())
+            result = await mgr._execute_subagent(config, workspace)
+            await responder
+
+        assert result.status == "completed"
+        assert result.answer == "Synthesized critique packet"
+        yaml_config = captured_request["yaml_config"]
+        assert isinstance(yaml_config, dict)
+        orchestrator_cfg = yaml_config["orchestrator"]
+        assert orchestrator_cfg["final_answer_strategy"] == "synthesize"
+        assert orchestrator_cfg["skip_final_presentation"] is False
+
 
 class TestExecuteDelegatedTimeout:
     """Tests for _execute_delegated timeout handling."""

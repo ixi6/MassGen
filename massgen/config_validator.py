@@ -913,6 +913,8 @@ class ConfigValidator:
                     "enable_changedoc",
                     "round_evaluator_before_checklist",
                     "orchestrator_managed_round_evaluator",
+                    "round_evaluator_refine",
+                    "round_evaluator_skip_synthesis",
                 ]
                 for field_name in boolean_fields:
                     if field_name in coordination:
@@ -1206,6 +1208,22 @@ class ConfigValidator:
                                     f"{location}.coordination.subagent_orchestrator.inherit_spawning_agent_backend",
                                     "Use true or false",
                                 )
+                            shared_child_team_types = subagent_orchestrator.get("shared_child_team_types")
+                            if shared_child_team_types is not None:
+                                if not isinstance(shared_child_team_types, list):
+                                    result.add_error(
+                                        "'shared_child_team_types' must be a list of non-empty strings",
+                                        f"{location}.coordination.subagent_orchestrator.shared_child_team_types",
+                                        "Use a list like: [round_evaluator, builder]",
+                                    )
+                                else:
+                                    for i, child_type in enumerate(shared_child_team_types):
+                                        if not isinstance(child_type, str) or not child_type.strip():
+                                            result.add_error(
+                                                "'shared_child_team_types' entries must be non-empty strings",
+                                                f"{location}.coordination.subagent_orchestrator.shared_child_team_types[{i}]",
+                                                "Use a list like: [round_evaluator, builder]",
+                                            )
                             child_final_answer_strategy = subagent_orchestrator.get("final_answer_strategy")
                             if child_final_answer_strategy is not None and child_final_answer_strategy not in self.VALID_FINAL_ANSWER_STRATEGIES:
                                 valid_values = ", ".join(sorted(self.VALID_FINAL_ANSWER_STRATEGIES))
@@ -1327,6 +1345,13 @@ class ConfigValidator:
                                         import yaml
 
                                         metadata = yaml.safe_load(metadata_path.read_text())
+                                        nested_resume = metadata.get("config", {}).get("orchestrator", {}).get("coordination", {}).get("resume_from_log")
+                                        if nested_resume is not None:
+                                            result.add_error(
+                                                "resume_from_log cannot target a log that itself used resume_from_log",
+                                                f"{location}.coordination.resume_from_log",
+                                                "Resume from the original non-resumed run instead",
+                                            )
                                         log_agent_ids = sorted(a["id"] for a in metadata.get("config", {}).get("agents", []))
                                         config_agent_ids = sorted(a.get("id", "") for a in (config or {}).get("agents", []))
                                         if log_agent_ids != config_agent_ids:
@@ -1798,18 +1823,31 @@ class ConfigValidator:
                         "orchestrator.coordination.orchestrator_managed_round_evaluator",
                         "Enable round_evaluator_before_checklist or remove orchestrator_managed_round_evaluator",
                     )
+                if round_eval_before_checklist and not orchestrator_managed_round_evaluator:
+                    result.add_error(
+                        "round_evaluator_before_checklist requires orchestrator_managed_round_evaluator: true",
+                        "orchestrator.coordination.round_evaluator_before_checklist",
+                        "Enable orchestrator_managed_round_evaluator so the evaluator stage is orchestrator-managed",
+                    )
+                round_evaluator_refine = coordination.get("round_evaluator_refine", False)
+                if round_evaluator_refine and not orchestrator_managed_round_evaluator:
+                    result.add_error(
+                        "round_evaluator_refine requires orchestrator_managed_round_evaluator: true",
+                        "orchestrator.coordination.round_evaluator_refine",
+                        "Enable orchestrator_managed_round_evaluator or remove round_evaluator_refine",
+                    )
                 if round_eval_before_checklist:
+                    if len(agents) != 1:
+                        result.add_error(
+                            "round_evaluator_before_checklist currently supports single-parent runs only",
+                            "orchestrator.coordination.round_evaluator_before_checklist",
+                            "Use exactly one top-level agent when enabling the round evaluator stage",
+                        )
                     if voting_sens != "checklist_gated":
                         result.add_error(
                             "round_evaluator_before_checklist requires orchestrator.voting_sensitivity: checklist_gated",
                             "orchestrator.coordination.round_evaluator_before_checklist",
                             "Set orchestrator.voting_sensitivity: checklist_gated",
-                        )
-                    if len(agents) != 1:
-                        result.add_error(
-                            "round_evaluator_before_checklist is currently supported only for single-parent top-level runs",
-                            "orchestrator.coordination.round_evaluator_before_checklist",
-                            "Use exactly one top-level agent for this v1 mode",
                         )
                     if coordination.get("enable_subagents") is not True:
                         result.add_error(
@@ -1830,6 +1868,12 @@ class ConfigValidator:
                             "round_evaluator_before_checklist requires subagent_types to include 'round_evaluator'",
                             "orchestrator.coordination.subagent_types",
                             "Set coordination.subagent_types to a list containing 'round_evaluator'",
+                        )
+                    if coordination.get("round_evaluator_skip_synthesis") is True:
+                        result.add_error(
+                            "round_evaluator_skip_synthesis is incompatible with the managed round evaluator stage",
+                            "orchestrator.coordination.round_evaluator_skip_synthesis",
+                            "Remove round_evaluator_skip_synthesis so the parent receives one synthesized evaluator packet",
                         )
 
         # Cross-validation: decomposition mode

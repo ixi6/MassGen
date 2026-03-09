@@ -26,7 +26,11 @@ from typing import Any
 
 import fastmcp
 
-from massgen.mcp_tools.planning.planning_dataclasses import Task, TaskPlan
+from massgen.mcp_tools.planning.planning_dataclasses import (
+    Task,
+    TaskPlan,
+    normalize_task_execution,
+)
 
 # Setup logging for debugging
 logger = logging.getLogger(__name__)
@@ -60,7 +64,7 @@ def _resolve_hook_middleware() -> Any:
 
 def _has_extended_task_fields(task_spec: dict[str, Any]) -> bool:
     """Check if task dict has extended fields beyond basic add_task parameters."""
-    extended_fields = {"status", "metadata", "verification_group", "completed_at", "verified_at", "created_at"}
+    extended_fields = {"status", "metadata", "verification_group", "completed_at", "verified_at", "created_at", "execution"}
     return bool(extended_fields & set(task_spec.keys()))
 
 
@@ -96,6 +100,12 @@ def _create_task_from_dict(task_spec: dict[str, Any]) -> Task:
     metadata = task_spec.get("metadata", {}).copy()
     if "verification_group" in task_spec and "verification_group" not in metadata:
         metadata["verification_group"] = task_spec["verification_group"]
+    if "execution" not in metadata:
+        metadata["execution"] = normalize_task_execution(
+            task_spec.get("execution"),
+            subagent_id=task_spec.get("subagent_id") or metadata.get("subagent_id"),
+            subagent_name=task_spec.get("subagent_name") or metadata.get("subagent_name"),
+        )
 
     return Task(
         id=task_id,
@@ -290,13 +300,14 @@ def _check_and_inject_pending_tasks(plan: TaskPlan, injection_dir: Path | None =
                 priority=t.get("priority", "medium"),
                 verification=t.get("verification"),
                 verification_method=t.get("verification_method"),
+                execution=t.get("execution") or t.get("metadata", {}).get("execution"),
                 subagent_name=t.get("subagent_name"),
                 subagent_id=t.get("subagent_id"),
                 skip_verification=True,
             )
             # Merge extra metadata (criterion_id, type, sources, etc.)
             task.metadata.update(t.get("metadata", {}))
-            for key in ("criterion_id", "impact", "sources", "type"):
+            for key in ("criterion_id", "impact", "sources", "type", "implementation_guidance"):
                 if key in t and key not in task.metadata:
                     task.metadata[key] = t[key]
             added_ids.append(task.id)
@@ -762,6 +773,7 @@ async def create_server() -> fastmcp.FastMCP:
                 is_framework = task_spec.get("id") in framework_task_ids
                 metadata = task_spec.get("metadata")
                 task_metadata = metadata if isinstance(metadata, dict) else {}
+                execution = task_spec.get("execution") or task_metadata.get("execution")
                 subagent_id = task_spec.get("subagent_id") or task_metadata.get("subagent_id")
                 subagent_name = task_spec.get("subagent_name") or task_metadata.get("subagent_name")
 
@@ -772,6 +784,7 @@ async def create_server() -> fastmcp.FastMCP:
                     priority=task_spec.get("priority", "medium"),
                     verification=task_spec.get("verification") or task_metadata.get("verification"),
                     verification_method=task_spec.get("verification_method") or task_metadata.get("verification_method"),
+                    execution=execution,
                     subagent_id=subagent_id,
                     subagent_name=subagent_name,
                     skip_verification=is_framework,
@@ -837,8 +850,7 @@ async def create_server() -> fastmcp.FastMCP:
         priority: str = "medium",
         verification: str | None = None,
         verification_method: str | None = None,
-        subagent_id: str | None = None,
-        subagent_name: str | None = None,
+        execution: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Add a new task to the plan.
@@ -850,8 +862,9 @@ async def create_server() -> fastmcp.FastMCP:
             priority: Task priority (low/medium/high, defaults to medium)
             verification: What success looks like (acceptance criteria). Required by default unless server runs with --no-require-verification.
             verification_method: How to verify (specific steps, e.g. "screenshot and check with read_media")
-            subagent_id: Optional ID of the subagent you plan to delegate this task to
-            subagent_name: Optional friendly name of the subagent (e.g. 'researcher', 'subagent_2')
+            execution: Execution plan for this task. Use `{"mode": "inline"}` to do it yourself,
+                or `{"mode": "delegate", "subagent_type": "builder"}` / `{"mode": "delegate", "subagent_id": "sub_1"}`
+                to delegate it when subagents are available.
 
         Returns:
             Dictionary with new task details
@@ -885,8 +898,7 @@ async def create_server() -> fastmcp.FastMCP:
                 priority=priority,
                 verification=verification,
                 verification_method=verification_method,
-                subagent_id=subagent_id,
-                subagent_name=subagent_name,
+                execution=execution,
             )
 
             # Save to filesystem if configured

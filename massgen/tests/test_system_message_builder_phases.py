@@ -228,9 +228,10 @@ class TestBuildCoordinationMessage:
         assert "vote" in msg.lower()
 
     def test_answers_used_drives_round_two_round_evaluator_context_guidance_without_peer_answers(self):
-        """A single-parent run with prior submissions should default to manual round-evaluator guidance."""
+        """A single-parent run with prior submissions should describe the managed evaluator stage."""
         builder = _make_builder()
         builder.config.coordination_config.round_evaluator_before_checklist = True
+        builder.config.coordination_config.orchestrator_managed_round_evaluator = True
         agent = _make_agent()
 
         msg = builder.build_coordination_message(
@@ -252,10 +253,10 @@ class TestBuildCoordinationMessage:
         assert "very critical" in lower
         assert "submit_checklist" in lower
         assert "before round 2" in lower
-        assert "blocking `round_evaluator` subagent yourself" in lower
-        assert "wait for its packet before" in lower
+        assert "orchestrator" in lower
+        assert "do not spawn another round_evaluator yourself" in lower
         assert "do not run a separate self-evaluation pass" in lower
-        assert "save or copy that round-evaluator report into your workspace" in lower
+        assert "pass that exact path as report_path" in lower
         assert "submit_checklist_args" not in msg
         assert "expected_verdict" not in msg
 
@@ -296,7 +297,7 @@ class TestBuildCoordinationMessage:
         lower = msg.lower()
         assert "round_evaluator" in lower
         assert "reserved for orchestrator-managed launches" in lower
-        assert "save or copy that round-evaluator report into your workspace" in lower
+        assert "pass that exact path as report_path" in lower
         assert "do not run a separate self-evaluation pass" in lower
         assert '"subagent_type": "round_evaluator"' not in msg
 

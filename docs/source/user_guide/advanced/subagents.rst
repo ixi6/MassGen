@@ -154,8 +154,32 @@ To inherit the exact backend/model from the spawning parent agent (single-agent 
 
 .. note::
 
-   ``inherit_spawning_agent_backend: true`` and ``subagent_orchestrator.agents`` are mutually exclusive.
-   Use one mode or the other, not both.
+   ``subagent_orchestrator.agents`` is typically the shared evaluator pool used by
+   ``round_evaluator``. Other subagent types prefer per-parent ``subagent_agents`` or
+   the spawning parent's inherited backend, so it is valid to configure both.
+
+To opt specific subagent types into that shared ``subagent_orchestrator.agents`` pool,
+set:
+
+.. code-block:: yaml
+
+   orchestrator:
+     coordination:
+       enable_subagents: true
+       subagent_orchestrator:
+         enabled: true
+         shared_child_team_types: [round_evaluator, builder]
+
+To apply the shared pool to every subagent type, use:
+
+.. code-block:: yaml
+
+   orchestrator:
+     coordination:
+       enable_subagents: true
+       subagent_orchestrator:
+         enabled: true
+         shared_child_team_types: ["*"]
 
 How Agents Use Subagents
 ------------------------

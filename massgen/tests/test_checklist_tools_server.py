@@ -23,6 +23,7 @@ from massgen.mcp_tools.checklist_tools_server import (
     _extract_score,
     _find_plateaued_criteria,
     _read_specs,
+    _resolve_report_file,
     build_server_config,
     evaluate_checklist_submission,
     evaluate_proposed_improvements,
@@ -782,36 +783,36 @@ class TestProposeImprovements:
         assert first["criterion"] == "Goal alignment"
         assert first["improvement"] == "add mobile nav"
 
-    def test_subagent_name_set_for_structural_impact(self):
-        """Structural impact improvements should suggest builder subagent."""
+    def test_delegate_execution_set_for_structural_impact_when_subagents_enabled(self):
+        """Structural impact improvements should suggest delegated builder execution when available."""
         result = evaluate_proposed_improvements(
             improvements={
                 "E1": [{"plan": "redesign nav", "sources": [], "impact": "structural"}],
             },
             failed_criteria=["E1"],
             items=["Check 1"],
-            state=self._NO_GATE,
+            state={**self._NO_GATE, "subagents_enabled": True},
         )
         assert result["valid"] is True
         improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
-        assert improve_entry["subagent_name"] == "builder"
+        assert improve_entry["execution"] == {"mode": "delegate", "subagent_type": "builder"}
 
-    def test_subagent_name_set_for_transformative_impact(self):
-        """Transformative impact improvements should suggest builder subagent."""
+    def test_delegate_execution_set_for_transformative_impact_when_subagents_enabled(self):
+        """Transformative impact improvements should suggest delegated builder execution when available."""
         result = evaluate_proposed_improvements(
             improvements={
                 "E1": [{"plan": "switch architecture", "sources": [], "impact": "transformative"}],
             },
             failed_criteria=["E1"],
             items=["Check 1"],
-            state=self._NO_GATE,
+            state={**self._NO_GATE, "subagents_enabled": True},
         )
         assert result["valid"] is True
         improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
-        assert improve_entry["subagent_name"] == "builder"
+        assert improve_entry["execution"] == {"mode": "delegate", "subagent_type": "builder"}
 
-    def test_no_subagent_name_for_incremental(self):
-        """Incremental impact should not pre-label a builder subagent."""
+    def test_no_delegate_execution_for_incremental(self):
+        """Incremental impact should stay inline."""
         result = evaluate_proposed_improvements(
             improvements={
                 "E1": [{"plan": "polish spacing", "sources": [], "impact": "incremental"}],
@@ -822,7 +823,21 @@ class TestProposeImprovements:
         )
         assert result["valid"] is True
         improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
-        assert "subagent_name" not in improve_entry
+        assert improve_entry["execution"] == {"mode": "inline"}
+
+    def test_no_delegate_execution_for_structural_when_subagents_disabled(self):
+        """Structural work should stay inline when subagents are unavailable."""
+        result = evaluate_proposed_improvements(
+            improvements={
+                "E1": [{"plan": "redesign nav", "sources": [], "impact": "structural"}],
+            },
+            failed_criteria=["E1"],
+            items=["Check 1"],
+            state=self._NO_GATE,
+        )
+        assert result["valid"] is True
+        improve_entry = [t for t in result["task_plan"] if t["type"] == "improve"][0]
+        assert improve_entry["execution"] == {"mode": "inline"}
 
     def test_novelty_task_injected_on_round_2_plus(self):
         """Round 2+ with novelty-on-iteration enabled should prepend novelty task."""
@@ -1105,7 +1120,7 @@ class TestProposeImprovements:
         )
         assert result["valid"] is True
         verify_entry = next(t for t in result["task_plan"] if t["type"] == "verify_preserve")
-        assert verify_entry["subagent_name"] == "evaluator"
+        assert verify_entry["execution"] == {"mode": "delegate", "subagent_type": "evaluator"}
         assert "evaluator or critic subagent" in verify_entry["description"]
         assert "without revealing which answer is yours" in verify_entry["description"]
 
@@ -2376,6 +2391,130 @@ class TestChecklistSdkSubmissionCounting:
         assert allowed_payload["valid"] is True
 
     @pytest.mark.asyncio
+    async def test_sdk_blocks_checklist_loop_after_round_evaluator_auto_injection(self, monkeypatch):
+        """Auto-injected evaluator task mode should redirect away from submit_checklist/propose_improvements."""
+        from massgen.orchestrator import AgentState, Orchestrator
+
+        self._install_fake_claude_agent_sdk(monkeypatch)
+
+        class _MockBackend:
+            def __init__(self):
+                self.config = {}
+
+        orchestrator = Orchestrator.__new__(Orchestrator)
+        orchestrator.config = SimpleNamespace(
+            max_checklist_calls_per_round=4,
+            checklist_first_answer=False,
+            coordination_config=SimpleNamespace(enable_subagents=False),
+        )
+        orchestrator.agents = {"agent_0": None}
+        orchestrator.agent_states = {"agent_0": AgentState(answer_count=1)}
+        orchestrator._planning_injection_dirs = {}
+        orchestrator._write_planning_injection = lambda *_args, **_kwargs: None
+
+        backend = _MockBackend()
+        checklist_state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "available_agent_labels": ["agent1.1"],
+            "round_evaluator_auto_injected": True,
+            "round_evaluator_primary_artifact_path": "/tmp/eval/critique_packet.md",
+            "round_evaluator_next_tasks_artifact_path": "/tmp/eval/next_tasks.json",
+        }
+        items = ["Hero clarity", "CTA clarity"]
+
+        orchestrator._init_checklist_tool_sdk(
+            "agent_0",
+            backend,
+            checklist_state,
+            items,
+        )
+        submit_checklist = backend.config["mcp_servers"]["massgen_checklist"]["tools"][0]
+        propose_improvements = backend.config["mcp_servers"]["massgen_checklist"]["tools"][1]
+
+        blocked_submit = await submit_checklist(
+            {
+                "scores": {
+                    "agent1.1": {
+                        "E1": {"score": 4, "reasoning": "weak hero"},
+                        "E2": {"score": 5, "reasoning": "weak CTA"},
+                    },
+                },
+            },
+        )
+        submit_text = blocked_submit["content"][0]["text"]
+        assert blocked_submit["isError"] is True
+        assert "get_task_plan" in submit_text
+        assert "new_answer" in submit_text
+        assert "submit_checklist" in submit_text and "do not call" in submit_text.lower()
+        assert "/tmp/eval/critique_packet.md" in submit_text
+
+        blocked_propose = await propose_improvements(
+            {
+                "improvements": {
+                    "E1": [{"plan": "rewrite hero", "sources": ["agent1.1"], "impact": "structural"}],
+                },
+                "preserve": {"E2": {"what": "cta clarity", "source": "agent1.1"}},
+            },
+        )
+        blocked_payload = json.loads(blocked_propose["content"][0]["text"])
+        assert blocked_payload["valid"] is False
+        assert "get_task_plan" in blocked_payload["error"]
+        assert "new_answer" in blocked_payload["error"]
+
+    @pytest.mark.asyncio
+    async def test_stdio_blocks_checklist_loop_after_round_evaluator_auto_injection(self, tmp_path):
+        """Stdio checklist path should redirect away from checklist/improvement loops in task mode."""
+        items = ["Hero clarity", "CTA clarity"]
+        state = {
+            "terminate_action": "vote",
+            "iterate_action": "new_answer",
+            "has_existing_answers": True,
+            "required": 2,
+            "cutoff": 7,
+            "require_diagnostic_report": False,
+            "available_agent_labels": ["agent1.1"],
+            "round_evaluator_auto_injected": True,
+            "round_evaluator_primary_artifact_path": "/tmp/eval/critique_packet.md",
+            "round_evaluator_next_tasks_artifact_path": "/tmp/eval/next_tasks.json",
+        }
+        specs_path = _make_specs_file(tmp_path, items, state)
+        handlers = _build_handlers(specs_path)
+        submit_checklist = handlers["submit_checklist"]
+        propose_improvements = handlers["propose_improvements"]
+
+        blocked_submit = json.loads(
+            await submit_checklist(
+                scores={
+                    "agent1.1": {
+                        "E1": {"score": 4, "reasoning": "weak hero"},
+                        "E2": {"score": 5, "reasoning": "weak CTA"},
+                    },
+                },
+            ),
+        )
+        assert "get_task_plan" in blocked_submit["error"]
+        assert "new_answer" in blocked_submit["error"]
+        assert "submit_checklist" in blocked_submit["error"]
+        assert "/tmp/eval/critique_packet.md" in blocked_submit["error"]
+
+        blocked_propose = json.loads(
+            await propose_improvements(
+                improvements={
+                    "E1": [{"plan": "rewrite hero", "sources": ["agent1.1"], "impact": "structural"}],
+                },
+                preserve={"E2": {"what": "cta clarity", "source": "agent1.1"}},
+            ),
+        )
+        assert blocked_propose["valid"] is False
+        assert "get_task_plan" in blocked_propose["error"]
+        assert "new_answer" in blocked_propose["error"]
+
+    @pytest.mark.asyncio
     async def test_stdio_propose_improvements_requires_recheck_after_injection(self, tmp_path):
         """Stdio checklist path must block propose_improvements when newer injected labels are pending recheck."""
         items = ["Hero clarity", "CTA clarity"]
@@ -2796,6 +2935,51 @@ class TestDiagnosticReportGate:
         )
         assert result["report_gate_triggered"] is True
 
+    def test_external_round_evaluator_packet_path_allowed_when_whitelisted(self, tmp_path):
+        """Fallback checklist mode should accept the exact evaluator packet path directly."""
+        parent_workspace = tmp_path / "parent"
+        parent_workspace.mkdir()
+        evaluator_workspace = tmp_path / "evaluator"
+        evaluator_workspace.mkdir()
+        report = evaluator_workspace / "critique_packet.md"
+        report.write_text(
+            "## Failure Patterns\n\nThe hero is generic and the mobile layout breaks.\n\n"
+            "## Root Causes\n\nThe current structure is brochure-first instead of route-first.\n\n"
+            "## Goal Alignment\n\nThe work still misses the experience bar on clarity and distinctiveness.\n",
+            encoding="utf-8",
+        )
+        state = self._make_state(parent_workspace)
+        state["allowed_external_report_paths"] = [str(report)]
+
+        resolved, error = _resolve_report_file(str(report), state)
+
+        assert error is None
+        assert resolved == report.resolve()
+
+        result = evaluate_checklist_submission(
+            scores=self._passing_scores(),
+            report_path=str(report),
+            items=["Check 1", "Check 2"],
+            state=state,
+        )
+
+        assert result["report_gate_triggered"] is False
+        assert result["report"]["resolved_path"] == str(report.resolve())
+
+    def test_external_report_path_still_rejected_without_whitelist(self, tmp_path):
+        """Arbitrary paths outside the workspace should remain blocked."""
+        parent_workspace = tmp_path / "parent"
+        parent_workspace.mkdir()
+        external_report = tmp_path / "elsewhere" / "diagnostic_report.md"
+        external_report.parent.mkdir()
+        external_report.write_text("diagnostic content that should not be allowed", encoding="utf-8")
+        state = self._make_state(parent_workspace)
+
+        resolved, error = _resolve_report_file(str(external_report), state)
+
+        assert resolved is None
+        assert "workspace" in (error or "").lower()
+
 
 # ---------------------------------------------------------------------------
 # Per-agent scores format
@@ -3115,8 +3299,8 @@ class TestConvertTaskPlanToInjectFormat:
         assert len(task["metadata"]["items"]) == 2
         assert task["metadata"]["injected"] is True
 
-    def test_convert_verify_preserve_item_preserves_subagent_hint(self):
-        """verify_preserve conversion should preserve evaluator/critic delegation hint metadata."""
+    def test_convert_verify_preserve_item_preserves_execution(self):
+        """verify_preserve conversion should preserve evaluator/critic delegation execution."""
         from massgen.mcp_tools.checklist_tools_server import (
             _convert_task_plan_to_inject_format,
         )
@@ -3129,14 +3313,14 @@ class TestConvertTaskPlanToInjectFormat:
                     {"criterion_id": "E1", "what": "Warm conversational tone in intro", "source": "agent2.1"},
                 ],
                 "priority": "high",
-                "subagent_name": "evaluator",
+                "execution": {"mode": "delegate", "subagent_type": "evaluator"},
             },
         ]
 
         result = _convert_task_plan_to_inject_format(task_plan)
         assert len(result) == 1
-        assert result[0]["subagent_name"] == "evaluator"
-        assert result[0]["metadata"]["subagent_name"] == "evaluator"
+        assert result[0]["execution"] == {"mode": "delegate", "subagent_type": "evaluator"}
+        assert result[0]["metadata"]["execution"] == {"mode": "delegate", "subagent_type": "evaluator"}
 
     def test_convert_verify_preserve_item_includes_blind_comparison_instruction(self):
         """verify_preserve conversion should include anti-bias blind comparison guidance."""
@@ -3152,7 +3336,7 @@ class TestConvertTaskPlanToInjectFormat:
                     {"criterion_id": "E1", "what": "Warm conversational tone in intro", "source": "agent2.1"},
                 ],
                 "priority": "high",
-                "subagent_name": "evaluator",
+                "execution": {"mode": "delegate", "subagent_type": "evaluator"},
             },
         ]
 

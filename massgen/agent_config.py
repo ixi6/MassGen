@@ -210,11 +210,13 @@ class CoordinationConfig:
     subagent_types: list[str] | None = None  # None = use DEFAULT_SUBAGENT_TYPES (excludes novelty)
     round_evaluator_before_checklist: bool = False  # Round 2+ must run round_evaluator before checklist submit
     orchestrator_managed_round_evaluator: bool = False  # Gate orchestrator-owned round_evaluator launch; default prompt-guidance only
+    round_evaluator_skip_synthesis: bool = False  # Skip synthesis stage; pass all raw critiques to parent directly
+    round_evaluator_refine: bool = False  # Allow evaluator agents to iterate (multi-round with voting)
     enable_quality_rethink_on_iteration: bool = False  # Auto-inject quality_rethinking spawn task on iteration 2+
     enable_novelty_on_iteration: bool = False  # Auto-inject novelty/quality spawn task on iteration 2+
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
     improvements: dict[str, Any] = field(default_factory=dict)  # Quality gate config for propose_improvements
-    checklist_criteria_preset: str | None = None  # "persona" | "decomposition" | "evaluation" | "prompt" | "analysis"
+    checklist_criteria_preset: str | None = None  # "persona" | "decomposition" | "evaluation" | "prompt" | "analysis" | "planning" | "spec" | "round_evaluator"
     checklist_criteria_inline: list[dict[str, str]] | None = None  # [{text: str, category: must|should|could}]
     resume_from_log: dict[str, Any] | None = None  # {log_path: str, round: int}
 

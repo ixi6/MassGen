@@ -20,6 +20,7 @@ TODOs:
 import ast
 import asyncio
 import concurrent.futures
+import copy
 import inspect
 import json
 import os
@@ -46,7 +47,7 @@ if TYPE_CHECKING:
     from .dspy_paraphraser import QuestionParaphraser
     from .filesystem_manager import IsolationContextManager
     from .mcp_tools.hooks import RuntimeInboxPoller
-    from .subagent.models import SubagentResult
+    from .subagent.models import RoundEvaluatorResult, SubagentResult
 
 from .filesystem_manager import has_meaningful_content
 from .logger_config import get_log_session_dir  # Import to get log directory
@@ -120,6 +121,7 @@ class AgentState:
     restart_pending: bool = False
     is_killed: bool = False
     timeout_reason: str | None = None
+    error_reason: str | None = None
     last_context: dict[str, Any] | None = None  # Store the context sent to this agent
     paraphrase: str | None = None
     answer_count: int = 0  # Track number of answers for memory archiving
@@ -184,6 +186,7 @@ class Orchestrator(ChatAgent):
 
     # TODO: derive this cap dynamically from model context limits per backend.
     _ENFORCEMENT_RETRY_BUFFER_MAX_CHARS = 120_000
+    _ROUND_EVALUATOR_MAX_LAUNCH_FAILURES = 1
 
     def __init__(
         self,
@@ -365,6 +368,9 @@ class Orchestrator(ChatAgent):
         # Latest answer-label tuples already critiqued by the orchestrator-owned
         # round_evaluator gate. Prevents duplicate launches for unchanged revisions.
         self._round_evaluator_completed_labels: dict[str, tuple[str, ...]] = {}
+        # Tracks failed evaluator launches per answer-label set so deterministic
+        # launch failures don't get retried forever.
+        self._round_evaluator_launch_failures: dict[tuple[str, tuple[str, ...]], int] = {}
         # Context blocks inserted at the start of the next parent round.
         self._round_start_context_blocks: dict[str, list[str]] = {}
 
@@ -1008,6 +1014,17 @@ class Orchestrator(ChatAgent):
                 "subagents_enabled": bool(
                     hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents") and self.config.coordination_config.enable_subagents,
                 ),
+                # Post-evaluator task mode: once round_evaluator has already
+                # injected next tasks, the parent should skip checklist loops.
+                "round_evaluator_auto_injected": False,
+                "round_evaluator_primary_artifact_path": "",
+                "round_evaluator_verdict_artifact_path": "",
+                "round_evaluator_next_tasks_artifact_path": "",
+                "round_evaluator_objective": "",
+                "round_evaluator_primary_strategy": "",
+                "round_evaluator_why_this_strategy": "",
+                "round_evaluator_deprioritize_or_remove": [],
+                "allowed_external_report_paths": [],
                 "agent_answer_count": (len(tracker.answers_by_agent.get(agent_id, [])) if tracker is not None and hasattr(tracker, "answers_by_agent") else 0),
                 "current_answer_label": (tracker.get_latest_answer_label(agent_id) if tracker is not None else None),
                 "enable_quality_rethink_on_iteration": bool(
@@ -1076,6 +1093,7 @@ class Orchestrator(ChatAgent):
             return
 
         from .mcp_tools.checklist_tools_server import (
+            build_round_evaluator_task_mode_redirect,
             evaluate_checklist_submission,
             evaluate_proposed_improvements,
         )
@@ -1228,6 +1246,12 @@ class Orchestrator(ChatAgent):
             agent_state = _orchestrator.agent_states.get(_agent_id)
             max_calls = getattr(_orchestrator.config, "max_checklist_calls_per_round", 1)
             checklist_first_answer = getattr(_orchestrator.config, "checklist_first_answer", False)
+            redirect_message = build_round_evaluator_task_mode_redirect(_state)
+            if redirect_message:
+                return {
+                    "content": [{"type": "text", "text": redirect_message}],
+                    "isError": True,
+                }
             raw_scores = args.get("scores", {})
             submitted_agent_labels = _orchestrator._extract_submitted_agent_labels(raw_scores)
             state_for_eval = _state
@@ -1359,6 +1383,16 @@ class Orchestrator(ChatAgent):
         async def propose_improvements_handler(args, _state=state):
             import json as _json
 
+            redirect_message = build_round_evaluator_task_mode_redirect(_state)
+            if redirect_message:
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": _json.dumps({"valid": False, "error": redirect_message}),
+                        },
+                    ],
+                }
             iterate_action = _state.get("iterate_action", "new_answer")
             last_status = str(_last_checklist_result.get("status", "none"))
             last_verdict = _last_checklist_result.get("verdict")
@@ -1451,7 +1485,8 @@ class Orchestrator(ChatAgent):
                         " Review the pre-populated plan for subagent delegation"
                         " opportunities. Tasks without mutual dependencies can be"
                         " spawned as parallel background subagents. Mark tasks"
-                        " with subagent_id/subagent_name, then spawn."
+                        " with execution.mode='delegate' plus subagent_type/subagent_id,"
+                        " then spawn."
                     )
             return {
                 "content": [
@@ -1716,6 +1751,11 @@ class Orchestrator(ChatAgent):
                     self.coordination_tracker.get_agent_context_labels(agent_id),
                 ),
                 "pending_checklist_recheck_labels": pending_recheck_labels,
+                "round_evaluator_auto_injected": state.get("round_evaluator_auto_injected", False),
+                "round_evaluator_primary_artifact_path": state.get("round_evaluator_primary_artifact_path", ""),
+                "round_evaluator_verdict_artifact_path": state.get("round_evaluator_verdict_artifact_path", ""),
+                "round_evaluator_next_tasks_artifact_path": state.get("round_evaluator_next_tasks_artifact_path", ""),
+                "allowed_external_report_paths": list(state.get("allowed_external_report_paths", []) or []),
             },
         )
         # Re-write specs file for stdio backends so the MCP server sees updated state
@@ -1734,6 +1774,44 @@ class Orchestrator(ChatAgent):
             _cl_remaining,
             _has_answers,
         )
+
+    def _set_round_evaluator_task_mode(
+        self,
+        agent_id: str,
+        *,
+        enabled: bool,
+        primary_artifact_path: str = "",
+        verdict_artifact_path: str = "",
+        next_tasks_artifact_path: str = "",
+        objective: str = "",
+        primary_strategy: str = "",
+        why_this_strategy: str = "",
+        deprioritize_or_remove: list[str] | None = None,
+    ) -> None:
+        """Persist whether an agent is in post-evaluator task mode."""
+        agent = self.agents.get(agent_id)
+        if not agent or not hasattr(agent.backend, "_checklist_state"):
+            return
+
+        state = agent.backend._checklist_state
+        state["round_evaluator_auto_injected"] = bool(enabled)
+        state["round_evaluator_primary_artifact_path"] = primary_artifact_path or ""
+        state["round_evaluator_verdict_artifact_path"] = verdict_artifact_path or ""
+        state["round_evaluator_next_tasks_artifact_path"] = next_tasks_artifact_path or ""
+        state["round_evaluator_objective"] = objective or ""
+        state["round_evaluator_primary_strategy"] = primary_strategy or ""
+        state["round_evaluator_why_this_strategy"] = why_this_strategy or ""
+        state["round_evaluator_deprioritize_or_remove"] = list(deprioritize_or_remove or [])
+        state["allowed_external_report_paths"] = [primary_artifact_path] if primary_artifact_path else []
+
+        if hasattr(agent.backend, "_checklist_specs_path"):
+            from .mcp_tools.checklist_tools_server import write_checklist_specs
+
+            write_checklist_specs(
+                items=getattr(agent.backend, "_checklist_items", []),
+                state=state,
+                output_path=agent.backend._checklist_specs_path,
+            )
 
     def ensure_workspace_symlinks(self) -> None:
         """Ensure per-agent workspace symlinks exist in the current attempt log directory."""
@@ -2318,9 +2396,12 @@ class Orchestrator(ChatAgent):
 
         # Create injection directory for task injection from propose_improvements
         # Use log session dir (persists for entire run, accessible in Docker)
+        # IMPORTANT: resolve() to absolute path — the planning MCP server runs
+        # as a subprocess whose CWD may differ from the orchestrator's CWD,
+        # so relative paths would resolve to the wrong location.
         log_dir = get_log_session_dir()
         if log_dir:
-            injection_dir = log_dir / "planning_injection" / agent_id
+            injection_dir = (log_dir / "planning_injection" / agent_id).resolve()
         else:
             import tempfile as _tempfile
 
@@ -2550,6 +2631,70 @@ class Orchestrator(ChatAgent):
         except Exception as e:
             logger.warning(f"[Orchestrator] Failed to write subagent type dirs: {e}")
 
+    def _build_parent_coordination_config_for_subagents(self) -> dict[str, Any]:
+        """Collect parent coordination fields that child subagent runs may inherit."""
+        parent_coordination_config: dict[str, Any] = {}
+        coord_cfg = getattr(self.config, "coordination_config", None)
+        if not coord_cfg:
+            return parent_coordination_config
+
+        if hasattr(coord_cfg, "enable_agent_task_planning"):
+            parent_coordination_config["enable_agent_task_planning"] = coord_cfg.enable_agent_task_planning
+        if hasattr(coord_cfg, "task_planning_filesystem_mode"):
+            parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
+        if hasattr(coord_cfg, "learning_capture_mode"):
+            parent_coordination_config["learning_capture_mode"] = coord_cfg.learning_capture_mode
+        if hasattr(coord_cfg, "disable_final_only_round_capture_fallback"):
+            parent_coordination_config["disable_final_only_round_capture_fallback"] = coord_cfg.disable_final_only_round_capture_fallback
+        if hasattr(coord_cfg, "subagent_orchestrator"):
+            so_cfg = coord_cfg.subagent_orchestrator
+            if so_cfg:
+                parent_coordination_config["subagent_orchestrator"] = so_cfg.to_dict()
+
+        use_skills = getattr(coord_cfg, "use_skills", False)
+        enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
+        if use_skills or enabled_skill_names is not None:
+            parent_coordination_config["use_skills"] = True
+            parent_coordination_config["massgen_skills"] = getattr(coord_cfg, "massgen_skills", []) or []
+            parent_coordination_config["skills_directory"] = getattr(
+                coord_cfg,
+                "skills_directory",
+                ".agent/skills",
+            )
+            parent_coordination_config["load_previous_session_skills"] = getattr(
+                coord_cfg,
+                "load_previous_session_skills",
+                False,
+            )
+            if enabled_skill_names is not None:
+                parent_coordination_config["enabled_skill_names"] = enabled_skill_names
+
+        if hasattr(coord_cfg, "subagent_round_timeouts") and coord_cfg.subagent_round_timeouts:
+            parent_coordination_config["subagent_round_timeouts"] = coord_cfg.subagent_round_timeouts
+
+        if hasattr(self.config, "timeout_config") and self.config.timeout_config:
+            parent_coordination_config["parent_round_timeouts"] = {
+                "initial_round_timeout_seconds": self.config.timeout_config.initial_round_timeout_seconds,
+                "subsequent_round_timeout_seconds": self.config.timeout_config.subsequent_round_timeout_seconds,
+                "round_timeout_grace_seconds": self.config.timeout_config.round_timeout_grace_seconds,
+            }
+
+        for setting in (
+            "voting_sensitivity",
+            "voting_threshold",
+            "checklist_require_gap_report",
+            "gap_report_mode",
+            "max_checklist_calls_per_round",
+            "checklist_first_answer",
+        ):
+            value = getattr(self.config, setting, None)
+            if setting == "voting_threshold" and value is None:
+                continue
+            if value is not None:
+                parent_coordination_config[setting] = value
+
+        return parent_coordination_config
+
     def _create_subagent_mcp_config(self, agent_id: str, agent: Any) -> dict[str, Any]:
         """
         Create MCP server configuration for subagent tools.
@@ -2631,49 +2776,7 @@ class Orchestrator(ChatAgent):
         # Extract coordination config to pass to subagents for planning tools inheritance
         coordination_config_path = ""
         if hasattr(self.config, "coordination_config") and self.config.coordination_config:
-            coord_cfg = self.config.coordination_config
-            # Extract relevant coordination settings that subagents should inherit
-            parent_coordination_config = {}
-            if hasattr(coord_cfg, "enable_agent_task_planning"):
-                parent_coordination_config["enable_agent_task_planning"] = coord_cfg.enable_agent_task_planning
-            if hasattr(coord_cfg, "task_planning_filesystem_mode"):
-                parent_coordination_config["task_planning_filesystem_mode"] = coord_cfg.task_planning_filesystem_mode
-            if hasattr(coord_cfg, "learning_capture_mode"):
-                parent_coordination_config["learning_capture_mode"] = coord_cfg.learning_capture_mode
-            if hasattr(coord_cfg, "disable_final_only_round_capture_fallback"):
-                parent_coordination_config["disable_final_only_round_capture_fallback"] = coord_cfg.disable_final_only_round_capture_fallback
-            if hasattr(coord_cfg, "subagent_orchestrator"):
-                so_cfg = coord_cfg.subagent_orchestrator
-                if so_cfg:
-                    parent_coordination_config["subagent_orchestrator"] = so_cfg.to_dict()
-            use_skills = getattr(coord_cfg, "use_skills", False)
-            enabled_skill_names = getattr(coord_cfg, "enabled_skill_names", None)
-            if use_skills or enabled_skill_names is not None:
-                parent_coordination_config["use_skills"] = True
-                parent_coordination_config["massgen_skills"] = getattr(coord_cfg, "massgen_skills", []) or []
-                parent_coordination_config["skills_directory"] = getattr(
-                    coord_cfg,
-                    "skills_directory",
-                    ".agent/skills",
-                )
-                parent_coordination_config["load_previous_session_skills"] = getattr(
-                    coord_cfg,
-                    "load_previous_session_skills",
-                    False,
-                )
-                if enabled_skill_names is not None:
-                    parent_coordination_config["enabled_skill_names"] = enabled_skill_names
-            if hasattr(coord_cfg, "subagent_round_timeouts") and coord_cfg.subagent_round_timeouts:
-                parent_coordination_config["subagent_round_timeouts"] = coord_cfg.subagent_round_timeouts
-
-            # Include parent round timeouts for inheritance if subagent settings are omitted
-            if hasattr(self.config, "timeout_config") and self.config.timeout_config:
-                parent_coordination_config["parent_round_timeouts"] = {
-                    "initial_round_timeout_seconds": self.config.timeout_config.initial_round_timeout_seconds,
-                    "subsequent_round_timeout_seconds": self.config.timeout_config.subsequent_round_timeout_seconds,
-                    "round_timeout_grace_seconds": self.config.timeout_config.round_timeout_grace_seconds,
-                }
-
+            parent_coordination_config = self._build_parent_coordination_config_for_subagents()
             if parent_coordination_config:
                 coordination_config_path = str(mcp_temp_dir / f"{agent_id}_coordination_config.json")
                 with open(coordination_config_path, "w") as f:
@@ -2701,6 +2804,10 @@ class Orchestrator(ChatAgent):
                 min_timeout = self.config.coordination_config.subagent_min_timeout
             if hasattr(self.config.coordination_config, "subagent_max_timeout"):
                 max_timeout = self.config.coordination_config.subagent_max_timeout
+            # Auto-raise max_timeout when default_timeout exceeds it to avoid
+            # silent capping (e.g. subagent_default_timeout: 900 capped to 600).
+            if default_timeout > max_timeout:
+                max_timeout = default_timeout
             # Get subagent_orchestrator config if present
             if hasattr(self.config.coordination_config, "subagent_orchestrator"):
                 so_config = self.config.coordination_config.subagent_orchestrator
@@ -2828,8 +2935,6 @@ class Orchestrator(ChatAgent):
             str(max_timeout),
             "--orchestrator-config-file",
             subagent_orchestrator_config_path,
-            "--orchestrator-config",
-            subagent_orchestrator_config_json,
             "--log-directory",
             log_directory,
             "--context-paths-file",
@@ -2845,6 +2950,13 @@ class Orchestrator(ChatAgent):
             "--delegation-directory",
             str(self._delegation_dir.resolve()) if self._delegation_dir is not None else "",
         ]
+        if not subagent_orchestrator_config_path:
+            args.extend(
+                [
+                    "--orchestrator-config",
+                    subagent_orchestrator_config_json,
+                ],
+            )
 
         # Pass hook directory for MCP server-level hook injection (Codex)
         if hasattr(agent.backend, "supports_mcp_server_hooks") and agent.backend.supports_mcp_server_hooks():
@@ -4789,6 +4901,17 @@ Your answer:"""
                                 logger.info(f"[Orchestrator] Cleaned {cleaned} orphaned branches in {ctx_path}")
                             break  # Only need to clean once per repo
 
+        # Restore state from a previous log BEFORE generating personas/criteria
+        # so the guard flags (_evaluation_criteria_generated, _personas_generated)
+        # are set and generation is skipped.
+        resume_cfg = getattr(
+            getattr(self.config, "coordination_config", None),
+            "resume_from_log",
+            None,
+        )
+        if resume_cfg:
+            await self._restore_from_previous_log(resume_cfg)
+
         # Generate personas and/or evaluation criteria if enabled (happens once per session)
         _persona_enabled = (
             hasattr(self.config, "coordination_config")
@@ -5208,15 +5331,6 @@ Your answer:"""
         When any agent provides new_answer, all other agents get restart_pending=True
         and gracefully terminate their current work before restarting.
         """
-        # Restore state from a previous log if resume_from_log is configured
-        resume_cfg = getattr(
-            getattr(self.config, "coordination_config", None),
-            "resume_from_log",
-            None,
-        )
-        if resume_cfg:
-            await self._restore_from_previous_log(resume_cfg)
-
         active_streams = {}
         active_tasks = {}  # Track active tasks to prevent duplicate task creation
 
@@ -5274,6 +5388,8 @@ Your answer:"""
             if gate_ready is False:
                 await asyncio.sleep(0.25)
                 continue
+            if gate_ready == "terminal_error":
+                break
 
             # Start new coordination iteration only after blocking pre-round gates complete.
             self.coordination_tracker.start_new_iteration()
@@ -5751,6 +5867,7 @@ Your answer:"""
 
                     elif chunk_type == "error":
                         # Agent error
+                        self.agent_states[agent_id].error_reason = chunk_data
                         self.coordination_tracker.track_agent_action(
                             agent_id,
                             ActionType.ERROR,
@@ -5862,6 +5979,7 @@ Your answer:"""
                         await self._close_agent_stream(agent_id, active_streams)
 
                 except Exception as e:
+                    self.agent_states[agent_id].error_reason = f"Stream error - {e}"
                     self.coordination_tracker.track_agent_action(
                         agent_id,
                         ActionType.ERROR,
@@ -6091,6 +6209,13 @@ Your answer:"""
                             dst = dest / rel
                             dst.parent.mkdir(parents=True, exist_ok=True)
                             shutil.copy2(str(src_file), str(dst))
+                    # Clear stale task plan so agent starts with a fresh plan
+                    stale_plan = dest / "tasks" / "plan.json"
+                    try:
+                        stale_plan.unlink()
+                        logger.info(f"[Orchestrator] Cleared stale task plan from restored workspace for {agent_id}")
+                    except FileNotFoundError:
+                        pass
 
             logger.info(
                 f"[Orchestrator] Restored {label}: agent={agent_id}, "
@@ -6106,6 +6231,7 @@ Your answer:"""
             answers = self.coordination_tracker.answers_by_agent.get(agent_id, [])
             if answers and agent_id in self.agent_states:
                 self.agent_states[agent_id].answer = answers[-1].content
+                self.agent_states[agent_id].answer_count = len(answers)
 
         # Load generated evaluation criteria from the log if no inline criteria override
         inline = getattr(
@@ -6130,12 +6256,37 @@ Your answer:"""
                             )
                             for i, c in enumerate(criteria_data)
                         ]
+                        self._evaluation_criteria_generated = True
                         logger.info(
                             f"[Orchestrator] Loaded {len(self._generated_evaluation_criteria)} " "evaluation criteria from previous log",
                         )
                 except Exception as e:
                     logger.warning(
                         f"[Orchestrator] Failed to load evaluation criteria from log: {e}",
+                    )
+
+        # Load generated personas from the log if not already set
+        if not self._generated_personas:
+            personas_file = log_path / "generated_personas.yaml"
+            if personas_file.exists():
+                try:
+                    from .persona_generator import GeneratedPersona
+
+                    personas_data = _yaml.safe_load(personas_file.read_text())
+                    if isinstance(personas_data, dict):
+                        for agent_id, pdata in personas_data.items():
+                            self._generated_personas[agent_id] = GeneratedPersona(
+                                agent_id=agent_id,
+                                persona_text=pdata.get("persona_text", ""),
+                                attributes=pdata.get("attributes", {}),
+                            )
+                        self._personas_generated = True
+                        logger.info(
+                            f"[Orchestrator] Loaded {len(self._generated_personas)} " "personas from previous log",
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[Orchestrator] Failed to load personas from log: {e}",
                     )
 
         logger.info(
@@ -8299,15 +8450,21 @@ Your answer:"""
 
         full_tool_name = f"mcp__subagent_{parent_agent_id}__{tool_name}"
         backend = getattr(agent, "backend", None)
+        error_messages: list[str] = []
+        attempted_path = False
 
         # Preferred path for OpenAI-compatible/Claude/Gemini/Grok style backends.
         mcp_executor = getattr(backend, "_execute_mcp_function_with_retry", None)
         if callable(mcp_executor):
+            attempted_path = True
             try:
                 raw_result = await mcp_executor(full_tool_name, json.dumps(params))
                 normalized = self._normalize_subagent_mcp_result(raw_result)
                 if normalized is not None:
                     return normalized
+                error_messages.append(
+                    f"Unparseable MCP result from executor for {full_tool_name}",
+                )
             except Exception as exc:
                 logger.debug(
                     "[Orchestrator] Backend MCP executor call failed for %s (%s): %s",
@@ -8315,25 +8472,32 @@ Your answer:"""
                     parent_agent_id,
                     exc,
                 )
+                error_messages.append(str(exc))
 
         # Claude Code backend path uses a lazily initialized background MCP client.
         background_client_getter = getattr(backend, "_get_background_mcp_client", None)
         if callable(background_client_getter):
+            attempted_path = True
             try:
-
-                async def _call_with_background_client() -> Any:
-                    client = await background_client_getter()
-                    if not client:
-                        return None
-                    return await client.call_tool(
-                        name=full_tool_name,
+                client = await background_client_getter()
+                if not client:
+                    init_error = str(getattr(backend, "_background_mcp_init_error", "") or "").strip()
+                    error_messages.append(
+                        init_error or f"Background MCP client unavailable for {full_tool_name}",
+                    )
+                    raw_result = None
+                else:
+                    raw_result = await client.call_tool(
+                        tool_name=full_tool_name,
                         arguments=params,
                     )
-
-                raw_result = await _call_with_background_client()
                 normalized = self._normalize_subagent_mcp_result(raw_result)
                 if normalized is not None:
                     return normalized
+                if raw_result is not None:
+                    error_messages.append(
+                        f"Unparseable MCP result from background client for {full_tool_name}",
+                    )
             except Exception as exc:
                 logger.debug(
                     "[Orchestrator] Background MCP client call failed for %s (%s): %s",
@@ -8341,10 +8505,12 @@ Your answer:"""
                     parent_agent_id,
                     exc,
                 )
+                error_messages.append(str(exc))
 
         # Legacy/fallback path used by tests and older adapters.
         mcp_client = getattr(agent, "mcp_client", None)
         if mcp_client and hasattr(mcp_client, "call_tool"):
+            attempted_path = True
             try:
                 call_result = mcp_client.call_tool(full_tool_name, params)
                 if inspect.isawaitable(call_result):
@@ -8352,6 +8518,9 @@ Your answer:"""
                 normalized = self._normalize_subagent_mcp_result(call_result)
                 if normalized is not None:
                     return normalized
+                error_messages.append(
+                    f"Unparseable MCP result from legacy client for {full_tool_name}",
+                )
             except Exception as exc:
                 logger.debug(
                     "[Orchestrator] Legacy MCP client call failed for %s (%s): %s",
@@ -8359,8 +8528,26 @@ Your answer:"""
                     parent_agent_id,
                     exc,
                 )
+                error_messages.append(str(exc))
 
-        return None
+        if error_messages:
+            deduped_messages = list(dict.fromkeys(msg for msg in error_messages if msg))
+            return {
+                "success": False,
+                "operation": tool_name,
+                "error": "; ".join(deduped_messages),
+            }
+        if attempted_path:
+            return {
+                "success": False,
+                "operation": tool_name,
+                "error": f"No usable MCP result returned for {full_tool_name}",
+            }
+        return {
+            "success": False,
+            "operation": tool_name,
+            "error": f"No programmatic MCP client available for {full_tool_name}",
+        }
 
     def _call_subagent_mcp_tool(
         self,
@@ -10171,6 +10358,88 @@ Your answer:"""
             return None
         return "\n\n".join(normalized)
 
+    def _rewrite_subagent_mcp_config_files(
+        self,
+        workspace_root: Any,
+        agent_id: str,
+    ) -> None:
+        """Re-write the subagent MCP JSON config files that may have been lost
+        when the workspace was cleared between rounds.
+
+        These are the same files originally created by _create_subagent_mcp_config
+        and referenced by path in the MCP server args.
+        """
+        import json
+        from pathlib import Path as PathlibPath
+
+        mcp_temp_dir = PathlibPath(workspace_root) / ".massgen" / "subagent_mcp"
+        mcp_temp_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # agent_configs.json
+            agent_configs = []
+            for aid, a in self.agents.items():
+                agent_cfg: dict[str, Any] = {"id": aid}
+                if hasattr(a.backend, "config"):
+                    backend_cfg = {k: v for k, v in a.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+                    agent_cfg["backend"] = backend_cfg
+                runtime_agent_config = getattr(a, "config", None)
+                subagent_agents = getattr(runtime_agent_config, "subagent_agents", None)
+                if isinstance(subagent_agents, list) and subagent_agents:
+                    agent_cfg["subagent_agents"] = json.loads(json.dumps(subagent_agents))
+                agent_configs.append(agent_cfg)
+            with open(mcp_temp_dir / f"{agent_id}_agent_configs.json", "w") as f:
+                json.dump(agent_configs, f)
+
+            # coordination_config.json
+            coord_cfg = getattr(self.config, "coordination_config", None)
+            if coord_cfg:
+                parent_coordination_config = self._build_parent_coordination_config_for_subagents()
+                if parent_coordination_config:
+                    with open(mcp_temp_dir / f"{agent_id}_coordination_config.json", "w") as f:
+                        json.dump(parent_coordination_config, f)
+
+            # orchestrator_config.json
+            if coord_cfg:
+                so_cfg = getattr(coord_cfg, "subagent_orchestrator", None)
+                if so_cfg:
+                    with open(mcp_temp_dir / f"{agent_id}_orchestrator_config.json", "w") as f:
+                        json.dump(so_cfg.to_dict(), f)
+
+            logger.info(
+                f"[Orchestrator] Re-wrote subagent MCP config files to {mcp_temp_dir}",
+            )
+        except Exception as e:
+            logger.warning(f"[Orchestrator] Failed to re-write subagent MCP config files: {e}")
+
+    def _ensure_context_md_for_round_evaluator(
+        self,
+        workspace_root: Any,
+        parent_agent_id: str,
+    ) -> None:
+        """Write a CONTEXT.md into the parent workspace for the round evaluator.
+
+        The SubagentManager requires CONTEXT.md in the parent workspace so it
+        can auto-copy it into each evaluator subagent workspace.  When the
+        orchestrator manages the spawn, the parent agent may not have created
+        one (or it may have been cleared between rounds).
+        """
+        from pathlib import Path as PathlibPath
+
+        context_path = PathlibPath(workspace_root) / "CONTEXT.md"
+        if context_path.exists():
+            return  # Parent already wrote one — don't overwrite
+
+        task_summary = (self.current_task or "Task coordination")[:2000]
+        content = f"# Task Context\n\n## Task\n{task_summary}\n"
+        try:
+            context_path.write_text(content, encoding="utf-8")
+            logger.info(
+                f"[Orchestrator] Wrote CONTEXT.md to {workspace_root} for round evaluator",
+            )
+        except Exception as e:
+            logger.warning(f"[Orchestrator] Failed to write CONTEXT.md: {e}")
+
     def _build_round_evaluator_task(
         self,
         parent_agent_id: str,
@@ -10189,29 +10458,73 @@ Your answer:"""
             criteria_lines.append(f"- {criterion_id}: {item}{verify_line}")
         criteria_block = "\n".join(criteria_lines) if criteria_lines else "- No explicit checklist criteria configured"
 
-        answer_label_mapping = self.coordination_tracker.get_answer_label_mapping()
         normalized_answers = self._normalize_workspace_paths_in_answers(
             answers,
             viewing_agent_id=parent_agent_id,
         )
+        # Use simple revision labels instead of internal agent labels (agent1.1)
+        # to avoid confusion — the evaluator subagent has its own agent numbering.
         answer_sections: list[str] = []
-        for answering_agent_id in sorted(normalized_answers.keys()):
-            label = answer_label_mapping.get(answering_agent_id) or answering_agent_id
+        for revision_idx, answering_agent_id in enumerate(sorted(normalized_answers.keys()), start=1):
+            label = f"Current answer (revision {revision_idx})" if len(normalized_answers) == 1 else f"Answer revision {revision_idx}"
             answer_sections.append(
-                f"## {label}\n" f"Source agent: {answering_agent_id}\n\n" f"{normalized_answers[answering_agent_id]}",
+                f"## {label}\n\n{normalized_answers[answering_agent_id]}",
             )
 
         answer_block = "\n\n".join(answer_sections) if answer_sections else "No answers available."
+        delegate_targets = self._get_parent_round_evaluator_delegate_targets()
+        if delegate_targets:
+            delegation_block = (
+                "PARENT DELEGATION OPTIONS:\n"
+                f"- The parent can delegate next-round work to these specialized subagents: {', '.join(delegate_targets)}.\n"
+                "- These execution hints are for the parent's next round, not for this evaluator child runtime.\n"
+                "- Base `execution` in `next_tasks.json` on what the parent can delegate, not by whether you can spawn subagents inside this evaluator run.\n"
+                "- Do not emit `round_evaluator` as a delegate target.\n\n"
+            )
+        else:
+            delegation_block = (
+                "PARENT DELEGATION OPTIONS:\n"
+                "- No parent-specialized subagents are available for delegation in the next round.\n"
+                "- Keep execution hints inline unless the task brief explicitly provides a reusable subagent_id.\n\n"
+            )
         return (
             "Produce one very critical cross-answer critique packet for the parent agent.\n\n"
             f"ORIGINAL TASK:\n{self.current_task or 'Task coordination'}\n\n"
             "EVALUATION CRITERIA:\n"
             f"{criteria_block}\n\n"
+            f"{delegation_block}"
             "CANDIDATE ANSWERS:\n"
             f"{answer_block}\n\n"
-            "Return critique/spec content only. Do not provide checklist payloads, numeric scores, "
-            "or parent workflow recommendations."
+            "Write the authoritative critique packet to `critique_packet.md`. "
+            "Write machine-readable verdict metadata to `verdict.json`. "
+            "When iteration is needed, write the implementation handoff to `next_tasks.json`. "
+            "Keep your `answer` minimal and do not provide parent workflow recommendations."
         )
+
+    def _get_parent_round_evaluator_delegate_targets(self) -> list[str]:
+        """Return specialized subagent types the parent can delegate to next round."""
+        coord = getattr(self.config, "coordination_config", None)
+        if not coord or not getattr(coord, "enable_subagents", False):
+            return []
+
+        from massgen.subagent.type_scanner import DEFAULT_SUBAGENT_TYPES
+
+        active_types = getattr(coord, "subagent_types", None)
+        if active_types is None:
+            active_types = DEFAULT_SUBAGENT_TYPES
+
+        targets: list[str] = []
+        seen: set[str] = set()
+        for raw_type in active_types or []:
+            type_name = str(raw_type or "").strip()
+            if not type_name:
+                continue
+            lowered = type_name.lower()
+            if lowered == "round_evaluator" or lowered in seen:
+                continue
+            seen.add(lowered)
+            targets.append(type_name)
+        return targets
 
     def _get_round_evaluator_context_paths(
         self,
@@ -10226,8 +10539,12 @@ Your answer:"""
             normalized = str(path_value or "").strip()
             if not normalized or normalized in seen:
                 return
-            seen.add(normalized)
-            context_paths.append(normalized)
+            # Resolve relative paths so the subagent MCP server can validate them.
+            resolved = str(Path(normalized).resolve()) if normalized else normalized
+            if resolved in seen:
+                return
+            seen.add(resolved)
+            context_paths.append(resolved)
 
         _add(temp_workspace_path)
 
@@ -10292,27 +10609,429 @@ Your answer:"""
     def _format_round_evaluator_result_block(
         self,
         subagent_id: str,
-        result: "SubagentResult",
+        result: "SubagentResult | RoundEvaluatorResult",
+        auto_injected: bool = False,
     ) -> str:
         """Format the blocking round_evaluator result for next-round prompt injection."""
-        from .subagent.result_formatter import format_single_result
+        from .subagent.models import RoundEvaluatorResult
+
+        if isinstance(result, RoundEvaluatorResult):
+            evaluator_result = result
+        else:
+            evaluator_result = RoundEvaluatorResult.from_subagent_result(result)
+        return Orchestrator._format_round_evaluator_result_block_static(
+            subagent_id=subagent_id,
+            evaluator_result=evaluator_result,
+            auto_injected=auto_injected,
+        )
+
+    @staticmethod
+    def _strip_absolute_workspace_paths(text: str) -> str:
+        """Replace absolute workspace paths with relative basenames.
+
+        Evaluator packet text often contains deep absolute paths like
+        ``/Users/.../workspace_abc/subagents/.../agent_1_xyz/critique_packet.md``.
+        When the packet is injected into the parent's context, these paths
+        cause the agent to waste many tool calls navigating the eval's
+        internal directory tree.  Replace them with just the filename so
+        the prose is still readable without triggering path-chasing.
+        """
+        import re
+
+        # Match paths starting with / that contain /workspace and end with
+        # a filename (letters, digits, dots, hyphens, underscores).
+        return re.sub(
+            r"/\S*?/(?:workspace|workspaces|subagents)/\S*?/([A-Za-z0-9_.-]+\.(?:md|json|txt|py|png|svg|yaml|yml))\b",
+            r"`\1`",
+            text,
+        )
+
+    @staticmethod
+    def _format_round_evaluator_result_block_static(
+        subagent_id: str,
+        evaluator_result: "RoundEvaluatorResult",
+        auto_injected: bool = False,
+    ) -> str:
+        """Format the blocking round_evaluator result for next-round prompt injection."""
+        status = evaluator_result.status
+        packet_text = evaluator_result.clean_packet_text or evaluator_result.packet_text or "(no packet produced)"
+        critique_path = evaluator_result.primary_artifact_path or "(missing critique_packet.md path)"
+        verdict_path = evaluator_result.verdict_artifact_path or "(missing verdict.json path)"
+        next_tasks_path = evaluator_result.next_tasks_artifact_path or "(missing next_tasks.json path)"
+
+        if auto_injected:
+            sanitized_packet = Orchestrator._strip_absolute_workspace_paths(packet_text)
+            strategy_lines: list[str] = []
+            if evaluator_result.next_tasks_objective:
+                strategy_lines.append(f"Chosen objective: {evaluator_result.next_tasks_objective}")
+            if evaluator_result.next_tasks_primary_strategy:
+                strategy_lines.append(f"Chosen strategy: {evaluator_result.next_tasks_primary_strategy}")
+            if evaluator_result.next_tasks_why_this_strategy:
+                strategy_lines.append(f"Why this strategy: {evaluator_result.next_tasks_why_this_strategy}")
+            if evaluator_result.next_tasks_deprioritize_or_remove:
+                strategy_lines.append(
+                    "Deprioritize or remove: " + ", ".join(evaluator_result.next_tasks_deprioritize_or_remove),
+                )
+            strategy_block = ("\n".join(strategy_lines) + "\n\n") if strategy_lines else ""
+            return (
+                "============================================================\n"
+                f"ROUND EVALUATOR RESULT (status: {status})\n"
+                "============================================================\n"
+                "The orchestrator ran one blocking `round_evaluator` before this round.\n"
+                "The evaluator's tasks have been auto-injected into your task plan.\n\n"
+                f'<evaluator_summary subagent_id="{subagent_id}" status="{status}">\n'
+                f"{sanitized_packet}\n"
+                "</evaluator_summary>\n\n"
+                f"{strategy_block}"
+                "Workflow:\n"
+                "1. Call `get_task_plan` — the evaluator's tasks are already there.\n"
+                "2. Reference the authoritative evaluator artifacts when needed:\n"
+                f"   - critique_packet.md: {critique_path}\n"
+                f"   - verdict.json: {verdict_path}\n"
+                f"   - next_tasks.json: {next_tasks_path}\n"
+                "3. Follow `implementation_guidance` on each task, then implement and verify.\n"
+                "4. If the deliverable is a pure text artifact, put the final\n"
+                "   artifact body directly in `new_answer.content`.\n"
+                "5. Otherwise, call `new_answer` with your usual concise summary.\n\n"
+                "Do NOT call `submit_checklist`.\n"
+                "Do NOT call `propose_improvements`.\n"
+                "Do NOT write a second diagnostic report.\n"
+                "Do NOT spawn another `round_evaluator`.\n"
+                "============================================================"
+            )
+        else:
+            instructions = (
+                "IMPORTANT: This evaluator packet is your sole diagnostic basis for\n"
+                f"submit_checklist. Pass this exact path as report_path: {critique_path}\n"
+                "Do NOT run a separate self-evaluation or author a second diagnostic\n"
+                "report from scratch.\n"
+            )
 
         return (
             "============================================================\n"
-            "ROUND EVALUATOR RESULT\n"
+            f"ROUND EVALUATOR RESULT (status: {status})\n"
             "============================================================\n"
-            "The orchestrator ran one blocking `round_evaluator` before this round.\n"
-            "Treat it as critique/spec context only. It does NOT decide your parent "
-            "workflow action for you.\n\n"
-            f"{format_single_result(subagent_id, result)}\n"
+            "The orchestrator ran one blocking `round_evaluator` before this round.\n\n"
+            f"{instructions}\n"
+            f'<evaluator_packet subagent_id="{subagent_id}" status="{status}">\n'
+            f"{packet_text}\n"
+            "</evaluator_packet>\n"
             "============================================================"
         )
+
+    @staticmethod
+    def extract_all_evaluator_answers(
+        log_path: str,
+        workspace_path: str,
+    ) -> dict[str, str] | None:
+        """Read all evaluator agent answers from a round_evaluator's log directory.
+
+        Reads status.json to discover agent IDs and timestamps, then reads
+        each agent's answer.txt. Returns anonymized keys like
+        ``{"Evaluator A": "...", "Evaluator B": "...", ...}``.
+
+        Returns None if the log directory or status.json doesn't exist.
+        """
+        log_dir = Path(log_path)
+
+        # log_path may be the base dir or a resolved events.jsonl path.
+        # Walk up to find the directory containing full_logs/status.json.
+        full_logs = log_dir / "full_logs"
+        status_file = full_logs / "status.json"
+        if not status_file.exists():
+            # Try walking up from resolved path (e.g. .../full_logs/events.jsonl)
+            for parent in [log_dir.parent, log_dir.parent.parent]:
+                candidate = parent / "full_logs" / "status.json"
+                if candidate.exists():
+                    full_logs = parent / "full_logs"
+                    status_file = candidate
+                    break
+            else:
+                return None
+
+        try:
+            status_data = json.loads(status_file.read_text())
+        except (json.JSONDecodeError, OSError):
+            logger.warning(
+                "[Orchestrator] Failed to read round_evaluator status.json from %s",
+                status_file,
+            )
+            return None
+
+        historical_list = status_data.get("historical_workspaces", [])
+        if not isinstance(historical_list, list) or not historical_list:
+            return None
+
+        answers: dict[str, str] = {}
+        anonymous_labels = iter(f"Evaluator {chr(65 + i)}" for i in range(26))
+
+        for ws_info in historical_list:
+            if not isinstance(ws_info, dict):
+                continue
+            agent_id = ws_info.get("agentId", "")
+            timestamp = ws_info.get("timestamp", "")
+            if not agent_id or not timestamp:
+                continue
+
+            # Try full_logs/{agentId}/{timestamp}/answer.txt
+            answer_file = full_logs / agent_id / timestamp / "answer.txt"
+            if answer_file.exists():
+                try:
+                    text = answer_file.read_text().strip()
+                    if text:
+                        label = next(anonymous_labels, f"Evaluator {len(answers)}")
+                        answers[label] = text
+                except OSError:
+                    pass
+
+        return answers if answers else None
+
+    @staticmethod
+    def extract_evaluator_workspace_paths(
+        log_path: str,
+    ) -> list[str]:
+        """Return workspace paths for each eval agent in a round_evaluator run.
+
+        Looks for ``full_logs/{agentId}/workspace/`` directories, which are
+        the persisted snapshots of each evaluator's workspace.
+        """
+        log_dir = Path(log_path)
+
+        # Same walk-up logic as extract_all_evaluator_answers
+        full_logs = log_dir / "full_logs"
+        if not full_logs.is_dir():
+            for parent in [log_dir.parent, log_dir.parent.parent]:
+                candidate = parent / "full_logs"
+                if candidate.is_dir():
+                    full_logs = candidate
+                    break
+            else:
+                return []
+
+        paths: list[str] = []
+        for child in sorted(full_logs.iterdir()):
+            if not child.is_dir():
+                continue
+            ws = child / "workspace"
+            if ws.is_dir():
+                paths.append(str(ws))
+        return paths
+
+    @staticmethod
+    def format_multi_evaluator_result_block(
+        all_answers: dict[str, str],
+        auto_injected: bool = False,
+    ) -> str:
+        """Format multiple evaluator critiques as separate tagged blocks.
+
+        Strips verdict_block JSON from each critique before injection so
+        the parent reads the prose analysis only.
+        """
+        from .subagent.models import RoundEvaluatorResult
+
+        n = len(all_answers)
+
+        if auto_injected:
+            instructions = (
+                "Improvement tasks have been auto-injected into your task plan.\n"
+                "Call `get_task_plan` to see them. Implement each task, then call `new_answer`.\n"
+                "Do NOT call `submit_checklist` or `propose_improvements` — already handled."
+            )
+        else:
+            instructions = (
+                "You received independent critiques from multiple evaluators.\n"
+                "Synthesize them yourself:\n"
+                "1. Read ALL critiques — each evaluator catches different issues.\n"
+                "2. For each criterion, adopt the HARSHEST score across evaluators.\n"
+                "3. Collect ALL unique concrete findings — even if only one evaluator mentions them.\n"
+                "4. When evaluators flag the SAME issue, merge into one finding:\n"
+                "   keep the most specific description, harshest severity, and\n"
+                "   combine distinct evidence.\n"
+                "5. Build one unified improvement plan from the combined findings.\n"
+                "6. Save the synthesized diagnostic to your workspace\n"
+                "   (e.g., tasks/diagnostic_report.md), then call `submit_checklist`\n"
+                "   with that path as report_path.\n"
+                "Do NOT discard findings just because other evaluators missed them.\n"
+                "Do NOT average scores — use the lowest (harshest) per criterion.\n\n"
+                "IMPORTANT: If any critique below is short or references a workspace\n"
+                "file (e.g., 'refer to critique_packet.md'), browse that evaluator's\n"
+                "workspace to read the full report. You have read-only access to all\n"
+                "evaluator workspaces. Do NOT skip a thin answer — the real critique\n"
+                "may be in the workspace."
+            )
+
+        parts = [
+            "============================================================",
+            f"ROUND EVALUATOR RESULTS ({n} independent evaluations)",
+            "============================================================",
+            instructions,
+            "",
+        ]
+
+        for label, critique_text in all_answers.items():
+            # Strip verdict_block from injected text (scores visible in prose)
+            clean_text = RoundEvaluatorResult.strip_verdict_block(critique_text)
+            parts.append(f'<evaluator_packet evaluator="{label}">')
+            parts.append(clean_text)
+            parts.append("</evaluator_packet>")
+            parts.append("")
+
+        parts.append("============================================================")
+        return "\n".join(parts)
+
+    @staticmethod
+    def build_task_plan_from_evaluator_verdict(
+        evaluator_result: "RoundEvaluatorResult",
+    ) -> list[dict]:
+        """Convert evaluator verdict improvements/preserve into a task_plan.
+
+        Returns a list in the same format as ``evaluate_proposed_improvements()``
+        output, ready for ``_write_inject_file()``.
+        """
+        if evaluator_result.verdict != "iterate":
+            return []
+
+        structured_next_tasks = evaluator_result.normalize_next_tasks_payload(
+            evaluator_result.next_tasks,
+        )
+        if structured_next_tasks:
+            task_plan = copy.deepcopy(structured_next_tasks.get("tasks", []))
+            if evaluator_result.preserve:
+                task_plan.append(
+                    {
+                        "type": "verify_preserve",
+                        "description": "Verify preserved strengths haven't regressed",
+                        "execution": {"mode": "inline"},
+                        "items": [
+                            {
+                                "criterion_id": p.get("criterion_id", ""),
+                                "what": p.get("what", ""),
+                                "source": p.get("source", ""),
+                            }
+                            for p in evaluator_result.preserve
+                        ],
+                    },
+                )
+            return task_plan
+
+        if not evaluator_result.improvements:
+            return []
+
+        task_plan: list[dict] = []
+
+        # Opportunities (explore tasks) come first — they represent independent
+        # ideas the evaluator identified that could be a leap forward, not just
+        # corrections.  Placing them before improve tasks encourages the parent
+        # to consider creative directions before falling back to patching.
+        if evaluator_result.opportunities:
+            for opp in evaluator_result.opportunities:
+                task_plan.append(
+                    {
+                        "type": "explore",
+                        "idea": opp.get("idea", ""),
+                        "rationale": opp.get("rationale", ""),
+                        "impact": opp.get("impact", "transformative"),
+                        "relates_to": opp.get("relates_to", []),
+                        "execution": {"mode": "delegate", "subagent_type": "builder"},
+                    },
+                )
+
+        for imp in evaluator_result.improvements:
+            entry: dict = {
+                "type": "improve",
+                "criterion_id": imp.get("criterion_id", ""),
+                "criterion": imp.get("verification", ""),
+                "plan": imp.get("plan", ""),
+                "impact": imp.get("impact", "incremental"),
+                "sources": imp.get("sources", []),
+            }
+            detail = imp.get("detail", "")
+            if detail:
+                entry["detail"] = detail
+            if entry["impact"] in ("structural", "transformative"):
+                entry["execution"] = {"mode": "delegate", "subagent_type": "builder"}
+            else:
+                entry["execution"] = {"mode": "inline"}
+            task_plan.append(entry)
+
+        if evaluator_result.preserve:
+            task_plan.append(
+                {
+                    "type": "verify_preserve",
+                    "description": "Verify preserved strengths haven't regressed",
+                    "execution": {"mode": "inline"},
+                    "items": [
+                        {
+                            "criterion_id": p.get("criterion_id", ""),
+                            "what": p.get("what", ""),
+                            "source": p.get("source", ""),
+                        }
+                        for p in evaluator_result.preserve
+                    ],
+                },
+            )
+
+        return task_plan
+
+    def _handle_round_evaluator_gate_failure(
+        self,
+        *,
+        parent_agent_id: str,
+        latest_labels: tuple[str, ...],
+        display_round: int,
+        emitter: Any,
+        elapsed_seconds: float,
+        failure_payload: dict[str, Any] | None,
+    ) -> bool | str:
+        """Record a failed evaluator launch and decide whether to retry or abort."""
+        failure_key = (parent_agent_id, latest_labels)
+        attempt_number = self._round_evaluator_launch_failures.get(failure_key, 0) + 1
+        self._round_evaluator_launch_failures[failure_key] = attempt_number
+
+        payload = failure_payload if isinstance(failure_payload, dict) else {}
+        error_message = str(
+            payload.get("error") or payload.get("output") or "round_evaluator gate failed before producing a packet",
+        ).strip()
+
+        logger.warning(
+            "[Orchestrator] round_evaluator gate failed for %s on attempt %s/%s: %s",
+            parent_agent_id,
+            attempt_number,
+            self._ROUND_EVALUATOR_MAX_LAUNCH_FAILURES,
+            error_message,
+        )
+
+        if emitter:
+            emitter.emit_raw(
+                StructuredEventType.ROUND_EVALUATOR_STAGE_COMPLETE,
+                agent_id=parent_agent_id,
+                round_number=display_round,
+                status="error",
+                execution_time_seconds=elapsed_seconds,
+                packet_text_length=0,
+                error=error_message,
+            )
+
+        if attempt_number < self._ROUND_EVALUATOR_MAX_LAUNCH_FAILURES:
+            return False
+
+        terminal_message = "Managed round evaluator failed " f"{attempt_number} time(s) for the current answer set. Last error: {error_message}"
+        agent_state = self.agent_states.get(parent_agent_id)
+        if agent_state is not None:
+            agent_state.is_killed = True
+            agent_state.error_reason = terminal_message
+        self.coordination_tracker.track_agent_action(
+            parent_agent_id,
+            ActionType.ERROR,
+            terminal_message,
+        )
+        return "terminal_error"
 
     async def _run_round_evaluator_pre_round_if_needed(
         self,
         answers: dict[str, str],
         conversation_context: dict[str, Any] | None = None,
-    ) -> bool:
+    ) -> bool | str:
         """Run the round_evaluator gate between answer rounds when configured."""
         _ = conversation_context
         if not self._is_round_evaluator_gate_enabled():
@@ -10333,7 +11052,26 @@ Your answer:"""
 
         upcoming_round = self._get_round_evaluator_upcoming_round(parent_agent_id)
         display_round = self._get_round_evaluator_display_round(parent_agent_id)
+        self._set_round_evaluator_task_mode(parent_agent_id, enabled=False)
+
+        # Re-write subagent type dirs and CONTEXT.md to the workspace — the
+        # workspace may have been cleared between rounds, and the MCP server
+        # rescans lazily.  CONTEXT.md is required by the SubagentManager; the
+        # orchestrator creates it on behalf of the parent since the parent
+        # doesn't know the evaluator spawn is about to happen.
+        parent_agent = self.agents.get(parent_agent_id)
+        if parent_agent:
+            fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
+            if fs_mgr:
+                ws_root = fs_mgr.get_workspace_root() if hasattr(fs_mgr, "get_workspace_root") else getattr(fs_mgr, "cwd", None)
+                if ws_root:
+                    self._write_subagent_type_dirs(ws_root)
+                    self._rewrite_subagent_mcp_config_files(ws_root, parent_agent_id)
+                    self._ensure_context_md_for_round_evaluator(ws_root, parent_agent_id)
+
         temp_workspace_path = await self._copy_all_snapshots_to_temp_workspace(parent_agent_id)
+        coord_cfg = getattr(self.config, "coordination_config", None)
+        evaluator_refine = bool(coord_cfg and getattr(coord_cfg, "round_evaluator_refine", False))
         spawn_args: dict[str, Any] = {
             "tasks": [
                 {
@@ -10347,10 +11085,17 @@ Your answer:"""
                 },
             ],
             "background": False,
-            "refine": False,
+            "refine": evaluator_refine,
         }
 
         tool_call_id = f"round_evaluator_pre_round_{parent_agent_id}_r{upcoming_round}_{int(time.time() * 1000)}"
+        emitter = get_event_emitter()
+        if emitter:
+            emitter.emit_raw(
+                StructuredEventType.ROUND_EVALUATOR_STAGE_START,
+                agent_id=parent_agent_id,
+                round_number=display_round,
+            )
         self._emit_round_evaluator_spawn_event(
             phase="start",
             agent_id=parent_agent_id,
@@ -10380,36 +11125,162 @@ Your answer:"""
             status="success" if success else "error",
         )
 
-        if not success:
-            logger.warning(
-                "[Orchestrator] round_evaluator gate failed for {}: {}",
-                parent_agent_id,
-                normalized_result,
-            )
-            return False
-
-        from .subagent.models import SubagentResult
+        from .subagent.models import RoundEvaluatorResult, SubagentResult
 
         results = normalized_result.get("results")
+
+        if not success:
+            # Graceful degradation: the child MassGen run may have failed or
+            # timed out, but the canonical recovery path (completed_but_timeout
+            # / partial) may have salvaged an answer from the most recent
+            # evaluator agent.  Check results before giving up.
+            salvaged = False
+            if isinstance(results, list) and results:
+                try:
+                    first = SubagentResult.from_dict(results[0])
+                    if first.answer:
+                        logger.info(
+                            "[Orchestrator] round_evaluator spawn reported " "failure (status=%s) but first result has a " "recovered answer — using it for %s",
+                            first.status,
+                            parent_agent_id,
+                        )
+                        salvaged = True
+                except Exception:
+                    logger.warning(
+                        "[Orchestrator] Failed to parse salvage result for %s",
+                        parent_agent_id,
+                        exc_info=True,
+                    )
+
+            if not salvaged:
+                return self._handle_round_evaluator_gate_failure(
+                    parent_agent_id=parent_agent_id,
+                    latest_labels=latest_labels,
+                    display_round=display_round,
+                    emitter=emitter,
+                    elapsed_seconds=elapsed_seconds,
+                    failure_payload=normalized_result,
+                )
         if not isinstance(results, list) or not results:
-            return False
+            return self._handle_round_evaluator_gate_failure(
+                parent_agent_id=parent_agent_id,
+                latest_labels=latest_labels,
+                display_round=display_round,
+                emitter=emitter,
+                elapsed_seconds=elapsed_seconds,
+                failure_payload={
+                    "success": False,
+                    "operation": "spawn_subagents",
+                    "error": "round_evaluator returned no result payloads",
+                },
+            )
 
         try:
             first_result = SubagentResult.from_dict(results[0])
         except Exception as exc:
-            logger.warning(
-                "[Orchestrator] Failed to parse round_evaluator result payload for %s: %s",
-                parent_agent_id,
-                exc,
+            return self._handle_round_evaluator_gate_failure(
+                parent_agent_id=parent_agent_id,
+                latest_labels=latest_labels,
+                display_round=display_round,
+                emitter=emitter,
+                elapsed_seconds=elapsed_seconds,
+                failure_payload={
+                    "success": False,
+                    "operation": "spawn_subagents",
+                    "error": f"Failed to parse round_evaluator result payload: {exc}",
+                },
             )
-            return False
 
-        if first_result.answer:
-            self._queue_round_start_context_block(
-                parent_agent_id,
-                self._format_round_evaluator_result_block(first_result.subagent_id, first_result),
+        evaluator_result = RoundEvaluatorResult.from_subagent_result(
+            first_result,
+            elapsed=elapsed_seconds,
+        )
+
+        if evaluator_result.status != "success" or not evaluator_result.packet_text:
+            return self._handle_round_evaluator_gate_failure(
+                parent_agent_id=parent_agent_id,
+                latest_labels=latest_labels,
+                display_round=display_round,
+                emitter=emitter,
+                elapsed_seconds=elapsed_seconds,
+                failure_payload={
+                    "success": False,
+                    "operation": "spawn_subagents",
+                    "error": evaluator_result.error or "round_evaluator produced no packet",
+                },
             )
 
+        auto_injected = False
+        if evaluator_result.verdict == "iterate" and evaluator_result.task_plan_source == "next_tasks_artifact":
+            task_plan = self.build_task_plan_from_evaluator_verdict(evaluator_result)
+            if task_plan:
+                self._write_planning_injection(parent_agent_id, task_plan)
+                auto_injected = True
+                logger.info(
+                    f"[Orchestrator] Auto-injected {len(task_plan)} tasks from evaluator next_tasks artifact for {parent_agent_id}",
+                )
+        elif evaluator_result.verdict == "iterate":
+            logger.info(
+                "[Orchestrator] Evaluator requested iteration for %s without a valid next_tasks.json artifact; using checklist fallback",
+                parent_agent_id,
+            )
+        elif evaluator_result.verdict == "converged":
+            logger.info(
+                "[Orchestrator] Evaluator verdict: converged for %s",
+                parent_agent_id,
+            )
+        else:
+            logger.debug(
+                "[Orchestrator] Missing or invalid verdict.json for %s; using checklist fallback",
+                parent_agent_id,
+            )
+
+        self._set_round_evaluator_task_mode(
+            parent_agent_id,
+            enabled=auto_injected,
+            primary_artifact_path=evaluator_result.primary_artifact_path or "",
+            verdict_artifact_path=evaluator_result.verdict_artifact_path or "",
+            next_tasks_artifact_path=evaluator_result.next_tasks_artifact_path or "",
+            objective=evaluator_result.next_tasks_objective or "",
+            primary_strategy=evaluator_result.next_tasks_primary_strategy or "",
+            why_this_strategy=evaluator_result.next_tasks_why_this_strategy or "",
+            deprioritize_or_remove=evaluator_result.next_tasks_deprioritize_or_remove or [],
+        )
+
+        self._queue_round_start_context_block(
+            parent_agent_id,
+            self._format_round_evaluator_result_block(
+                first_result.subagent_id,
+                evaluator_result,
+                auto_injected=auto_injected,
+            ),
+        )
+
+        # Add evaluator workspace as read-only context path so the
+        # parent can read critique_packet.md / verdict.json / next_tasks.json.
+        if first_result.workspace_path:
+            parent_agent = self.agents.get(parent_agent_id)
+            if parent_agent and hasattr(parent_agent, "backend"):
+                fs_mgr = getattr(parent_agent.backend, "filesystem_manager", None)
+                if fs_mgr:
+                    ppm = getattr(fs_mgr, "path_permission_manager", None)
+                    if ppm:
+                        ppm.add_context_paths([{"path": first_result.workspace_path, "permission": "read"}])
+                        logger.info(
+                            f"[Orchestrator] Added evaluator workspace as read-only context for {parent_agent_id}: {first_result.workspace_path}",
+                        )
+
+        if emitter:
+            emitter.emit_raw(
+                StructuredEventType.ROUND_EVALUATOR_STAGE_COMPLETE,
+                agent_id=parent_agent_id,
+                round_number=display_round,
+                status=evaluator_result.status,
+                execution_time_seconds=elapsed_seconds,
+                packet_text_length=len(evaluator_result.packet_text or ""),
+            )
+
+        self._round_evaluator_launch_failures.pop((parent_agent_id, latest_labels), None)
         self._round_evaluator_completed_labels[parent_agent_id] = latest_labels
         return True
 
@@ -10860,6 +11731,7 @@ Your answer:"""
         # Initialize agent state
         self.agent_states[agent_id].is_killed = False
         self.agent_states[agent_id].timeout_reason = None
+        self.agent_states[agent_id].error_reason = None
         self.agent_states[agent_id].midstream_injections_this_round = 0
 
         # Track whether we've notified TUI of new round (done once per real execution)
@@ -11298,6 +12170,10 @@ Your answer:"""
                 conversation["user_message"] = restart_context + "\n\n" + conversation["user_message"]
 
             round_start_context = self._consume_round_start_context_block(agent_id)
+            if round_start_context:
+                logger.info(
+                    f"[Orchestrator] Injecting round_start_context_block for {agent_id}" f" ({len(round_start_context)} chars," f" first 300: {round_start_context[:300]!r})",
+                )
             runtime_user_instructions = self._build_runtime_user_instructions_context(agent_id)
             conversation["user_message"] = self._insert_runtime_context_blocks_after_original_message(
                 conversation["user_message"],
@@ -13036,6 +13912,76 @@ Your answer:"""
                 ppm.clear_context_path_writes()
                 logger.debug(f"[Orchestrator] Cleared context path write tracking for {agent_id}")
 
+    async def _yield_existing_answer_finalization(
+        self,
+        *,
+        selected_agent_id: str,
+        vote_results: dict[str, Any],
+        force_workspace_snapshot: bool = False,
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Finalize by reusing an already-available answer without a presenter pass."""
+        existing_answer = self.agent_states[selected_agent_id].answer
+        if not existing_answer:
+            return
+
+        agent = self.agents.get(selected_agent_id)
+
+        _emitter = get_event_emitter()
+        if _emitter:
+            _emitter.emit_winner_selected(
+                winner_id=selected_agent_id,
+                vote_results=vote_results,
+            )
+            _emitter.emit_answer_locked(
+                agent_id=selected_agent_id,
+            )
+
+        log_stream_chunk(
+            "orchestrator",
+            "content",
+            f"\n{existing_answer}\n",
+            selected_agent_id,
+        )
+        yield StreamChunk(
+            type="content",
+            content=f"\n{existing_answer}\n",
+            source=selected_agent_id,
+        )
+        self._final_presentation_content = existing_answer
+
+        if force_workspace_snapshot and agent and hasattr(agent, "backend") and agent.backend:
+            filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
+            if filesystem_manager:
+                await filesystem_manager.save_snapshot(
+                    timestamp=None,
+                    is_final=True,
+                )
+
+        final_context = self.get_last_context(selected_agent_id)
+        await self._save_agent_snapshot(
+            selected_agent_id,
+            answer_content=existing_answer,
+            is_final=True,
+            context_data=final_context,
+        )
+
+        self.coordination_tracker.set_final_answer(
+            selected_agent_id,
+            existing_answer,
+            snapshot_timestamp="final",
+        )
+
+        if agent and agent.backend.filesystem_manager:
+            agent.backend.filesystem_manager.path_permission_manager.compute_context_path_writes()
+
+        self.add_to_history("assistant", existing_answer)
+        self.save_coordination_logs()
+        self.workflow_phase = "presenting"
+        await self._show_workspace_modal_if_needed()
+
+        log_stream_chunk("orchestrator", "done", None, selected_agent_id)
+        yield StreamChunk(type="done", source=selected_agent_id)
+
     async def _present_final_answer(self) -> AsyncGenerator[StreamChunk, None]:
         """Present the final coordinated answer with optional post-evaluation and restart loop."""
 
@@ -13118,79 +14064,14 @@ Your answer:"""
                 )
 
             if should_skip_presentation:
-                # Use existing answer directly without an additional LLM call
-                existing_answer = self.agent_states[self._selected_agent].answer
-                if existing_answer:
-                    # Emit to events.jsonl for unified pipeline
-
-                    _emitter = get_event_emitter()
-                    if _emitter:
-                        _emitter.emit_winner_selected(
-                            winner_id=self._selected_agent,
-                            vote_results=vote_results,
-                        )
-                        _emitter.emit_answer_locked(
-                            agent_id=self._selected_agent,
-                        )
-
-                    log_stream_chunk(
-                        "orchestrator",
-                        "content",
-                        f"\n{existing_answer}\n",
-                        self._selected_agent,
-                    )
-                    yield StreamChunk(
-                        type="content",
-                        content=f"\n{existing_answer}\n",
-                        source=self._selected_agent,
-                    )
-                    self._final_presentation_content = existing_answer
-
-                    # Force a workspace snapshot before final answer saving in single-agent skip mode
-                    if is_single_agent_mode and agent and hasattr(agent, "backend") and agent.backend:
-                        filesystem_manager = getattr(agent.backend, "filesystem_manager", None)
-                        if filesystem_manager:
-                            await filesystem_manager.save_snapshot(
-                                timestamp=None,  # Use None for final snapshots
-                                is_final=True,
-                            )
-
-                    # Save the final snapshot (creates final/ directory with answer.txt)
-                    # This copies the agent's workspace to the final directory
-                    final_context = self.get_last_context(self._selected_agent)
-                    await self._save_agent_snapshot(
-                        self._selected_agent,
-                        answer_content=existing_answer,
-                        is_final=True,
-                        context_data=final_context,
-                    )
-
-                    # Track the final answer in coordination tracker
-                    self.coordination_tracker.set_final_answer(
-                        self._selected_agent,
-                        existing_answer,
-                        snapshot_timestamp="final",
-                    )
-
-                    # Compute context path writes (compare current state to snapshot taken at start)
-                    if agent.backend.filesystem_manager:
-                        agent.backend.filesystem_manager.path_permission_manager.compute_context_path_writes()
-
-                    # Add to conversation history
-                    self.add_to_history("assistant", existing_answer)
-
-                    # Save coordination logs
-                    self.save_coordination_logs()
-
-                    # Update workflow phase
-                    self.workflow_phase = "presenting"
-
-                    # Show workspace modal in no-git mode before returning
-                    await self._show_workspace_modal_if_needed()
-
-                    log_stream_chunk("orchestrator", "done", None, self._selected_agent)
-                    yield StreamChunk(type="done", source=self._selected_agent)
-                    return  # Skip post-evaluation and all remaining logic
+                if self.agent_states[self._selected_agent].answer:
+                    async for chunk in self._yield_existing_answer_finalization(
+                        selected_agent_id=self._selected_agent,
+                        vote_results=vote_results,
+                        force_workspace_snapshot=is_single_agent_mode,
+                    ):
+                        yield chunk
+                    return
                 else:
                     # No existing answer - fall through to normal presentation
                     logger.warning(
@@ -13331,7 +14212,7 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         yield StreamChunk(type="done")
 
     async def _handle_orchestrator_timeout(self) -> AsyncGenerator[StreamChunk, None]:
-        """Handle orchestrator timeout by jumping directly to get_final_presentation."""
+        """Handle orchestrator timeout by salvaging the best available answer."""
         # Count available answers
         available_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer and not state.is_killed}
 
@@ -13341,14 +14222,17 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
         selection_reason = "no answers available"
 
         if available_answers:
-            selected_agent = self._determine_final_agent_from_votes(
-                current_votes,
-                available_answers,
-            )
             if current_votes:
+                selected_agent = self._determine_final_agent_from_votes(
+                    current_votes,
+                    available_answers,
+                )
                 selection_reason = "most votes"
             else:
-                selection_reason = "first with answer"
+                selected_agent = self._determine_final_agent_from_states()
+                if selected_agent not in available_answers:
+                    selected_agent = next(iter(available_answers))
+                selection_reason = "latest answer"
 
         # Build per-agent summary
         agent_answer_summary = {}
@@ -13410,23 +14294,22 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
         self._selected_agent = selected_agent
 
-        # Jump directly to get_final_presentation
         vote_results = self._get_vote_results()
         log_stream_chunk(
             "orchestrator",
             "content",
-            f"🎯 Jumping to final presentation with {self._selected_agent} (selected despite timeout)\n",
+            f"🎯 Using available answer from {self._selected_agent} (selected despite timeout)\n",
             self.orchestrator_id,
         )
         yield StreamChunk(
             type="content",
-            content=f"🎯 Jumping to final presentation with {self._selected_agent} (selected despite timeout)\n",
+            content=f"🎯 Using available answer from {self._selected_agent} (selected despite timeout)\n",
             source=self.orchestrator_id,
         )
 
-        async for chunk in self.get_final_presentation(
-            self._selected_agent,
-            vote_results,
+        async for chunk in self._yield_existing_answer_finalization(
+            selected_agent_id=self._selected_agent,
+            vote_results=vote_results,
         ):
             yield chunk
 
@@ -15421,15 +16304,30 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         }
 
     def _determine_final_agent_from_states(self) -> str | None:
-        """Determine final agent based on current agent states."""
+        """Determine final agent based on current agent states.
+
+        When no winner or votes exist, selects the agent whose most recent
+        answer has the latest timestamp — that agent has the most context
+        from prior iterations.
+        """
         # Find agents with answers
         agents_with_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
 
         if not agents_with_answers:
             return None
 
-        # Return the first agent with an answer (by order in agent_states)
-        return next(iter(agents_with_answers))
+        # Select agent with the most recent answer by timestamp
+        latest_agent = None
+        latest_ts = -1.0
+        for aid in agents_with_answers:
+            agent_answers = self.coordination_tracker.answers_by_agent.get(aid, [])
+            if agent_answers:
+                last_answer = agent_answers[-1]
+                if last_answer.timestamp > latest_ts:
+                    latest_ts = last_answer.timestamp
+                    latest_agent = aid
+
+        return latest_agent or next(iter(agents_with_answers))
 
     async def _handle_followup(
         self,
@@ -15620,7 +16518,98 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                 # Don't fail if tracker serialization fails
                 pass
 
+        # Best-effort: create the final/ directory so downstream consumers
+        # (e.g., resolve_next_tasks_artifact for round_evaluator auto-injection)
+        # find artifacts at the standard path. Normally the presentation phase
+        # creates this, but on SIGTERM/timeout the process is killed before
+        # presentation runs.
+        self._ensure_final_directory_on_shutdown(answers, workspaces_with_content)
+
         return result
+
+    def _ensure_final_directory_on_shutdown(
+        self,
+        answers: dict[str, Any],
+        workspaces: dict[str, str],
+    ) -> None:
+        """Best-effort creation of final/ directory during shutdown.
+
+        When the process is terminated (SIGTERM) before the presentation phase,
+        the normal final snapshot path never runs.  This method creates a
+        minimal final/ directory from the winning agent's snapshot_storage so
+        that downstream consumers (resolve_next_tasks_artifact, session
+        persistence) find artifacts at the standard path.
+        """
+        log_session_dir = get_log_session_dir()
+        if not log_session_dir:
+            return
+
+        # Determine the best agent to use for the final snapshot
+        selected = self._selected_agent or self._determine_final_agent_from_states()
+        if not selected:
+            return
+
+        # Skip if final/ already exists (presentation phase already ran)
+        final_dir = log_session_dir / "final" / selected
+        if final_dir.exists():
+            return
+
+        # Find the agent's snapshot source — prefer snapshot_storage, then
+        # live workspace
+        agent = self.agents.get(selected)
+        if not agent:
+            return
+        fm = getattr(agent.backend, "filesystem_manager", None) if hasattr(agent, "backend") else None
+        if not fm:
+            return
+
+        source: Path | None = None
+        snapshot_storage = getattr(fm, "snapshot_storage", None)
+        if snapshot_storage and Path(snapshot_storage).exists():
+            from .filesystem_manager._filesystem_manager import has_meaningful_content
+
+            if has_meaningful_content(Path(snapshot_storage)):
+                source = Path(snapshot_storage)
+        if source is None:
+            ws = fm.get_current_workspace() if hasattr(fm, "get_current_workspace") else getattr(fm, "cwd", None)
+            if ws and Path(ws).exists():
+                source = Path(ws)
+        if source is None:
+            return
+
+        try:
+            import shutil
+
+            workspace_dest = final_dir / "workspace"
+            workspace_dest.mkdir(parents=True, exist_ok=True)
+            for item in source.iterdir():
+                if item.is_symlink():
+                    continue
+                if item.is_file():
+                    shutil.copy2(item, workspace_dest / item.name)
+                elif item.is_dir():
+                    shutil.copytree(
+                        item,
+                        workspace_dest / item.name,
+                        symlinks=True,
+                        ignore_dangling_symlinks=True,
+                    )
+
+            # Write answer.txt alongside workspace
+            answer_data = answers.get(selected)
+            if answer_data and answer_data.get("answer"):
+                (final_dir / "answer.txt").write_text(answer_data["answer"])
+
+            logger.info(
+                "[Orchestrator] Created final/ directory on shutdown for %s at %s",
+                selected,
+                final_dir,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[Orchestrator] Failed to create final/ directory on shutdown: %s",
+                exc,
+            )
 
     def get_all_agent_workspaces(self) -> dict[str, str | None]:
         """Get workspace paths for all agents.
@@ -16062,6 +17051,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             state.restart_pending = False
             state.is_killed = False
             state.timeout_reason = None
+            state.error_reason = None
             state.answer_count = 0
             state.injection_count = 0
             state.midstream_injections_this_round = 0

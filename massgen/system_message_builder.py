@@ -267,6 +267,7 @@ class SystemMessageBuilder:
         # PRIORITY 1 (HIGH): Output-First Verification - verify outcomes, not implementations
         is_decomposition = coordination_mode == "decomposition"
         builder.add_section(OutputFirstVerificationSection(decomposition_mode=is_decomposition))
+        enable_subagents = bool(getattr(getattr(self.config, "coordination_config", None), "enable_subagents", False))
 
         # PRIORITY 1 (CRITICAL): MassGen Coordination - vote/new_answer or decomposition primitives
         changedoc_enabled = self._changedoc_enabled
@@ -329,6 +330,7 @@ class SystemMessageBuilder:
                         "orchestrator_managed_round_evaluator",
                         False,
                     ),
+                    specialized_subagents_available=bool(enable_subagents),
                 ),
             )
 
@@ -640,7 +642,22 @@ class SystemMessageBuilder:
             from massgen.system_prompt_sections import ChangedocSection
 
             has_prior_answers = bool(answers)
-            builder.add_section(ChangedocSection(has_prior_answers=has_prior_answers, gap_report_mode=gap_report_mode))
+            builder.add_section(
+                ChangedocSection(
+                    has_prior_answers=has_prior_answers,
+                    gap_report_mode=gap_report_mode,
+                    round_evaluator_before_checklist=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "round_evaluator_before_checklist",
+                        False,
+                    ),
+                    orchestrator_managed_round_evaluator=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "orchestrator_managed_round_evaluator",
+                        False,
+                    ),
+                ),
+            )
             logger.info(f"[SystemMessageBuilder] Added changedoc instructions for {agent_id} (prior_answers={has_prior_answers})")
 
         # Build and return the complete structured system prompt

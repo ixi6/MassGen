@@ -11,7 +11,11 @@ from pathlib import Path
 
 import pytest
 
-from massgen.mcp_tools.planning.planning_dataclasses import Task, TaskPlan
+from massgen.mcp_tools.planning.planning_dataclasses import (
+    Task,
+    TaskPlan,
+    normalize_task_execution,
+)
 
 
 class TestTask:
@@ -860,46 +864,52 @@ class TestVerificationEnforcement:
 # ---------------------------------------------------------------------------
 
 
-class TestAddTaskSubagentMetadata:
-    """Tests for subagent_id and subagent_name params on TaskPlan.add_task."""
+class TestAddTaskExecutionMetadata:
+    """Tests for canonical task execution metadata on TaskPlan.add_task."""
 
-    def test_add_task_with_subagent_metadata(self):
-        """add_task with subagent_id and subagent_name sets metadata correctly."""
+    def test_add_task_defaults_to_inline_execution(self):
+        """Tasks without explicit execution should persist as inline work."""
+        plan = TaskPlan(agent_id="test", require_verification=False)
+        task = plan.add_task(description="Simple task")
+        assert task.metadata["execution"] == {"mode": "inline"}
+        assert task.to_dict()["execution"] == {"mode": "inline"}
+
+    def test_add_task_with_delegate_execution_type(self):
+        """Delegate execution should preserve subagent_type on the task."""
         plan = TaskPlan(agent_id="test", require_verification=False)
         task = plan.add_task(
             description="Research biography",
-            subagent_id="sa_1",
-            subagent_name="researcher",
+            execution={"mode": "delegate", "subagent_type": "researcher"},
         )
-        assert task.metadata["subagent_id"] == "sa_1"
-        assert task.metadata["subagent_name"] == "researcher"
+        assert task.metadata["execution"] == {"mode": "delegate", "subagent_type": "researcher"}
+        assert task.to_dict()["execution"] == {"mode": "delegate", "subagent_type": "researcher"}
 
-    def test_add_task_without_subagent_metadata(self):
-        """add_task without subagent params does not add subagent keys to metadata."""
-        plan = TaskPlan(agent_id="test", require_verification=False)
-        task = plan.add_task(description="Simple task")
-        assert "subagent_id" not in task.metadata
-        assert "subagent_name" not in task.metadata
-
-    def test_add_task_with_only_subagent_id(self):
-        """add_task with only subagent_id (no name) sets just that key."""
+    def test_add_task_with_delegate_execution_id(self):
+        """Delegate execution may target a specific existing subagent by id."""
         plan = TaskPlan(agent_id="test", require_verification=False)
         task = plan.add_task(
-            description="Delegated task",
-            subagent_id="sa_2",
+            description="Continue delegated task",
+            execution={"mode": "delegate", "subagent_id": "sa_2"},
         )
-        assert task.metadata["subagent_id"] == "sa_2"
-        assert "subagent_name" not in task.metadata
+        assert task.metadata["execution"] == {"mode": "delegate", "subagent_id": "sa_2"}
 
-    def test_add_task_with_only_subagent_name(self):
-        """add_task with only subagent_name (no id) sets just that key."""
+    def test_add_task_rejects_inline_with_delegate_target(self):
+        """Inline execution must not include delegation-only fields."""
         plan = TaskPlan(agent_id="test", require_verification=False)
-        task = plan.add_task(
-            description="Named task",
-            subagent_name="writer",
-        )
-        assert "subagent_id" not in task.metadata
-        assert task.metadata["subagent_name"] == "writer"
+        with pytest.raises(ValueError, match="inline"):
+            plan.add_task(
+                description="Invalid inline task",
+                execution={"mode": "inline", "subagent_type": "writer"},
+            )
+
+    def test_add_task_rejects_delegate_without_target(self):
+        """Delegate execution requires a subagent_type or subagent_id."""
+        plan = TaskPlan(agent_id="test", require_verification=False)
+        with pytest.raises(ValueError, match="subagent_type or subagent_id"):
+            plan.add_task(
+                description="Invalid delegated task",
+                execution={"mode": "delegate"},
+            )
 
     def test_plan_serialization_uses_display_id_when_set(self):
         """to_dict should use display_id instead of agent_id when display_id is set."""
@@ -913,3 +923,71 @@ class TestAddTaskSubagentMetadata:
         plan = TaskPlan(agent_id="orchestrator:agent_a")
         d = plan.to_dict()
         assert d["agent_id"] == "orchestrator:agent_a"
+
+
+class TestNormalizeTaskExecution:
+    """Tests for the normalize_task_execution utility."""
+
+    def test_none_input_returns_inline(self):
+        assert normalize_task_execution(None) == {"mode": "inline"}
+
+    def test_empty_dict_returns_inline(self):
+        assert normalize_task_execution({}) == {"mode": "inline"}
+
+    def test_explicit_inline_mode(self):
+        assert normalize_task_execution({"mode": "inline"}) == {"mode": "inline"}
+
+    def test_explicit_delegate_with_subagent_type(self):
+        result = normalize_task_execution({"mode": "delegate", "subagent_type": "builder"})
+        assert result == {"mode": "delegate", "subagent_type": "builder"}
+
+    def test_legacy_subagent_name_promoted_to_delegate(self):
+        result = normalize_task_execution({"subagent_name": "round_evaluator"})
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "round_evaluator"
+
+    def test_legacy_subagent_type_in_dict_promoted(self):
+        result = normalize_task_execution({"subagent_type": "builder"})
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "builder"
+
+    def test_subagent_name_kwarg_promoted(self):
+        result = normalize_task_execution(None, subagent_name="builder")
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "builder"
+
+    def test_subagent_id_kwarg_promoted(self):
+        result = normalize_task_execution(None, subagent_id="eval-123")
+        assert result["mode"] == "delegate"
+        assert result["subagent_id"] == "eval-123"
+
+    def test_default_mode_delegate_without_subagent_raises(self):
+        # default_mode="delegate" with no subagent info still requires a subagent
+        with pytest.raises(ValueError, match="Delegate execution requires"):
+            normalize_task_execution({}, default_mode="delegate")
+
+    def test_unknown_mode_raises(self):
+        with pytest.raises(ValueError, match="mode must be either"):
+            normalize_task_execution({"mode": "parallel"})
+
+    def test_inline_with_subagent_type_raises(self):
+        with pytest.raises(ValueError, match="inline execution cannot include"):
+            normalize_task_execution({"mode": "inline", "subagent_type": "builder"})
+
+    def test_inline_with_subagent_id_raises(self):
+        with pytest.raises(ValueError, match="inline execution cannot include"):
+            normalize_task_execution({"mode": "inline"}, subagent_id="eval-1")
+
+    def test_delegate_without_subagent_raises(self):
+        with pytest.raises(ValueError, match="Delegate execution requires"):
+            normalize_task_execution({"mode": "delegate"})
+
+    def test_extra_fields_preserved_in_delegate(self):
+        result = normalize_task_execution({"mode": "delegate", "subagent_type": "builder", "priority": "high"})
+        assert result["priority"] == "high"
+        assert result["mode"] == "delegate"
+        assert result["subagent_type"] == "builder"
+
+    def test_subagent_name_key_stripped_from_output(self):
+        result = normalize_task_execution({"subagent_name": "builder"})
+        assert "subagent_name" not in result

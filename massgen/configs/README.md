@@ -227,7 +227,26 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.60 - Latest
+### v0.1.61 - Latest
+**New Features:** Round Evaluator Paradigm
+
+**Key Features:**
+- **Round Evaluator Subagent Type**: New `round_evaluator` subagent type that delegates evaluation to specialized evaluator subagents for deeper quality assessment
+- **Orchestrator Refactoring**: Major orchestrator refactoring (+1,189 lines) to support the round evaluation workflow
+- **Evaluation Improvements**: Improved evaluation prompts with task plan injection for context-aware assessment
+- **New Config**: `round_evaluator_example.yaml` for easy adoption
+- **Fixes**: Session resumption from already-resumed logs, SUBAGENT.md generality improvements
+
+**Try It:**
+```bash
+# Install or upgrade to v0.1.61
+pip install --upgrade massgen
+
+# Try the round evaluator paradigm
+uv run massgen --config @examples/features/round_evaluator_example.yaml "Create a website for an AI startup with polished visuals and interactive elements"
+```
+
+### v0.1.60
 **New Features:** Multimodal Tools, Subagent Enhancements & GPT-5.4
 
 **Key Features:**
@@ -235,16 +254,6 @@ Most configurations use environment variables for API keys:so
 - **Subagent Enhancements**: `inherit_spawning_agent_backend` for automatic backend inheritance, `final_answer_strategy` for child orchestrator policy, per-agent `subagent_agents` override
 - **GPT-5.4 Support**: New default OpenAI flagship model
 - **Decomp + Checklist Cooperation**: Decomposition mode works with checklist workflow for quality-gated subtask iteration
-- **Fixes**: Codex prompt caching calculation fix, checklist/proposal injection improvements, task plan refresh
-
-**Try It:**
-```bash
-# Install or upgrade to v0.1.60
-pip install --upgrade massgen
-
-# Choose backend 'openai' with model 'gpt-5.4' in the setup wizard to start using GPT-5.4
-uv run massgen --quickstart
-```
 
 ### v0.1.59
 **New Features:** Quality Round Improvements — Planning, Evaluation, Subagents, Media Fixes

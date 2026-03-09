@@ -774,9 +774,21 @@ class TestSynthesisSpecificityGuidance:
         assert "concrete" in content.lower()
         # Must warn against abstracting away specifics
         assert "abstract" in content.lower() or "generalize" in content.lower()
-        # Must tell the evaluator to base delegation hints on the parent's capabilities
-        assert "parent can delegate" in content.lower()
+        # Must tell the evaluator to base delegation hints on available capabilities
+        assert "implementing agent can delegate" in content.lower()
         assert "not on whether you can spawn subagents inside this evaluator run" in content.lower()
+
+    def test_subagent_md_next_tasks_example_is_not_svg_specific(self):
+        """The next_tasks example should stay domain-agnostic instead of teaching a route-map SVG fix."""
+        import pathlib
+
+        subagent_md = pathlib.Path(__file__).parent.parent / "subagent_types" / "round_evaluator" / "SUBAGENT.md"
+        content = subagent_md.read_text()
+
+        assert "route-planning experience" not in content
+        assert "SVG path elements with clickable segments" not in content
+        assert "canvas overlay with hit-testing on path geometries" not in content
+        assert "primary interaction model" in content
 
 
 # ---------------------------------------------------------------------------

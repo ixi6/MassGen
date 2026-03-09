@@ -1344,6 +1344,13 @@ class ConfigValidator:
                                         import yaml
 
                                         metadata = yaml.safe_load(metadata_path.read_text())
+                                        nested_resume = metadata.get("config", {}).get("orchestrator", {}).get("coordination", {}).get("resume_from_log")
+                                        if nested_resume is not None:
+                                            result.add_error(
+                                                "resume_from_log cannot target a log that itself used resume_from_log",
+                                                f"{location}.coordination.resume_from_log",
+                                                "Resume from the original non-resumed run instead",
+                                            )
                                         log_agent_ids = sorted(a["id"] for a in metadata.get("config", {}).get("agents", []))
                                         config_agent_ids = sorted(a.get("id", "") for a in (config or {}).get("agents", []))
                                         if log_agent_ids != config_agent_ids:

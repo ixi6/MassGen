@@ -424,6 +424,46 @@ class TestResumeConfigValidation:
         error_messages = [e.message for e in result.errors]
         assert any("resume_from_log" in msg for msg in error_messages)
 
+    def test_resume_from_resumed_log_fails(self, tmp_path):
+        from massgen.config_validator import ConfigValidator
+
+        original_log_dir = _make_log_dir(
+            tmp_path / "original",
+            {
+                "agent_a": [{"round": 0, "timestamp": "t0", "answer": "A"}],
+            },
+        )
+        resumed_log_dir = _make_log_dir(
+            tmp_path / "resumed",
+            {
+                "agent_a": [{"round": 1, "timestamp": "t1", "answer": "B"}],
+            },
+        )
+
+        metadata_path = resumed_log_dir / "execution_metadata.yaml"
+        metadata = yaml.safe_load(metadata_path.read_text())
+        metadata["config"]["orchestrator"] = {
+            "coordination": {
+                "resume_from_log": {
+                    "log_path": str(original_log_dir),
+                    "round": 1,
+                },
+            },
+        }
+        metadata_path.write_text(yaml.dump(metadata))
+
+        validator = ConfigValidator()
+        result = validator.validate_config(
+            self._make_config(
+                {
+                    "log_path": str(resumed_log_dir),
+                    "round": 2,
+                },
+            ),
+        )
+        error_messages = [e.message for e in result.errors]
+        assert any("log that itself used resume_from_log" in msg for msg in error_messages)
+
 
 # ---------------------------------------------------------------------------
 # Multi-agent resume

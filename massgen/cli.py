@@ -268,7 +268,6 @@ def _apply_orchestrator_runtime_params(
         "defer_voting_until_all_answered",
         "coordination_mode",
         "presenter_agent",
-        "final_answer_strategy",
     )
     for field_name in direct_fields:
         if field_name in orchestrator_cfg:
@@ -281,12 +280,16 @@ def _apply_orchestrator_runtime_params(
     elif "checklist_require_gap_report" in orchestrator_cfg and "gap_report_mode" not in orchestrator_cfg:
         orchestrator_config.gap_report_mode = "separate" if orchestrator_cfg["checklist_require_gap_report"] else "none"
 
+    if orchestrator_cfg.get("skip_coordination_rounds", False):
+        orchestrator_config.skip_coordination_rounds = True
     if orchestrator_cfg.get("debug_final_answer"):
         orchestrator_config.debug_final_answer = orchestrator_cfg["debug_final_answer"]
-
-    for bool_field in ("skip_final_presentation", "skip_voting", "disable_injection", "skip_coordination_rounds"):
-        if bool_field in orchestrator_cfg:
-            setattr(orchestrator_config, bool_field, bool(orchestrator_cfg[bool_field]))
+    if orchestrator_cfg.get("skip_final_presentation", False):
+        orchestrator_config.skip_final_presentation = True
+    if orchestrator_cfg.get("skip_voting", False):
+        orchestrator_config.skip_voting = True
+    if orchestrator_cfg.get("disable_injection", False):
+        orchestrator_config.disable_injection = True
 
 
 def _is_planning_turn(
@@ -457,8 +460,114 @@ MASSGEN_QUESTIONARY_STYLE = Style(
 )
 
 
+def _run_cloud_job(args: argparse.Namespace, config: dict[str, Any], config_path_label: str | None) -> None:
+    """
+    Launch a MassGen run on Modal cloud, materialize resulting artifacts locally, and emit automation-friendly outputs.
+    
+    If the CLI args do not include a question, raises ConfigurationError. The function uploads/rewrites configured context paths for remote execution, submits a cloud job using the provided config and question, and writes the final answer to the configured output location (either args.output_file or the job artifacts directory). When automation mode is enabled, prints machine-parseable locations for the final output file, artifacts directory, log directory, events file, and optional cloud config source.
+    
+    Parameters:
+        args (argparse.Namespace): Parsed CLI arguments; must include `question`. Also reads `cloud_timeout`, `output_file`, and `automation`.
+        config (dict[str, Any]): MassGen runtime configuration to send to the cloud job; context paths may be rewritten for remote execution.
+        config_path_label (str | None): Optional label identifying the source of the config; emitted in automation output as `CLOUD_CONFIG_SOURCE` when provided.
+    
+    Raises:
+        ConfigurationError: If `args.question` is missing.
+    """
+    if not args.question:
+        raise ConfigurationError("--cloud requires a question argument")
+
+    import uuid
+
+    import yaml
+
+    from .cloud.cloud_job import CloudJobRequest
+    from .cloud.modal_launcher import ModalCloudJobLauncher
+    from .cloud.utils import process_context_paths
+
+    config_copy = copy.deepcopy(config)
+
+    cloud_job_id = uuid.uuid4().hex[:8]
+
+    # Package context path files and rewrite config paths for remote
+    orchestrator_cfg = config_copy.get("orchestrator", {})
+    context_paths = orchestrator_cfg.get("context_paths", [])
+    if context_paths:
+        rewritten_paths = process_context_paths(context_paths, cloud_job_id=cloud_job_id)
+        if rewritten_paths:
+            orchestrator_cfg["context_paths"] = rewritten_paths
+            config_copy["orchestrator"] = orchestrator_cfg
+
+    agents_list = config_copy.get("agents", [])
+
+    for agent_cfg in agents_list:
+        if isinstance(agent_cfg, dict):
+            backend_cfg = agent_cfg.get("backend", {})
+            agent_context_paths = backend_cfg.get("context_paths", [])
+            if agent_context_paths:
+                rewritten_paths = process_context_paths(agent_context_paths, cloud_job_id=cloud_job_id)
+                if rewritten_paths:
+                    backend_cfg["context_paths"] = rewritten_paths
+                    agent_cfg["backend"] = backend_cfg
+
+    # Cloud validation compatibility for PyPI version
+    # The PyPI version of massgen on Modal fails if display_type is "silent".
+    # Since modal_app.py passes `--automation`, it will be re-set to "silent"
+    # internally *after* validation in the cloud. We remove it here just for validation.
+    if "ui" in config_copy and config_copy["ui"].get("display_type") == "silent":
+        config_copy.pop("ui", None)
+
+    launcher = ModalCloudJobLauncher()
+    request = CloudJobRequest(
+        prompt=args.question,
+        config_yaml=yaml.safe_dump(config_copy, sort_keys=False),
+        timeout_seconds=args.cloud_timeout,
+        cloud_job_id=cloud_job_id,
+    )
+    result = launcher.launch(request)
+
+    final_answer = result.final_answer
+    output_path: Path | None = None
+    if args.output_file:
+        output_path = Path(args.output_file)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(final_answer, encoding="utf-8")
+    else:
+        output_path = result.artifacts_dir / "final_answer.txt"
+        output_path.write_text(final_answer, encoding="utf-8")
+
+    # Always print location in automation mode for machine parsing.
+    if args.automation:
+        _automation_print(f"OUTPUT_FILE: {output_path.resolve()}")
+        _automation_print(f"CLOUD_ARTIFACTS_DIR: {result.artifacts_dir.resolve()}")
+        if result.local_log_dir:
+            _automation_print(f"LOG_DIR: {result.local_log_dir.resolve()}")
+        if result.local_events_path:
+            _automation_print(f"EVENTS_FILE: {result.local_events_path.resolve()}")
+        if config_path_label:
+            _automation_print(f"CLOUD_CONFIG_SOURCE: {config_path_label}")
+    else:
+        print(final_answer)
+
+
 def _build_coordination_ui(ui_config: dict[str, Any]) -> CoordinationUI:
-    """Create a CoordinationUI with display_kwargs passthrough (incl. theme)."""
+    """
+    Builds a CoordinationUI instance configured from a UI configuration dictionary.
+    
+    Recognizes and applies the following keys from `ui_config`:
+    - `display_kwargs` (dict): passthrough kwargs forwarded to CoordinationUI.
+    - `theme` (str): UI theme; applied when not already present in `display_kwargs`.
+    - `automation_mode` (bool): when true, enables automation mode in the UI.
+    - `skip_agent_selector` (bool): when true, disables the agent selector UI.
+    - `display_type` (str): UI display type (defaults to `"textual_terminal"`).
+    - `logging_enabled` (bool): whether UI logging is enabled (defaults to `True`).
+    
+    Parameters:
+        ui_config (dict[str, Any]): UI configuration mapping.
+    
+    Returns:
+        CoordinationUI: A CoordinationUI instance configured according to `ui_config`.
+    """
     display_kwargs = dict(ui_config.get("display_kwargs", {}) or {})
     theme = ui_config.get("theme")
     if theme is not None and "theme" not in display_kwargs:
@@ -3169,8 +3278,6 @@ def _parse_coordination_config(coord_cfg: dict[str, Any]) -> "CoordinationConfig
         subagent_types=coord_cfg.get("subagent_types"),
         round_evaluator_before_checklist=coord_cfg.get("round_evaluator_before_checklist", False),
         orchestrator_managed_round_evaluator=coord_cfg.get("orchestrator_managed_round_evaluator", False),
-        round_evaluator_skip_synthesis=coord_cfg.get("round_evaluator_skip_synthesis", False),
-        round_evaluator_refine=coord_cfg.get("round_evaluator_refine", False),
         enable_quality_rethink_on_iteration=coord_cfg.get("enable_quality_rethink_on_iteration", False),
         enable_novelty_on_iteration=coord_cfg.get("enable_novelty_on_iteration", False),
         novelty_injection=coord_cfg.get("novelty_injection", "none"),
@@ -8855,7 +8962,21 @@ async def run_plan_and_execute(
 
 
 async def main(args):
-    """Main CLI entry point (async operations only)."""
+    """
+    Run the MassGen command-line application using the provided parsed CLI arguments.
+    
+    This function is the async entry point for the CLI: it initializes logging and observability, loads or
+    creates the runtime configuration, validates and applies CLI overrides, creates agents (when needed),
+    and dispatches to the appropriate execution mode (single-question run, interactive TUI, planning/spec
+    flows, plan-and-execute, cloud execution, or execution of existing plan/spec). It also manages session
+    registration, execution metadata persistence (including best-effort fallback on early failures),
+    timeout and error handling, and cleanup of filesystem and Docker resources.
+    
+    Parameters:
+        args (argparse.Namespace): Parsed CLI arguments (flags and options produced by the CLI parser)
+            that control configuration selection, execution mode, UI/display options, automation output,
+            timeouts, and other runtime behavior.
+    """
     # Setup logging (only for actual agent runs, not special commands)
     setup_logging(debug=args.debug)
 
@@ -9091,9 +9212,6 @@ async def main(args):
 
         # Validate that all context paths exist before proceeding
         validate_context_paths(config)
-
-        # Relocate all filesystem paths to .massgen/ directory
-        relocate_filesystem_paths(config)
 
         # Generate unique instance ID for parallel execution safety
         # This prevents Docker container naming conflicts when running multiple instances
@@ -9430,6 +9548,21 @@ async def main(args):
             logger.info(
                 f"[Spec Mode] Prepended spec creation instructions " f"(target_chunks={plan_target_chunks}, broadcast={broadcast_mode})",
             )
+
+        # Cloud execution path (Modal MVP)
+        if getattr(args, "cloud", False):
+            if not args.automation:
+                logger.info("Cloud mode requires automation output; enabling --automation")
+                args.automation = True
+            _run_cloud_job(
+                args=args,
+                config=config,
+                config_path_label=str(resolved_path) if resolved_path else None,
+            )
+            return
+
+        # Relocate all filesystem paths to .massgen/ directory
+        relocate_filesystem_paths(config)
 
         # For interactive mode without initial question, defer agent creation until first prompt
         # This allows @path references in the first prompt to be included in Docker mounts
@@ -9853,13 +9986,30 @@ async def main(args):
         _save_prompt_metadata_failure_fallback("timeout_error", failure_error=e)
         sys.exit(EXIT_TIMEOUT)
     except Exception as e:
+        # Keep cloud-specific timeout mapping distinct from generic execution failures.
+        from .cloud.modal_launcher import CloudJobError
+
+        if isinstance(e, CloudJobError) and "timeout" in str(e).lower():
+            print(f"❌ Timeout error: {e}", flush=True)
+            sys.exit(EXIT_TIMEOUT)
         print(f"❌ Error: {e}", flush=True)
         _save_prompt_metadata_failure_fallback("execution_error", failure_error=e)
         sys.exit(EXIT_EXECUTION_ERROR)
 
 
 def cli_main():
-    """Synchronous wrapper for CLI entry point."""
+    """
+    Entry point for the CLI: parse command-line arguments, handle special subcommands and setup flows, then run the asynchronous main application.
+    
+    This function:
+    - Parses CLI flags and validates combinations (mode, planning, cloud timeout, etc.).
+    - Handles top-level subcommands that must run before normal parsing: logs, serve, export, shares.
+    - Provides handlers for interactive flows and one-off commands: setup, quickstart, init, generate-config, list-examples, show-schema, validate, textual-serve, web UI, config selection, session continuation, and various tooling/setup helpers.
+    - Configures logging, observability, and environment reload where appropriate.
+    - Launches the asynchronous main(args) via asyncio.run and restores terminal state on KeyboardInterrupt.
+    
+    No return value; exits the process for subcommands that complete with sys.exit or by returning from the function.
+    """
     # Handle 'logs' subcommand specially before main argument parsing
     # This avoids conflict with the positional 'question' argument
     if len(sys.argv) >= 2 and sys.argv[1] == "logs":
@@ -10328,6 +10478,17 @@ Environment Variables:
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
     )
     parser.add_argument(
+        "--cloud",
+        action="store_true",
+        help="Run the job in Modal cloud (MVP: single-agent automation).",
+    )
+    parser.add_argument(
+        "--cloud-timeout",
+        type=int,
+        default=3600,
+        help="Cloud job timeout in seconds (default: 3600).",
+    )
+    parser.add_argument(
         "--stream-events",
         action="store_true",
         help="Stream events to stdout as JSON lines. Used by parent processes (e.g., TUI subagent modal) " "to receive real-time updates. Implies --automation.",
@@ -10583,6 +10744,9 @@ Environment Variables:
         sys.exit(2)
     if args.plan_chunks is not None and args.plan_chunks <= 0:
         print("❌ --plan-chunks must be a positive integer")
+        sys.exit(2)
+    if args.cloud_timeout <= 0:
+        print("❌ --cloud-timeout must be a positive integer")
         sys.exit(2)
 
     # Validate mode flag combinations

@@ -29,7 +29,7 @@ orchestrator:
   voting_threshold: 3
   max_new_answers_per_agent: 5
   max_new_answers_global: 12
-  answer_novelty_requirement: balanced #give some new answers 
+  answer_novelty_requirement: balanced #give some new answers
   checklist_require_gap_report: true
   gap_report_mode: changedoc
 
@@ -59,7 +59,7 @@ orchestrator:
     write_mode: auto
     novelty_injection: gentle
     enable_changedoc: true
-    pre_collab_voting_threshold: 2 #agent think his answer is good enough to be voted 
+    pre_collab_voting_threshold: 2 #agent think his answer is good enough to be voted
 
     # --- Evaluation Criteria Generator ---
     evaluation_criteria_generator:

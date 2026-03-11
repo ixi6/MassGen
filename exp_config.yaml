@@ -1,0 +1,77 @@
+agents:
+- id: agent_a
+  backend:
+    type: codex
+    model: gpt-5.3-codex
+    reasoning:
+      effort: high
+    cwd: workspace
+    exclude_file_operation_mcps: false
+    enable_web_search: false
+- id: agent_b
+  backend:
+    type: claude_code
+    model: claude-opus-4-6
+    cwd: workspace
+    exclude_file_operation_mcps: false
+    enable_web_search: false
+- id: agent_c
+  backend:
+    type: claude_code
+    model: claude-sonnet-4-6
+    cwd: workspace
+    exclude_file_operation_mcps: false
+    enable_web_search: false
+
+orchestrator:
+  # --- Voting & Refinement ---
+  voting_sensitivity: checklist_gated
+  voting_threshold: 3
+  max_new_answers_per_agent: 5
+  max_new_answers_global: 12
+  answer_novelty_requirement: balanced #give some new answers 
+  checklist_require_gap_report: true
+  gap_report_mode: changedoc
+
+  # --- Pacing & Fairness ---
+  fairness_enabled: true
+  fairness_lead_cap_answers: 2
+  max_midstream_injections_per_round: 2
+
+  # --- Multimodal ---
+  enable_multimodal_tools: true
+  image_generation_backend: openai
+  video_generation_backend: openai
+  audio_generation_backend: openai
+
+  # --- Storage ---
+  snapshot_storage: snapshots
+  agent_temporary_workspace: temp_workspaces
+  context_paths: []
+
+  coordination:
+    broadcast: agents
+    broadcast_sensitivity: medium
+    max_orchestration_restarts: 1
+    enable_agent_task_planning: true
+    task_planning_filesystem_mode: true
+    enable_memory_filesystem_mode: true
+    write_mode: auto
+    novelty_injection: gentle
+    enable_changedoc: true
+    pre_collab_voting_threshold: 2 #agent think his answer is good enough to be voted 
+
+    # --- Evaluation Criteria Generator ---
+    evaluation_criteria_generator:
+      enabled: true
+
+
+timeout_settings:
+  orchestrator_timeout_seconds: 5400
+  initial_round_timeout_seconds: 1500
+  subsequent_round_timeout_seconds: 1200
+  round_timeout_grace_seconds: 400
+
+ui:
+  display_type: textual_terminal
+  logging_enabled: true

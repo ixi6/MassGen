@@ -1,47 +1,36 @@
-# MassGen v0.1.62 — MassGen Skill & Viewer
+# 🚀 Release Highlights — v0.1.62 (2026-03-11)
 
-New general-purpose MassGen Skill with 4 modes (general, evaluate, plan, spec) for use from Claude Code and other AI agents. Session viewer for real-time observation of automation runs. Backend improvements and quickstart enhancements.
+### 🧩 [MassGen Skill](https://github.com/massgen/skills)
+- **Multi-agent collaboration as a skill**: Install with `npx skills add massgen/skills --all` and use MassGen directly from Claude Code, Cursor, Copilot, and 40+ other AI agents
+- **Four modes**: General (any task), Evaluate (critique existing work), Plan (structured project plans), Spec (requirements specifications)
+- **Auto-distributed**: Skill automatically syncs to a [dedicated repository](https://github.com/massgen/skills) for easy installation
 
-## 🧩 MassGen Skill
+### 👁️ [Session Viewer](https://docs.massgen.ai/en/latest/reference/cli.html)
+- **Watch automation runs in real-time**: New `massgen viewer` command opens a TUI to observe running or completed sessions
+- **Session picker**: `--pick` flag for browsing and selecting specific sessions, `--web` for browser-based viewing
 
-- New general-purpose multi-agent skill with 4 modes: general, evaluate, plan, and spec
-- Usable from Claude Code, Codex, and other AI coding agents via `/massgen`
-- Auto-installation and auto-sync to a separate skills repository for easy distribution
-- Comprehensive reference documentation and workflow guides for each mode
+### ⚡ [Backend & Quickstart Improvements](https://docs.massgen.ai/en/latest/user_guide/backends.html)
+- **Claude Code backend**: Background task execution and native MCP support via the SDK
+- **Codex backend**: Native filesystem access and MCP tool integration
+- **Copilot backend**: Runtime model discovery with automatic capability detection
+- **Headless quickstart**: Non-interactive setup via `--quickstart --headless` for CI/CD pipelines
+- **Web quickstart**: Browser-based setup via `--web-quickstart`
 
-## 👁️ Session Viewer
+### ✅ Fixes
+- **Evaluation criteria**: Removed should/could criteria that caused agents to produce overly similar outputs
+- **Planning prompts**: Improved planning prompts with configurable thoroughness levels
 
-- New `massgen viewer` command for real-time observation of automation sessions in the TUI
-- Interactive session picker (`--pick`) and web viewing mode (`--web`)
+---
 
-## ⚡ Backend & Quickstart
+### 📖 Getting Started
+- [**Quick Start Guide**](https://github.com/massgen/MassGen?tab=readme-ov-file#1--installation)
+- **Try It**:
+  ```bash
+  # Install the MassGen Skill for your AI agent
+  npx skills add massgen/skills --all
+  # Then use MassGen from Claude Code, Cursor, Copilot, etc.
 
-- Claude Code backend with background task execution and SDK MCP support
-- Codex backend with native filesystem access, JSONL streaming, and MCP tool integration
-- Copilot runtime model discovery with metadata caching
-- Headless quickstart (`--quickstart --headless`) for automated CI/CD setup
-- Web quickstart (`--web-quickstart`) for browser-based configuration
-- `--print-backends` table showing all supported backends with capabilities
-
-## 📝 Evaluation & Planning
-
-- Better planning prompts with thoroughness support (standard vs thorough)
-- Removed should/could evaluation criteria to reduce output similarity
-
-## 🚀 Try It
-
-```bash
-# Install the MassGen Skill for your AI agent
-npx skills add massgen/skills --all
-# Then in Claude Code, Cursor, Copilot, etc.:
-#   /massgen "Your complex task"
-
-# Or install MassGen directly
-pip install massgen==0.1.62
-# Try the Session Viewer
-uv run massgen viewer --pick
-```
-
-**Full Changelog:** https://github.com/massgen/MassGen/blob/main/CHANGELOG.md
-
-📖 [Documentation](https://docs.massgen.ai) · 💬 [Discord](https://discord.massgen.ai) · 🐦 [X/Twitter](https://x.massgen.ai)
+  # Or install MassGen directly and try the Session Viewer
+  pip install massgen==0.1.62
+  uv run massgen viewer --pick
+  ```

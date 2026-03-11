@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.62 — MassGen Skill & Viewer! 🚀 New general-purpose MassGen Skill with 4 modes (general, evaluate, plan, spec) for use from Claude Code and other AI agents. Session viewer for real-time observation of automation runs. Backend improvements and quickstart enhancements.
+We're excited to release MassGen v0.1.62 — MassGen Skill & Viewer! 🚀 New general-purpose MassGen Skill (https://github.com/massgen/skills) with 4 modes (general, evaluate, plan, spec) for use from Claude Code and other AI agents. Session viewer for real-time observation of automation runs. Backend improvements and quickstart enhancements.
 
 ## Install
 
@@ -29,7 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.62 — MassGen Skill & Viewer! 🚀 New general-purpose MassGen Skill with 4 modes (general, evaluate, plan, spec) for use from Claude Code and other AI agents. Session viewer for real-time observation of automation runs. Backend improvements and quickstart enhancements.
+We're excited to release MassGen v0.1.62 — MassGen Skill & Viewer! 🚀 New general-purpose MassGen Skill (https://github.com/massgen/skills) with 4 modes (general, evaluate, plan, spec) for use from Claude Code and other AI agents. Session viewer for real-time observation of automation runs. Backend improvements and quickstart enhancements.
 
 **Key Improvements:**
 

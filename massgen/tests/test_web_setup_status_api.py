@@ -194,7 +194,7 @@ def test_quickstart_reasoning_profile_endpoint_supports_codex_xhigh() -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["profile"]["default_effort"] == "xhigh"
+    assert payload["profile"]["default_effort"] == "high"
     assert [value for _, value in payload["profile"]["choices"]] == [
         "low",
         "medium",
@@ -212,7 +212,7 @@ def test_quickstart_reasoning_profile_endpoint_uses_copilot_metadata(monkeypatch
                 "id": "gpt-5.4",
                 "name": "GPT-5.4",
                 "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"],
-                "default_reasoning_effort": "xhigh",
+                "default_reasoning_effort": "high",
             },
         ],
     )
@@ -227,7 +227,7 @@ def test_quickstart_reasoning_profile_endpoint_uses_copilot_metadata(monkeypatch
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["profile"]["default_effort"] == "xhigh"
+    assert payload["profile"]["default_effort"] == "high"
     assert [value for _, value in payload["profile"]["choices"]] == [
         "low",
         "medium",

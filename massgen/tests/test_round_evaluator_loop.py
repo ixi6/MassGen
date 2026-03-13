@@ -37,6 +37,93 @@ def _make_round_evaluator_config() -> dict:
     }
 
 
+def _make_valid_next_tasks_payload() -> dict:
+    return {
+        "schema_version": "2",
+        "objective": "Rebuild the deliverable around a stronger editorial thesis",
+        "primary_strategy": "editorial_reframe",
+        "why_this_strategy": "A stronger organizing concept fixes multiple weak criteria at once.",
+        "strategy_mode": "incremental_refinement",
+        "approach_assessment": {
+            "ceiling_status": "ceiling_not_reached",
+            "ceiling_explanation": "The current approach still has headroom if executed with more discipline.",
+            "breakthroughs": [],
+            "paradigm_shift": {
+                "recommended": False,
+                "current_limitation": "",
+                "alternative_approach": "",
+                "transferable_elements": [],
+            },
+        },
+        "success_contract": {
+            "outcome_statement": "The next revision should feel intentionally reauthored, not just patched.",
+            "quality_bar": "The weakest section should feel deliberate and premium in isolation.",
+            "fail_if_any": [
+                "The output still reads like the same template with only local polish changes.",
+            ],
+            "required_evidence": [
+                "Fresh rendered screenshots of the revised sections",
+                "Replayable verification notes for the key changed areas",
+            ],
+        },
+        "deprioritize_or_remove": ["generic filler modules"],
+        "execution_scope": {"active_chunk": "c1"},
+        "fix_tasks": [],
+        "evolution_tasks": [
+            {
+                "id": "reframe_midpage",
+                "task_category": "evolution",
+                "strategy_role": "thesis_shift",
+                "description": "Rebuild the weak middle sections around one stronger editorial concept.",
+                "implementation_guidance": "Replace repeated generic card modules with one stronger narrative section model.",
+                "priority": "high",
+                "depends_on": [],
+                "chunk": "c1",
+                "execution": {"mode": "delegate", "subagent_type": "builder"},
+                "verification": "The mid-page is organized around one stronger editorial concept.",
+                "verification_method": "Render the page and compare the changed sections against the previous layout.",
+                "success_criteria": "A reviewer can describe one clear new organizing thesis behind the revised sections.",
+                "failure_signals": [
+                    "The sections are still recognizably the same layout with only copy and styling tweaks.",
+                ],
+                "required_evidence": [
+                    "Before/after screenshots of the rebuilt sections",
+                ],
+                "metadata": {
+                    "impact": "transformative",
+                    "relates_to": ["E7", "E8"],
+                },
+            },
+        ],
+        "tasks": [
+            {
+                "id": "reframe_midpage",
+                "task_category": "evolution",
+                "strategy_role": "thesis_shift",
+                "description": "Rebuild the weak middle sections around one stronger editorial concept.",
+                "implementation_guidance": "Replace repeated generic card modules with one stronger narrative section model.",
+                "priority": "high",
+                "depends_on": [],
+                "chunk": "c1",
+                "execution": {"mode": "delegate", "subagent_type": "builder"},
+                "verification": "The mid-page is organized around one stronger editorial concept.",
+                "verification_method": "Render the page and compare the changed sections against the previous layout.",
+                "success_criteria": "A reviewer can describe one clear new organizing thesis behind the revised sections.",
+                "failure_signals": [
+                    "The sections are still recognizably the same layout with only copy and styling tweaks.",
+                ],
+                "required_evidence": [
+                    "Before/after screenshots of the rebuilt sections",
+                ],
+                "metadata": {
+                    "impact": "transformative",
+                    "relates_to": ["E7", "E8"],
+                },
+            },
+        ],
+    }
+
+
 def test_parse_coordination_config_passes_round_evaluator_before_checklist():
     from massgen.cli import _parse_coordination_config
 
@@ -44,6 +131,7 @@ def test_parse_coordination_config_passes_round_evaluator_before_checklist():
         {
             "round_evaluator_before_checklist": True,
             "orchestrator_managed_round_evaluator": True,
+            "round_evaluator_transformation_pressure": "aggressive",
             "subagent_orchestrator": {
                 "enabled": True,
                 "final_answer_strategy": "synthesize",
@@ -53,8 +141,22 @@ def test_parse_coordination_config_passes_round_evaluator_before_checklist():
 
     assert coord.round_evaluator_before_checklist is True
     assert coord.orchestrator_managed_round_evaluator is True
+    assert coord.round_evaluator_transformation_pressure == "aggressive"
     assert coord.subagent_orchestrator is not None
     assert coord.subagent_orchestrator.final_answer_strategy == "synthesize"
+
+
+def test_round_evaluator_transformation_pressure_defaults_to_balanced():
+    from massgen.cli import _parse_coordination_config
+
+    coord = _parse_coordination_config(
+        {
+            "round_evaluator_before_checklist": True,
+            "orchestrator_managed_round_evaluator": True,
+        },
+    )
+
+    assert coord.round_evaluator_transformation_pressure == "balanced"
 
 
 def test_config_validator_accepts_valid_round_evaluator_single_parent_config():
@@ -104,6 +206,17 @@ def test_config_validator_rejects_round_evaluator_skip_synthesis_in_managed_flow
 
     assert not result.is_valid()
     assert any("skip_synthesis" in e.message.lower() for e in result.errors)
+
+
+def test_config_validator_rejects_invalid_round_evaluator_transformation_pressure():
+    config = _make_round_evaluator_config()
+    config["orchestrator"]["coordination"]["round_evaluator_transformation_pressure"] = "wild"
+
+    result = ConfigValidator().validate_config(config)
+
+    assert not result.is_valid()
+    assert any("round_evaluator_transformation_pressure" in e.location for e in result.errors)
+    assert any("gentle" in e.message and "aggressive" in e.message for e in result.errors)
 
 
 def test_config_validator_rejects_round_evaluator_loop_without_subagent_support():
@@ -183,6 +296,7 @@ def test_round_evaluator_result_from_failed_subagent():
 def test_round_evaluator_result_serialization_roundtrip():
     from massgen.subagent.models import RoundEvaluatorResult
 
+    next_tasks = _make_valid_next_tasks_payload()
     original = RoundEvaluatorResult(
         packet_text="critique text",
         status="success",
@@ -194,20 +308,14 @@ def test_round_evaluator_result_serialization_roundtrip():
         verdict_artifact_path="/tmp/ws/verdict.json",
         next_tasks_artifact_path="/tmp/ws/next_tasks.json",
         task_plan_source="next_tasks_artifact",
-        next_tasks={
-            "schema_version": "1",
-            "objective": "Turn it into a route planner",
-            "primary_strategy": "interactive_route_map",
-            "why_this_strategy": "One architectural move fixes the weakest criteria",
-            "deprioritize_or_remove": ["generic grid"],
-            "execution_scope": {"active_chunk": "c1"},
-            "tasks": [{"id": "t1", "description": "Do work", "verification": "done"}],
-        },
-        next_tasks_objective="Turn it into a route planner",
-        next_tasks_primary_strategy="interactive_route_map",
-        next_tasks_why_this_strategy="One architectural move fixes the weakest criteria",
-        next_tasks_deprioritize_or_remove=["generic grid"],
+        next_tasks=next_tasks,
+        next_tasks_objective="Rebuild the deliverable around a stronger editorial thesis",
+        next_tasks_primary_strategy="editorial_reframe",
+        next_tasks_why_this_strategy="A stronger organizing concept fixes multiple weak criteria at once.",
+        next_tasks_deprioritize_or_remove=["generic filler modules"],
         next_tasks_execution_scope={"active_chunk": "c1"},
+        next_tasks_strategy_mode="incremental_refinement",
+        next_tasks_success_contract=next_tasks["success_contract"],
     )
     restored = RoundEvaluatorResult.from_dict(original.to_dict())
 
@@ -223,6 +331,47 @@ def test_round_evaluator_result_serialization_roundtrip():
     assert restored.task_plan_source == "next_tasks_artifact"
     assert restored.next_tasks == original.next_tasks
     assert restored.next_tasks_primary_strategy == original.next_tasks_primary_strategy
+    assert restored.next_tasks_strategy_mode == original.next_tasks_strategy_mode
+    assert restored.next_tasks_success_contract == original.next_tasks_success_contract
+
+
+def test_normalize_next_tasks_payload_requires_success_contract():
+    from massgen.subagent.models import RoundEvaluatorResult
+
+    payload = _make_valid_next_tasks_payload()
+    payload.pop("success_contract")
+
+    assert RoundEvaluatorResult.normalize_next_tasks_payload(payload) is None
+
+
+def test_normalize_next_tasks_payload_requires_task_success_semantics():
+    from massgen.subagent.models import RoundEvaluatorResult
+
+    payload = _make_valid_next_tasks_payload()
+    payload["tasks"][0].pop("success_criteria")
+
+    assert RoundEvaluatorResult.normalize_next_tasks_payload(payload) is None
+
+
+def test_normalize_next_tasks_payload_rejects_elevated_ceiling_without_escalation():
+    from massgen.subagent.models import RoundEvaluatorResult
+
+    payload = _make_valid_next_tasks_payload()
+    payload["approach_assessment"]["ceiling_status"] = "ceiling_approaching"
+    payload["strategy_mode"] = "incremental_refinement"
+
+    assert RoundEvaluatorResult.normalize_next_tasks_payload(payload) is None
+
+
+def test_normalize_next_tasks_payload_requires_thesis_shift_task_when_strategy_demands_it():
+    from massgen.subagent.models import RoundEvaluatorResult
+
+    payload = _make_valid_next_tasks_payload()
+    payload["approach_assessment"]["ceiling_status"] = "ceiling_reached"
+    payload["strategy_mode"] = "thesis_shift"
+    payload["tasks"][0]["strategy_role"] = "supporting_fix"
+
+    assert RoundEvaluatorResult.normalize_next_tasks_payload(payload) is None
 
 
 # ---------------------------------------------------------------------------
@@ -290,6 +439,13 @@ def test_auto_injected_evaluator_result_block_includes_summary():
         next_tasks_primary_strategy="interactive_route_map",
         next_tasks_why_this_strategy="One architectural move fixes the weak IA",
         next_tasks_deprioritize_or_remove=["generic destination grid", "gallery strip"],
+        next_tasks_strategy_mode="thesis_shift",
+        next_tasks_success_contract={
+            "outcome_statement": "The next revision should feel reauthored around a new interaction thesis.",
+            "quality_bar": "A reviewer should be able to name the new thesis immediately.",
+            "fail_if_any": ["The output still feels like the same brochure with cosmetic tweaks."],
+            "required_evidence": ["Fresh screenshots of the rebuilt information architecture"],
+        },
     )
 
     block = Orchestrator._format_round_evaluator_result_block_static(
@@ -309,6 +465,10 @@ def test_auto_injected_evaluator_result_block_includes_summary():
     assert "interactive_route_map" in block
     assert "Turn the brochure into a route planner" in block
     assert "generic destination grid" in block
+    assert "Success contract" in block
+    assert "The next revision should feel reauthored around a new interaction thesis." in block
+    assert "The output still feels like the same brochure with cosmetic tweaks." in block
+    assert "thesis_shift" in block
     assert "/tmp/eval/critique_packet.md" in block
     assert "/tmp/eval/verdict.json" in block
     assert "/tmp/eval/next_tasks.json" in block
@@ -456,7 +616,8 @@ def test_example_round_evaluator_config_exists_and_validates():
     config_path = Path(__file__).resolve().parents[2] / "massgen" / "configs" / "features" / "round_evaluator_example.yaml"
     assert config_path.exists()
 
-    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    raw_text = config_path.read_text(encoding="utf-8")
+    config = yaml.safe_load(raw_text)
     result = ConfigValidator().validate_config(config)
 
     assert result.is_valid(), result.format_errors()
@@ -464,5 +625,32 @@ def test_example_round_evaluator_config_exists_and_validates():
     assert config["orchestrator"]["enable_multimodal_tools"] is True
     assert config["orchestrator"]["image_generation_backend"] == "openai"
     assert config["orchestrator"]["video_generation_backend"] == "openai"
+    assert config["orchestrator"]["coordination"]["round_evaluator_transformation_pressure"] == "balanced"
+    assert "round_evaluator_refine:" not in raw_text
+    assert "round_evaluator_skip_synthesis:" not in raw_text
     child_agents = config["orchestrator"]["coordination"]["subagent_orchestrator"]["agents"]
     assert [agent["id"] for agent in child_agents] == ["eval_codex", "eval_claude", "eval_gemini"]
+
+
+def test_coordination_workflow_docs_describe_round_evaluator_support_matrix():
+    doc_path = Path(__file__).resolve().parents[2] / "docs" / "modules" / "coordination_workflow.md"
+    content = doc_path.read_text(encoding="utf-8").lower()
+
+    assert "core path" in content
+    assert "degraded fallback" in content
+    assert "advanced / non-default" in content or "advanced/non-default" in content
+    assert "material self-improvement" in content
+    assert "open-ended self-improvement" in content
+    assert "round_evaluator_transformation_pressure" in content
+    assert "conceptual — not yet implemented" not in content
+    assert "save or copy that packet into its workspace" not in content
+
+
+def test_yaml_schema_docs_list_round_evaluator_transformation_pressure():
+    schema_path = Path(__file__).resolve().parents[2] / "docs" / "source" / "reference" / "yaml_schema.rst"
+    content = schema_path.read_text(encoding="utf-8")
+
+    assert "round_evaluator_transformation_pressure" in content
+    assert "gentle" in content
+    assert "balanced" in content
+    assert "aggressive" in content

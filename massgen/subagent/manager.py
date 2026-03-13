@@ -2071,6 +2071,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             orchestrator_config["max_new_answers_per_agent"] = orch_config.max_new_answers
         if orch_config and orch_config.final_answer_strategy is not None:
             orchestrator_config["final_answer_strategy"] = orch_config.final_answer_strategy
+        # Propagate ensemble defaults (disable_injection, defer_voting) only
+        # for non-refine runs.  refine=True means collaborative iteration where
+        # agents should see each other's work — ensemble isolation would break that.
+        if orch_config and not refine:
+            orchestrator_config.setdefault("disable_injection", orch_config.disable_injection)
+            orchestrator_config.setdefault("defer_voting_until_all_answered", orch_config.defer_voting_until_all_answered)
 
         # Apply refinement overrides for quick mode (matches TUI behavior)
         if not refine:

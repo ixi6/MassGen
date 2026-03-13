@@ -62,13 +62,12 @@ orchestrator:
     subagent_default_timeout: 2000
     subagent_max_concurrent: 3
     round_evaluator_before_checklist: true
-    round_evaluator_skip_synthesis: false
-    round_evaluator_refine: true
     orchestrator_managed_round_evaluator: true
+    round_evaluator_transformation_pressure: balanced
     subagent_types: [round_evaluator]
     subagent_orchestrator:
       enabled: true
-      max_new_answers: 3  # evaluator agents iterate up to 3 rounds
+      max_new_answers: 3
       # Only round_evaluator uses the shared 3-agent child team by default.
       # builder and other subagent types stay on the spawning parent's backend
       # unless you opt them into the shared pool here.

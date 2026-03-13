@@ -330,6 +330,11 @@ class SystemMessageBuilder:
                         "orchestrator_managed_round_evaluator",
                         False,
                     ),
+                    round_evaluator_transformation_pressure=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "round_evaluator_transformation_pressure",
+                        "balanced",
+                    ),
                     specialized_subagents_available=bool(enable_subagents),
                 ),
             )
@@ -655,6 +660,11 @@ class SystemMessageBuilder:
                         getattr(self.config, "coordination_config", None),
                         "orchestrator_managed_round_evaluator",
                         False,
+                    ),
+                    round_evaluator_transformation_pressure=getattr(
+                        getattr(self.config, "coordination_config", None),
+                        "round_evaluator_transformation_pressure",
+                        "balanced",
                     ),
                 ),
             )

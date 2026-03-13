@@ -131,6 +131,20 @@ Phase 2: Per-dimension parallel analysis (methodology personas per dimension)
 Phase 3: Cross-dimension synthesis (integration personas, synthesis eval criteria)
 ```
 
+### Pattern 5: Ensemble (Produce → Vote → Synthesize)
+
+For tasks where independent diversity matters more than iterative refinement. Each agent produces their best answer in isolation, then agents vote, and the winner synthesizes insights from all others.
+
+```
+Phase 1: Independent parallel production (disable_injection: true)
+Phase 2: Vote on best answer (defer_voting_until_all_answered: true)
+Phase 3: Winner synthesizes from all (final_answer_strategy: synthesize)
+```
+
+This is the default pattern for multi-agent subagent runs. It maximizes answer diversity by preventing agents from anchoring on each other's work, while still producing a high-quality synthesized final answer.
+
+See ``docs/source/reference/yaml_schema.rst`` and ``configs/voting/ensemble_mode.yaml`` for configuration details.
+
 ## Checklist Gate Criteria for Special Primitives
 
 The default checklist items (E1-E4) are designed for general task output. But special primitives — persona generation, task decomposition, evaluation criteria generation, and analytical tasks like prompt crafting or log analysis — have well-defined quality characteristics that don't require another level of prompt generation to specify.

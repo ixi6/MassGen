@@ -355,7 +355,7 @@ class ConfigBuilder:
 
         default_effort = "low" if "nano" in normalized_model else "medium"
         if supports_xhigh and (normalized_model == "gpt-5.4" or normalized_model.startswith("gpt-5.4-") or "gpt-5.3" in normalized_model):
-            default_effort = "xhigh"
+            default_effort = "high"
         if supports_xhigh:
             return cls._build_quickstart_reasoning_profile(
                 supported_efforts=["low", "medium", "high", "xhigh"],

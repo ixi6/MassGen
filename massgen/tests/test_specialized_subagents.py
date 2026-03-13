@@ -344,6 +344,82 @@ def test_round_evaluator_prompt_requires_correctness_first_handoffs_and_final_re
     assert "correctness fixes still hold after later changes" in lower
 
 
+def test_round_evaluator_prompt_commits_to_one_material_next_round_thesis():
+    """round_evaluator should aim for material self-improvement and collapse to one thesis."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "one committed next-round thesis" in lower
+    assert "material self-improvement" in lower
+    assert "local convergence" in lower
+    assert "low-value polish" in lower or "minor cleanup" in lower
+    assert "not a menu of incompatible directions" in lower
+
+
+def test_round_evaluator_prompt_defines_transformation_pressure_contract():
+    """round_evaluator should define how transformation pressure biases thesis selection."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "round_evaluator_transformation_pressure" in config.system_prompt
+    assert "gentle" in lower
+    assert "balanced" in lower
+    assert "aggressive" in lower
+    assert "correctness-critical work still comes first" in lower
+
+
+def test_round_evaluator_prompt_requires_narrow_builder_task_scopes():
+    """round_evaluator should split delegated builder work into one surface / one defect-family specs."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["round_evaluator"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "one surface" in lower
+    assert "one defect family" in lower
+    assert "do not bundle multiple independent fixes" in lower
+
+
+def test_builder_prompt_requires_one_coherent_goal_and_split_same_file_shopping_lists():
+    """builder should reject broad same-file shopping lists rather than silently bundling them."""
+    from massgen.subagent.type_scanner import scan_subagent_types
+
+    builtin_dir = Path(__file__).parent.parent / "subagent_types"
+    types = scan_subagent_types(
+        builtin_dir=builtin_dir,
+        project_dir=Path("/nonexistent"),
+        allowed_types=["builder"],
+    )
+    config = types[0]
+    lower = config.system_prompt.lower()
+
+    assert "one coherent goal" in lower or "one surface" in lower
+    assert "same file" in lower
+    assert "split required" in lower
+
+
 def test_scanner_project_overrides_builtin(tmp_path):
     """Project type with same name replaces built-in."""
     from massgen.subagent.type_scanner import scan_subagent_types
@@ -675,6 +751,7 @@ def test_subagent_section_includes_builder_novelty_delegation_guidance():
     # Must tell agents that novelty proposals too complex for inline → list as transformative
     assert "novelty" in content
     assert "transformative" in content
+    assert "background=true" in content
     # Must steer agents away from deferring
     assert "defer" in content or "inline" in content
 

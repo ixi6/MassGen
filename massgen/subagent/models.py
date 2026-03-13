@@ -234,7 +234,8 @@ class SubagentOrchestratorConfig:
                 to apply the shared pool to every subagent type.
         coordination: Optional coordination config subset (broadcast, planning, etc.)
         max_new_answers: Maximum new answers per agent before forcing consensus.
-                        Default 3 for subagents to prevent runaway iterations.
+                        Default 3 for iterative (refine=True) subagent runs.
+                        The refine=False path forces max_new_answers_per_agent=1 regardless.
         enable_web_search: Whether to enable web search for subagents (None = inherit from parent).
                           This is set in YAML config, not by agents at runtime.
         parse_at_references: Whether subagent subprocess CLI should parse @path/@path:w
@@ -247,6 +248,10 @@ class SubagentOrchestratorConfig:
             syntax.
         final_answer_strategy: Optional child orchestrator final-answer policy.
             Mirrors the top-level orchestrator setting for multi-agent subagent runs.
+        disable_injection: Whether agents work independently without seeing peer answers.
+            Default True (ensemble pattern: isolated production for answer diversity).
+        defer_voting_until_all_answered: Whether to hold voting until all agents
+            have submitted at least one answer. Default True (ensemble pattern).
     """
 
     enabled: bool = False
@@ -254,10 +259,12 @@ class SubagentOrchestratorConfig:
     inherit_spawning_agent_backend: bool = False
     shared_child_team_types: list[str] = field(default_factory=lambda: DEFAULT_SHARED_CHILD_TEAM_TYPES.copy())
     coordination: dict[str, Any] = field(default_factory=dict)
-    max_new_answers: int = 3  # Conservative default for subagents
+    max_new_answers: int = 3  # Used for refine=True iterative mode; refine=False forces 1
     enable_web_search: bool | None = None  # None = inherit from parent
     parse_at_references: bool = False
     final_answer_strategy: Literal["winner_reuse", "winner_present", "synthesize"] | None = None
+    disable_injection: bool = True  # Ensemble default: agents work independently
+    defer_voting_until_all_answered: bool = True  # Ensemble default: vote after all produce
 
     @property
     def num_agents(self) -> int:
@@ -307,6 +314,8 @@ class SubagentOrchestratorConfig:
             enable_web_search=data.get("enable_web_search"),
             parse_at_references=data.get("parse_at_references", False),
             final_answer_strategy=data.get("final_answer_strategy"),
+            disable_injection=data.get("disable_injection", True),
+            defer_voting_until_all_answered=data.get("defer_voting_until_all_answered", True),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -319,6 +328,8 @@ class SubagentOrchestratorConfig:
             "coordination": self.coordination.copy() if self.coordination else {},
             "max_new_answers": self.max_new_answers,
             "parse_at_references": self.parse_at_references,
+            "disable_injection": self.disable_injection,
+            "defer_voting_until_all_answered": self.defer_voting_until_all_answered,
         }
         if self.enable_web_search is not None:
             result["enable_web_search"] = self.enable_web_search
@@ -636,6 +647,9 @@ class RoundEvaluatorResult:
     next_tasks_why_this_strategy: str | None = None
     next_tasks_deprioritize_or_remove: list[str] | None = None
     next_tasks_execution_scope: dict[str, Any] | None = None
+    next_tasks_strategy_mode: Literal["incremental_refinement", "thesis_shift"] | None = None
+    next_tasks_incremental_override_reason: str | None = None
+    next_tasks_success_contract: dict[str, Any] | None = None
     clean_packet_text: str | None = None  # packet_text with verdict_block stripped
 
     _VERDICT_BLOCK_RE = re.compile(
@@ -700,17 +714,50 @@ class RoundEvaluatorResult:
         if not isinstance(next_tasks, dict):
             return None
 
+        success_contract = next_tasks.get("success_contract")
+        if not isinstance(success_contract, dict):
+            return None
+        outcome_statement = str(success_contract.get("outcome_statement") or "").strip()
+        quality_bar = str(success_contract.get("quality_bar") or "").strip()
+        fail_if_any = success_contract.get("fail_if_any")
+        required_evidence = success_contract.get("required_evidence")
+        if not outcome_statement or not quality_bar:
+            return None
+        if not isinstance(fail_if_any, list) or not [str(item).strip() for item in fail_if_any if str(item).strip()]:
+            return None
+        if not isinstance(required_evidence, list) or not [str(item).strip() for item in required_evidence if str(item).strip()]:
+            return None
+
+        strategy_mode = str(next_tasks.get("strategy_mode") or "").strip()
+        if strategy_mode not in {"incremental_refinement", "thesis_shift"}:
+            return None
+
+        approach_assessment = next_tasks.get("approach_assessment")
+        if not isinstance(approach_assessment, dict):
+            return None
+        ceiling_status = str(approach_assessment.get("ceiling_status") or "").strip()
+        if ceiling_status not in {"ceiling_not_reached", "ceiling_approaching", "ceiling_reached"}:
+            return None
+
+        incremental_override_reason = str(next_tasks.get("incremental_override_reason") or "").strip()
+        if ceiling_status in {"ceiling_approaching", "ceiling_reached"} and strategy_mode == "incremental_refinement" and not incremental_override_reason:
+            return None
+
         tasks = next_tasks.get("tasks")
         if not isinstance(tasks, list) or not tasks:
             return None
 
         normalized = copy.deepcopy(next_tasks)
+        thesis_shift_task_count = 0
         for task in normalized.get("tasks", []):
             if not isinstance(task, dict):
                 return None
             description = str(task.get("description") or "").strip()
             verification = str(task.get("verification") or "").strip()
             metadata = task.get("metadata")
+            success_criteria = str(task.get("success_criteria") or "").strip()
+            failure_signals = task.get("failure_signals")
+            required_task_evidence = task.get("required_evidence")
             if not description:
                 return None
             if not verification:
@@ -719,6 +766,21 @@ class RoundEvaluatorResult:
                 metadata_verification = str(metadata.get("verification") or "").strip()
                 if not metadata_verification:
                     return None
+            if not success_criteria:
+                return None
+            if not isinstance(failure_signals, list) or not [str(item).strip() for item in failure_signals if str(item).strip()]:
+                return None
+            if not isinstance(required_task_evidence, list) or not [str(item).strip() for item in required_task_evidence if str(item).strip()]:
+                return None
+            strategy_role = str(task.get("strategy_role") or "").strip()
+            if strategy_role:
+                if strategy_role not in {"thesis_shift", "supporting_fix"}:
+                    return None
+                if strategy_role == "thesis_shift":
+                    thesis_shift_task_count += 1
+
+        if strategy_mode == "thesis_shift" and thesis_shift_task_count < 1:
+            return None
 
         return normalized
 
@@ -732,6 +794,9 @@ class RoundEvaluatorResult:
                 "why_this_strategy": None,
                 "deprioritize_or_remove": None,
                 "execution_scope": None,
+                "strategy_mode": None,
+                "incremental_override_reason": None,
+                "success_contract": None,
             }
 
         objective = str(next_tasks.get("objective") or "").strip() or None
@@ -747,6 +812,10 @@ class RoundEvaluatorResult:
 
         execution_scope = next_tasks.get("execution_scope")
         normalized_execution_scope = copy.deepcopy(execution_scope) if isinstance(execution_scope, dict) else None
+        strategy_mode = str(next_tasks.get("strategy_mode") or "").strip() or None
+        incremental_override_reason = str(next_tasks.get("incremental_override_reason") or "").strip() or None
+        success_contract = next_tasks.get("success_contract")
+        normalized_success_contract = copy.deepcopy(success_contract) if isinstance(success_contract, dict) else None
 
         return {
             "objective": objective,
@@ -754,6 +823,9 @@ class RoundEvaluatorResult:
             "why_this_strategy": why_this_strategy,
             "deprioritize_or_remove": deprioritize_or_remove,
             "execution_scope": normalized_execution_scope,
+            "strategy_mode": strategy_mode,
+            "incremental_override_reason": incremental_override_reason,
+            "success_contract": normalized_success_contract,
         }
 
     @classmethod
@@ -989,6 +1061,9 @@ class RoundEvaluatorResult:
             next_tasks_why_this_strategy=next_tasks_strategy.get("why_this_strategy"),
             next_tasks_deprioritize_or_remove=next_tasks_strategy.get("deprioritize_or_remove"),
             next_tasks_execution_scope=next_tasks_strategy.get("execution_scope"),
+            next_tasks_strategy_mode=next_tasks_strategy.get("strategy_mode"),
+            next_tasks_incremental_override_reason=next_tasks_strategy.get("incremental_override_reason"),
+            next_tasks_success_contract=next_tasks_strategy.get("success_contract"),
             clean_packet_text=cls.strip_verdict_block(packet_text) if packet_text else None,
         )
 
@@ -1017,6 +1092,9 @@ class RoundEvaluatorResult:
             "next_tasks_why_this_strategy": self.next_tasks_why_this_strategy,
             "next_tasks_deprioritize_or_remove": self.next_tasks_deprioritize_or_remove,
             "next_tasks_execution_scope": self.next_tasks_execution_scope,
+            "next_tasks_strategy_mode": self.next_tasks_strategy_mode,
+            "next_tasks_incremental_override_reason": self.next_tasks_incremental_override_reason,
+            "next_tasks_success_contract": self.next_tasks_success_contract,
             "clean_packet_text": self.clean_packet_text,
         }
 
@@ -1046,6 +1124,9 @@ class RoundEvaluatorResult:
             next_tasks_why_this_strategy=data.get("next_tasks_why_this_strategy"),
             next_tasks_deprioritize_or_remove=data.get("next_tasks_deprioritize_or_remove"),
             next_tasks_execution_scope=data.get("next_tasks_execution_scope"),
+            next_tasks_strategy_mode=data.get("next_tasks_strategy_mode"),
+            next_tasks_incremental_override_reason=data.get("next_tasks_incremental_override_reason"),
+            next_tasks_success_contract=data.get("next_tasks_success_contract"),
             clean_packet_text=data.get("clean_packet_text"),
         )
 

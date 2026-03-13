@@ -212,6 +212,7 @@ class CoordinationConfig:
     orchestrator_managed_round_evaluator: bool = False  # Gate orchestrator-owned round_evaluator launch; default prompt-guidance only
     round_evaluator_skip_synthesis: bool = False  # Skip synthesis stage; pass all raw critiques to parent directly
     round_evaluator_refine: bool = False  # Allow evaluator agents to iterate (multi-round with voting)
+    round_evaluator_transformation_pressure: str = "balanced"  # "gentle" | "balanced" | "aggressive"
     enable_quality_rethink_on_iteration: bool = False  # Auto-inject quality_rethinking spawn task on iteration 2+
     enable_novelty_on_iteration: bool = False  # Auto-inject novelty/quality spawn task on iteration 2+
     novelty_injection: str = "none"  # "none" | "gentle" | "moderate" | "aggressive"
@@ -227,6 +228,7 @@ class CoordinationConfig:
         self._validate_subagent_runtime_config()
         self._validate_drift_conflict_policy()
         self._validate_novelty_injection()
+        self._validate_round_evaluator_transformation_pressure()
         self._validate_learning_capture_mode()
         self._validate_pre_collab_voting_threshold()
         self._validate_improvements()
@@ -292,6 +294,14 @@ class CoordinationConfig:
         if self.novelty_injection not in valid_values:
             raise ValueError(
                 f"Invalid novelty_injection: '{self.novelty_injection}'. " f"Must be one of: {sorted(valid_values)}",
+            )
+
+    def _validate_round_evaluator_transformation_pressure(self):
+        """Validate round_evaluator_transformation_pressure setting."""
+        valid_values = {"gentle", "balanced", "aggressive"}
+        if self.round_evaluator_transformation_pressure not in valid_values:
+            raise ValueError(
+                "Invalid round_evaluator_transformation_pressure: " f"'{self.round_evaluator_transformation_pressure}'. " f"Must be one of: {sorted(valid_values)}",
             )
 
     def _validate_learning_capture_mode(self):
@@ -1151,6 +1161,7 @@ class AgentConfig:
             "planning_mode_instruction": self.coordination_config.planning_mode_instruction,
             "max_orchestration_restarts": self.coordination_config.max_orchestration_restarts,
             "drift_conflict_policy": self.coordination_config.drift_conflict_policy,
+            "round_evaluator_transformation_pressure": self.coordination_config.round_evaluator_transformation_pressure,
         }
 
         # Handle debug fields

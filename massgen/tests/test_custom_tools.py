@@ -1458,6 +1458,22 @@ class TestStripBackgroundControlArgs:
         assert result["background"] is True
         assert "mode" not in result
 
+    def test_explicit_synthetic_mode_strip_removes_non_control_mode_value(self):
+        """When callers mark `mode` as synthetic, strip it even if it looks real.
+
+        Regression: media tools can receive a synthetic `mode="image"` control arg
+        from MCP wrapper generation. That value must not leak into the real tool.
+        """
+        args = {
+            "prompt": "review screenshots",
+            "inputs": [{"files": {"hero": "hero.png"}}],
+            "mode": "image",
+        }
+        result = _strip_background_control_args(args, control_args_to_strip={"mode"})
+        assert "mode" not in result
+        assert result["prompt"] == "review screenshots"
+        assert result["inputs"] == [{"files": {"hero": "hero.png"}}]
+
     def test_strips_run_in_background_flag(self):
         args = {"prompt": "goat", "run_in_background": True}
         result = _strip_background_control_args(args)

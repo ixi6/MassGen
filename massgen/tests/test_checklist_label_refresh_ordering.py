@@ -166,6 +166,43 @@ class TestChecklistLabelRefreshOrdering:
         assert "agent2.2" not in labels, f"Stale agent2.2 should be replaced, got: {labels}"
         assert "agent1.4" in labels, f"agent1.4 (own prior) should still be present, got: {labels}"
 
+    def test_refresh_preserves_round_evaluator_strategy_summary(self):
+        """Refreshing checklist state must not drop the round-evaluator success contract."""
+        tracker = _make_tracker_with_multi_round_answers()
+        orch = _make_orchestrator_with_checklist(tracker)
+
+        orch.agents["agent_a"].backend._checklist_state.update(
+            {
+                "round_evaluator_auto_injected": True,
+                "round_evaluator_primary_artifact_path": "/tmp/eval/critique_packet.md",
+                "round_evaluator_verdict_artifact_path": "/tmp/eval/verdict.json",
+                "round_evaluator_next_tasks_artifact_path": "/tmp/eval/next_tasks.json",
+                "round_evaluator_objective": "Rebuild the page around a route planner",
+                "round_evaluator_primary_strategy": "interactive_route_map",
+                "round_evaluator_why_this_strategy": "One structural thesis resolves multiple weak criteria at once.",
+                "round_evaluator_strategy_mode": "thesis_shift",
+                "round_evaluator_incremental_override_reason": "",
+                "round_evaluator_success_contract": {
+                    "outcome_statement": "The next revision should feel reauthored around a planner-first interaction model.",
+                    "quality_bar": "A reviewer can identify the new thesis immediately.",
+                    "fail_if_any": ["The old brochure stack still remains visible."],
+                    "required_evidence": ["Fresh screenshots of the rebuilt flow"],
+                },
+                "round_evaluator_deprioritize_or_remove": ["generic destination grid"],
+            },
+        )
+
+        orch._refresh_checklist_state_for_agent("agent_a")
+
+        state = orch.agents["agent_a"].backend._checklist_state
+        assert state["round_evaluator_auto_injected"] is True
+        assert state["round_evaluator_objective"] == "Rebuild the page around a route planner"
+        assert state["round_evaluator_primary_strategy"] == "interactive_route_map"
+        assert state["round_evaluator_why_this_strategy"] == "One structural thesis resolves multiple weak criteria at once."
+        assert state["round_evaluator_strategy_mode"] == "thesis_shift"
+        assert state["round_evaluator_success_contract"]["quality_bar"] == "A reviewer can identify the new thesis immediately."
+        assert state["round_evaluator_deprioritize_or_remove"] == ["generic destination grid"]
+
 
 @pytest.mark.asyncio
 async def test_stream_setup_tracks_context_before_checklist_refresh(

@@ -1030,6 +1030,9 @@ class Orchestrator(ChatAgent):
                 "round_evaluator_objective": "",
                 "round_evaluator_primary_strategy": "",
                 "round_evaluator_why_this_strategy": "",
+                "round_evaluator_strategy_mode": "",
+                "round_evaluator_incremental_override_reason": "",
+                "round_evaluator_success_contract": {},
                 "round_evaluator_deprioritize_or_remove": [],
                 "allowed_external_report_paths": [],
                 "agent_answer_count": (len(tracker.answers_by_agent.get(agent_id, [])) if tracker is not None and hasattr(tracker, "answers_by_agent") else 0),
@@ -1793,6 +1796,9 @@ class Orchestrator(ChatAgent):
         objective: str = "",
         primary_strategy: str = "",
         why_this_strategy: str = "",
+        strategy_mode: str = "",
+        incremental_override_reason: str = "",
+        success_contract: dict[str, Any] | None = None,
         deprioritize_or_remove: list[str] | None = None,
     ) -> None:
         """Persist whether an agent is in post-evaluator task mode."""
@@ -1808,6 +1814,9 @@ class Orchestrator(ChatAgent):
         state["round_evaluator_objective"] = objective or ""
         state["round_evaluator_primary_strategy"] = primary_strategy or ""
         state["round_evaluator_why_this_strategy"] = why_this_strategy or ""
+        state["round_evaluator_strategy_mode"] = strategy_mode or ""
+        state["round_evaluator_incremental_override_reason"] = incremental_override_reason or ""
+        state["round_evaluator_success_contract"] = copy.deepcopy(success_contract) if isinstance(success_contract, dict) else {}
         state["round_evaluator_deprioritize_or_remove"] = list(deprioritize_or_remove or [])
         state["allowed_external_report_paths"] = [primary_artifact_path] if primary_artifact_path else []
 
@@ -2258,6 +2267,10 @@ class Orchestrator(ChatAgent):
         if len(self.agents) <= 1:
             return False
         if self._get_final_answer_strategy() != "synthesize":
+            return False
+        # Don't skip voting when defer_voting is set — it implies
+        # the caller wants a produce-then-vote (ensemble) pattern.
+        if getattr(self.config, "defer_voting_until_all_answered", False):
             return False
         return getattr(self.config, "max_new_answers_per_agent", None) == 1
 
@@ -5507,20 +5520,26 @@ Your answer:"""
             Returns True when:
             - All agents have voted (normal case), OR
             - skip_voting=True and all agents have submitted at least one answer
+            - All live agents have voted/answered and remaining agents are killed
             """
-            all_voted = all(state.has_voted for state in self.agent_states.values())
+            # Treat killed agents as effectively done — they will never vote or answer.
+            live_states = [s for s in self.agent_states.values() if not s.is_killed]
+            if not live_states:
+                return True  # All agents killed — nothing left to coordinate
+
+            all_voted = all(state.has_voted or state.is_killed for state in self.agent_states.values())
             if all_voted:
                 return True
 
-            # Check skip_voting mode: complete when all agents have answered
+            # Check skip_voting mode: complete when all live agents have answered
             if self.config.skip_voting:
-                all_answered = all(state.answer is not None for state in self.agent_states.values())
+                all_answered = all(state.answer is not None or state.is_killed for state in self.agent_states.values())
                 if all_answered:
                     logger.info("[skip_voting] All agents have answered - skipping voting, proceeding to presentation")
                     return True
 
             if self._should_skip_vote_rounds_for_synthesize():
-                all_answered = all(state.answer is not None for state in self.agent_states.values())
+                all_answered = all(state.answer is not None or state.is_killed for state in self.agent_states.values())
                 if all_answered:
                     logger.info(
                         "[synthesize] All agents have answered - skipping vote rounds and proceeding to final presentation",
@@ -10574,8 +10593,9 @@ Your answer:"""
         if not hit_answer_limit:
             return False
 
-        # Check if all agents have answered
-        all_answered = all(state.answer is not None for state in self.agent_states.values())
+        # Check if all agents have answered (treat killed agents as done —
+        # they will never answer, so don't block others waiting for them).
+        all_answered = all(state.answer is not None or state.is_killed for state in self.agent_states.values())
         if all_answered:
             return False  # Can proceed to voting
 
@@ -10755,6 +10775,32 @@ Your answer:"""
             )
 
         answer_block = "\n\n".join(answer_sections) if answer_sections else "No answers available."
+        coord_cfg = getattr(self.config, "coordination_config", None)
+        transformation_pressure = getattr(
+            coord_cfg,
+            "round_evaluator_transformation_pressure",
+            "balanced",
+        )
+        pressure_lines = [
+            "TRANSFORMATION PRESSURE:",
+            f"- Current setting: {transformation_pressure}.",
+        ]
+        if transformation_pressure == "gentle":
+            pressure_lines.append(
+                "- Exploit the current thesis longer and only escalate to a thesis shift when ceiling evidence is clear.",
+            )
+        elif transformation_pressure == "aggressive":
+            pressure_lines.append(
+                "- Search harder for a higher-leverage thesis or frontier move. Incremental-only follow-up or local convergence needs stronger justification.",
+            )
+        else:
+            pressure_lines.append(
+                "- Default balance: pursue a stronger thesis once the current line is plateauing, but do not chase novelty for its own sake.",
+            )
+        pressure_lines.append(
+            "- Regardless of pressure, correctness-critical work still comes first and you must resolve your diagnosis into one committed next-round thesis.",
+        )
+        pressure_block = "\n".join(pressure_lines) + "\n\n"
         delegate_targets = self._get_parent_round_evaluator_delegate_targets()
         if delegate_targets:
             delegation_block = (
@@ -10775,6 +10821,7 @@ Your answer:"""
             f"ORIGINAL TASK:\n{self.current_task or 'Task coordination'}\n\n"
             "EVALUATION CRITERIA:\n"
             f"{criteria_block}\n\n"
+            f"{pressure_block}"
             f"{delegation_block}"
             "CANDIDATE ANSWERS:\n"
             f"{answer_block}\n\n"
@@ -10951,10 +10998,31 @@ Your answer:"""
                 strategy_lines.append(f"Chosen strategy: {evaluator_result.next_tasks_primary_strategy}")
             if evaluator_result.next_tasks_why_this_strategy:
                 strategy_lines.append(f"Why this strategy: {evaluator_result.next_tasks_why_this_strategy}")
+            if evaluator_result.next_tasks_strategy_mode:
+                strategy_lines.append(f"Strategy mode: {evaluator_result.next_tasks_strategy_mode}")
+            if evaluator_result.next_tasks_incremental_override_reason:
+                strategy_lines.append(
+                    "Incremental override reason: " + evaluator_result.next_tasks_incremental_override_reason,
+                )
             if evaluator_result.next_tasks_deprioritize_or_remove:
                 strategy_lines.append(
                     "Deprioritize or remove: " + ", ".join(evaluator_result.next_tasks_deprioritize_or_remove),
                 )
+            success_contract = evaluator_result.next_tasks_success_contract or {}
+            if success_contract:
+                outcome_statement = str(success_contract.get("outcome_statement") or "").strip()
+                quality_bar = str(success_contract.get("quality_bar") or "").strip()
+                fail_if_any = [str(item).strip() for item in success_contract.get("fail_if_any", []) if str(item).strip()]
+                required_evidence = [str(item).strip() for item in success_contract.get("required_evidence", []) if str(item).strip()]
+                strategy_lines.append("Success contract:")
+                if outcome_statement:
+                    strategy_lines.append(f"- Outcome: {outcome_statement}")
+                if quality_bar:
+                    strategy_lines.append(f"- Quality bar: {quality_bar}")
+                if fail_if_any:
+                    strategy_lines.append(f"- Fail if any: {'; '.join(fail_if_any)}")
+                if required_evidence:
+                    strategy_lines.append(f"- Required evidence: {'; '.join(required_evidence)}")
             strategy_block = ("\n".join(strategy_lines) + "\n\n") if strategy_lines else ""
             return (
                 "============================================================\n"
@@ -11005,6 +11073,28 @@ Your answer:"""
             f'<evaluator_packet subagent_id="{subagent_id}" status="{status}">\n'
             f"{packet_text}\n"
             "</evaluator_packet>\n"
+            "============================================================"
+        )
+
+    @staticmethod
+    def _format_round_evaluator_timeout_block_static(
+        subagent_id: str,
+        error_message: str,
+    ) -> str:
+        """Format a degraded timeout notice when no evaluator packet was produced."""
+        normalized_error = str(error_message or "round_evaluator timed out before producing a packet").strip()
+        return (
+            "============================================================\n"
+            "ROUND EVALUATOR RESULT (status: degraded)\n"
+            "============================================================\n"
+            "The orchestrator ran one blocking `round_evaluator` before this round,\n"
+            "but it timed out before producing `critique_packet.md`.\n\n"
+            f'<evaluator_timeout subagent_id="{subagent_id}" status="degraded">\n'
+            f"{normalized_error}\n"
+            "</evaluator_timeout>\n\n"
+            "For this answer set, the orchestrator is degrading to the normal parent-owned checklist flow.\n"
+            "Do NOT wait for evaluator artifacts for this revision.\n"
+            "You may call `submit_checklist` and `propose_improvements` as usual.\n"
             "============================================================"
         )
 
@@ -11316,6 +11406,50 @@ Your answer:"""
         )
         return "terminal_error"
 
+    def _handle_round_evaluator_timeout_degraded(
+        self,
+        *,
+        parent_agent_id: str,
+        latest_labels: tuple[str, ...],
+        display_round: int,
+        emitter: Any,
+        elapsed_seconds: float,
+        first_result: "SubagentResult",
+        evaluator_result: "RoundEvaluatorResult",
+    ) -> bool:
+        """Allow coordination to continue when the evaluator timed out without a packet."""
+        timeout_message = str(
+            evaluator_result.error or first_result.error or "round_evaluator timed out before producing a packet",
+        ).strip()
+
+        logger.warning(
+            "[Orchestrator] round_evaluator timed out for %s without artifacts; degrading to normal checklist flow: %s",
+            parent_agent_id,
+            timeout_message,
+        )
+
+        if emitter:
+            emitter.emit_raw(
+                StructuredEventType.ROUND_EVALUATOR_STAGE_COMPLETE,
+                agent_id=parent_agent_id,
+                round_number=display_round,
+                status="degraded",
+                execution_time_seconds=elapsed_seconds,
+                packet_text_length=0,
+                error=timeout_message,
+            )
+
+        self._queue_round_start_context_block(
+            parent_agent_id,
+            self._format_round_evaluator_timeout_block_static(
+                first_result.subagent_id,
+                timeout_message,
+            ),
+        )
+        self._round_evaluator_launch_failures.pop((parent_agent_id, latest_labels), None)
+        self._round_evaluator_completed_labels[parent_agent_id] = latest_labels
+        return True
+
     async def _run_round_evaluator_pre_round_if_needed(
         self,
         answers: dict[str, str],
@@ -11418,6 +11552,8 @@ Your answer:"""
         from .subagent.models import RoundEvaluatorResult, SubagentResult
 
         results = normalized_result.get("results")
+        first_result: SubagentResult | None = None
+        evaluator_result: RoundEvaluatorResult | None = None
 
         if not success:
             # Graceful degradation: the child MassGen run may have failed or
@@ -11427,14 +11563,36 @@ Your answer:"""
             salvaged = False
             if isinstance(results, list) and results:
                 try:
-                    first = SubagentResult.from_dict(results[0])
-                    if first.answer:
+                    first_result = SubagentResult.from_dict(results[0])
+                    if first_result.answer:
                         logger.info(
                             "[Orchestrator] round_evaluator spawn reported " "failure (status=%s) but first result has a " "recovered answer — using it for %s",
-                            first.status,
+                            first_result.status,
                             parent_agent_id,
                         )
                         salvaged = True
+                    else:
+                        evaluator_result = RoundEvaluatorResult.from_subagent_result(
+                            first_result,
+                            elapsed=elapsed_seconds,
+                        )
+                        if evaluator_result.status == "success" and evaluator_result.packet_text:
+                            logger.info(
+                                "[Orchestrator] round_evaluator spawn reported failure (status=%s) but authoritative artifacts were recovered for %s",
+                                first_result.status,
+                                parent_agent_id,
+                            )
+                            salvaged = True
+                        elif first_result.status == "timeout" and evaluator_result.status == "degraded":
+                            return self._handle_round_evaluator_timeout_degraded(
+                                parent_agent_id=parent_agent_id,
+                                latest_labels=latest_labels,
+                                display_round=display_round,
+                                emitter=emitter,
+                                elapsed_seconds=elapsed_seconds,
+                                first_result=first_result,
+                                evaluator_result=evaluator_result,
+                            )
                 except Exception:
                     logger.warning(
                         "[Orchestrator] Failed to parse salvage result for %s",
@@ -11466,7 +11624,7 @@ Your answer:"""
             )
 
         try:
-            first_result = SubagentResult.from_dict(results[0])
+            first_result = first_result or SubagentResult.from_dict(results[0])
         except Exception as exc:
             return self._handle_round_evaluator_gate_failure(
                 parent_agent_id=parent_agent_id,
@@ -11481,7 +11639,7 @@ Your answer:"""
                 },
             )
 
-        evaluator_result = RoundEvaluatorResult.from_subagent_result(
+        evaluator_result = evaluator_result or RoundEvaluatorResult.from_subagent_result(
             first_result,
             elapsed=elapsed_seconds,
         )
@@ -11534,6 +11692,9 @@ Your answer:"""
             objective=evaluator_result.next_tasks_objective or "",
             primary_strategy=evaluator_result.next_tasks_primary_strategy or "",
             why_this_strategy=evaluator_result.next_tasks_why_this_strategy or "",
+            strategy_mode=evaluator_result.next_tasks_strategy_mode or "",
+            incremental_override_reason=evaluator_result.next_tasks_incremental_override_reason or "",
+            success_contract=evaluator_result.next_tasks_success_contract or {},
             deprioritize_or_remove=evaluator_result.next_tasks_deprioritize_or_remove or [],
         )
 
@@ -14903,6 +15064,7 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
                 selected_agent_id=selected_agent_id,
                 agent_changedocs=_pres_changedocs,
                 final_answer_strategy=presentation_strategy,
+                had_voting=bool(vote_counts),
             )
 
         # Add worktree location to presentation message

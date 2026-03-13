@@ -163,6 +163,7 @@ class ConfigValidator:
     VALID_WRITE_MODES = {"auto", "worktree", "isolated", "legacy"}
     VALID_DRIFT_CONFLICT_POLICIES = {"skip", "prefer_presenter", "fail"}
     VALID_NOVELTY_INJECTION = {"none", "gentle", "moderate", "aggressive"}
+    VALID_ROUND_EVALUATOR_TRANSFORMATION_PRESSURE = {"gentle", "balanced", "aggressive"}
     VALID_SUBAGENT_RUNTIME_MODES = {"isolated", "inherited"}
     VALID_SUBAGENT_RUNTIME_FALLBACK_MODES = {"inherited"}
     VALID_FINAL_ANSWER_STRATEGIES = {"winner_reuse", "winner_present", "synthesize"}
@@ -1130,6 +1131,15 @@ class ConfigValidator:
                         result.add_error(
                             f"Invalid novelty_injection: '{novelty}'",
                             f"{location}.coordination.novelty_injection",
+                            f"Use one of: {valid_values}",
+                        )
+                if "round_evaluator_transformation_pressure" in coordination:
+                    pressure = coordination["round_evaluator_transformation_pressure"]
+                    if pressure not in self.VALID_ROUND_EVALUATOR_TRANSFORMATION_PRESSURE:
+                        valid_values = ", ".join(sorted(self.VALID_ROUND_EVALUATOR_TRANSFORMATION_PRESSURE))
+                        result.add_error(
+                            f"Invalid round_evaluator_transformation_pressure: '{pressure}'. Supported values: {valid_values}",
+                            f"{location}.coordination.round_evaluator_transformation_pressure",
                             f"Use one of: {valid_values}",
                         )
                 if "enable_novelty_on_iteration" in coordination and not isinstance(

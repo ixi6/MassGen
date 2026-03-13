@@ -545,13 +545,13 @@ class TestQuickstartReasoningSettings:
         efforts = [value for _, value in profile["choices"]]
         assert efforts == ["low", "medium", "high", "xhigh"]
         labels = {value: label for label, value in profile["choices"]}
-        assert "recommended" in labels["xhigh"].lower()
-        assert "recommended" not in labels["medium"].lower()
+        assert "recommended" in labels["high"].lower()
+        assert "recommended" not in labels["xhigh"].lower()
 
-    def test_reasoning_profile_for_codex_gpt54_defaults_xhigh(self):
+    def test_reasoning_profile_for_codex_gpt54_defaults_high(self):
         profile = ConfigBuilder.get_quickstart_reasoning_profile("codex", "gpt-5.4")
         assert profile is not None
-        assert profile["default_effort"] == "xhigh"
+        assert profile["default_effort"] == "high"
 
     def test_reasoning_profile_for_copilot_uses_runtime_metadata(self, monkeypatch):
         monkeypatch.setattr(
@@ -561,7 +561,7 @@ class TestQuickstartReasoningSettings:
                     "id": "gpt-5.4",
                     "name": "GPT-5.4",
                     "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"],
-                    "default_reasoning_effort": "xhigh",
+                    "default_reasoning_effort": "high",
                 },
             ],
         )
@@ -569,7 +569,7 @@ class TestQuickstartReasoningSettings:
         profile = ConfigBuilder.get_quickstart_reasoning_profile("copilot", "gpt-5.4")
 
         assert profile is not None
-        assert profile["default_effort"] == "xhigh"
+        assert profile["default_effort"] == "high"
         assert [value for _, value in profile["choices"]] == [
             "low",
             "medium",
@@ -577,7 +577,7 @@ class TestQuickstartReasoningSettings:
             "xhigh",
         ]
         labels = {value: label for label, value in profile["choices"]}
-        assert "recommended" in labels["xhigh"].lower()
+        assert "recommended" in labels["high"].lower()
 
     def test_reasoning_profile_for_claude_code_includes_max(self):
         profile = ConfigBuilder.get_quickstart_reasoning_profile("claude_code", "claude-opus-4-6")

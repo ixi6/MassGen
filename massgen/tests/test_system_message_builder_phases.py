@@ -301,6 +301,33 @@ class TestBuildCoordinationMessage:
         assert "do not run a separate self-evaluation pass" in lower
         assert '"subagent_type": "round_evaluator"' not in msg
 
+    def test_round_evaluator_transformation_pressure_flows_into_coordination_message(self):
+        """Transformation pressure should flow from config into the coordination prompt guidance."""
+        builder = _make_builder()
+        builder.config.coordination_config.round_evaluator_before_checklist = True
+        builder.config.coordination_config.orchestrator_managed_round_evaluator = True
+        builder.config.coordination_config.round_evaluator_transformation_pressure = "aggressive"
+        agent = _make_agent()
+
+        msg = builder.build_coordination_message(
+            agent=agent,
+            agent_id="agent_a",
+            answers={},
+            planning_mode_enabled=False,
+            use_skills=False,
+            enable_memory=False,
+            enable_task_planning=False,
+            previous_turns=[],
+            voting_sensitivity_override="checklist_gated",
+            answers_used=1,
+        )
+
+        lower = msg.lower()
+        assert "transformation pressure" in lower
+        assert "aggressive" in lower
+        assert "stronger justification" in lower
+        assert "one committed next-round thesis" in lower or "one committed thesis" in lower
+
     def test_final_only_suppresses_round_evolving_skills_and_memory_writes(self):
         """final_only keeps memory readable but disables round-time production prompts."""
         builder = _make_builder(

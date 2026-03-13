@@ -1964,11 +1964,15 @@ class TestSubagentConfigInheritance:
             json.dumps(
                 {
                     "schema_version": "1",
-                    "objective": "Reframe the page",
-                    "primary_strategy": "interactive_route_map",
-                    "why_this_strategy": "Most directly addresses weak architecture",
-                    "deprioritize_or_remove": ["generic grid"],
-                    "execution_scope": {"active_chunk": "c1"},
+                    "success_contract": {
+                        "outcome_statement": "Page reframed with route planning structure",
+                        "quality_bar": "Page is route-first",
+                        "fail_if_any": ["Brochure IA still present"],
+                        "required_evidence": ["Rendered page showing route-first IA"],
+                    },
+                    "strategy_mode": "thesis_shift",
+                    "approach_assessment": {"ceiling_status": "ceiling_reached"},
+                    "incremental_override_reason": "",
                     "tasks": [
                         {
                             "id": "reframe_ia",
@@ -1977,8 +1981,10 @@ class TestSubagentConfigInheritance:
                             "depends_on": [],
                             "chunk": "c1",
                             "verification": "Page is route-first",
-                            "verification_method": "Review rendered page",
-                            "execution": {"mode": "delegate", "subagent_type": "builder"},
+                            "success_criteria": "Route planning structure replaces brochure IA",
+                            "failure_signals": ["Brochure layout still present"],
+                            "required_evidence": ["Rendered page screenshot"],
+                            "strategy_role": "thesis_shift",
                         },
                     ],
                 },
@@ -1997,7 +2003,7 @@ class TestSubagentConfigInheritance:
 
         next_tasks_path = workspace / "next_tasks.json"
         assert next_tasks_path.exists()
-        assert '"primary_strategy": "interactive_route_map"' in next_tasks_path.read_text(encoding="utf-8")
+        assert '"strategy_mode": "thesis_shift"' in next_tasks_path.read_text(encoding="utf-8")
 
     def test_round_evaluator_result_preserves_existing_next_tasks_json(self, tmp_path):
         """Minimal verdict_block should keep a pre-written next_tasks.json artifact intact."""
@@ -2107,11 +2113,15 @@ class TestSubagentConfigInheritance:
             json.dumps(
                 {
                     "schema_version": "1",
-                    "objective": "Artifact-driven task handoff",
-                    "primary_strategy": "scenario_based_prediction_demo",
-                    "why_this_strategy": "The final presenter artifact should be authoritative",
-                    "deprioritize_or_remove": ["generic testimonial card block"],
-                    "execution_scope": {"active_chunk": "c1"},
+                    "success_contract": {
+                        "outcome_statement": "Demo replaced with prediction simulator",
+                        "quality_bar": "Demo proves anticipation rather than reaction",
+                        "fail_if_any": ["Demo still shows reactive pattern"],
+                        "required_evidence": ["Interaction log showing anticipatory state changes"],
+                    },
+                    "strategy_mode": "thesis_shift",
+                    "approach_assessment": {"ceiling_status": "ceiling_reached"},
+                    "incremental_override_reason": "",
                     "tasks": [
                         {
                             "id": "replace_demo",
@@ -2120,7 +2130,10 @@ class TestSubagentConfigInheritance:
                             "depends_on": [],
                             "chunk": "c1",
                             "verification": "The demo proves anticipation rather than reaction",
-                            "verification_method": "Run the interaction and inspect the state changes",
+                            "success_criteria": "Prediction simulator replaces old demo",
+                            "failure_signals": ["Old demo still present"],
+                            "required_evidence": ["State change inspection log"],
+                            "strategy_role": "thesis_shift",
                         },
                     ],
                 },
@@ -2139,7 +2152,7 @@ class TestSubagentConfigInheritance:
 
         next_tasks_path = workspace / "next_tasks.json"
         assert next_tasks_path.exists()
-        assert '"objective": "Artifact-driven task handoff"' in next_tasks_path.read_text(encoding="utf-8")
+        assert '"strategy_mode": "thesis_shift"' in next_tasks_path.read_text(encoding="utf-8")
 
     def test_refine_true_general_subagent_inherits_parent_voting_settings(self, tmp_path):
         """General refine=True subagents should inherit parent checklist/voting settings."""

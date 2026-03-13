@@ -766,6 +766,35 @@ def _build_impact_requirement(improvements_cfg: dict | None) -> str:
     return f"**Impact requirement: {req}** " "All-incremental proposals will be rejected — a round at this cost needs bolder changes."
 
 
+def _build_round_evaluator_transformation_pressure_guidance(pressure: str) -> str:
+    """Explain how transformation pressure should bias evaluator follow-up."""
+    normalized = (pressure or "balanced").strip().lower()
+    if normalized == "gentle":
+        bias = (
+            "- **Transformation pressure: gentle** — exploit the current thesis longer. "
+            "Prefer deeper corrective work within the current direction unless there is "
+            "clear evidence that the approach has hit a ceiling.\n"
+        )
+    elif normalized == "aggressive":
+        bias = (
+            "- **Transformation pressure: aggressive** — search harder for a higher-leverage "
+            "thesis or frontier-seeking move on open-ended tasks. Incremental-only follow-up "
+            "or local convergence needs stronger justification.\n"
+        )
+    else:
+        bias = "- **Transformation pressure: balanced** — default behavior. Push for a stronger " "thesis once the current line is plateauing, but do not chase novelty for its own sake.\n"
+
+    return (
+        "Transformation-pressure contract:\n"
+        f"{bias}"
+        "- Regardless of pressure, correctness-critical work still comes first.\n"
+        "- The evaluator must still collapse its diagnosis into **one committed next-round thesis**, "
+        "not a menu of incompatible directions.\n"
+        "- The goal is material self-improvement. If no material next step is evidenced, "
+        "treat local convergence as the honest answer instead of inventing low-value polish.\n"
+    )
+
+
 def _build_checklist_gated_decision(
     checklist_items: list,
     terminate_action: str = "vote",
@@ -777,6 +806,7 @@ def _build_checklist_gated_decision(
     score_current_work_only: bool = False,
     round_evaluator_before_checklist: bool = False,
     orchestrator_managed_round_evaluator: bool = False,
+    round_evaluator_transformation_pressure: str = "balanced",
     specialized_subagents_available: bool = True,
 ) -> str:
     """Build checklist_gated decision section (tool-gated, hidden threshold).
@@ -1061,12 +1091,21 @@ score without this evidence."""
 Use this to fill in the `sources` and `preserve` fields accurately."""
 
         if round_evaluator_before_checklist and orchestrator_managed_round_evaluator:
+            pressure_guidance = _build_round_evaluator_transformation_pressure_guidance(
+                round_evaluator_transformation_pressure,
+            )
             _phase1_scope = """Before round 2 and later checklist-gated rounds, the **orchestrator**
 runs one blocking `round_evaluator` for you. Do not spawn another round_evaluator yourself.
 
 That orchestrator-managed evaluator sees all candidate answers together, the
 evaluation criteria verbatim, relevant evidence/artifact paths, and the
 available peer/temp-workspace paths so it can inspect snapshots directly.
+
+This stage exists for **material self-improvement**, not for minor cleanup. It
+may recommend a transformative thesis shift when the evidence supports it. For
+open-ended tasks, the evaluator should keep searching for the next meaningful
+frontier of improvement until it can justify one stronger direction or local
+convergence for this run.
 
 The round evaluator is a **very critical** critic/spec writer. Its packet will
 include:
@@ -1084,6 +1123,11 @@ artifacts. Treat `critique_packet.md` as the human-readable rationale,
 `verdict.json` as verdict metadata, and `next_tasks.json` as the iterate-only
 implementation handoff when it exists.
 
+**Normal path**: when the evaluator returns valid structured `next_tasks.json`,
+that task-driven handoff is the primary supported workflow. The evaluator has
+already collapsed the diagnosis into **one committed next-round thesis** for
+you to execute.
+
 **When the evaluator auto-injected tasks** (you will see "tasks have been
 auto-injected into your task plan" in the evaluator result header): the
 evaluator has already scored your work, decided iteration is needed, and
@@ -1097,6 +1141,14 @@ do not call `propose_improvements`. do not write a second diagnostic report.
 After implementing all tasks, verify them and call `new_answer` to submit your
 improved work. If the deliverable is a pure text artifact, place the final
 artifact body directly in `new_answer.content`.
+
+When executing delegated builder tasks from this injected plan, treat
+background execution as the normal path: spawn independent builder tasks in
+batches with `background=True, refine=False`, keep each builder scoped to one
+injected task, and continue with your inline planning/merge/verification work
+while the batch runs. Use blocking mode only for evaluator work or the rare
+case where the very next step is fully blocked by one prerequisite result —
+not for normal builder batches.
 
 If the task plan includes correctness-critical tasks or tasks tied to explicit \
 correctness criteria, do those first. Then execute the remaining higher-order work. \
@@ -1122,6 +1174,10 @@ Treat any alternative ideas left only in `critique_packet.md` as reference
 material, not as open architectural decisions for you to resolve. If the
 evaluator wanted an alternative pursued now, it would have elevated that
 direction into `next_tasks.json` and the injected tasks already reflect it.
+
+"""
+            _phase1_scope += pressure_guidance
+            _phase1_scope += """
 
 Your task plan may have two categories:
 1. **OPPORTUNITIES** (explore tasks) — independent ideas the evaluator identified
@@ -1162,9 +1218,11 @@ delegate execution hints or try to spawn builder/evaluator helpers here.
 
             _phase1_scope += """
 
-**When no auto-injection occurred** (you will see instructions about
-`submit_checklist` in the evaluator result header): use the critique packet(s)
-as the sole diagnostic basis for your scores when you call `submit_checklist`.
+**Degraded fallback**: if valid `next_tasks.json` is missing or invalid, you
+will see instructions about `submit_checklist` in the evaluator result header.
+That checklist branch is fallback behavior, not a co-equal normal workflow.
+Use the critique packet(s) as the sole diagnostic basis for your scores when
+you call `submit_checklist`.
 Your scores MUST reflect the evaluator's findings. Pass that exact path as
 report_path using the `critique_packet.md` path from the evaluator result header.
 If iteration is required, translate the critique(s)
@@ -1174,6 +1232,8 @@ richer build brief while implementing.
 Do not run a separate self-evaluation pass, fresh interactive verification
 sweep, or second report-writing cycle unless the packet's `evidence_gaps`
 identify a concrete missing fact that blocks grounded checklist submission.
+If the evaluator cannot justify a material delta, local convergence is better
+than inventing low-value polish-only churn.
 
 If no specialized subagents are available: do all evidence gathering and
 qualitative analysis inline, but keep the same parent-owned checklist flow.
@@ -1404,18 +1464,21 @@ After all tasks complete:
 
 5. Write/update `memory/short_term/verification_latest.md` with a **verification replay**
    summary for this answer. This memo must be replayable — a future agent should be able to
-   re-run verification from it without guessing. Required fields:
-   - **Environment**: workspace path, artifact under test, tools used (e.g. Playwright Python)
-   - **Pipeline**: exact commands or script paths used (e.g. `python .massgen_scratch/verification/check.py`
-     or `npx -y playwright@1.52.0 screenshot ...`). Scripts must live under `.massgen_scratch/verification/`.
-   - **Outputs**: for each script — its output file path and a one-line result summary
-     (e.g. `verification/output_pytest.txt — 15 passed, 0 failed`)
-   - **Artifacts**: list every file produced (screenshots, logs, scripts) with paths relative to workspace
-   - **Freshness**: whether each key verification artifact is still current for the submitted answer
-     (fresh, stale, or unknown) and what triggered any staleness
-   - **Current Media Map**: reconciled mapping of the media call ledger to current files after any
-     moved or renamed artifacts; explicitly mark superseded entries
-   - **Coverage**: note any known gaps or checks skipped and why
+   re-run verification from it without guessing. Use this section structure:
+   - `## Verification Contract` — stable method/context for replay: workspace path, artifact under
+     test, tools used, and any assumptions that define how this deliverable should be verified
+   - `## Inputs and Artifacts` — the output files, screenshots, logs, scripts, and current media map
+     relevant to verification, with paths relative to the workspace when possible
+   - `## Replay Steps` — exact commands or script paths used (for example
+     `python .massgen_scratch/verification/check.py` or `npx -y playwright@1.52.0 screenshot ...`);
+     scripts must live under `.massgen_scratch/verification/`
+   - `## Latest Verification Result` — for each script, its output file path and a one-line result
+     summary (for example `verification/output_pytest.txt — 15 passed, 0 failed`), plus overall
+     status and any known coverage gaps or skipped checks
+   - `## Stale If` — whether each key verification artifact is still current for the submitted answer
+     (`fresh`, `stale`, or `unknown`) and what would make the replay invalid or incomplete
+   Keep the stable sections current when the verification method changes; otherwise update the
+   latest result/staleness sections for the answer you are submitting now.
    Absolute paths are allowed; they are normalized when replay memories are auto-injected in later rounds.
    Write this memo after your final answer is complete — it must reflect the submitted state, not an intermediate one.
    Before making new media calls, read `.massgen_scratch/verification/media_call_ledger.json` first.
@@ -2404,11 +2467,12 @@ class MemorySection(SystemPromptSection):
             "- **Short-term** → `memory/short_term/{name}.md` (auto-loaded every turn)\n"
             "- **Long-term** → `memory/long_term/{name}.md` (load manually when needed)\n\n"
             "- **Verification replay** → `memory/short_term/verification_latest.md` "
-            "(required before checklist-gated `new_answer` submissions; must include: environment context "
-            "(workspace path, artifact under test, tools used), exact commands/script paths under "
-            "`.massgen_scratch/verification/`, artifact paths, and any known coverage gaps; "
-            "freshness status for key artifacts and media mappings; "
-            "write after your final answer is complete so it reflects submitted state)\n\n"
+            "(required before checklist-gated `new_answer` submissions; structure it with "
+            "`## Verification Contract`, `## Inputs and Artifacts`, `## Replay Steps`, "
+            "`## Latest Verification Result`, and `## Stale If`; include exact commands/script paths "
+            "under `.massgen_scratch/verification/`, output/artifact paths, media mappings, and "
+            "coverage gaps; update stable contract details when the method changes and always rewrite "
+            "the latest result section for the submitted state)\n\n"
             "**File Format (REQUIRED YAML Frontmatter):**\n"
             "```markdown\n"
             "---\n"
@@ -3330,8 +3394,9 @@ class TaskPlanningSection(SystemPromptSection):
             "\n"
             "When tasks come from `propose_improvements`, structural and transformative criteria "
             'are pre-filled with `execution: {"mode": "delegate", "subagent_type": "builder"}` as an advisory signal. '
-            "Scope each builder to exactly one task. Never bundle multiple criteria into one "
-            "builder spec.\n"
+            "Scope each builder to exactly one task, one surface, or one defect family. Never "
+            "bundle multiple independent criteria into one builder spec just because they live in "
+            "the same file.\n"
             "\n"
             "Novelty/quality tasks (`type: novelty_quality_spawn`) may appear at the top of "
             "your plan on iteration 2+. Spawn those in background first so they run while you "
@@ -3519,6 +3584,7 @@ class EvaluationSection(SystemPromptSection):
         improvements_cfg: dict | None = None,
         round_evaluator_before_checklist: bool = False,
         orchestrator_managed_round_evaluator: bool = False,
+        round_evaluator_transformation_pressure: str = "balanced",
         specialized_subagents_available: bool = True,
     ):
         super().__init__(
@@ -3544,6 +3610,7 @@ class EvaluationSection(SystemPromptSection):
         self.improvements_cfg = improvements_cfg
         self.round_evaluator_before_checklist = round_evaluator_before_checklist
         self.orchestrator_managed_round_evaluator = orchestrator_managed_round_evaluator
+        self.round_evaluator_transformation_pressure = round_evaluator_transformation_pressure
         self.specialized_subagents_available = specialized_subagents_available
 
     def build_content(self) -> str:
@@ -3698,6 +3765,7 @@ Your goal is to iteratively refine answers until they meet the quality bar.
                     improvements_cfg=self.improvements_cfg,
                     round_evaluator_before_checklist=self.round_evaluator_before_checklist,
                     orchestrator_managed_round_evaluator=self.orchestrator_managed_round_evaluator,
+                    round_evaluator_transformation_pressure=self.round_evaluator_transformation_pressure,
                     specialized_subagents_available=self.specialized_subagents_available,
                 )
                 evaluation_section = f"""{analysis}
@@ -4202,6 +4270,7 @@ def _build_changedoc_subsequent_round_prompt(
     gap_report_mode: str = "changedoc",
     round_evaluator_before_checklist: bool = False,
     orchestrator_managed_round_evaluator: bool = False,
+    round_evaluator_transformation_pressure: str = "balanced",
 ) -> str:
     """Build subsequent-round changedoc instructions."""
     quality_assessment = ""
@@ -4221,14 +4290,20 @@ treat this as a todo list.]
         "because changes are only locked in when you call `new_answer`."
     )
     if round_evaluator_before_checklist and orchestrator_managed_round_evaluator:
+        pressure_guidance = _build_round_evaluator_transformation_pressure_guidance(
+            round_evaluator_transformation_pressure,
+        ).replace("Transformation-pressure contract:\n", "")
         gate_step = (
             "2. **Choose the correct gate before you start building.**\n"
+            "   - The orchestrator-managed round evaluator is for material self-improvement.\n"
             "   - If the round-evaluator header says tasks were auto-injected into your task plan:\n"
-            "     call `get_task_plan`, implement those tasks, verify them, and do NOT call\n"
-            "     `submit_checklist` or `propose_improvements`.\n"
-            "   - Otherwise, run the checklist evaluation before you start building: evaluate the\n"
-            "     existing answers, identify gaps and improvements, then `submit_checklist` with\n"
-            "     your scores. Do NOT make edits to the deliverable before the checklist verdict —\n"
+            "     this is the normal path. Call `get_task_plan`, implement that one committed\n"
+            "     next-round thesis, verify it, and do NOT call `submit_checklist` or\n"
+            "     `propose_improvements`.\n"
+            f"   - {pressure_guidance.strip()}\n"
+            "   - Otherwise, the checklist branch is degraded fallback: evaluate the existing\n"
+            "     answers, identify gaps and improvements, then `submit_checklist` with your\n"
+            "     scores. Do NOT make edits to the deliverable before the checklist verdict —\n"
             '     work done before a "vote" verdict is wasted because changes are only locked in\n'
             "     when you call `new_answer`."
         )
@@ -4532,6 +4607,7 @@ class ChangedocSection(SystemPromptSection):
         gap_report_mode: str = "changedoc",
         round_evaluator_before_checklist: bool = False,
         orchestrator_managed_round_evaluator: bool = False,
+        round_evaluator_transformation_pressure: str = "balanced",
     ):
         super().__init__(
             title="Change Document",
@@ -4542,6 +4618,7 @@ class ChangedocSection(SystemPromptSection):
         self.gap_report_mode = gap_report_mode
         self.round_evaluator_before_checklist = round_evaluator_before_checklist
         self.orchestrator_managed_round_evaluator = orchestrator_managed_round_evaluator
+        self.round_evaluator_transformation_pressure = round_evaluator_transformation_pressure
 
     def build_content(self) -> str:
         if self.has_prior_answers:
@@ -4549,6 +4626,7 @@ class ChangedocSection(SystemPromptSection):
                 gap_report_mode=self.gap_report_mode,
                 round_evaluator_before_checklist=self.round_evaluator_before_checklist,
                 orchestrator_managed_round_evaluator=self.orchestrator_managed_round_evaluator,
+                round_evaluator_transformation_pressure=self.round_evaluator_transformation_pressure,
             )
         return _CHANGEDOC_FIRST_ROUND_PROMPT
 
@@ -4869,10 +4947,10 @@ quality and priorities, since you have the full context and the subagent may run
 **DO NOT submit your answer until ALL subagents have returned results.**
 
 When you spawn subagents:
-1. **Use `background=False` for prerequisite tasks (default)** — especially `evaluator`,
-   where downstream scoring and iteration depend on returned evidence.
-2. **Use `background=True` only for independent work** where you can keep making
-   meaningful progress without those results.
+1. **Use `background=True` for independent builder batches and other async-friendly work** —
+   this is the preferred mode when you can keep making progress while they run.
+2. **Use `background=False` only for evaluator work or a true hard blocker** —
+   cases where your very next step is fully blocked on the returned result.
 3. **Do NOT say "I will now run subagents"** and submit an answer before collecting results.
 4. **Only after receiving results** should you integrate outputs and submit your answer.
 

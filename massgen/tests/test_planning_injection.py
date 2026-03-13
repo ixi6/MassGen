@@ -278,9 +278,9 @@ class TestCheckAndInjectPendingTasks:
         assert out[-1]["id"] == "write_verification_memo"
         assert set(out[-1]["depends_on"]) == {"implement", "test"}
         assert "memory/short_term/verification_latest.md" in out[-1]["description"]
-        assert "workspace path" in out[-1]["description"]
-        assert "artifact under test" in out[-1]["description"]
-        assert "generated this run" in out[-1]["description"]
+        assert "## Verification Contract" in out[-1]["description"]
+        assert "## Latest Verification Result" in out[-1]["description"]
+        assert "## Stale If" in out[-1]["description"]
         assert "concrete assertion extracted" not in out[-1]["description"].lower()
 
     @pytest.mark.asyncio

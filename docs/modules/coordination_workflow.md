@@ -446,13 +446,19 @@ Checklist mode is policy, not the core coordination primitive:
   4. in that task-driven branch, the parent uses `get_task_plan` as the source of truth, may open the evaluator artifact paths for rationale, and does not call `submit_checklist` or `propose_improvements`
   5. in that task-driven branch, the parent implements, verifies, and submits via `new_answer` directly; for pure text artifacts, the final artifact body goes straight into `new_answer.content`
   6. if structured `next_tasks` are missing or invalid, the parent uses the returned critique/spec packet as the diagnostic basis for checklist submission
-  7. in that fallback branch, the parent saves or copies that packet into its workspace as the diagnostic report and calls `submit_checklist`
+  7. in that degraded fallback branch, the parent references the surfaced `critique_packet.md` path directly as `report_path` and calls `submit_checklist`
   8. if checklist returns `status=validation_error`, fix payload/report and call `submit_checklist` again
   9. if accepted iterate verdict, call `propose_improvements`
   10. implement plan (use `improvement_spec` from the evaluator packet as richer guidance when present)
-  11. write/update `memory/short_term/verification_latest.md` with replayable verification steps/artifacts
+  11. write/update `memory/short_term/verification_latest.md` using the replay contract sections
+      `Verification Contract`, `Inputs and Artifacts`, `Replay Steps`, `Latest Verification Result`,
+      and `Stale If`
   12. submit via `new_answer` (or terminal action)
 - round evaluator contract notes:
+  - support matrix:
+    - core path: orchestrator-managed stage -> synthesized evaluator packet -> valid `next_tasks.json` -> parent executes one task-driven next-round thesis
+    - degraded fallback: canonical packet exists but structured handoff is missing or invalid, so checklist submission uses `critique_packet.md` as the diagnostic basis
+    - advanced / non-default: branches such as `round_evaluator_refine` remain available for specific uses, but they are not the default story
   - returns a packet with `criteria_interpretation`, `criterion_findings`, `cross_answer_synthesis`, `preserve`, `improvement_spec`, `verification_plan`, and `evidence_gaps`
   - the packet is critique/spec guidance only, not a checklist payload or terminal recommendation
   - the inline `verdict_block` is intentionally minimal and carries verdict metadata (`verdict` + `scores`) rather than the full task handoff
@@ -468,6 +474,7 @@ Checklist mode is policy, not the core coordination primitive:
   - generated child YAML for `round_evaluator` always mounts the shared temp-workspace root read-only
   - `refine=false` keeps the evaluator child checklist-free; `refine=true` may inherit the parent checklist gate
   - checklist-enabled `round_evaluator` child runs use a dedicated default criteria preset for evaluator-packet quality when no child-specific criteria are configured
+  - `round_evaluator_transformation_pressure` biases how hard the evaluator searches for a larger thesis shift (`gentle`, `balanced`, `aggressive`) while still keeping correctness-first execution and one committed next-round thesis
 - checklist result contract:
   - accepted path: `status=accepted` + `verdict`
   - invalid path: `status=validation_error`, `requires_resubmission=true`, no `verdict`
@@ -569,9 +576,16 @@ orchestrator:
   checklist_first_answer: false
 ```
 
-## Self-Improvement and Evaluator Rescue Cycle
+## Round Evaluator Normal Path
 
-MassGen agents self-improve iteratively within each round, then submit their best answer. This cycle is by design — agents should push themselves to plateau before asking for external feedback. The round evaluator exists to rescue agents from plateaus they cannot break through alone.
+MassGen agents self-improve iteratively within each round, then submit their
+best answer. The round evaluator is the post-answer stage for **material self-improvement**
+that should either surface a materially better next-round thesis or declare
+local convergence for the current run.
+
+This is especially useful for open-ended self-improvement loops. The evaluator
+should keep helping the system find the next meaningful frontier of work rather
+than certifying the current answer after a few cosmetic chores.
 
 ### The plateau problem
 
@@ -647,6 +661,70 @@ Not every criterion can be driven to 10/10. Distinguish between two cases:
 2. **Approach ceiling** (evaluator signals `ceiling_reached`): the approach itself is fundamentally limited. This is NOT the same as implementation difficulty — it means no amount of refinement within this approach will produce excellent output. The correct response is to pivot via `evolution_tasks`, not to accept mediocrity.
 
 The evaluator's `ceiling_status` signal lets the orchestrator make informed convergence decisions rather than burning rounds on diminishing returns.
+
+## Transformation Pressure
+
+`round_evaluator_transformation_pressure` is the evaluator-specific knob for
+how aggressively the managed stage should search for a larger thesis change
+before settling for incremental refinement.
+
+Current behavior:
+
+- `gentle`: exploit the current thesis longer; prefer corrective work unless
+  there is strong ceiling evidence.
+- `balanced`: the default middle ground; allow bigger restructuring once the
+  current line of improvement starts plateauing.
+- `aggressive`: treat open-ended tasks as frontier-seeking; push for
+  transformative shifts sooner when repeated rounds are not producing
+  step-change improvement.
+
+Machine-learning intuition that may be useful here:
+
+- **Exploration vs. exploitation**: `incremental_refinement` exploits the
+  current thesis; `thesis_shift` explores a different solution basin.
+- **Local minima escape**: repeated small gains can indicate that more polish
+  is not enough and that a different approach should be tried.
+- **Annealing / schedules**: effective transformation pressure could rise after
+  consecutive incremental rounds instead of remaining fixed.
+- **Validation signal**: evaluator verification evidence should ground the push
+  toward transformation so the system does not chase novelty for novelty's
+  sake.
+- **Catastrophic forgetting prevention**: the `preserve` list and final
+  preserve/regression verification protect strengths that should survive larger
+  pivots.
+- **Ensemble distillation**: multiple evaluator agents may surface several
+  promising directions, but the managed stage should still collapse them into
+  one committed next thesis for the parent to execute.
+
+This knob biases how strongly the evaluator searches for a higher frontier. It
+does not override correctness-first fixes, and it does not turn the handoff
+into an unresolved menu of incompatible strategies.
+
+## Ensemble Pattern
+
+The **ensemble pattern** is a coordination strategy that sits between iterative
+voting and decomposition. Agents produce answers independently (no peer
+visibility), then vote on the best, and the winner synthesizes insights from all
+others.
+
+Set it up with existing orchestrator parameters:
+
+```yaml
+orchestrator:
+  disable_injection: true
+  defer_voting_until_all_answered: true
+  max_new_answers_per_agent: 1
+  final_answer_strategy: "synthesize"
+```
+
+This is also the default pattern for multi-agent subagent runs (via
+`SubagentOrchestratorConfig` defaults: `disable_injection: true`,
+`defer_voting_until_all_answered: true`).
+
+When voting has occurred, the `synthesize` strategy gives the winner a
+winner-biased prompt ("your answer was selected as the best — use it as the
+primary basis and incorporate strongest elements from others"). Without voting,
+the prompt is neutral ("synthesize the strongest parts across all answers").
 
 ## Related Docs
 

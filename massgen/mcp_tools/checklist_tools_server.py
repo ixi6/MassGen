@@ -125,6 +125,9 @@ def build_round_evaluator_task_mode_redirect(state: dict[str, Any]) -> str | Non
     objective = str(state.get("round_evaluator_objective") or "").strip()
     primary_strategy = str(state.get("round_evaluator_primary_strategy") or "").strip()
     why_this_strategy = str(state.get("round_evaluator_why_this_strategy") or "").strip()
+    strategy_mode = str(state.get("round_evaluator_strategy_mode") or "").strip()
+    incremental_override_reason = str(state.get("round_evaluator_incremental_override_reason") or "").strip()
+    success_contract = state.get("round_evaluator_success_contract")
     deprioritize_raw = state.get("round_evaluator_deprioritize_or_remove")
     deprioritize = [str(item).strip() for item in deprioritize_raw or [] if str(item).strip()] if isinstance(deprioritize_raw, list) else []
 
@@ -141,8 +144,25 @@ def build_round_evaluator_task_mode_redirect(state: dict[str, Any]) -> str | Non
         parts.append(f"Chosen strategy: {primary_strategy}.")
     if why_this_strategy:
         parts.append(f"Why this strategy: {why_this_strategy}.")
+    if strategy_mode:
+        parts.append(f"Strategy mode: {strategy_mode}.")
+    if incremental_override_reason:
+        parts.append(f"Incremental override reason: {incremental_override_reason}.")
     if deprioritize:
         parts.append(f"Deprioritize or remove: {', '.join(deprioritize)}.")
+    if isinstance(success_contract, dict):
+        outcome_statement = str(success_contract.get("outcome_statement") or "").strip()
+        quality_bar = str(success_contract.get("quality_bar") or "").strip()
+        fail_if_any = [str(item).strip() for item in success_contract.get("fail_if_any", []) if str(item).strip()]
+        required_evidence = [str(item).strip() for item in success_contract.get("required_evidence", []) if str(item).strip()]
+        if outcome_statement:
+            parts.append(f"Success contract outcome: {outcome_statement}.")
+        if quality_bar:
+            parts.append(f"Success contract quality bar: {quality_bar}.")
+        if fail_if_any:
+            parts.append(f"Still failing if any remain: {'; '.join(fail_if_any)}.")
+        if required_evidence:
+            parts.append(f"Required evidence: {'; '.join(required_evidence)}.")
     if critique_path:
         parts.append(f"Reference critique packet: {critique_path}.")
     if verdict_path:
@@ -1145,7 +1165,19 @@ def _convert_task_plan_to_inject_format(task_plan: list[dict]) -> list[dict]:
             normalized_metadata["execution"] = normalized_execution.copy()
             normalized_item.pop("subagent_name", None)
             normalized_item.pop("subagent_id", None)
-            for key in ("verification", "verification_method", "impact", "relates_to", "sources", "chunk", "implementation_guidance"):
+            for key in (
+                "verification",
+                "verification_method",
+                "impact",
+                "relates_to",
+                "sources",
+                "chunk",
+                "implementation_guidance",
+                "success_criteria",
+                "failure_signals",
+                "required_evidence",
+                "strategy_role",
+            ):
                 if key in normalized_item:
                     normalized_metadata.setdefault(key, normalized_item[key])
             tasks.append(normalized_item)

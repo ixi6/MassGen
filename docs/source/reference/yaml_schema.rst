@@ -1032,6 +1032,22 @@ Coordination Configuration
      - object
      - No
      - Background subagent configuration (``enabled``, ``injection_strategy``)
+   * - ``round_evaluator_before_checklist``
+     - boolean
+     - No
+     - Enable the orchestrator-managed round-evaluator stage before round-2+ checklist decisions (default: ``false``). Requires ``orchestrator_managed_round_evaluator: true`` and checklist-gated voting.
+   * - ``orchestrator_managed_round_evaluator``
+     - boolean
+     - No
+     - Treat the synthesized round-evaluator task handoff as the normal post-answer self-improvement path (default: ``false``).
+   * - ``round_evaluator_refine``
+     - boolean
+     - No
+     - Advanced/non-default option that lets the evaluator child run iterate before producing its packet (default: ``false``).
+   * - ``round_evaluator_transformation_pressure``
+     - string
+     - No
+     - Bias on how aggressively the evaluator seeks a larger thesis change. Supported values: ``gentle``, ``balanced``, ``aggressive``. Default: ``balanced``.
 
 .. note::
 
@@ -1159,6 +1175,66 @@ Decomposition mode (recommended defaults):
      fairness_enabled: true
      fairness_lead_cap_answers: 2
      max_midstream_injections_per_round: 2
+
+Ensemble pattern (recommended defaults):
+
+.. code-block:: yaml
+
+   orchestrator:
+     # Agents work independently — no peer answer injection
+     disable_injection: true
+     # Wait for all agents to finish before voting begins
+     defer_voting_until_all_answered: true
+     # Each agent produces 1 answer (adjustable)
+     max_new_answers_per_agent: 1
+     # Winner synthesizes from all answers
+     final_answer_strategy: "synthesize"
+
+The **ensemble pattern** is a coordination strategy where agents produce answers
+independently (no peer visibility), then vote on the best answer, and the winner
+synthesizes insights from all others into a refined final answer.
+
+**When to use ensemble mode:**
+
+- You want diverse, independent perspectives without agents anchoring on each
+  other's work
+- The task benefits from competitive parallel attempts rather than iterative
+  refinement (e.g., creative writing, design proposals, solution brainstorming)
+- You want faster coordination — single round of production + vote, no
+  multi-round iteration
+
+**Subagent default:** Multi-agent subagent runs use ensemble defaults
+automatically (``disable_injection: true``, ``defer_voting_until_all_answered:
+true``). Override by setting these fields explicitly in
+``subagent_orchestrator`` config.
+
+.. list-table:: Ensemble vs Standard Voting vs Decomposition
+   :header-rows: 1
+
+   * - Aspect
+     - Standard voting
+     - Ensemble pattern
+     - Decomposition
+   * - Peer visibility
+     - Agents see each other's answers
+     - Agents work in isolation
+     - Agents see subtask assignments
+   * - Iteration
+     - Multiple refinement rounds
+     - Single round of production
+     - Multiple rounds per subtask
+   * - Voting
+     - After iterative refinement
+     - After all answers produced
+     - No voting (presenter assembles)
+   * - Final answer
+     - Winner presents
+     - Winner synthesizes from all
+     - Presenter integrates subtasks
+   * - Best for
+     - Deep quality refinement
+     - Diverse perspectives, speed
+     - Complex multi-part tasks
 
 Timeout Configuration
 ~~~~~~~~~~~~~~~~~~~~~

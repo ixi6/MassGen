@@ -155,6 +155,67 @@ async def test_codex_background_mcp_client_uses_orchestrator_servers(
     assert len(setup_calls) == 1
 
 
+@pytest.mark.asyncio
+async def test_codex_background_mcp_client_rewrites_delegated_subagent_runtime_mode_for_host(
+    tmp_path: Path,
+    monkeypatch,
+):
+    """Host-side background MCP clients must not keep delegated subagent runtime mode."""
+    from massgen.backend import codex as codex_mod
+
+    backend = CodexBackend(
+        cwd=str(tmp_path),
+        agent_id="agent_a",
+    )
+    backend.config["type"] = "codex"
+    backend.config["mcp_servers"] = {
+        "subagent_agent_a": {
+            "type": "stdio",
+            "command": "fastmcp",
+            "args": [
+                "run",
+                "dummy",
+                "--",
+                "--runtime-mode",
+                "delegated",
+                "--runtime-fallback-mode",
+                "",
+                "--delegation-directory",
+                str(tmp_path / "delegation"),
+            ],
+            "tool_timeout_sec": 2040,
+        },
+    }
+
+    fake_client = object()
+    setup_calls: list[dict] = []
+
+    async def fake_setup_mcp_client(**kwargs):
+        setup_calls.append(kwargs)
+        return fake_client
+
+    monkeypatch.setattr(
+        codex_mod,
+        "MCPResourceManager",
+        SimpleNamespace(setup_mcp_client=fake_setup_mcp_client),
+        raising=False,
+    )
+
+    client = await backend._get_background_mcp_client()
+
+    assert client is fake_client
+    assert len(setup_calls) == 1
+
+    server = setup_calls[0]["servers"][0]
+    args = server["args"]
+    runtime_mode_index = args.index("--runtime-mode")
+    assert args[runtime_mode_index + 1] == "isolated"
+
+    original_args = backend.config["mcp_servers"]["subagent_agent_a"]["args"]
+    original_runtime_mode_index = original_args.index("--runtime-mode")
+    assert original_args[original_runtime_mode_index + 1] == "delegated"
+
+
 class TestCodexMcpEnvFileMultiLocation:
     """Env file resolution should search multiple locations like DockerManager."""
 

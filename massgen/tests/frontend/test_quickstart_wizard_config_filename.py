@@ -129,7 +129,7 @@ def test_provider_model_reasoning_defaults_from_copilot_metadata(monkeypatch):
                 "id": "gpt-5.4",
                 "name": "GPT-5.4",
                 "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"],
-                "default_reasoning_effort": "xhigh",
+                "default_reasoning_effort": "high",
             },
         ],
     )
@@ -142,11 +142,11 @@ def test_provider_model_reasoning_defaults_from_copilot_metadata(monkeypatch):
 
     step._update_reasoning_input()
 
-    assert step._current_reasoning_effort == "xhigh"
+    assert step._current_reasoning_effort == "high"
 
 
-def test_tabbed_reasoning_defaults_to_codex_xhigh_even_if_stale_medium():
-    """Codex GPT-5.4 should force xhigh default in tabbed quickstart step."""
+def test_tabbed_reasoning_defaults_to_codex_high_even_if_stale_medium():
+    """Codex GPT-5.4 should force high default in tabbed quickstart step."""
     step = TabbedProviderModelStep(WizardState(), agent_count=1)
     step._reasoning_selects["a"] = object()
     step._tab_selections["a"] = {
@@ -157,7 +157,7 @@ def test_tabbed_reasoning_defaults_to_codex_xhigh_even_if_stale_medium():
 
     step._update_reasoning_input("a", "codex", "gpt-5.4")
 
-    assert step._tab_selections["a"]["reasoning_effort"] == "xhigh"
+    assert step._tab_selections["a"]["reasoning_effort"] == "high"
 
 
 def test_provider_model_step_loads_runtime_copilot_models(monkeypatch):

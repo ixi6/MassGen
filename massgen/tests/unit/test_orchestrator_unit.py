@@ -601,11 +601,14 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_without_legacy
         json.dumps(
             {
                 "schema_version": "1",
-                "objective": "Refocus the work",
-                "primary_strategy": "angle_first",
-                "why_this_strategy": "It addresses the weakest criteria directly",
-                "deprioritize_or_remove": ["generic closing stanza"],
-                "execution_scope": {"active_chunk": "c1"},
+                "success_contract": {
+                    "outcome_statement": "Core structure rewritten around a governing angle",
+                    "quality_bar": "The angle is visible in stanza 1",
+                    "fail_if_any": ["No governing angle identifiable"],
+                    "required_evidence": ["Stanza 1 text showing the angle"],
+                },
+                "strategy_mode": "incremental_refinement",
+                "approach_assessment": {"ceiling_status": "ceiling_not_reached"},
                 "tasks": [
                     {
                         "id": "rewrite_core",
@@ -614,7 +617,9 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_without_legacy
                         "depends_on": [],
                         "chunk": "c1",
                         "verification": "The new draft has a clear governing angle",
-                        "verification_method": "Read stanza 1 and confirm the angle is visible",
+                        "success_criteria": "Angle is visible in stanza 1",
+                        "failure_signals": ["No clear angle"],
+                        "required_evidence": ["Stanza 1 text"],
                     },
                 ],
             },
@@ -731,11 +736,14 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_only_in_nested
         json.dumps(
             {
                 "schema_version": "1",
-                "objective": "Refocus the work",
-                "primary_strategy": "angle_first",
-                "why_this_strategy": "It addresses the weakest criteria directly",
-                "deprioritize_or_remove": ["generic closing stanza"],
-                "execution_scope": {"active_chunk": "c1"},
+                "success_contract": {
+                    "outcome_statement": "Core structure rewritten around a governing angle",
+                    "quality_bar": "The angle is visible in stanza 1",
+                    "fail_if_any": ["No governing angle identifiable"],
+                    "required_evidence": ["Stanza 1 text showing the angle"],
+                },
+                "strategy_mode": "incremental_refinement",
+                "approach_assessment": {"ceiling_status": "ceiling_not_reached"},
                 "tasks": [
                     {
                         "id": "rewrite_core",
@@ -744,7 +752,9 @@ async def test_round_evaluator_auto_injects_when_next_tasks_exist_only_in_nested
                         "depends_on": [],
                         "chunk": "c1",
                         "verification": "The new draft has a clear governing angle",
-                        "verification_method": "Read stanza 1 and confirm the angle is visible",
+                        "success_criteria": "Angle is visible in stanza 1",
+                        "failure_signals": ["No clear angle"],
+                        "required_evidence": ["Stanza 1 text"],
                     },
                 ],
             },
@@ -945,6 +955,24 @@ def test_round_evaluator_task_brief_reports_no_parent_delegate_targets(mock_orch
 
     assert "PARENT DELEGATION OPTIONS" in task
     assert "No parent-specialized subagents are available for delegation in the next round." in task
+
+
+def test_round_evaluator_task_brief_includes_transformation_pressure(mock_orchestrator):
+    """The evaluator task brief should surface the configured transformation pressure contract."""
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Build a product website."
+    orchestrator.config.coordination_config.round_evaluator_transformation_pressure = "aggressive"
+
+    task = orchestrator._build_round_evaluator_task(
+        parent_agent_id="agent_a",
+        answers={"agent_a": "answer v1"},
+    )
+
+    lower = task.lower()
+    assert "transformation pressure" in lower
+    assert "aggressive" in lower
+    assert "higher-leverage thesis" in lower or "frontier" in lower
+    assert "one committed next-round thesis" in lower or "one committed thesis" in lower
 
 
 def test_truncate_enforcement_buffer_content_caps_to_first_segment(mock_orchestrator):
@@ -1269,6 +1297,86 @@ async def test_round_evaluator_single_failure_terminates_coordination(
     ]
     assert stream_call_count["count"] == 1
     assert orchestrator.agent_states[agent_id].is_killed is True
+
+
+@pytest.mark.asyncio
+async def test_round_evaluator_timeout_without_packet_degrades_and_continues(
+    mock_orchestrator,
+    monkeypatch,
+    tmp_path,
+):
+    """Timeouts with a real subagent result but no packet should not kill coordination."""
+    from massgen.subagent.models import SubagentResult
+
+    orchestrator = mock_orchestrator(num_agents=1)
+    orchestrator.current_task = "Continue even if the evaluator times out."
+    agent_id = next(iter(orchestrator.agents.keys()))
+
+    orchestrator.config.voting_sensitivity = "checklist_gated"
+    orchestrator.config.coordination_config.round_evaluator_before_checklist = True
+    orchestrator.config.coordination_config.orchestrator_managed_round_evaluator = True
+    orchestrator.config.coordination_config.enable_subagents = True
+    orchestrator.config.coordination_config.subagent_types = ["round_evaluator"]
+    orchestrator.agent_states[agent_id].answer = "answer v1"
+    orchestrator.coordination_tracker.add_agent_answer(
+        agent_id=agent_id,
+        answer="answer v1",
+    )
+
+    backend = orchestrator.agents[agent_id].backend
+    backend._execute_mcp_function_with_retry = AsyncMock()
+
+    monkeypatch.setattr("massgen.orchestrator.get_log_session_dir", lambda: None)
+    orchestrator._save_agent_snapshot = AsyncMock(return_value="snapshot-ts")
+    orchestrator._copy_all_snapshots_to_temp_workspace = AsyncMock(
+        return_value="/tmp/temp_workspaces",
+    )
+    monkeypatch.setattr("massgen.orchestrator.asyncio.sleep", AsyncMock())
+
+    round_eval_workspace = tmp_path / "round-eval-timeout"
+    round_eval_workspace.mkdir()
+
+    # Re-run with explicit timeout payload through the real spawn path.
+    async def fake_subagent_call(
+        parent_agent_id: str,
+        tool_name: str,
+        params: dict[str, object],
+    ):
+        _ = params
+        assert parent_agent_id == agent_id
+        assert tool_name == "spawn_subagents"
+        return {
+            "success": False,
+            "operation": "spawn_subagents",
+            "results": [
+                SubagentResult.create_timeout(
+                    subagent_id="round_eval_r2",
+                    workspace_path=str(round_eval_workspace),
+                    timeout_seconds=1800.0,
+                ).to_dict(),
+            ],
+        }
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_call_subagent_mcp_tool_async",
+        fake_subagent_call,
+    )
+    orchestrator._round_evaluator_completed_labels.clear()
+
+    result = await orchestrator._run_round_evaluator_pre_round_if_needed(
+        answers={agent_id: "answer v1"},
+        conversation_context=None,
+    )
+
+    assert result is True
+    assert orchestrator.agent_states[agent_id].is_killed is False
+    assert orchestrator._round_evaluator_completed_labels[agent_id]
+
+    context_block = orchestrator._consume_round_start_context_block(agent_id)
+    assert context_block is not None
+    assert "timed out" in context_block.lower()
+    assert "normal parent-owned checklist flow" in context_block
 
 
 @pytest.mark.asyncio

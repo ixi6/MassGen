@@ -80,7 +80,7 @@ def test_reasoning_sync_resets_sonnet46_to_medium_on_model_change(tmp_path: Path
     }
 
 
-def test_reasoning_sync_resets_codex_gpt54_to_xhigh_on_model_change(tmp_path: Path) -> None:
+def test_reasoning_sync_resets_codex_gpt54_to_high_on_model_change(tmp_path: Path) -> None:
     result = _run_reasoning_sync(
         tmp_path,
         {
@@ -88,20 +88,20 @@ def test_reasoning_sync_resets_codex_gpt54_to_xhigh_on_model_change(tmp_path: Pa
                 "choices": [
                     ["Low (faster)", "low"],
                     ["Medium", "medium"],
-                    ["High (deeper reasoning)", "high"],
-                    ["XHigh (maximum depth, recommended)", "xhigh"],
+                    ["High (deeper reasoning, recommended)", "high"],
+                    ["XHigh (maximum depth)", "xhigh"],
                 ],
-                "default_effort": "xhigh",
+                "default_effort": "high",
                 "description": "Codex GPT-5.4 reasoning profile",
             },
             "profileKey": "codex::gpt-5.4",
             "lastAppliedProfileKey": "claude_code::claude-opus-4-6",
-            "currentEffort": "high",
+            "currentEffort": "medium",
         },
     )
 
     assert result == {
-        "nextEffort": "xhigh",
+        "nextEffort": "high",
         "nextProfileKey": "codex::gpt-5.4",
         "shouldApply": True,
     }
@@ -115,10 +115,10 @@ def test_reasoning_sync_preserves_manual_selection_with_same_profile(tmp_path: P
                 "choices": [
                     ["Low (faster)", "low"],
                     ["Medium", "medium"],
-                    ["High (deeper reasoning)", "high"],
-                    ["XHigh (maximum depth, recommended)", "xhigh"],
+                    ["High (deeper reasoning, recommended)", "high"],
+                    ["XHigh (maximum depth)", "xhigh"],
                 ],
-                "default_effort": "xhigh",
+                "default_effort": "high",
                 "description": "Codex GPT-5.4 reasoning profile",
             },
             "profileKey": "codex::gpt-5.4",

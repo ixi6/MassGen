@@ -171,16 +171,22 @@ def _strip_background_control_args(
             compatibility. Callers should pass synthetic-only controls when a tool
             defines real parameters like `background`.
     """
-    controls = {"mode", "background", "run_in_background"} if control_args_to_strip is None else set(control_args_to_strip)
+    explicit_controls = set(control_args_to_strip) if control_args_to_strip is not None else None
+    controls = {"mode", "background", "run_in_background"} if explicit_controls is None else explicit_controls
     cleaned = dict(arguments)
     if "background" in controls:
         cleaned.pop("background", None)
     if "run_in_background" in controls:
         cleaned.pop("run_in_background", None)
     if "mode" in controls:
-        mode = cleaned.get("mode")
-        if mode is None or (isinstance(mode, str) and mode.lower() in BACKGROUND_CONTROL_MODES):
+        if explicit_controls is not None:
+            # When callers explicitly mark `mode` as synthetic, drop it
+            # unconditionally instead of trying to infer intent from the value.
             cleaned.pop("mode", None)
+        else:
+            mode = cleaned.get("mode")
+            if mode is None or (isinstance(mode, str) and mode.lower() in BACKGROUND_CONTROL_MODES):
+                cleaned.pop("mode", None)
     return cleaned
 
 

@@ -152,9 +152,9 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
                 if isinstance(effort, str) and effort.strip():
                     self.model_reasoning_effort = effort.strip()
         if self.model_reasoning_effort is None and str(self.model).strip().lower() == "gpt-5.4":
-            # GPT-5.4 supports xhigh reasoning, and Codex should default to
-            # the deepest effort tier unless the caller explicitly overrides it.
-            self.model_reasoning_effort = "xhigh"
+            # GPT-5.4 supports xhigh reasoning, but default to high for a
+            # better cost/quality tradeoff unless the caller explicitly overrides.
+            self.model_reasoning_effort = "high"
         self._config_cwd = kwargs.get("cwd")  # May be relative; resolved at execution time
         self.system_prompt = kwargs.get("system_prompt", "")
         self.approval_mode = kwargs.get("approval_mode", "full-auto")
@@ -608,6 +608,7 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
         for server_cfg in merged:
             if not isinstance(server_cfg, dict):
                 continue
+            server_cfg = self._normalize_background_server_config(server_cfg)
             name = server_cfg.get("name")
             if not isinstance(name, str) or not name:
                 continue
@@ -620,6 +621,42 @@ class CodexBackend(StreamingBufferMixin, NativeToolBackendMixin, LLMBackend):
             filtered.append(server_cfg)
 
         return filtered
+
+    @staticmethod
+    def _normalize_background_server_config(server_cfg: dict[str, Any]) -> dict[str, Any]:
+        """Rewrite server config details that only make sense in model-facing runtimes."""
+        name = server_cfg.get("name")
+        if not isinstance(name, str) or not name.startswith("subagent_"):
+            return server_cfg
+
+        args = server_cfg.get("args")
+        if not isinstance(args, list):
+            return server_cfg
+
+        rewritten_args = CodexBackend._rewrite_subagent_runtime_mode_for_background(args)
+        if rewritten_args is args:
+            return server_cfg
+
+        normalized = server_cfg.copy()
+        normalized["args"] = rewritten_args
+        return normalized
+
+    @staticmethod
+    def _rewrite_subagent_runtime_mode_for_background(args: list[Any]) -> list[Any]:
+        """Host-side background clients should launch subagent MCP servers in isolated mode."""
+        rewritten = list(args)
+        changed = False
+
+        for index, token in enumerate(rewritten[:-1]):
+            if token != "--runtime-mode":
+                continue
+            runtime_mode = rewritten[index + 1]
+            if str(runtime_mode).strip().lower() != "delegated":
+                continue
+            rewritten[index + 1] = "isolated"
+            changed = True
+
+        return rewritten if changed else args
 
     async def _get_background_mcp_client(self):
         """Create or return a host-side MCP client for orchestrator-managed tool calls.

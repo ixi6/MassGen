@@ -64,7 +64,7 @@ def test_codex_skips_reasoning_effort_when_not_provided(tmp_path: Path):
     assert "model_reasoning_effort" not in config
 
 
-def test_codex_defaults_gpt54_to_xhigh_when_not_provided(tmp_path: Path):
+def test_codex_defaults_gpt54_to_high_when_not_provided(tmp_path: Path):
     backend = CodexBackend(
         cwd=str(tmp_path),
         model="gpt-5.4",
@@ -73,7 +73,7 @@ def test_codex_defaults_gpt54_to_xhigh_when_not_provided(tmp_path: Path):
     backend._write_workspace_config()
 
     config = _read_workspace_codex_config(tmp_path)
-    assert config["model_reasoning_effort"] == "xhigh"
+    assert config["model_reasoning_effort"] == "high"
 
 
 def test_codex_disables_view_image_tool_in_workspace_config(tmp_path: Path):

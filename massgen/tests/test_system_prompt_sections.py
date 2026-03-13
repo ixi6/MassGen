@@ -125,6 +125,63 @@ def test_checklist_gated_decision_orchestrator_managed_auto_injection_is_task_dr
     assert "multiple independent critiques" not in lower
 
 
+def test_checklist_gated_decision_managed_round_evaluator_declares_primary_path_and_fallback():
+    """Managed mode should describe the task-driven branch as the normal path and checklist as degraded fallback."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+    )
+    lower = content.lower()
+    assert "normal path" in lower
+    assert "task-driven" in lower
+    assert "degraded fallback" in lower
+    assert "fallback" in lower and "submit_checklist" in lower
+
+
+def test_checklist_gated_decision_managed_round_evaluator_targets_material_self_improvement():
+    """Managed mode should frame the evaluator as material self-improvement, not cleanup churn."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+    )
+    lower = content.lower()
+    assert "material self-improvement" in lower
+    assert "transformative thesis shift" in lower or "transformative shift" in lower
+    assert "low-value polish" in lower or "minor cleanup" in lower
+    assert "local convergence" in lower
+    assert "open-ended" in lower
+
+
+def test_checklist_gated_decision_round_evaluator_transformation_pressure_biases_guidance():
+    """Pressure settings should bias boldness while preserving correctness-first single-thesis execution."""
+    gentle = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+        round_evaluator_transformation_pressure="gentle",
+    )
+    aggressive = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+        round_evaluator_transformation_pressure="aggressive",
+    )
+
+    gentle_lower = gentle.lower()
+    aggressive_lower = aggressive.lower()
+    assert "transformation pressure" in gentle_lower
+    assert "gentle" in gentle_lower
+    assert "current thesis" in gentle_lower
+    assert "aggressive" in aggressive_lower
+    assert "higher-leverage thesis" in aggressive_lower or "frontier" in aggressive_lower
+    assert "stronger justification" in aggressive_lower
+    for lower in (gentle_lower, aggressive_lower):
+        assert "correctness-critical" in lower
+        assert "one committed next-round thesis" in lower or "one committed thesis" in lower
+
+
 def test_checklist_gated_decision_auto_injection_prioritizes_correctness_then_regression_check():
     """Auto-injected round-evaluator guidance should make correctness-first execution order explicit."""
     content = _build_checklist_gated_decision(
@@ -138,6 +195,20 @@ def test_checklist_gated_decision_auto_injection_prioritizes_correctness_then_re
     assert "then execute the remaining higher-order work" in lower
     assert "use explicit correctness criteria when they exist" in lower
     assert "finish with the final preserve/regression verification" in lower
+
+
+def test_checklist_gated_decision_auto_injection_prefers_background_builder_batches():
+    """Managed round-evaluator guidance should prefer async builder batches over blocking launches."""
+    content = _build_checklist_gated_decision(
+        checklist_items=_CHECKLIST_ITEMS,
+        round_evaluator_before_checklist=True,
+        orchestrator_managed_round_evaluator=True,
+    )
+    lower = content.lower()
+    assert "background=true, refine=false" in lower
+    assert "independent builder tasks" in lower
+    assert "use blocking mode only for evaluator work" in lower
+    assert "not for normal builder batches" in lower
 
 
 def test_checklist_gated_decision_includes_peer_build_copy_guidance():
@@ -252,10 +323,11 @@ def test_checklist_gated_decision_requires_verification_replay_memory_capture():
     )
     assert "memory/short_term/verification_latest.md" in content
     assert "verification replay" in content.lower()
-    assert "**Environment**" in content
-    assert "**Pipeline**" in content
-    assert "**Artifacts**" in content
-    assert "**Freshness**" in content
+    assert "## Verification Contract" in content
+    assert "## Inputs and Artifacts" in content
+    assert "## Replay Steps" in content
+    assert "## Latest Verification Result" in content
+    assert "## Stale If" in content
     assert "Key assertions" not in content
     assert "concrete value extracted" not in content.lower()
 
@@ -273,9 +345,10 @@ def test_memory_section_verification_replay_requirements_drop_output_assertion_r
 
     content = section.build_content()
     assert "memory/short_term/verification_latest.md" in content
-    assert "exact commands/script paths" in content
-    assert "artifact paths" in content
-    assert "freshness status" in content
+    assert "## Verification Contract" in content
+    assert "## Replay Steps" in content
+    assert "## Latest Verification Result" in content
+    assert "## Stale If" in content
     assert "concrete assertion" not in content.lower()
 
 
@@ -358,14 +431,13 @@ def test_checklist_gated_decision_media_ledger_non_blocking_side_by_side():
 
 
 def test_checklist_gated_decision_requires_media_map_finalization_reconciliation():
-    """Phase 5 should require reconciling moved artifacts and finalizing Current Media Map."""
+    """Phase 5 should reference media map and media call ledger for artifact tracking."""
     content = _build_checklist_gated_decision(
         checklist_items=_CHECKLIST_ITEMS,
     )
     lower = content.lower()
     assert "current media map" in lower
-    assert "moved or renamed" in lower or "moved/renamed" in lower
-    assert "superseded" in lower
+    assert "media_call_ledger" in lower
 
 
 def test_checklist_gated_decision_mentions_context_snapshot_provenance():

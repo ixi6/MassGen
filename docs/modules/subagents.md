@@ -28,6 +28,7 @@ Behavior:
 - `inherited` runs subagents in the same runtime boundary as the parent
 - `delegated` uses the outbox pattern: the container writes a request file, a trusted host-side `SubagentLaunchWatcher` creates an isolated container per subagent (see [Delegated Mode](#delegated-mode-codex--docker) below)
 - Codex+Docker auto-detection: when the backend is Codex with `command_line_execution_mode: docker` and no explicit fallback/prefix is set, the orchestrator automatically switches to `delegated` mode if a delegation directory is available. This replaces the old `inherited` fallback with secure per-subagent container isolation.
+- Host-side Codex background MCP clients rewrite delegated subagent server configs back to `isolated` before connecting. That client already runs on the host, so it should launch the child run directly instead of pretending it is still inside the parent container.
 
 ## Delegated Mode (Codex + Docker)
 
@@ -184,30 +185,34 @@ Built-in profiles:
 ### Round Evaluator Loop
 
 `coordination.round_evaluator_before_checklist: true` enables the single-parent
-manual/prompt-guided v1 flow:
+orchestrator-managed round-evaluator stage:
 
 - round 1: parent builds and submits its first answer normally
-- round 2+: the parent launches one blocking `round_evaluator` subagent before
-  checklist submission unless the separate orchestrator-managed gate is enabled
+- round 2+: the orchestrator launches one blocking `round_evaluator` subagent
+  before checklist submission
 - the round evaluator returns a critique/spec packet with `criteria_interpretation`, `criterion_findings`, `cross_answer_synthesis`, `preserve`, `improvement_spec`, `verification_plan`, and `evidence_gaps`
-- the parent saves or copies that packet into its workspace as the diagnostic
-  report used for `submit_checklist`
+- core path: if valid `next_tasks.json` is present, the parent treats it as the
+  one committed next-round thesis, calls `get_task_plan`, implements, verifies,
+  and submits via `new_answer`
+- degraded fallback: if valid `next_tasks.json` is missing or invalid, the
+  parent uses `critique_packet.md` as the diagnostic basis for `submit_checklist`
 - the parent does not run a second full self-evaluation pass; additional
   verification is only for explicit `evidence_gaps`
 - the parent still owns `submit_checklist`, `propose_improvements`, `new_answer`, and `vote`
 - generated child YAML for `round_evaluator` always mounts the shared
   temp-workspace root read-only
-- with `refine: false`, `round_evaluator` remains a quick critique-only child
-  run and omits checklist-gated child settings
-- with `refine: true`, `round_evaluator` may inherit the parent checklist gate;
-  when no child-specific criteria are configured, it falls back to a built-in
-  `round_evaluator` criteria preset for judging the critique packet itself
+- if the evaluator child times out before producing `critique_packet.md`, the
+  orchestrator degrades back to the normal parent-owned checklist flow for that
+  answer set instead of terminating coordination immediately
+- `round_evaluator_refine` remains an advanced/non-default branch
 - when the child run is using presenter-stage `synthesize`/`winner_present`, it
   keeps `skip_final_presentation: false`
+- `round_evaluator_transformation_pressure` controls how aggressively the
+  evaluator seeks a larger thesis shift: `gentle`, `balanced`, or `aggressive`
 
-`coordination.orchestrator_managed_round_evaluator: true` is a separate,
-currently gated mode that lets the orchestrator launch that same blocking
-`round_evaluator` before round 2+.
+`coordination.orchestrator_managed_round_evaluator: true` remains required for
+this stage and keeps the launch reserved for the orchestrator rather than a
+manual parent prompt pattern.
 
 Validation constraints for this mode:
 

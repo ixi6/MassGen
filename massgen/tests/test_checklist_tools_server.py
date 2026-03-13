@@ -2440,6 +2440,13 @@ class TestChecklistSdkSubmissionCounting:
             "round_evaluator_auto_injected": True,
             "round_evaluator_primary_artifact_path": "/tmp/eval/critique_packet.md",
             "round_evaluator_next_tasks_artifact_path": "/tmp/eval/next_tasks.json",
+            "round_evaluator_strategy_mode": "thesis_shift",
+            "round_evaluator_success_contract": {
+                "outcome_statement": "The next revision should feel reauthored around a new interaction thesis.",
+                "quality_bar": "A reviewer can name the new thesis immediately.",
+                "fail_if_any": ["The output still feels like the same brochure with cosmetic tweaks."],
+                "required_evidence": ["Fresh screenshots of the rebuilt information architecture"],
+            },
         }
         items = ["Hero clarity", "CTA clarity"]
 
@@ -2468,6 +2475,9 @@ class TestChecklistSdkSubmissionCounting:
         assert "new_answer" in submit_text
         assert "submit_checklist" in submit_text and "do not call" in submit_text.lower()
         assert "/tmp/eval/critique_packet.md" in submit_text
+        assert "thesis_shift" in submit_text
+        assert "The next revision should feel reauthored around a new interaction thesis." in submit_text
+        assert "The output still feels like the same brochure with cosmetic tweaks." in submit_text
 
         blocked_propose = await propose_improvements(
             {
@@ -2481,6 +2491,8 @@ class TestChecklistSdkSubmissionCounting:
         assert blocked_payload["valid"] is False
         assert "get_task_plan" in blocked_payload["error"]
         assert "new_answer" in blocked_payload["error"]
+        assert "thesis_shift" in blocked_payload["error"]
+        assert "The next revision should feel reauthored around a new interaction thesis." in blocked_payload["error"]
 
     @pytest.mark.asyncio
     async def test_stdio_blocks_checklist_loop_after_round_evaluator_auto_injection(self, tmp_path):
@@ -2497,6 +2509,13 @@ class TestChecklistSdkSubmissionCounting:
             "round_evaluator_auto_injected": True,
             "round_evaluator_primary_artifact_path": "/tmp/eval/critique_packet.md",
             "round_evaluator_next_tasks_artifact_path": "/tmp/eval/next_tasks.json",
+            "round_evaluator_strategy_mode": "thesis_shift",
+            "round_evaluator_success_contract": {
+                "outcome_statement": "The next revision should feel reauthored around a new interaction thesis.",
+                "quality_bar": "A reviewer can name the new thesis immediately.",
+                "fail_if_any": ["The output still feels like the same brochure with cosmetic tweaks."],
+                "required_evidence": ["Fresh screenshots of the rebuilt information architecture"],
+            },
         }
         specs_path = _make_specs_file(tmp_path, items, state)
         handlers = _build_handlers(specs_path)
@@ -2517,6 +2536,8 @@ class TestChecklistSdkSubmissionCounting:
         assert "new_answer" in blocked_submit["error"]
         assert "submit_checklist" in blocked_submit["error"]
         assert "/tmp/eval/critique_packet.md" in blocked_submit["error"]
+        assert "thesis_shift" in blocked_submit["error"]
+        assert "The next revision should feel reauthored around a new interaction thesis." in blocked_submit["error"]
 
         blocked_propose = json.loads(
             await propose_improvements(
@@ -2529,6 +2550,7 @@ class TestChecklistSdkSubmissionCounting:
         assert blocked_propose["valid"] is False
         assert "get_task_plan" in blocked_propose["error"]
         assert "new_answer" in blocked_propose["error"]
+        assert "Fresh screenshots of the rebuilt information architecture" in blocked_propose["error"]
 
     @pytest.mark.asyncio
     async def test_stdio_propose_improvements_requires_recheck_after_injection(self, tmp_path):

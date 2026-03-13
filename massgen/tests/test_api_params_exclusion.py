@@ -141,6 +141,7 @@ class TestKnownInternalParamsExcluded:
         "subagent_types",
         "round_evaluator_before_checklist",
         "orchestrator_managed_round_evaluator",
+        "round_evaluator_transformation_pressure",
     ]
 
     @pytest.mark.parametrize("param", KNOWN_INTERNAL_PARAMS)

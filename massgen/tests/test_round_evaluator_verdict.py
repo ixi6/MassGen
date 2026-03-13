@@ -78,46 +78,151 @@ SAMPLE_VERDICT_WITH_OPPORTUNITIES = {
     ],
 }
 
-SAMPLE_NEXT_TASKS = {
-    "schema_version": "1",
-    "objective": "Turn the current California brochure into a route-planning experience",
-    "primary_strategy": "interactive_route_map",
-    "why_this_strategy": "Best addresses weak architecture and California-specific distinctiveness together",
-    "deprioritize_or_remove": ["generic destination grid", "repetitive gallery strip"],
-    "execution_scope": {"active_chunk": "c1"},
-    "tasks": [
-        {
-            "id": "reframe_ia",
-            "description": "Replace brochure IA with route and region planning structure",
-            "priority": "high",
-            "depends_on": [],
-            "chunk": "c1",
-            "execution": {"mode": "delegate", "subagent_type": "builder"},
-            "verification": "Page is organized around route and region choices",
-            "verification_method": "Review rendered page and confirm route-first navigation",
-            "metadata": {
-                "impact": "transformative",
-                "relates_to": ["E3", "E7", "E8"],
-                "sources": ["agent3.1"],
-                "contract_first": True,
+
+def _make_valid_next_tasks_payload() -> dict:
+    return {
+        "schema_version": "2",
+        "objective": "Turn the current California brochure into a route-planning experience",
+        "primary_strategy": "interactive_route_map",
+        "why_this_strategy": "Best addresses weak architecture and California-specific distinctiveness together",
+        "strategy_mode": "thesis_shift",
+        "approach_assessment": {
+            "ceiling_status": "ceiling_approaching",
+            "ceiling_explanation": "Further polish on the brochure structure will not produce a professional jump in quality.",
+            "breakthroughs": ["The existing regional content can survive a stronger planner-first structure."],
+            "paradigm_shift": {
+                "recommended": True,
+                "current_limitation": "The brochure layout keeps flattening the user journey into passive browsing.",
+                "alternative_approach": "Recast the page as a route planner where region and trip choices drive the active content.",
+                "transferable_elements": ["Keep the strongest California imagery and practical travel details."],
             },
         },
-        {
-            "id": "route_map",
-            "description": "Add a route map explorer that drives trip selection",
-            "priority": "high",
-            "depends_on": ["reframe_ia"],
-            "chunk": "c1",
-            "verification": "Interactive route map works and influences content",
-            "verification_method": "Run app and verify map interaction in browser",
-            "metadata": {
-                "impact": "transformative",
-                "relates_to": ["E5", "E8"],
-                "sources": ["agent2.1", "agent3.1"],
-            },
+        "success_contract": {
+            "outcome_statement": "The next revision should feel reauthored around a route-planning thesis rather than patched brochure sections.",
+            "quality_bar": "A reviewer can immediately identify the planner-first interaction model and the weakest section no longer feels template-tier.",
+            "fail_if_any": [
+                "The old brochure-style section stack remains visible underneath the new controls.",
+                "The route planner exists as decoration only and does not change active content.",
+            ],
+            "required_evidence": [
+                "Fresh rendered screenshots of the rebuilt information architecture",
+                "Interaction verification showing route choices change what content is active",
+            ],
         },
-    ],
-}
+        "deprioritize_or_remove": ["generic destination grid", "repetitive gallery strip"],
+        "execution_scope": {"active_chunk": "c1"},
+        "fix_tasks": [
+            {
+                "id": "route_map",
+                "task_category": "fix",
+                "strategy_role": "supporting_fix",
+                "description": "Add a route map explorer that drives trip selection",
+                "implementation_guidance": "Bind the selected route to the visible trip details and hide inactive route content.",
+                "priority": "high",
+                "depends_on": ["reframe_ia"],
+                "chunk": "c1",
+                "execution": {"mode": "inline"},
+                "verification": "Interactive route map works and influences content",
+                "verification_method": "Run app and verify map interaction in browser",
+                "success_criteria": "Changing the selected route updates the active itinerary details without leaving duplicate brochure sections in view.",
+                "failure_signals": [
+                    "The route selector is present but the same content remains visible regardless of selection.",
+                ],
+                "required_evidence": [
+                    "Interaction notes showing at least two route states",
+                ],
+                "metadata": {
+                    "impact": "transformative",
+                    "relates_to": ["E5", "E8"],
+                    "sources": ["agent2.1", "agent3.1"],
+                },
+            },
+        ],
+        "evolution_tasks": [
+            {
+                "id": "reframe_ia",
+                "task_category": "evolution",
+                "strategy_role": "thesis_shift",
+                "description": "Replace brochure IA with route and region planning structure",
+                "implementation_guidance": "Promote route and region selection to the top-level IA and remove the old passive browse stack.",
+                "priority": "high",
+                "depends_on": [],
+                "chunk": "c1",
+                "execution": {"mode": "delegate", "subagent_type": "builder"},
+                "verification": "Page is organized around route and region choices",
+                "verification_method": "Review rendered page and confirm route-first navigation",
+                "success_criteria": "A reviewer can explain the page as a planner-first experience rather than a generic travel brochure.",
+                "failure_signals": [
+                    "The route-planning chrome was added on top of the same old section order.",
+                ],
+                "required_evidence": [
+                    "Before/after screenshots of the rebuilt information architecture",
+                ],
+                "metadata": {
+                    "impact": "transformative",
+                    "relates_to": ["E3", "E7", "E8"],
+                    "sources": ["agent3.1"],
+                    "contract_first": True,
+                },
+            },
+        ],
+        "tasks": [
+            {
+                "id": "reframe_ia",
+                "task_category": "evolution",
+                "strategy_role": "thesis_shift",
+                "description": "Replace brochure IA with route and region planning structure",
+                "implementation_guidance": "Promote route and region selection to the top-level IA and remove the old passive browse stack.",
+                "priority": "high",
+                "depends_on": [],
+                "chunk": "c1",
+                "execution": {"mode": "delegate", "subagent_type": "builder"},
+                "verification": "Page is organized around route and region choices",
+                "verification_method": "Review rendered page and confirm route-first navigation",
+                "success_criteria": "A reviewer can explain the page as a planner-first experience rather than a generic travel brochure.",
+                "failure_signals": [
+                    "The route-planning chrome was added on top of the same old section order.",
+                ],
+                "required_evidence": [
+                    "Before/after screenshots of the rebuilt information architecture",
+                ],
+                "metadata": {
+                    "impact": "transformative",
+                    "relates_to": ["E3", "E7", "E8"],
+                    "sources": ["agent3.1"],
+                    "contract_first": True,
+                },
+            },
+            {
+                "id": "route_map",
+                "task_category": "fix",
+                "strategy_role": "supporting_fix",
+                "description": "Add a route map explorer that drives trip selection",
+                "implementation_guidance": "Bind the selected route to the visible trip details and hide inactive route content.",
+                "priority": "high",
+                "depends_on": ["reframe_ia"],
+                "chunk": "c1",
+                "execution": {"mode": "inline"},
+                "verification": "Interactive route map works and influences content",
+                "verification_method": "Run app and verify map interaction in browser",
+                "success_criteria": "Changing the selected route updates the active itinerary details without leaving duplicate brochure sections in view.",
+                "failure_signals": [
+                    "The route selector is present but the same content remains visible regardless of selection.",
+                ],
+                "required_evidence": [
+                    "Interaction notes showing at least two route states",
+                ],
+                "metadata": {
+                    "impact": "transformative",
+                    "relates_to": ["E5", "E8"],
+                    "sources": ["agent2.1", "agent3.1"],
+                },
+            },
+        ],
+    }
+
+
+SAMPLE_NEXT_TASKS = _make_valid_next_tasks_payload()
 
 SAMPLE_VERDICT_WITH_NEXT_TASKS = {
     **SAMPLE_VERDICT_WITH_OPPORTUNITIES,
@@ -378,6 +483,8 @@ class TestFromSubagentResultWithVerdict:
         assert result.next_tasks_why_this_strategy == SAMPLE_NEXT_TASKS["why_this_strategy"]
         assert result.next_tasks_deprioritize_or_remove == SAMPLE_NEXT_TASKS["deprioritize_or_remove"]
         assert result.next_tasks_execution_scope == SAMPLE_NEXT_TASKS["execution_scope"]
+        assert result.next_tasks_strategy_mode == SAMPLE_NEXT_TASKS["strategy_mode"]
+        assert result.next_tasks_success_contract == SAMPLE_NEXT_TASKS["success_contract"]
         assert result.primary_artifact_path == str(workspace / "critique_packet.md")
         assert result.next_tasks_artifact_path == str(workspace / "next_tasks.json")
         assert result.task_plan_source == "next_tasks_artifact"
@@ -648,26 +755,41 @@ class TestImplementationGuidancePassthrough:
 
     def test_normalize_preserves_implementation_guidance(self):
         """implementation_guidance should survive normalize_next_tasks_payload."""
-        payload = {
-            "schema_version": "1",
-            "objective": "Fix the animation system",
-            "primary_strategy": "shared_timebase",
-            "tasks": [
-                {
-                    "id": "rebuild_timebase",
-                    "description": "Rebuild panels around a single shared time axis",
-                    "implementation_guidance": (
-                        "Step 1: Define a single time domain [0, 2T]. "
-                        "Step 2: Map to shared pixel range x=100..1300. "
-                        "The previous approach used per-row animateTransform — "
-                        "replace with requestAnimationFrame and a shared clock."
-                    ),
-                    "priority": "high",
-                    "verification": "Identical x-positions correspond to same time",
-                    "verification_method": "Render to PNG and inspect alignment",
-                },
-            ],
-        }
+        payload = _make_valid_next_tasks_payload()
+        payload["objective"] = "Fix the animation system"
+        payload["primary_strategy"] = "shared_timebase"
+        payload["strategy_mode"] = "incremental_refinement"
+        payload["approach_assessment"]["ceiling_status"] = "ceiling_not_reached"
+        payload["approach_assessment"]["paradigm_shift"]["recommended"] = False
+        payload["tasks"] = [
+            {
+                "id": "rebuild_timebase",
+                "task_category": "evolution",
+                "strategy_role": "thesis_shift",
+                "description": "Rebuild panels around a single shared time axis",
+                "implementation_guidance": (
+                    "Step 1: Define a single time domain [0, 2T]. "
+                    "Step 2: Map to shared pixel range x=100..1300. "
+                    "The previous approach used per-row animateTransform — "
+                    "replace with requestAnimationFrame and a shared clock."
+                ),
+                "priority": "high",
+                "depends_on": [],
+                "chunk": "c1",
+                "execution": {"mode": "inline"},
+                "verification": "Identical x-positions correspond to same time",
+                "verification_method": "Render to PNG and inspect alignment",
+                "success_criteria": "Aligned x-positions represent the same moment across all panels.",
+                "failure_signals": [
+                    "Rows still drift independently because they do not share one clock.",
+                ],
+                "required_evidence": [
+                    "Rendered output showing aligned timestamps across rows",
+                ],
+            },
+        ]
+        payload["evolution_tasks"] = list(payload["tasks"])
+        payload["fix_tasks"] = []
 
         normalized = RoundEvaluatorResult.normalize_next_tasks_payload(payload)
 
@@ -1588,5 +1710,9 @@ class TestTaskPlanOpportunities:
         assert injected[0]["metadata"]["injected"] is True
         assert injected[0]["metadata"]["execution"] == {"mode": "delegate", "subagent_type": "builder"}
         assert injected[0]["metadata"]["impact"] == "transformative"
+        assert injected[0]["metadata"]["strategy_role"] == "thesis_shift"
+        assert injected[0]["metadata"]["success_criteria"] == SAMPLE_NEXT_TASKS["tasks"][0]["success_criteria"]
+        assert injected[0]["metadata"]["failure_signals"] == SAMPLE_NEXT_TASKS["tasks"][0]["failure_signals"]
+        assert injected[0]["metadata"]["required_evidence"] == SAMPLE_NEXT_TASKS["tasks"][0]["required_evidence"]
         assert injected[1]["depends_on"] == ["reframe_ia"]
         assert injected[1]["chunk"] == "c1"

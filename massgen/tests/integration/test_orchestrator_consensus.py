@@ -74,7 +74,7 @@ async def test_quick_synthesize_mode_completes_after_first_answer_round_without_
     orchestrator = mock_orchestrator(num_agents=3)
     orchestrator.current_task = "Draft three alternatives, then synthesize."
     orchestrator.config.disable_injection = True
-    orchestrator.config.defer_voting_until_all_answered = True
+    orchestrator.config.defer_voting_until_all_answered = False
     orchestrator.config.max_new_answers_per_agent = 1
     orchestrator.config.final_answer_strategy = "synthesize"
 

@@ -725,12 +725,16 @@ Please address these specific issues in your coordination and final answer.
         selected_agent_id: str,
         agent_changedocs: dict[str, str] | None = None,
         final_answer_strategy: str = "winner_present",
+        had_voting: bool = False,
     ) -> str:
         """Build final presentation message for winning agent."""
-        # Format all answers with clear marking
+        # Format all answers with clear marking.
+        # Hide (YOUR ANSWER) marker when synthesizing without voting —
+        # all answers should be treated equally when there is no winner.
+        show_own_marker = had_voting or final_answer_strategy != "synthesize"
         answers_section = "All answers provided during coordination:\n"
         for agent_id, answer in all_answers.items():
-            marker = " (YOUR ANSWER)" if agent_id == selected_agent_id else ""
+            marker = " (YOUR ANSWER)" if show_own_marker and agent_id == selected_agent_id else ""
             changedoc = (agent_changedocs or {}).get(agent_id)
             if changedoc:
                 answers_section += f'\n{agent_id}{marker}: "{answer}"\n<changedoc>\n{changedoc}\n</changedoc>\n'
@@ -738,16 +742,34 @@ Please address these specific issues in your coordination and final answer.
                 answers_section += f'\n{agent_id}{marker}: "{answer}"\n'
 
         if final_answer_strategy == "synthesize":
-            strategy_instruction = (
-                "Synthesize the strongest relevant parts across the completed answers into a single final answer. "
-                "Do not just repeat your own answer if another agent handled part of the task better.\n\n"
-                "Preserve concrete details during synthesis: keep specific implementation details, exact values, "
-                "named elements, and actionable directives verbatim from whichever answer provided them. "
-                "Do not abstract concrete findings into vague generalizations — the synthesized output "
-                "should be at least as specific as the most detailed individual answer. "
-                "When answers overlap on a topic, combine them intelligently — keep the most specific "
-                "version and merge in any unique details from others rather than dropping either."
-            )
+            if had_voting:
+                # Winner-biased: winner's answer is primary, incorporate from others
+                strategy_instruction = (
+                    "Your answer was selected as the best by your peers. "
+                    "Use it as the primary basis for the final response. "
+                    "Actively incorporate the strongest elements from the other agents' "
+                    "answers where they improve completeness, accuracy, or depth.\n\n"
+                    "Preserve concrete details during synthesis: keep specific "
+                    "implementation details, exact values, named elements, and "
+                    "actionable directives verbatim from whichever answer provided "
+                    "them. Be selective — integrate specific strengths rather than "
+                    "diluting your answer by merging everything."
+                )
+            else:
+                # Neutral: no winner, combine the best parts equally
+                strategy_instruction = (
+                    "Synthesize the strongest relevant parts across all completed "
+                    "answers into a single final answer.\n\n"
+                    "Preserve concrete details during synthesis: keep specific "
+                    "implementation details, exact values, named elements, and "
+                    "actionable directives verbatim from whichever answer provided "
+                    "them. Do not abstract concrete findings into vague "
+                    "generalizations — the synthesized output should be at least as "
+                    "specific as the most detailed individual answer. "
+                    "When answers overlap on a topic, combine them intelligently — "
+                    "keep the most specific version and merge in any unique details "
+                    "from others rather than dropping either."
+                )
         elif final_answer_strategy == "winner_present":
             strategy_instruction = "Use your answer as the primary basis for the final response. " "You may incorporate useful details from other answers when they improve completeness or accuracy."
         else:

@@ -468,13 +468,13 @@ def _append_terminal_verification_memory_task(task_list: list[dict[str, Any]]) -
         "id": task_id,
         "description": (
             "Write/update memory/short_term/verification_latest.md with a replayable verification summary for the "
-            "answer you are about to submit. Requirements: (1) Include environment context: workspace path, "
-            "artifact under test, and tools used. (2) List the exact commands or script paths used to verify "
-            "(e.g. `python .massgen_scratch/verification/check.py` or the npx playwright command), not just a "
-            "description of what was checked. (3) List every artifact path produced (screenshots, logs, scripts) "
-            "under .massgen_scratch/verification/ with relative paths. (4) Note freshness: 'generated this run' "
-            "or 'reused from prior run'. Absolute paths are allowed; "
-            "they are normalized on injection."
+            "answer you are about to submit. Use these sections: `## Verification Contract`, "
+            "`## Inputs and Artifacts`, `## Replay Steps`, `## Latest Verification Result`, and "
+            "`## Stale If`. Include environment context (workspace path, artifact under test, tools used), "
+            "exact commands or script paths used to verify (e.g. `python .massgen_scratch/verification/check.py` "
+            "or the npx playwright command), every artifact/output path produced under "
+            ".massgen_scratch/verification/ when relevant, and freshness/staleness conditions. "
+            "Absolute paths are allowed; they are normalized on injection."
         ),
         "depends_on": existing_ids,
         "priority": "medium",

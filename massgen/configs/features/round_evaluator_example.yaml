@@ -1,5 +1,5 @@
 ### One agent builds, 3 agents evaluate
-# uv run massgen --config @examples/features/round_evaluator_example.yaml "Create a website about a fictional AI product that is visually stunning and has at least one unique interactive element."
+# uv run massgen --config @examples/features/round_evaluator_example.yaml "Create an svg of an AI agent coding."
 
 agents:
   - id: agent_a
@@ -63,11 +63,12 @@ orchestrator:
     subagent_max_concurrent: 3
     round_evaluator_before_checklist: true
     orchestrator_managed_round_evaluator: true
-    round_evaluator_transformation_pressure: balanced
+    round_evaluator_transformation_pressure: aggressive
     subagent_types: [round_evaluator]
     subagent_orchestrator:
       enabled: true
-      max_new_answers: 3
+      max_new_answers: 1
+      final_answer_strategy: synthesize
       # Only round_evaluator uses the shared 3-agent child team by default.
       # builder and other subagent types stay on the spawning parent's backend
       # unless you opt them into the shared pool here.

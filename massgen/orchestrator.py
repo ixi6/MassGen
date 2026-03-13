@@ -11500,6 +11500,8 @@ Your answer:"""
             parent_agent_id,
             temp_workspace_path=temp_workspace_path,
         )
+        pressure_label = getattr(coord_cfg, "round_evaluator_transformation_pressure", "balanced") or "balanced"
+        display_subagent_type = f"round_evaluator·{pressure_label}" if pressure_label != "balanced" else "round_evaluator"
         task_payload: dict[str, Any] = {
             "subagent_id": f"round_eval_r{upcoming_round}",
             "task": spawn_task,
@@ -11511,6 +11513,10 @@ Your answer:"""
             "background": False,
             "refine": evaluator_refine,
         }
+
+        # TUI display args use the decorated type label so the card shows the pressure level.
+        tui_task_payload = {**task_payload, "subagent_type": display_subagent_type}
+        tui_spawn_args = {**spawn_args, "tasks": [tui_task_payload]}
 
         tool_call_id = f"round_evaluator_pre_round_{parent_agent_id}_r{upcoming_round}_{int(time.time() * 1000)}"
         emitter = get_event_emitter()
@@ -11525,7 +11531,7 @@ Your answer:"""
             agent_id=parent_agent_id,
             tool_call_id=tool_call_id,
             round_number=display_round,
-            args=spawn_args,
+            args=tui_spawn_args,
         )
 
         started_at = time.time()

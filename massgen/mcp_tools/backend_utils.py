@@ -102,7 +102,7 @@ class Function:
                     # Return proper CallToolResult format matching permission_wrapper.py
                     reason = hook_result.metadata.get("reason", f"Hook '{hook.name}' blocked function call")
                     error_msg = f"Permission denied for tool '{self.name}': {reason}"
-                    logger.warning(f"🚫 [Function] {error_msg}")
+                    logger.warning(f"[Function] {error_msg}")
 
                     # Import MCP types for proper result formatting
                     try:

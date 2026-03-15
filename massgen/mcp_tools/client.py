@@ -271,7 +271,7 @@ class MCPClient:
 
                 # Record success
                 self._circuit_breaker.record_success(server_name)
-                logger.info(f"✅ MCP server '{server_name}' connected successfully!")
+                logger.info(f"MCP server '{server_name}' connected successfully")
                 return True
 
             except Exception as e:
@@ -455,7 +455,7 @@ class MCPClient:
                     connection_successful = True
                     server_client.connected_event.set()
 
-                    logger.info(f"✅ MCP server '{server_name}' connected successfully!")
+                    logger.info(f"MCP server '{server_name}' connected successfully")
 
                     # Send connected status if callback is available
                     if self.status_callback:
@@ -786,13 +786,14 @@ class MCPClient:
             )
         except Exception as e:
             # Note: log_tool_execution is NOT called here - parent handles logging
-            logger.error(f"Tool call failed for {original_tool_name} on {server_name}: {e}", exc_info=True)
+            error_detail = str(e) or f"{type(e).__name__} (no message)"
+            logger.error(f"Tool call failed for {original_tool_name} on {server_name}: {error_detail}", exc_info=True)
 
             # Record failure with circuit breaker
             self._circuit_breaker.record_failure(
                 server_name,
                 error_type="execution",
-                error_message=f"Tool '{original_tool_name}' failed: {e}",
+                error_message=f"Tool '{original_tool_name}' failed: {error_detail}",
             )
 
             if self.status_callback:
@@ -801,13 +802,13 @@ class MCPClient:
                     {
                         "server": server_name,
                         "tool": original_tool_name,
-                        "message": f"Tool '{original_tool_name}' failed: {e}",
-                        "error": str(e),
+                        "message": f"Tool '{original_tool_name}' failed: {error_detail}",
+                        "error": error_detail,
                     },
                 )
 
             raise MCPServerError(
-                f"Tool call failed: {e}",
+                f"Tool call failed: {error_detail}",
                 server_name=server_name,
                 context={"tool_name": original_tool_name, "arguments": validated_arguments},
             ) from e

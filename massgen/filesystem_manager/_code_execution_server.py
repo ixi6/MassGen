@@ -320,7 +320,7 @@ async def create_server() -> fastmcp.FastMCP:
         try:
             mcp.docker_client = docker.from_env()
             mcp.docker_client.ping()  # Test connection
-            print("✅ [Docker] Connected to Docker daemon")
+            print("[Docker] Connected to Docker daemon")
         except DockerException as e:
             # Use diagnostics for better error message
             try:
@@ -673,7 +673,7 @@ async def create_server() -> fastmcp.FastMCP:
                 "work_dir": work_dir or str(Path.cwd()),
             }
 
-    print("🚀 Command Execution MCP Server started and ready")
+    print("Command Execution MCP Server started and ready")
     print(f"Execution mode: {mcp.execution_mode}")
     if mcp.execution_mode == "docker":
         print(f"Agent ID: {mcp.agent_id}")

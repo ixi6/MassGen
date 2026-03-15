@@ -1864,7 +1864,7 @@ class PermissionClientSession(ClientSession):
                     error_msg = f"Permission denied for tool '{name}'"
                     if reason:
                         error_msg += f": {reason}"
-                    logger.warning(f"🚫 [PermissionClientSession] {error_msg}")
+                    logger.warning(f"[PermissionClientSession] {error_msg}")
 
                     # Return an error result instead of calling the tool
                     return types.CallToolResult(content=[types.TextContent(type="text", text=f"Error: {error_msg}")], isError=True)

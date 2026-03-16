@@ -1,7 +1,7 @@
 # 🚀 Release Highlights — v0.1.64 (2026-03-16)
 
 ### 🔌 [Gemini CLI Backend](https://docs.massgen.ai/en/latest/user_guide/backends.html)
-- **First new CLI backend since Codex**: Google's Gemini CLI as a native MassGen backend with subprocess-based streaming
+- **Gemini CLI as a native backend**: Google's Gemini CLI with subprocess-based streaming
 - **Session persistence**: Multi-turn conversations via CLI session IDs
 - **MCP tools**: Wired through `.gemini/settings.json` with native hook adapter for tool execution
 - **Docker support**: Containerized execution via `gemini_cli_docker.yaml` config

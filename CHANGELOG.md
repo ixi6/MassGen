@@ -41,7 +41,7 @@ Planning improvements with auto-added improvements to task plan and plan review 
 - **Response API Duplicates** ([#1000](https://github.com/massgen/MassGen/pull/1000)): Prevent duplicate item errors in recursive tool loops
 
 ### Technical Details
-- **Major Focus**: Gemini CLI Backend — first new CLI backend since Codex
+- **Major Focus**: Gemini CLI Backend
 - **PRs Merged**: [#999](https://github.com/massgen/MassGen/pull/999), [#990](https://github.com/massgen/MassGen/pull/990), [#1002](https://github.com/massgen/MassGen/pull/1002), [#1000](https://github.com/massgen/MassGen/pull/1000)
 - **Contributors**: @ncrispino, @HenryQi, @db-ol and the MassGen team
 

@@ -7,7 +7,7 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.64 — Gemini CLI Backend! 🚀 MassGen now supports Google's Gemini CLI as a first-class backend with session persistence, MCP tools, and Docker support — the first new CLI backend since Codex. Plus: WebSocket streaming for OpenAI Response API, execution trace analyzer subagent, and Copilot Docker mode.
+We're excited to release MassGen v0.1.64 — Gemini CLI Backend! 🚀 MassGen now supports Google's Gemini CLI as a first-class backend with session persistence, MCP tools, and Docker support. Plus: WebSocket streaming for OpenAI Response API, execution trace analyzer subagent, and Copilot Docker mode.
 
 ## Install
 
@@ -29,7 +29,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.64 — Gemini CLI Backend! 🚀 MassGen now supports Google's Gemini CLI as a first-class backend with session persistence, MCP tools, and Docker support — the first new CLI backend since Codex. Plus: WebSocket streaming for OpenAI Response API, execution trace analyzer subagent, and Copilot Docker mode.
+We're excited to release MassGen v0.1.64 — Gemini CLI Backend! 🚀 MassGen now supports Google's Gemini CLI as a first-class backend with session persistence, MCP tools, and Docker support. Plus: WebSocket streaming for OpenAI Response API, execution trace analyzer subagent, and Copilot Docker mode.
 
 **Key Improvement:**
 

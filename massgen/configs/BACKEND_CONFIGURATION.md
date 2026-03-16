@@ -148,10 +148,10 @@ backend:
   append_system_prompt: ""           # Custom system prompt to append
 
   # Reasoning config (preferred over deprecated max_thinking_tokens)
-  # Default: adaptive thinking + high effort (matches Claude Code CLI)
+  # Default: adaptive thinking + medium effort
   reasoning:
     type: "adaptive"              # "adaptive" (default), "enabled", or "disabled"
-    effort: "high"                # "low", "medium", "high" (default), or "max"
+    effort: "medium"              # "low", "medium" (default), "high", or "max"
     # budget_tokens: 32000        # Only for type: "enabled" (fixed token budget)
 
   # MCP servers
@@ -195,7 +195,7 @@ backend:
 - **Task Management**: TodoWrite for tracking progress
 - **Jupyter Support**: Notebook editing capabilities
 - **MCP Integration**: Supports external MCP servers
-- **Reasoning**: Configure via `reasoning: {type, effort}`. Defaults to adaptive thinking + high effort. Use `type: "adaptive"` (recommended) to let Claude decide when to think, or `type: "enabled"` with `budget_tokens` for a fixed budget. The deprecated `max_thinking_tokens` is still supported for backward compatibility.
+- **Reasoning**: Configure via `reasoning: {type, effort}`. Defaults to adaptive thinking + medium effort. Use `type: "adaptive"` (recommended) to let Claude decide when to think, or `type: "enabled"` with `budget_tokens` for a fixed budget. The deprecated `max_thinking_tokens` is still supported for backward compatibility.
 
 ---
 

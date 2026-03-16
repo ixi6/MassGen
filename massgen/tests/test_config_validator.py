@@ -335,6 +335,7 @@ class TestConfigValidator:
                 "backend": {
                     "type": "claude_code",
                     "model": "claude-sonnet-4-5-20250929",
+                    "cwd": "workspace",
                     "allowed_tools": ["Read", "Write"],
                     "exclude_tools": ["Bash"],
                 },

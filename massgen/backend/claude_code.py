@@ -2764,7 +2764,7 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
         # Parse unified reasoning config → SDK thinking + effort fields
         # Supports: reasoning: {type: adaptive, effort: high}
         # Backward compat: max_thinking_tokens: N → thinking: {type: enabled, budget_tokens: N}
-        # Default: adaptive thinking + high effort (matches Claude Code CLI behavior)
+        # Default: adaptive thinking + medium effort
         reasoning = options_kwargs.get("reasoning", {})
         max_thinking = options_kwargs.get("max_thinking_tokens")
 

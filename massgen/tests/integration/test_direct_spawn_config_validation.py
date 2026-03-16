@@ -154,8 +154,11 @@ async def test_direct_spawn_generates_valid_subprocess_configs(tmp_path, monkeyp
 
     # Find all generated subagent config files.
     # Fallback workspaces go under .massgen/workspaces/direct_spawn_*
+    # Only search direct_spawn_* dirs to avoid picking up stale configs from previous runs.
     workspaces_base = Path(".massgen") / "workspaces"
-    generated_configs = list(workspaces_base.rglob("subagent_config_*.yaml"))
+    generated_configs = []
+    for spawn_dir in workspaces_base.glob("direct_spawn_*/"):
+        generated_configs.extend(spawn_dir.rglob("subagent_config_*.yaml"))
 
     assert len(generated_configs) >= 2, f"Expected at least 2 subagent configs, got {len(generated_configs)}: " f"{[str(p) for p in generated_configs]}"
 

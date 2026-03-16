@@ -356,6 +356,9 @@ class Orchestrator(ChatAgent):
         # Rework signal from review modal (set by _review_isolated_changes, consumed by caller)
         self._pending_review_rework: dict[str, Any] | None = None
 
+        # TUI coordination UI (set externally by CoordinationUI.set_orchestrator())
+        self.coordination_ui: Any | None = None
+
         # Human input hook for injecting user input during execution
         # Shared across all agents (one per orchestration session)
         self._human_input_hook: HumanInputHook | None = None

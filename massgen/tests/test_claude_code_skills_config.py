@@ -99,10 +99,10 @@ def test_reasoning_adaptive_default_sonnet(tmp_path: Path):
 
 
 def test_reasoning_adaptive_default_opus(tmp_path: Path):
-    """Without reasoning config, opus defaults to adaptive thinking + high effort."""
+    """Without reasoning config, opus defaults to adaptive thinking + medium effort."""
     options = _build_options_with_kwargs(tmp_path, model="claude-opus-4-6")
     assert options.thinking == {"type": "adaptive"}
-    assert options.effort == "high"
+    assert options.effort == "medium"
 
 
 def test_reasoning_explicit_config(tmp_path: Path):

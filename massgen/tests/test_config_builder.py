@@ -10,6 +10,8 @@ These tests ensure:
 Run with: uv run pytest massgen/tests/test_config_builder.py -v
 """
 
+from pathlib import Path
+
 import pytest
 
 from massgen.config_builder import (
@@ -699,6 +701,53 @@ class TestQuickstartConfigPathHelpers:
         assert path == fake_home / ".config" / "massgen" / "global-name.yaml"
 
 
+class TestConfigBuilderAuthDetection:
+    """Test backend availability detection for config generation."""
+
+    @pytest.fixture
+    def builder(self):
+        return ConfigBuilder()
+
+    def test_detect_api_keys_marks_gemini_cli_available_with_cached_login(self, builder, tmp_path, monkeypatch):
+        """Cached Gemini CLI login should count as backend availability."""
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        fake_home = tmp_path / "home"
+        gemini_home = fake_home / ".gemini"
+        gemini_home.mkdir(parents=True, exist_ok=True)
+        (gemini_home / "oauth_creds.json").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        api_keys = builder.detect_api_keys()
+
+        assert api_keys["gemini_cli"] is True
+
+    def test_generate_config_programmatic_allows_gemini_cli_with_cached_login(self, builder, tmp_path, monkeypatch):
+        """Config generation should allow Gemini CLI when cached login exists."""
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+        fake_home = tmp_path / "home"
+        gemini_home = fake_home / ".gemini"
+        gemini_home.mkdir(parents=True, exist_ok=True)
+        (gemini_home / "google_accounts.json").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+
+        output_path = tmp_path / "gemini_cli_config.yaml"
+        success = builder.generate_config_programmatic(
+            output_path=str(output_path),
+            num_agents=1,
+            backend_type="gemini_cli",
+            model="gemini-3.1-pro-preview",
+            use_docker=False,
+        )
+
+        assert success is True
+        assert output_path.exists()
+        assert "type: gemini_cli" in output_path.read_text()
+
+
 class TestHeadlessQuickstartMultiBackend:
     """Test multi-backend headless quickstart support."""
 
@@ -716,6 +765,11 @@ class TestHeadlessQuickstartMultiBackend:
         """Backends not in priority list fall back to provider default."""
         model = builder._resolve_default_model("gemini")
         assert model  # Should find a model from provider info
+
+    def test_resolve_default_model_uses_updated_grok_headless_default(self, builder):
+        """Headless quickstart should use the latest configured Grok default."""
+        model = builder._resolve_default_model("grok")
+        assert model == "grok-4.20-0309-reasoning"
 
     def test_explicit_agent_specs_are_used(self, builder, tmp_path, monkeypatch):
         """Explicit agent specs create one agent per entry."""

@@ -11234,8 +11234,12 @@ def _load_eval_criteria(file_path: str) -> list[dict]:
     except json.JSONDecodeError as e:
         print(f"{BRIGHT_RED}Error: --eval-criteria file is not valid JSON: {e}{RESET}")
         sys.exit(EXIT_CONFIG_ERROR)
+    # Accept both bare array [...] and wrapped {"criteria": [...]} format
+    # (the latter is what MassGen's quality tools produce)
+    if isinstance(criteria_data, dict) and "criteria" in criteria_data:
+        criteria_data = criteria_data["criteria"]
     if not isinstance(criteria_data, list):
-        print(f"{BRIGHT_RED}Error: --eval-criteria must be a JSON array{RESET}")
+        print(f'{BRIGHT_RED}Error: --eval-criteria must be a JSON array or {{"criteria": [...]}}{RESET}')
         sys.exit(EXIT_CONFIG_ERROR)
     return criteria_data
 

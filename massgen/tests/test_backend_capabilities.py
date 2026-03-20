@@ -48,6 +48,12 @@ class TestBackendCapabilitiesRegistry:
         assert caps.default_model == "gpt-5.4"
         assert caps.models[0] == "gpt-5.4"
 
+    def test_grok_default_model_is_grok_420_reasoning(self):
+        """Grok should advertise grok-4.20-0309-reasoning as the default model."""
+        caps = BACKEND_CAPABILITIES["grok"]
+        assert caps.default_model == "grok-4.20-0309-reasoning"
+        assert caps.models[0] == "grok-4.20-0309-reasoning"
+
     def test_filesystem_support_values(self):
         """Ensure filesystem_support has valid values."""
         valid_values = {"none", "native", "mcp"}

@@ -66,7 +66,7 @@ HEADLESS_BACKEND_PRIORITY = [
     ("claude", "claude-sonnet-4-5-20250514"),
     ("openai", "gpt-5.4"),
     ("gemini", "gemini-3-flash-preview"),
-    ("grok", "grok-4-1-fast-reasoning"),
+    ("grok", "grok-4.20-0309-reasoning"),
 ]
 
 
@@ -782,6 +782,12 @@ class ConfigBuilder:
                         api_keys[provider_id] = True
                         continue
 
+                    # Gemini CLI supports cached login credentials in ~/.gemini/
+                    # in addition to GOOGLE_API_KEY / GEMINI_API_KEY.
+                    if provider_id == "gemini_cli":
+                        api_keys[provider_id] = self._has_gemini_cli_credentials()
+                        continue
+
                     env_var = provider_info.get("env_var")
                     if env_var:
                         api_keys[provider_id] = bool(os.getenv(env_var))
@@ -797,6 +803,14 @@ class ConfigBuilder:
             console.print(f"[error]❌ Error detecting API keys: {e}[/error]")
             # Return empty dict to allow continue with manual input
             return {provider_id: False for provider_id in self.PROVIDERS.keys()}
+
+    def _has_gemini_cli_credentials(self) -> bool:
+        """Return True when Gemini CLI can authenticate via env var or cached login."""
+        if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+            return True
+
+        gemini_home = Path.home() / ".gemini"
+        return (gemini_home / "google_accounts.json").exists() or (gemini_home / "oauth_creds.json").exists()
 
     def interactive_api_key_setup(self) -> dict[str, bool]:
         """Interactive API key setup wizard.

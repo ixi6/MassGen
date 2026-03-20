@@ -110,6 +110,7 @@ MODEL_MAPPINGS = {
         "gemini-2.5-pro",
     ],
     "grok": [
+        "grok-4.20-0309-reasoning",
         "grok-3-mini",
         "grok-3",
         "grok-4",

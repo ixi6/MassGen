@@ -392,6 +392,7 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         builtin_tools=["web_search"],
         filesystem_support="mcp",
         models=[
+            "grok-4.20-0309-reasoning",
             "grok-4-1-fast-reasoning",
             "grok-4-1-fast-non-reasoning",
             "grok-code-fast-1",
@@ -400,10 +401,11 @@ BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
             "grok-3",
             "grok-3-mini",
         ],
-        default_model="grok-4-1-fast-reasoning",
+        default_model="grok-4.20-0309-reasoning",
         env_var="XAI_API_KEY",
         notes="Web search includes real-time data access. Image understanding capabilities.",
         model_release_dates={
+            "grok-4.20-0309-reasoning": "2026-03",
             "grok-4-1-fast-reasoning": "2025-11",
             "grok-4-1-fast-non-reasoning": "2025-11",
             "grok-code-fast-1": "2025-08",

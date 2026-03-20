@@ -857,6 +857,53 @@ class TestHeadlessQuickstartMultiBackend:
         assert len(generated) == 1
         assert generated[0]["backend"] == "claude"
 
+    def test_exact_output_path_is_honored(self, builder, tmp_path, monkeypatch):
+        """Headless quickstart should write to an exact requested file path."""
+        monkeypatch.setattr(
+            builder,
+            "detect_api_keys",
+            lambda: {"openai": True},
+        )
+
+        generated = []
+        requested_path = tmp_path / "nested" / "custom-headless.yaml"
+
+        def mock_programmatic(output_path, num_agents, backend_type, model, **kwargs):
+            generated.append(
+                {
+                    "output_path": output_path,
+                    "num_agents": num_agents,
+                    "backend_type": backend_type,
+                    "model": model,
+                },
+            )
+            import pathlib
+
+            pathlib.Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            pathlib.Path(output_path).write_text("agents: []")
+            return True
+
+        monkeypatch.setattr(builder, "generate_config_programmatic", mock_programmatic)
+
+        result = builder.run_quickstart_headless(
+            output_dir=str(tmp_path / ".massgen"),
+            output_path=str(requested_path),
+            backend_override="openai",
+            model_override="gpt-5.4",
+            use_docker=False,
+        )
+
+        assert result["success"]
+        assert result["config_path"] == str(requested_path)
+        assert generated == [
+            {
+                "output_path": str(requested_path),
+                "num_agents": 3,
+                "backend_type": "openai",
+                "model": "gpt-5.4",
+            },
+        ]
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

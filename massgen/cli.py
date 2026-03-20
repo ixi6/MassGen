@@ -323,6 +323,18 @@ def _quickstart_filename_from_config_arg(config_path_arg: str | None) -> str | N
     return normalize_quickstart_config_filename(value)
 
 
+def _headless_quickstart_output_path_from_config_arg(config_path_arg: str | None) -> str | None:
+    """Extract an exact output path for headless quickstart from --config."""
+    if not config_path_arg:
+        return None
+
+    value = config_path_arg.strip()
+    if not value:
+        return None
+
+    return str(Path(value).expanduser())
+
+
 def _parse_quickstart_agent_specs(values: list[str] | None) -> list[dict[str, str | None]]:
     """Parse repeated --quickstart-agent values into explicit agent specs."""
     specs: list[dict[str, str | None]] = []
@@ -10782,7 +10794,12 @@ Environment Variables:
     config_group.add_argument(
         "--config",
         type=str,
-        help="Path to YAML/JSON configuration file or @examples/NAME. With --quickstart, this is used as the output filename under .massgen/",
+        help=(
+            "Path to YAML/JSON configuration file or @examples/NAME. With "
+            "interactive --quickstart, this is used as the output filename under "
+            ".massgen/. With --quickstart --headless, this is used as the exact "
+            "output config path."
+        ),
     )
     config_group.add_argument(
         "--select",
@@ -11217,8 +11234,12 @@ def _load_eval_criteria(file_path: str) -> list[dict]:
     except json.JSONDecodeError as e:
         print(f"{BRIGHT_RED}Error: --eval-criteria file is not valid JSON: {e}{RESET}")
         sys.exit(EXIT_CONFIG_ERROR)
+    # Accept both bare array [...] and wrapped {"criteria": [...]} format
+    # (the latter is what MassGen's quality tools produce)
+    if isinstance(criteria_data, dict) and "criteria" in criteria_data:
+        criteria_data = criteria_data["criteria"]
     if not isinstance(criteria_data, list):
-        print(f"{BRIGHT_RED}Error: --eval-criteria must be a JSON array{RESET}")
+        print(f'{BRIGHT_RED}Error: --eval-criteria must be a JSON array or {{"criteria": [...]}}{RESET}')
         sys.exit(EXIT_CONFIG_ERROR)
     return criteria_data
 
@@ -11374,6 +11395,7 @@ def _cli_main_continued(args):
         logger.debug(f"Command line arguments: {vars(args)}")
 
     quickstart_config_filename = _quickstart_filename_from_config_arg(args.config) if args.quickstart else None
+    headless_quickstart_output_path = _headless_quickstart_output_path_from_config_arg(args.config) if args.quickstart else None
 
     def _run_quickstart_wizard_tui(config_filename: str | None = None):
         """Launch quickstart wizard TUI. Returns result dict or None."""
@@ -11790,6 +11812,7 @@ def _cli_main_continued(args):
             )
             headless_result = builder.run_quickstart_headless(
                 output_dir=".massgen",
+                output_path=headless_quickstart_output_path,
                 num_agents=args.config_agents or 3,
                 backend_override=args.config_backend,
                 model_override=args.config_model,

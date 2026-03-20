@@ -116,6 +116,10 @@ class TestBuildConfig:
         config = build_config(models=["grok-4"])
         assert config["agents"][0]["backend"]["type"] == "grok"
 
+        # New Grok default model
+        config = build_config(models=["grok-4.20-0309-reasoning"])
+        assert config["agents"][0]["backend"]["type"] == "grok"
+
     def test_build_config_slash_format(self):
         """Test slash format for explicit backend specification."""
         config = build_config(models=["openai/gpt-5", "groq/llama-3.3-70b"])

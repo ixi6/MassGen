@@ -66,7 +66,7 @@ HEADLESS_BACKEND_PRIORITY = [
     ("claude", "claude-sonnet-4-5-20250514"),
     ("openai", "gpt-5.4"),
     ("gemini", "gemini-3-flash-preview"),
-    ("grok", "grok-4-1-fast-reasoning"),
+    ("grok", "grok-4.20-0309-reasoning"),
 ]
 
 
@@ -155,9 +155,22 @@ def build_quickstart_env_path(
 def resolve_headless_quickstart_project_dir(
     output_dir: str | Path,
     *,
+    output_path: str | Path | None = None,
     cwd: Path | None = None,
 ) -> Path:
     """Resolve the project dir used for local headless quickstart env files."""
+    if output_path is not None:
+        resolved_output_path = Path(output_path).expanduser()
+        parent = resolved_output_path.parent
+        if str(parent) in {"", "."}:
+            return cwd or Path.cwd()
+        if parent.name == ".massgen":
+            project_dir = parent.parent
+            if str(project_dir) in {"", "."}:
+                return cwd or Path.cwd()
+            return project_dir
+        return parent
+
     resolved_output_dir = Path(output_dir)
     if resolved_output_dir.name == ".massgen":
         parent = resolved_output_dir.parent
@@ -769,6 +782,12 @@ class ConfigBuilder:
                         api_keys[provider_id] = True
                         continue
 
+                    # Gemini CLI supports cached login credentials in ~/.gemini/
+                    # in addition to GOOGLE_API_KEY / GEMINI_API_KEY.
+                    if provider_id == "gemini_cli":
+                        api_keys[provider_id] = self._has_gemini_cli_credentials()
+                        continue
+
                     env_var = provider_info.get("env_var")
                     if env_var:
                         api_keys[provider_id] = bool(os.getenv(env_var))
@@ -784,6 +803,14 @@ class ConfigBuilder:
             console.print(f"[error]❌ Error detecting API keys: {e}[/error]")
             # Return empty dict to allow continue with manual input
             return {provider_id: False for provider_id in self.PROVIDERS.keys()}
+
+    def _has_gemini_cli_credentials(self) -> bool:
+        """Return True when Gemini CLI can authenticate via env var or cached login."""
+        if os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"):
+            return True
+
+        gemini_home = Path.home() / ".gemini"
+        return (gemini_home / "google_accounts.json").exists() or (gemini_home / "oauth_creds.json").exists()
 
     def interactive_api_key_setup(self) -> dict[str, bool]:
         """Interactive API key setup wizard.
@@ -4276,6 +4303,7 @@ class ConfigBuilder:
     def run_quickstart_headless(
         self,
         output_dir: str = ".massgen",
+        output_path: str | None = None,
         num_agents: int = 3,
         backend_override: str | None = None,
         model_override: str | None = None,
@@ -4290,6 +4318,7 @@ class ConfigBuilder:
 
         Args:
             output_dir: Directory for config and .env files
+            output_path: Optional exact config file path (overrides output_dir/config.yaml)
             num_agents: Number of agents (default 3)
             backend_override: Force specific backend for all agents
             model_override: Force specific model for all agents
@@ -4318,7 +4347,10 @@ class ConfigBuilder:
             "messages": [],
             "manual_steps": [],
         }
-        project_dir = resolve_headless_quickstart_project_dir(output_dir)
+        project_dir = resolve_headless_quickstart_project_dir(
+            output_dir,
+            output_path=output_path,
+        )
         env_template_path = build_quickstart_env_path(
             location="project",
             project_dir=project_dir,
@@ -4453,7 +4485,7 @@ class ConfigBuilder:
             result["docker_available"] = False
 
         # Step 4: Generate config
-        config_path = str(Path(output_dir) / "config.yaml")
+        config_path = output_path or str(Path(output_dir) / "config.yaml")
         try:
             if resolved_agent_specs:
                 config = self._generate_quickstart_config(

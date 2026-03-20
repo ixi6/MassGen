@@ -469,6 +469,96 @@ class TestHeadlessCLI:
         ]
         assert f"Configuration saved to: {output_path}" in output
 
+    def test_headless_quickstart_cli_honors_exact_config_path(self, monkeypatch, tmp_path):
+        """Headless quickstart should treat --config as an exact output path."""
+        from massgen import cli as massgen_cli
+
+        requested_path = tmp_path / "exact" / "headless.yaml"
+        args = massgen_cli.main_parser().parse_args(
+            [
+                "--quickstart",
+                "--headless",
+                "--config",
+                str(requested_path),
+                "--config-backend",
+                "openai",
+                "--config-model",
+                "gpt-5.4",
+            ],
+        )
+
+        run_calls = []
+        monkeypatch.setattr(
+            massgen_cli,
+            "_print_headless_quickstart_summary",
+            lambda result: None,
+        )
+        monkeypatch.setattr(
+            massgen_cli,
+            "_ensure_quickstart_skills_ready",
+            lambda *_args, **_kwargs: None,
+        )
+
+        def fake_run_quickstart_headless(
+            self,
+            output_dir,
+            num_agents,
+            backend_override,
+            model_override,
+            use_docker,
+            context_path,
+            agent_specs,
+            output_path=None,
+        ):
+            run_calls.append(
+                {
+                    "output_dir": output_dir,
+                    "output_path": output_path,
+                    "num_agents": num_agents,
+                    "backend_override": backend_override,
+                    "model_override": model_override,
+                    "use_docker": use_docker,
+                    "context_path": context_path,
+                    "agent_specs": agent_specs,
+                },
+            )
+            return {
+                "success": True,
+                "config_path": output_path,
+                "env_template_path": None,
+                "backend": backend_override,
+                "model": model_override,
+                "backends": None,
+                "models": None,
+                "api_keys_summary": {},
+                "docker_available": False,
+                "docker_pulled": False,
+                "skills_installed": False,
+                "messages": [],
+                "manual_steps": [],
+            }
+
+        monkeypatch.setattr(
+            massgen_cli.ConfigBuilder,
+            "run_quickstart_headless",
+            fake_run_quickstart_headless,
+        )
+
+        massgen_cli._cli_main_continued(args)
+
+        assert run_calls == [
+            {
+                "output_dir": ".massgen",
+                "output_path": str(requested_path),
+                "num_agents": 3,
+                "backend_override": "openai",
+                "model_override": "gpt-5.4",
+                "use_docker": None,
+                "context_path": None,
+                "agent_specs": None,
+            },
+        ]
+
 
 class TestHeadlessAutoTrigger:
     """Auto-trigger headless mode when no TTY."""

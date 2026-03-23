@@ -231,7 +231,7 @@ Most configurations use environment variables for API keys:so
 **New Features:** Modernized WebUI
 
 **Key Features:**
-- **Modernized WebUI v0.3**: Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management
+- **Modernized WebUI**: Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management
 - **RoundBudgetGuardHook**: Per-round cost enforcement with configurable warning thresholds
 - **Unified Pre-Collab**: Personas, evaluation criteria, and prompt improvement run in parallel
 - **Regression Guard**: Blind A/B verification subagent before submitting revisions

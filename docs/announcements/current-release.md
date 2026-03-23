@@ -33,7 +33,7 @@ We're excited to release MassGen v0.1.67 — Modernized WebUI! 🚀 Complete Web
 
 **Key Improvement:**
 
-🖥️ **Modernized WebUI v0.3** - Complete UI redesign:
+🖥️ **Modernized WebUI** - Complete UI redesign:
 - Inline final answers replace modal overlays for smoother workflow
 - Responsive keyboard shortcuts for efficient navigation
 - Modernized React component architecture with Zustand state management

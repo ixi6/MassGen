@@ -159,7 +159,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: March 23, 2026**
 
 **What's New in v0.1.67:**
-- **🖥️ Modernized WebUI v0.3** - Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management.
+- **🖥️ Modernized WebUI** - Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management.
 - **💰 RoundBudgetGuardHook** - Per-round cost enforcement prevents unexpected API bill overruns.
 - **🎭 Unified Pre-Collab** - Personas, evaluation criteria, and prompt improvement run in parallel.
 
@@ -1244,7 +1244,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 **🎉 Released: March 23, 2026**
 
 #### Modernized WebUI & Quality
-- **Modernized WebUI v0.3** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management
+- **Modernized WebUI** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management
 - **RoundBudgetGuardHook** ([#1013](https://github.com/massgen/MassGen/pull/1013)): Per-round cost enforcement with configurable warning thresholds
 - **Unified Pre-Collab** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Personas, evaluation criteria, and prompt improvement run in parallel
 - **Regression Guard** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Blind A/B verification subagent before submitting revisions

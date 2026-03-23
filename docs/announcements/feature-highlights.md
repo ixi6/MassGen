@@ -25,7 +25,7 @@ Update this when major new features ship.
 
 🐳Code execution — Each agent can run commands (with Docker support, if installed) and use code mode for efficient filesystem-discoverable tools with large token reduction. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/tools/code_execution.html
 
-🖥️Interactive TUI & Web UI — Watch agents in real-time via Terminal UI with mode cycling, log analysis, tool batching, and keyboard shortcuts. Session viewer for observing automation runs. Modernized Web UI v0.3 with inline final answers and keyboard shortcuts. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/webui.html
+🖥️Interactive TUI & Web UI — Watch agents in real-time via Terminal UI with mode cycling, log analysis, tool batching, and keyboard shortcuts. Session viewer for observing automation runs. Modernized Web UI with inline final answers and keyboard shortcuts. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/webui.html
 
 🪪Trace workflows — Orchestration logs, execution traces, workspace history, cost tracking, and Logfire integration for full observability. 👉 More Info: https://docs.massgen.ai/en/latest/user_guide/logging.html#logging-directory-structure
 
@@ -47,7 +47,7 @@ Update this when major new features ship.
 
 🐳Code execution — Each agent can run commands (with Docker support, if installed) and use code mode for efficient filesystem-discoverable tools with large token reduction. 👉 More Info: https://lnkd.in/gDy5imFE
 
-🖥️Interactive TUI & Web UI — Watch agents in real-time via Terminal UI with mode cycling, log analysis, tool batching, and keyboard shortcuts. Session viewer for observing automation runs. Modernized Web UI v0.3 with inline final answers and keyboard shortcuts. 👉 More Info: https://lnkd.in/gxWNKCB6
+🖥️Interactive TUI & Web UI — Watch agents in real-time via Terminal UI with mode cycling, log analysis, tool batching, and keyboard shortcuts. Session viewer for observing automation runs. Modernized Web UI with inline final answers and keyboard shortcuts. 👉 More Info: https://lnkd.in/gxWNKCB6
 
 🪪Trace workflows — Orchestration logs, execution traces, workspace history, cost tracking, and Logfire integration for full observability. 👉 More Info: https://lnkd.in/gecFJE2z
 

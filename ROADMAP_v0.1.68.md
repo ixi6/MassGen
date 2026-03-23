@@ -27,5 +27,5 @@ Version 0.1.68 focuses on running MassGen as a cloud job on Modal.
 
 ## Related Tracks
 
-- **v0.1.67**: Modernized WebUI — WebUI v0.3, Budget Guard, pre-collab, regression guard ([#1016](https://github.com/massgen/MassGen/pull/1016), [#1013](https://github.com/massgen/MassGen/pull/1013))
+- **v0.1.67**: Modernized WebUI — WebUI, Budget Guard, pre-collab, regression guard ([#1016](https://github.com/massgen/MassGen/pull/1016), [#1013](https://github.com/massgen/MassGen/pull/1013))
 - **v0.1.69**: OpenAI Audio API ([#960](https://github.com/massgen/MassGen/issues/960))

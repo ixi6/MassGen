@@ -55,7 +55,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 **Released:** March 23, 2026 | PRs: [#1016](https://github.com/massgen/MassGen/pull/1016), [#1013](https://github.com/massgen/MassGen/pull/1013)
 
 ### Features
-- **Modernized WebUI v0.3**: Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management
+- **Modernized WebUI**: Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management
 - **RoundBudgetGuardHook**: Per-round cost enforcement with configurable warning thresholds
 - **Unified Pre-Collab Phases**: Personas, evaluation criteria, and prompt improvement run in parallel
 - **Regression Guard**: Blind A/B verification subagent before submitting revisions

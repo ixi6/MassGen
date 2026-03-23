@@ -23,7 +23,7 @@ Standalone MCP servers (quality, workflow, media) bring MassGen's checklist-base
 ## [0.1.67] - 2026-03-23
 
 ### Added
-- **Modernized WebUI v0.3** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management (message, mode, tile, agent, theme stores)
+- **Modernized WebUI** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Complete UI redesign with inline final answers, keyboard shortcuts, and Zustand state management (message, mode, tile, agent, theme stores)
 - **RoundBudgetGuardHook** ([#1013](https://github.com/massgen/MassGen/pull/1013)): Per-round cost enforcement with configurable warning thresholds (50%, 75%, 90%) and graceful termination on budget overrun
 - **Unified Pre-Collab Phases** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Persona generation, evaluation criteria, and prompt improvement now run in parallel with unified TUI batch display
 - **Regression Guard** ([#1016](https://github.com/massgen/MassGen/pull/1016)): Blind A/B verification subagent before submitting revisions to catch silent regressions

@@ -1,6 +1,6 @@
 # 🚀 Release Highlights — v0.1.67 (2026-03-23)
 
-### 🖥️ [Modernized WebUI v0.3](https://docs.massgen.ai/en/latest/user_guide/webui.html)
+### 🖥️ [Modernized WebUI](https://docs.massgen.ai/en/latest/user_guide/webui.html)
 - **Inline final answers**: Final answers render inline in AgentChannel — no more modal overlays
 - **Keyboard shortcuts**: Responsive navigation via `useV2KeyboardShortcuts`
 - **Modernized architecture**: Zustand stores (message, mode, tile, agent, theme) replace ad-hoc state management

@@ -1018,6 +1018,7 @@ class Orchestrator(ChatAgent):
             )
             if _active_subagent_types is None:
                 _active_subagent_types = DEFAULT_SUBAGENT_TYPES
+            _lowered_types = {t.lower() for t in _active_subagent_types}
 
             checklist_state = {
                 "threshold": threshold,
@@ -1060,15 +1061,15 @@ class Orchestrator(ChatAgent):
                 "item_verify_by": item_verify_by or {},
                 "criteria_source": criteria_source,
                 # Novelty subagent guidance only when novelty type is available
-                "novelty_subagent_enabled": "novelty" in [t.lower() for t in _active_subagent_types],
+                "novelty_subagent_enabled": "novelty" in _lowered_types,
                 # Critic subagent guidance only when critic type is available
-                "critic_subagent_enabled": "critic" in [t.lower() for t in _active_subagent_types],
+                "critic_subagent_enabled": "critic" in _lowered_types,
                 # Builder subagent guidance only when builder type is available
-                "builder_subagent_enabled": "builder" in [t.lower() for t in _active_subagent_types],
+                "builder_subagent_enabled": "builder" in _lowered_types,
                 # Regression guard: agent-initiated blind comparison before committing
-                "regression_guard_subagent_enabled": "regression_guard" in [t.lower() for t in _active_subagent_types],
+                "regression_guard_subagent_enabled": "regression_guard" in _lowered_types,
                 # Quality rethinking subagent: per-element craft improvements
-                "quality_rethinking_subagent_enabled": "quality_rethinking" in [t.lower() for t in _active_subagent_types],
+                "quality_rethinking_subagent_enabled": "quality_rethinking" in _lowered_types,
                 # Planning injection dir for auto-populating task plan from propose_improvements
                 "planning_injection_dir": str(getattr(self, "_planning_injection_dirs", {}).get(agent_id, "")),
                 # Whether subagents are enabled (for delegation guidance in propose_improvements message)
@@ -3169,47 +3170,138 @@ class Orchestrator(ChatAgent):
 
         return config
 
+    # ------------------------------------------------------------------
+    # Pre-collab shared helpers
+    # ------------------------------------------------------------------
+
+    def _build_parent_agent_configs(self) -> list[dict[str, Any]]:
+        """Build simplified agent configs for subagent inheritance."""
+        configs: list[dict[str, Any]] = []
+        for agent_id, agent in self.agents.items():
+            agent_cfg: dict[str, Any] = {"id": agent_id}
+            if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
+                backend_cfg = {k: v for k, v in agent.backend.config.items() if k not in ("mcp_servers", "_config_path")}
+                agent_cfg["backend"] = backend_cfg
+            configs.append(agent_cfg)
+        return configs
+
+    def _get_parent_workspace(self, fallback_prefix: str = "massgen_precollab_") -> str:
+        """Return the first agent's workspace path, or a temp dir."""
+        for agent in self.agents.values():
+            fm = getattr(getattr(agent, "backend", None), "filesystem_manager", None)
+            if fm and fm.cwd:
+                return str(fm.cwd)
+        import tempfile
+
+        return tempfile.mkdtemp(prefix=fallback_prefix)
+
+    @staticmethod
+    def _get_log_directory() -> str | None:
+        """Return the current log session directory as a string, or None."""
+        try:
+            log_dir = get_log_session_dir()
+            return str(log_dir) if log_dir else None
+        except Exception:
+            return None
+
+    def _get_pre_collab_voting_threshold(self) -> int | None:
+        """Return the voting threshold for pre-collab subagent runs."""
+        threshold = getattr(
+            self.config.coordination_config,
+            "pre_collab_voting_threshold",
+            None,
+        )
+        if threshold is None:
+            threshold = getattr(self.config, "voting_threshold", None)
+        return threshold
+
+    def _make_precollab_started_callback(
+        self,
+        anchor_agent: str | None,
+        call_id: str,
+        display: Any,
+    ):
+        """Build a callback for pre-collab subagent start notifications."""
+
+        def _on_started(
+            subagent_id: str,
+            subagent_task: str,
+            timeout_seconds: int,
+            status_callback: Any,
+            log_path: str | None,
+        ) -> None:
+            _emitter = get_event_emitter()
+            if _emitter:
+                _emitter.emit_raw(
+                    StructuredEventType.PRE_COLLAB_STARTED,
+                    agent_id=anchor_agent,
+                    subagent_id=subagent_id,
+                    task=subagent_task,
+                    timeout_seconds=timeout_seconds,
+                    call_id=call_id,
+                    log_path=log_path,
+                )
+            if display and anchor_agent and hasattr(display, "notify_runtime_subagent_started"):
+                try:
+                    display.notify_runtime_subagent_started(
+                        agent_id=anchor_agent,
+                        subagent_id=subagent_id,
+                        task=subagent_task,
+                        timeout_seconds=timeout_seconds,
+                        call_id=call_id,
+                        status_callback=status_callback,
+                        log_path=log_path,
+                    )
+                except Exception:
+                    pass
+
+        return _on_started
+
+    def _notify_precollab_completed(
+        self,
+        anchor_agent: str | None,
+        subagent_id: str,
+        call_id: str,
+        display: Any,
+        *,
+        status: str = "completed",
+        answer_preview: str = "",
+        error: str | None = None,
+    ) -> None:
+        """Emit event + notify display for a pre-collab phase completion."""
+        _emitter = get_event_emitter()
+        kwargs: dict[str, Any] = {
+            "agent_id": anchor_agent,
+            "subagent_id": subagent_id,
+            "call_id": call_id,
+            "status": status,
+        }
+        if error:
+            kwargs["error"] = error
+        if answer_preview:
+            kwargs["answer_preview"] = answer_preview
+        if _emitter and anchor_agent:
+            _emitter.emit_raw(StructuredEventType.PRE_COLLAB_COMPLETED, **kwargs)
+
+        if display and anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
+            try:
+                display.notify_runtime_subagent_completed(**kwargs)
+            except Exception:
+                pass
+
+    # ------------------------------------------------------------------
+    # Pre-collab phases
+    # ------------------------------------------------------------------
+
     async def _generate_and_inject_personas(self) -> None:
-        """
-        Generate diverse personas for all agents and inject into their system messages.
-
-        This method uses a subagent (running the same models as parent) to generate
-        complementary personas for each agent, increasing response diversity.
-        The generated personas are prepended to existing system messages.
-
-        The subagent approach:
-        - Inherits the same models/backends as the parent config
-        - Uses stripped-down config (no filesystem/command line tools)
-        - If parent has N agents, subagent uses N agents to collaboratively generate personas
-        """
-        # Check if persona generation is enabled
+        """Generate diverse personas for all agents and inject into their system messages."""
         if not hasattr(self.config, "coordination_config"):
-            logger.info(
-                "[Orchestrator] No coordination_config, skipping persona generation",
-            )
             return
         if not hasattr(self.config.coordination_config, "persona_generator"):
-            logger.info(
-                "[Orchestrator] No persona_generator config, skipping persona generation",
-            )
             return
-
-        pg = self.config.coordination_config.persona_generator
-        logger.info(
-            f"[Orchestrator] persona_generator config: type={type(pg)}, value={pg}",
-        )
-        if hasattr(pg, "enabled"):
-            logger.info(f"[Orchestrator] persona_generator.enabled = {pg.enabled}")
-        else:
-            logger.info(
-                f"[Orchestrator] persona_generator has no 'enabled' attr, attrs={dir(pg)}",
-            )
-
         if not self.config.coordination_config.persona_generator.enabled:
             logger.info("[Orchestrator] Persona generation disabled in config")
             return
-
-        # Skip if already generated (for multi-turn scenarios)
         if self._personas_generated:
             logger.info("[Orchestrator] Personas already generated, skipping")
             return
@@ -3218,19 +3310,17 @@ class Orchestrator(ChatAgent):
             f"[Orchestrator] Generating personas for {len(self.agents)} agents via subagent",
         )
 
+        display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+        anchor_agent = next(iter(self.agents.keys()), None)
+        call_id = "persona_generation_persona_generation"
+
         try:
             pg_config = self.config.coordination_config.persona_generator
-            display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
-            persona_anchor_agent = next(iter(self.agents.keys()), None)
-            persona_call_id = "persona_generation_persona_generation"
-
-            # Initialize generator
             generator = PersonaGenerator(
                 guidelines=pg_config.persona_guidelines,
                 diversity_mode=pg_config.diversity_mode,
             )
 
-            # Get existing system messages
             existing_messages = {}
             for agent_id, agent in self.agents.items():
                 if hasattr(agent, "get_configurable_system_message"):
@@ -3238,169 +3328,57 @@ class Orchestrator(ChatAgent):
                 else:
                     existing_messages[agent_id] = None
 
-            # Build parent agent configs for inheritance
-            parent_configs = []
-            for agent_id, agent in self.agents.items():
-                agent_cfg = {"id": agent_id}
-                if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
-                    # Filter out non-serializable keys
-                    backend_cfg = {k: v for k, v in agent.backend.config.items() if k not in ("mcp_servers", "_config_path")}
-                    agent_cfg["backend"] = backend_cfg
-                parent_configs.append(agent_cfg)
-
-            # Get workspace path (use first agent's workspace or temp)
-            parent_workspace = None
-            for agent in self.agents.values():
-                if hasattr(agent, "backend") and hasattr(
-                    agent.backend,
-                    "filesystem_manager",
-                ):
-                    if agent.backend.filesystem_manager and agent.backend.filesystem_manager.cwd:
-                        parent_workspace = str(agent.backend.filesystem_manager.cwd)
-                        break
-
-            if not parent_workspace:
-                import tempfile
-
-                parent_workspace = tempfile.mkdtemp(prefix="massgen_persona_")
-                logger.debug(
-                    f"[Orchestrator] Using temp workspace for persona generation: {parent_workspace}",
-                )
-
-            # Get log directory
-            log_directory = None
-            try:
-                log_dir = get_log_session_dir()
-                if log_dir:
-                    log_directory = str(log_dir)
-            except Exception:
-                pass
-
-            def _on_persona_subagent_started(
-                subagent_id: str,
-                subagent_task: str,
-                timeout_seconds: int,
-                status_callback: Any,
-                log_path: str | None,
-            ) -> None:
-                _emitter = get_event_emitter()
-                if _emitter:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_STARTED,
-                        agent_id=persona_anchor_agent,
-                        subagent_id=subagent_id,
-                        task=subagent_task,
-                        timeout_seconds=timeout_seconds,
-                        call_id=persona_call_id,
-                        log_path=log_path,
-                    )
-                if display and persona_anchor_agent and hasattr(display, "notify_runtime_subagent_started"):
-                    try:
-                        display.notify_runtime_subagent_started(
-                            agent_id=persona_anchor_agent,
-                            subagent_id=subagent_id,
-                            task=subagent_task,
-                            timeout_seconds=timeout_seconds,
-                            call_id=persona_call_id,
-                            status_callback=status_callback,
-                            log_path=log_path,
-                        )
-                    except Exception:
-                        pass
-
-            pre_collab_voting_threshold = getattr(
-                self.config.coordination_config,
-                "pre_collab_voting_threshold",
-                None,
-            )
-            if pre_collab_voting_threshold is None:
-                pre_collab_voting_threshold = getattr(self.config, "voting_threshold", None)
-
-            # Generate personas via subagent
             personas = await generator.generate_personas_via_subagent(
                 agent_ids=list(self.agents.keys()),
                 task=self.current_task or "Complete the assigned task",
                 existing_system_messages=existing_messages,
-                parent_agent_configs=parent_configs,
-                parent_workspace=parent_workspace,
+                parent_agent_configs=self._build_parent_agent_configs(),
+                parent_workspace=self._get_parent_workspace("massgen_persona_"),
                 orchestrator_id=self.orchestrator_id,
-                log_directory=log_directory,
-                on_subagent_started=_on_persona_subagent_started,
+                log_directory=self._get_log_directory(),
+                on_subagent_started=self._make_precollab_started_callback(
+                    anchor_agent,
+                    call_id,
+                    display,
+                ),
                 voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
-                voting_threshold=pre_collab_voting_threshold,
+                voting_threshold=self._get_pre_collab_voting_threshold(),
                 has_planning_spec_context=bool(self._plan_session_id),
             )
 
             source = getattr(generator, "last_generation_source", "unknown")
 
-            # Emit event for replay
-            _emitter = get_event_emitter()
-            if _emitter and persona_anchor_agent:
-                if source == "subagent":
-                    _preview_entries: list[str] = []
-                    for _aid, _persona in personas.items():
-                        _summary = _persona.attributes.get(
-                            "approach_summary",
-                            _persona.attributes.get("thinking_style", ""),
-                        )
-                        if _summary:
-                            _preview_entries.append(f"{_aid}: {_summary}")
-                        if len(_preview_entries) >= 2:
-                            break
-                    _preview = " | ".join(_preview_entries)[:400]
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_COMPLETED,
-                        agent_id=persona_anchor_agent,
-                        subagent_id="persona_generation",
-                        call_id=persona_call_id,
-                        status="completed",
-                        answer_preview=_preview or "Personas generated successfully.",
-                    )
-                else:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_COMPLETED,
-                        agent_id=persona_anchor_agent,
-                        subagent_id="persona_generation",
-                        call_id=persona_call_id,
-                        status="failed",
-                        error="Used fallback personas.",
-                    )
+            # Build preview from personas
+            preview_entries: list[str] = []
+            for aid, persona in personas.items():
+                summary = persona.attributes.get(
+                    "approach_summary",
+                    persona.attributes.get("thinking_style", ""),
+                )
+                if summary:
+                    preview_entries.append(f"{aid}: {summary}")
+                if len(preview_entries) >= 2:
+                    break
+            preview = " | ".join(preview_entries)[:400]
 
-            if display and persona_anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
-                try:
-                    if source == "subagent":
-                        preview_entries: list[str] = []
-                        for aid, persona in personas.items():
-                            summary = persona.attributes.get(
-                                "approach_summary",
-                                persona.attributes.get("thinking_style", ""),
-                            )
-                            if summary:
-                                preview_entries.append(f"{aid}: {summary}")
-                            if len(preview_entries) >= 2:
-                                break
-                        preview = " | ".join(preview_entries)[:400]
-                        display.notify_runtime_subagent_completed(
-                            agent_id=persona_anchor_agent,
-                            subagent_id="persona_generation",
-                            call_id=persona_call_id,
-                            status="completed",
-                            answer_preview=preview or "Personas generated successfully.",
-                        )
-                    else:
-                        display.notify_runtime_subagent_completed(
-                            agent_id=persona_anchor_agent,
-                            subagent_id="persona_generation",
-                            call_id=persona_call_id,
-                            status="failed",
-                            error="Used fallback personas.",
-                        )
-                except Exception:
-                    pass
+            if source == "subagent":
+                self._notify_precollab_completed(
+                    anchor_agent,
+                    "persona_generation",
+                    call_id,
+                    display,
+                    answer_preview=preview or "Personas generated successfully.",
+                )
+            else:
+                self._notify_precollab_completed(
+                    anchor_agent,
+                    "persona_generation",
+                    call_id,
+                    display,
+                    status="failed",
+                    error="Used fallback personas.",
+                )
 
-            # Store personas and original system messages for phase-based injection
-            # We don't inject into agents here - we do it dynamically per execution
-            # based on whether they've seen other answers (exploration vs convergence)
             self._generated_personas = personas
             self._original_system_messages = existing_messages
             self._personas_generated = True
@@ -3414,9 +3392,7 @@ class Orchestrator(ChatAgent):
                     f"[Orchestrator] Generated persona for {agent_id}: {approach}",
                 )
 
-            # Save personas to log file
             self._save_personas_to_log(personas)
-
             logger.info(
                 f"[Orchestrator] Successfully generated and injected {len(personas)} personas",
             )
@@ -3424,152 +3400,63 @@ class Orchestrator(ChatAgent):
         except Exception as e:
             logger.error(f"[Orchestrator] Failed to generate personas: {e}")
             logger.warning("[Orchestrator] Continuing without persona generation")
-            try:
-                display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
-                persona_anchor_agent = next(iter(self.agents.keys()), None)
-                _emitter = get_event_emitter()
-                if _emitter and persona_anchor_agent:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_COMPLETED,
-                        agent_id=persona_anchor_agent,
-                        subagent_id="persona_generation",
-                        call_id="persona_generation_persona_generation",
-                        status="failed",
-                        error=str(e),
-                    )
-                if display and persona_anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
-                    display.notify_runtime_subagent_completed(
-                        agent_id=persona_anchor_agent,
-                        subagent_id="persona_generation",
-                        call_id="persona_generation_persona_generation",
-                        status="failed",
-                        error=str(e),
-                    )
-            except Exception:
-                pass
+            self._notify_precollab_completed(
+                anchor_agent,
+                "persona_generation",
+                call_id,
+                display,
+                status="failed",
+                error=str(e),
+            )
             self._personas_generated = True  # Don't retry on failure
 
     async def _generate_and_inject_evaluation_criteria(self) -> None:
-        """Generate task-specific evaluation criteria via a pre-collab subagent run.
-
-        When enabled, spawns a subagent to generate criteria specific to the current task.
-        Falls back to static defaults on failure. Follows the same pattern as persona generation.
-        """
+        """Generate task-specific evaluation criteria via a pre-collab subagent run."""
         if not hasattr(self.config, "coordination_config"):
             return
         if not hasattr(self.config.coordination_config, "evaluation_criteria_generator"):
             return
-
-        ecg = self.config.coordination_config.evaluation_criteria_generator
-        if not ecg.enabled:
+        if not self.config.coordination_config.evaluation_criteria_generator.enabled:
             logger.info("[Orchestrator] Evaluation criteria generation disabled in config")
             return
-
         if self._evaluation_criteria_generated:
             logger.info("[Orchestrator] Evaluation criteria already generated, skipping")
             return
 
         logger.info("[Orchestrator] Generating evaluation criteria via subagent")
 
+        display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+        anchor_agent = next(iter(self.agents.keys()), None)
+        call_id = "criteria_generation_criteria_generation"
+
         try:
             from .evaluation_criteria_generator import EvaluationCriteriaGenerator
 
+            ecg = self.config.coordination_config.evaluation_criteria_generator
             generator = EvaluationCriteriaGenerator()
 
-            # Build parent agent configs for inheritance
-            parent_configs = []
-            for agent_id, agent in self.agents.items():
-                agent_cfg = {"id": agent_id}
-                if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
-                    backend_cfg = {k: v for k, v in agent.backend.config.items() if k not in ("mcp_servers", "_config_path")}
-                    agent_cfg["backend"] = backend_cfg
-                parent_configs.append(agent_cfg)
-
-            # Get workspace path
-            parent_workspace = None
-            for agent in self.agents.values():
-                if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager and agent.backend.filesystem_manager.cwd:
-                    parent_workspace = str(agent.backend.filesystem_manager.cwd)
-                    break
-
-            if not parent_workspace:
-                import tempfile
-
-                parent_workspace = tempfile.mkdtemp(prefix="massgen_criteria_")
-
-            # Get log directory
-            log_directory = None
-            try:
-                log_dir = get_log_session_dir()
-                if log_dir:
-                    log_directory = str(log_dir)
-            except Exception:
-                pass
-
-            # Determine if changedoc is enabled
             has_changedoc = getattr(
                 self.config.coordination_config,
                 "enable_changedoc",
                 False,
             )
 
-            # Display notification setup
-            display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
-            criteria_anchor_agent = next(iter(self.agents.keys()), None)
-            criteria_call_id = "criteria_generation_criteria_generation"
-
-            def _on_criteria_subagent_started(
-                subagent_id: str,
-                subagent_task: str,
-                timeout_seconds: int,
-                status_callback: Any,
-                log_path: str | None,
-            ) -> None:
-                _emitter = get_event_emitter()
-                if _emitter:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_STARTED,
-                        agent_id=criteria_anchor_agent,
-                        subagent_id=subagent_id,
-                        task=subagent_task,
-                        timeout_seconds=timeout_seconds,
-                        call_id=criteria_call_id,
-                        log_path=log_path,
-                    )
-                if display and criteria_anchor_agent and hasattr(display, "notify_runtime_subagent_started"):
-                    try:
-                        display.notify_runtime_subagent_started(
-                            agent_id=criteria_anchor_agent,
-                            subagent_id=subagent_id,
-                            task=subagent_task,
-                            timeout_seconds=timeout_seconds,
-                            call_id=criteria_call_id,
-                            status_callback=status_callback,
-                            log_path=log_path,
-                        )
-                    except Exception:
-                        pass
-
-            pre_collab_voting_threshold = getattr(
-                self.config.coordination_config,
-                "pre_collab_voting_threshold",
-                None,
-            )
-            if pre_collab_voting_threshold is None:
-                pre_collab_voting_threshold = getattr(self.config, "voting_threshold", None)
-
             criteria = await generator.generate_criteria_via_subagent(
                 task=self.current_task or "",
-                agent_configs=parent_configs,
+                agent_configs=self._build_parent_agent_configs(),
                 has_changedoc=has_changedoc,
-                parent_workspace=parent_workspace,
-                log_directory=log_directory,
+                parent_workspace=self._get_parent_workspace("massgen_criteria_"),
+                log_directory=self._get_log_directory(),
                 orchestrator_id=self.orchestrator_id,
                 min_criteria=ecg.min_criteria,
                 max_criteria=ecg.max_criteria,
-                on_subagent_started=_on_criteria_subagent_started,
+                on_subagent_started=self._make_precollab_started_callback(
+                    anchor_agent,
+                    call_id,
+                    display,
+                ),
                 voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
-                voting_threshold=pre_collab_voting_threshold,
+                voting_threshold=self._get_pre_collab_voting_threshold(),
                 has_planning_spec_context=bool(self._plan_session_id),
             )
 
@@ -3577,12 +3464,7 @@ class Orchestrator(ChatAgent):
             self._evaluation_criteria_generated = True
 
             # Re-initialize checklist tool now that generated criteria are available.
-            # The initial _init_checklist_tool() in __init__ used default items because
-            # criteria hadn't been generated yet. This second call picks up the generated
-            # criteria via the self._generated_evaluation_criteria check (line ~707).
             self._init_checklist_tool()
-
-            # Save to log
             self._save_evaluation_criteria_to_log(criteria)
 
             source = generator.last_generation_source
@@ -3590,80 +3472,36 @@ class Orchestrator(ChatAgent):
                 f"[Orchestrator] Generated {len(criteria)} evaluation criteria (source: {source})",
             )
 
-            # Emit event for replay
-            _emitter = get_event_emitter()
-            if _emitter and criteria_anchor_agent:
-                if source == "subagent":
-                    _crit_preview = " | ".join(f"{c.id}: {c.text[:60]}..." if len(c.text) > 60 else f"{c.id}: {c.text}" for c in criteria[:3])
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_COMPLETED,
-                        agent_id=criteria_anchor_agent,
-                        subagent_id="criteria_generation",
-                        call_id=criteria_call_id,
-                        status="completed",
-                        answer_preview=_crit_preview or f"{len(criteria)} criteria generated.",
-                    )
-                else:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_COMPLETED,
-                        agent_id=criteria_anchor_agent,
-                        subagent_id="criteria_generation",
-                        call_id=criteria_call_id,
-                        status="completed",
-                        answer_preview=f"Using {len(criteria)} fallback criteria.",
-                    )
-
-            # Notify display of completion
-            if display and criteria_anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
-                try:
-                    if source == "subagent":
-                        criteria_preview = " | ".join(f"{c.id}: {c.text[:60]}..." if len(c.text) > 60 else f"{c.id}: {c.text}" for c in criteria[:3])
-                        display.notify_runtime_subagent_completed(
-                            agent_id=criteria_anchor_agent,
-                            subagent_id="criteria_generation",
-                            call_id=criteria_call_id,
-                            status="completed",
-                            answer_preview=criteria_preview or f"{len(criteria)} criteria generated.",
-                        )
-                    else:
-                        display.notify_runtime_subagent_completed(
-                            agent_id=criteria_anchor_agent,
-                            subagent_id="criteria_generation",
-                            call_id=criteria_call_id,
-                            status="completed",
-                            answer_preview=f"Using {len(criteria)} fallback criteria.",
-                        )
-                except Exception:
-                    pass
+            crit_preview = " | ".join(f"{c.id}: {c.text[:60]}..." if len(c.text) > 60 else f"{c.id}: {c.text}" for c in criteria[:3])
+            if source == "subagent":
+                self._notify_precollab_completed(
+                    anchor_agent,
+                    "criteria_generation",
+                    call_id,
+                    display,
+                    answer_preview=crit_preview or f"{len(criteria)} criteria generated.",
+                )
+            else:
+                self._notify_precollab_completed(
+                    anchor_agent,
+                    "criteria_generation",
+                    call_id,
+                    display,
+                    answer_preview=f"Using {len(criteria)} fallback criteria.",
+                )
 
         except Exception as e:
             logger.error(f"[Orchestrator] Failed to generate evaluation criteria: {e}")
             logger.warning("[Orchestrator] Continuing without criteria generation")
             self._evaluation_criteria_generated = True  # Don't retry on failure
-            # Notify display of failure
-            try:
-                display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
-                criteria_anchor_agent = next(iter(self.agents.keys()), None)
-                _emitter = get_event_emitter()
-                if _emitter and criteria_anchor_agent:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_COMPLETED,
-                        agent_id=criteria_anchor_agent,
-                        subagent_id="criteria_generation",
-                        call_id="criteria_generation_criteria_generation",
-                        status="failed",
-                        error=str(e),
-                    )
-                if display and criteria_anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
-                    display.notify_runtime_subagent_completed(
-                        agent_id=criteria_anchor_agent,
-                        subagent_id="criteria_generation",
-                        call_id="criteria_generation_criteria_generation",
-                        status="failed",
-                        error=str(e),
-                    )
-            except Exception:
-                pass
+            self._notify_precollab_completed(
+                anchor_agent,
+                "criteria_generation",
+                call_id,
+                display,
+                status="failed",
+                error=str(e),
+            )
 
     async def _improve_and_inject_prompt(self) -> None:
         """Improve the task prompt via a pre-collab subagent consensus run."""
@@ -3671,115 +3509,36 @@ class Orchestrator(ChatAgent):
             return
         if not hasattr(self.config.coordination_config, "prompt_improver"):
             return
-
-        pi_cfg = self.config.coordination_config.prompt_improver
-        if not pi_cfg.enabled:
+        if not self.config.coordination_config.prompt_improver.enabled:
             return
-
         if self._prompt_improved:
             logger.info("[Orchestrator] Prompt already improved, skipping")
             return
 
         logger.info("[Orchestrator] Improving prompt via subagent")
 
+        display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
+        anchor_agent = next(iter(self.agents.keys()), None)
+        call_id = "prompt_improvement_prompt_improvement"
+
         try:
             from .prompt_improver import PromptImprover
 
             improver = PromptImprover()
 
-            parent_configs = []
-            for agent_id, agent in self.agents.items():
-                agent_cfg: dict[str, Any] = {"id": agent_id}
-                if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
-                    backend_cfg = {k: v for k, v in agent.backend.config.items() if k not in ("mcp_servers", "_config_path")}
-                    agent_cfg["backend"] = backend_cfg
-                parent_configs.append(agent_cfg)
-
-            parent_workspace = None
-            for agent in self.agents.values():
-                fm = getattr(
-                    getattr(agent, "backend", None),
-                    "filesystem_manager",
-                    None,
-                )
-                if fm and fm.cwd:
-                    parent_workspace = str(fm.cwd)
-                    break
-
-            if not parent_workspace:
-                import tempfile
-
-                parent_workspace = tempfile.mkdtemp(prefix="massgen_prompt_")
-
-            log_directory = None
-            try:
-                log_dir = get_log_session_dir()
-                if log_dir:
-                    log_directory = str(log_dir)
-            except Exception:
-                pass
-
-            display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
-            anchor_agent = next(iter(self.agents.keys()), None)
-            call_id = "prompt_improvement_prompt_improvement"
-
-            def _on_prompt_subagent_started(
-                subagent_id: str,
-                subagent_task: str,
-                timeout_seconds: int,
-                status_callback: Any,
-                log_path: str | None,
-            ) -> None:
-                _emitter = get_event_emitter()
-                if _emitter:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_STARTED,
-                        agent_id=anchor_agent,
-                        subagent_id=subagent_id,
-                        task=subagent_task,
-                        timeout_seconds=timeout_seconds,
-                        call_id=call_id,
-                        log_path=log_path,
-                    )
-                if display and anchor_agent and hasattr(display, "notify_runtime_subagent_started"):
-                    try:
-                        display.notify_runtime_subagent_started(
-                            agent_id=anchor_agent,
-                            subagent_id=subagent_id,
-                            task=subagent_task,
-                            timeout_seconds=timeout_seconds,
-                            call_id=call_id,
-                            status_callback=status_callback,
-                            log_path=log_path,
-                        )
-                    except Exception:
-                        pass
-
-            pre_collab_voting_threshold = getattr(
-                self.config.coordination_config,
-                "pre_collab_voting_threshold",
-                None,
-            )
-            if pre_collab_voting_threshold is None:
-                pre_collab_voting_threshold = getattr(
-                    self.config,
-                    "voting_threshold",
-                    None,
-                )
-
             improved = await improver.improve_prompt_via_subagent(
                 task=self.current_task or "",
-                agent_configs=parent_configs,
-                parent_workspace=parent_workspace,
-                log_directory=log_directory,
+                agent_configs=self._build_parent_agent_configs(),
+                parent_workspace=self._get_parent_workspace("massgen_prompt_"),
+                log_directory=self._get_log_directory(),
                 orchestrator_id=self.orchestrator_id,
-                on_subagent_started=_on_prompt_subagent_started,
-                voting_sensitivity=getattr(
-                    self.config,
-                    "voting_sensitivity",
-                    None,
+                on_subagent_started=self._make_precollab_started_callback(
+                    anchor_agent,
+                    call_id,
+                    display,
                 ),
-                voting_threshold=pre_collab_voting_threshold,
+                voting_sensitivity=getattr(self.config, "voting_sensitivity", None),
+                voting_threshold=self._get_pre_collab_voting_threshold(),
             )
 
             self._prompt_improved = True
@@ -3789,7 +3548,6 @@ class Orchestrator(ChatAgent):
                 logger.info(
                     f"[Orchestrator] Prompt improved ({len(improved)} chars)",
                 )
-                # Notify TUI so the session info modal can show the improved prompt
                 if display and hasattr(display, "notify_prompt_improved"):
                     try:
                         display.notify_prompt_improved(improved)
@@ -3797,61 +3555,29 @@ class Orchestrator(ChatAgent):
                         pass
             else:
                 logger.info(
-                    "[Orchestrator] Prompt improvement returned no result, " "keeping original",
+                    "[Orchestrator] Prompt improvement returned no result, keeping original",
                 )
 
-            # Emit completion event
-            _emitter = get_event_emitter()
-            if _emitter and anchor_agent:
-                _emitter.emit_raw(
-                    StructuredEventType.PRE_COLLAB_COMPLETED,
-                    agent_id=anchor_agent,
-                    subagent_id="prompt_improvement",
-                    call_id=call_id,
-                    status="completed",
-                    answer_preview=(f"Improved prompt ({len(improved)} chars)" if improved else "Using original prompt"),
-                )
-            if display and anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
-                try:
-                    display.notify_runtime_subagent_completed(
-                        agent_id=anchor_agent,
-                        subagent_id="prompt_improvement",
-                        call_id=call_id,
-                        status="completed",
-                        answer_preview=(f"Improved prompt ({len(improved)} chars)" if improved else "Using original prompt"),
-                    )
-                except Exception:
-                    pass
+            self._notify_precollab_completed(
+                anchor_agent,
+                "prompt_improvement",
+                call_id,
+                display,
+                answer_preview=(f"Improved prompt ({len(improved)} chars)" if improved else "Using original prompt"),
+            )
 
         except Exception as e:
             logger.error(f"[Orchestrator] Failed to improve prompt: {e}")
-            logger.warning(
-                "[Orchestrator] Continuing without prompt improvement",
-            )
+            logger.warning("[Orchestrator] Continuing without prompt improvement")
             self._prompt_improved = True
-            try:
-                display = getattr(self.coordination_ui, "display", None) if self.coordination_ui else None
-                anchor_agent = next(iter(self.agents.keys()), None)
-                _emitter = get_event_emitter()
-                if _emitter and anchor_agent:
-                    _emitter.emit_raw(
-                        StructuredEventType.PRE_COLLAB_COMPLETED,
-                        agent_id=anchor_agent,
-                        subagent_id="prompt_improvement",
-                        call_id="prompt_improvement_prompt_improvement",
-                        status="failed",
-                        error=str(e),
-                    )
-                if display and anchor_agent and hasattr(display, "notify_runtime_subagent_completed"):
-                    display.notify_runtime_subagent_completed(
-                        agent_id=anchor_agent,
-                        subagent_id="prompt_improvement",
-                        call_id="prompt_improvement_prompt_improvement",
-                        status="failed",
-                        error=str(e),
-                    )
-            except Exception:
-                pass
+            self._notify_precollab_completed(
+                anchor_agent,
+                "prompt_improvement",
+                call_id,
+                display,
+                status="failed",
+                error=str(e),
+            )
 
     def _save_evaluation_criteria_to_log(self, criteria: list) -> None:
         """Save generated evaluation criteria to a YAML file in the log directory."""
@@ -10609,8 +10335,8 @@ Your answer:"""
         """Return True when orchestration is running in decomposition mode."""
         return getattr(self.config, "coordination_mode", "voting") == "decomposition"
 
-    def _is_builder_subagent_enabled(self) -> bool:
-        """Return True when 'builder' is in the active subagent types."""
+    def _is_subagent_type_active(self, type_name: str) -> bool:
+        """Return True when *type_name* is in the active subagent types."""
         from massgen.subagent.type_scanner import DEFAULT_SUBAGENT_TYPES
 
         types = (
@@ -10621,21 +10347,15 @@ Your answer:"""
             )
             or DEFAULT_SUBAGENT_TYPES
         )
-        return "builder" in [t.lower() for t in types]
+        return type_name in {t.lower() for t in types}
+
+    def _is_builder_subagent_enabled(self) -> bool:
+        """Return True when 'builder' is in the active subagent types."""
+        return self._is_subagent_type_active("builder")
 
     def _is_regression_guard_subagent_enabled(self) -> bool:
         """Return True when 'regression_guard' is in the active subagent types."""
-        from massgen.subagent.type_scanner import DEFAULT_SUBAGENT_TYPES
-
-        types = (
-            getattr(
-                getattr(self.config, "coordination_config", None),
-                "subagent_types",
-                None,
-            )
-            or DEFAULT_SUBAGENT_TYPES
-        )
-        return "regression_guard" in [t.lower() for t in types]
+        return self._is_subagent_type_active("regression_guard")
 
     def _is_changedoc_enabled(self) -> bool:
         """Return True when changedoc decision journal is enabled."""

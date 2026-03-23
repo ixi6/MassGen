@@ -53,48 +53,14 @@ def replace_stale_paths_in_workspace(
     # Pre-encode old paths to bytes for fast ``in`` scanning
     encoded_keys = [old.encode("utf-8") for old, _ in ordered]
 
-    modified = 0
-
+    # Collect files from scan dirs
+    target_files: list[Path] = []
     for scan_dir_name in _SCAN_DIRS:
         scan_dir = workspace_root / scan_dir_name
-        if not scan_dir.is_dir():
-            continue
+        if scan_dir.is_dir():
+            target_files.extend(_walk_files(scan_dir))
 
-        for file_path in _walk_files(scan_dir):
-            if _should_skip_file(file_path):
-                continue
-
-            try:
-                raw = file_path.read_bytes()
-            except OSError:
-                continue
-
-            # Fast check: does any old path appear?
-            if not any(key in raw for key in encoded_keys):
-                continue
-
-            # Decode, replace, write back
-            try:
-                text = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-
-            new_text = text
-            for old_path, new_path in ordered:
-                new_text = new_text.replace(old_path, new_path)
-
-            if new_text != text:
-                try:
-                    file_path.write_text(new_text, encoding="utf-8")
-                    modified += 1
-                except OSError as exc:
-                    logger.debug(
-                        "[PathRewriter] Failed to write %s: %s",
-                        file_path,
-                        exc,
-                    )
-
-    return modified
+    return _replace_in_files(target_files, ordered, encoded_keys)
 
 
 def _walk_files(directory: Path) -> list[Path]:
@@ -123,6 +89,38 @@ def _should_skip_file(file_path: Path) -> bool:
     except OSError:
         return True
     return False
+
+
+def _replace_in_files(
+    files: list[Path],
+    ordered_replacements: list[tuple[str, str]],
+    encoded_keys: list[bytes],
+) -> int:
+    """Replace strings in a list of files. Returns count of modified files."""
+    modified = 0
+    for file_path in files:
+        if not file_path.exists() or _should_skip_file(file_path):
+            continue
+        try:
+            raw = file_path.read_bytes()
+        except OSError:
+            continue
+        if not any(key in raw for key in encoded_keys):
+            continue
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            continue
+        new_text = text
+        for old_val, new_val in ordered_replacements:
+            new_text = new_text.replace(old_val, new_val)
+        if new_text != text:
+            try:
+                file_path.write_text(new_text, encoding="utf-8")
+                modified += 1
+            except OSError as exc:
+                logger.debug("[PathRewriter] Failed to write %s: %s", file_path, exc)
+    return modified
 
 
 # ---------------------------------------------------------------------------
@@ -206,37 +204,6 @@ def scrub_agent_ids_in_snapshot(
 
     # Pass 2: Replace agent IDs in file contents
     encoded_keys = [real_id.encode("utf-8") for real_id, _ in ordered]
-
-    for file_path in final_files:
-        if not file_path.exists() or _should_skip_file(file_path):
-            continue
-
-        try:
-            raw = file_path.read_bytes()
-        except OSError:
-            continue
-
-        if not any(key in raw for key in encoded_keys):
-            continue
-
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-
-        new_text = text
-        for real_id, anon_id in ordered:
-            new_text = new_text.replace(real_id, anon_id)
-
-        if new_text != text:
-            try:
-                file_path.write_text(new_text, encoding="utf-8")
-                modified += 1
-            except OSError as exc:
-                logger.debug(
-                    "[PathRewriter] Failed to write %s: %s",
-                    file_path,
-                    exc,
-                )
+    modified += _replace_in_files(final_files, ordered, encoded_keys)
 
     return modified

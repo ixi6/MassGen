@@ -239,9 +239,11 @@ Requirements:
                 coordination=coordination,
                 max_new_answers=5,
             )
-            parent_context_paths = self._build_subagent_parent_context_paths(
+            from massgen.precollab_utils import build_subagent_parent_context_paths
+
+            parent_context_paths = build_subagent_parent_context_paths(
                 parent_workspace=base_workspace,
-                parent_agent_configs=parent_agent_configs,
+                agent_configs=parent_agent_configs,
             )
 
             manager = SubagentManager(
@@ -323,51 +325,6 @@ Requirements:
         fallback_subtasks = self._generate_fallback_subtasks(task, agent_ids, existing_system_messages)
         self.last_subtask_specs = {aid: {"subtask": subtask, "criteria": []} for aid, subtask in fallback_subtasks.items()}
         return fallback_subtasks
-
-    @staticmethod
-    def _build_subagent_parent_context_paths(
-        parent_workspace: str,
-        parent_agent_configs: list[dict[str, Any]],
-    ) -> list[dict[str, str]]:
-        """Build read-only context paths for pre-collab decomposition subagents."""
-        base_workspace = Path(parent_workspace).resolve()
-        context_paths: list[dict[str, str]] = []
-        seen: set[str] = set()
-
-        def _add_path(raw_path: str | None) -> None:
-            if not raw_path:
-                return
-            try:
-                path_obj = Path(raw_path)
-                resolved = path_obj.resolve() if path_obj.is_absolute() else (base_workspace / path_obj).resolve()
-            except Exception:
-                return
-
-            path_str = str(resolved)
-            if path_str in seen:
-                return
-            seen.add(path_str)
-            context_paths.append({"path": path_str, "permission": "read"})
-
-        _add_path(str(base_workspace))
-
-        for config in parent_agent_configs:
-            if not isinstance(config, dict):
-                continue
-            backend = config.get("backend", {})
-            if not isinstance(backend, dict):
-                continue
-            inherited_paths = backend.get("context_paths", [])
-            if not isinstance(inherited_paths, list):
-                continue
-            for entry in inherited_paths:
-                if isinstance(entry, str):
-                    _add_path(entry)
-                elif isinstance(entry, dict):
-                    raw_path = entry.get("path")
-                    _add_path(str(raw_path).strip() if raw_path else None)
-
-        return context_paths
 
     def _parse_subtasks_from_text(self, text: str, agent_ids: list[str]) -> dict[str, str]:
         """Parse decomposition JSON from model text output."""

@@ -15,6 +15,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -37,9 +38,13 @@ from massgen.backend.llm_circuit_breaker import (
 # ---------------------------------------------------------------------------
 
 
+class FakeAPIError(Exception):
+    """Test double for provider API errors."""
+
+
 def _make_api_error(status_code: int, retry_after: float | None = None):
     """Create a fake Anthropic-style API error with optional Retry-After."""
-    exc = Exception(f"HTTP {status_code}")
+    exc = FakeAPIError(f"HTTP {status_code}")
     exc.status_code = status_code
     if retry_after is not None:
         response = MagicMock()
@@ -379,7 +384,7 @@ class TestCallWithRetry429Stop:
         async def api_call():
             raise _make_api_error(429, retry_after=600.0)
 
-        with pytest.raises(Exception, match="429"):
+        with pytest.raises(FakeAPIError, match="429"):
             await cb.call_with_retry(api_call)
 
         assert cb.state == CircuitState.OPEN
@@ -396,7 +401,7 @@ class TestCallWithRetry429Stop:
             call_count += 1
             raise _make_api_error(429, retry_after=3600.0)
 
-        with pytest.raises(Exception):
+        with pytest.raises(FakeAPIError):
             await cb.call_with_retry(api_call)
 
         assert call_count == 1  # no retries
@@ -438,7 +443,7 @@ class TestCallWithRetry429Cap:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception):
+            with pytest.raises(FakeAPIError):
                 await cb.call_with_retry(api_call, max_retries=3)
 
         # 3 CAP failures recorded (no success to reset)
@@ -453,7 +458,7 @@ class TestCallWithRetry429Cap:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception, match="429"):
+            with pytest.raises(FakeAPIError, match="429"):
                 await cb.call_with_retry(api_call, max_retries=2)
 
 
@@ -494,7 +499,7 @@ class TestCallWithRetryRetryable:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception):
+            with pytest.raises(FakeAPIError):
                 await cb.call_with_retry(api_call, max_retries=3)
 
         # 3 failures recorded (no success to reset)
@@ -510,7 +515,7 @@ class TestCallWithRetryRetryable:
             call_count += 1
             raise _make_api_error(400)  # not retryable
 
-        with pytest.raises(Exception, match="400"):
+        with pytest.raises(FakeAPIError, match="400"):
             await cb.call_with_retry(api_call)
 
         assert call_count == 1
@@ -543,7 +548,7 @@ class TestCallWithRetryCBBlocks:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception):
+            with pytest.raises(FakeAPIError):
                 await cb.call_with_retry(api_call, max_retries=3)
 
         assert cb.state == CircuitState.OPEN
@@ -679,7 +684,7 @@ class TestEdgeCases:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception):
+            with pytest.raises(FakeAPIError):
                 await cb.call_with_retry(api_call, max_retries=5)
 
         # CB opens after 2 failures; 3rd retry blocked by should_block() before API call
@@ -704,7 +709,7 @@ class TestRound3Findings:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception, match="500") as exc_info:
+            with pytest.raises(FakeAPIError, match="500") as exc_info:
                 await cb.call_with_retry(api_call, max_retries=3)
 
         # Should be the original 500 error, not CircuitBreakerOpenError
@@ -721,7 +726,7 @@ class TestRound3Findings:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception, match="429"):
+            with pytest.raises(FakeAPIError, match="429"):
                 await cb.call_with_retry(api_call, max_retries=3)
 
         # WAIT does not increment failure counter
@@ -739,7 +744,7 @@ class TestRound3Findings:
 
         with patch("massgen.backend.llm_circuit_breaker.asyncio.sleep") as mock_sleep:
             mock_sleep.return_value = None
-            with pytest.raises(Exception, match="429"):
+            with pytest.raises(FakeAPIError, match="429"):
                 await cb.call_with_retry(api_call, max_retries=1)
 
         # max_retries=1: single attempt, immediately raises, no sleep
@@ -753,3 +758,86 @@ class TestRepr:
         assert "LLMCircuitBreaker" in r
         assert "closed" in r
         assert "claude" in r
+
+
+# ---------------------------------------------------------------------------
+# CodeRabbit findings
+# ---------------------------------------------------------------------------
+
+
+class TestHalfOpenProbeCleanup:
+    """Verify HALF_OPEN probe flag is cleared on non-retryable errors (#3 Critical)."""
+
+    @pytest.mark.asyncio
+    async def test_non_retryable_error_clears_half_open_probe(self):
+        """400 during HALF_OPEN probe must not wedge the CB."""
+        cb = LLMCircuitBreaker(
+            config=_enabled_config(max_failures=1, reset_time_seconds=1),
+        )
+        cb.record_failure()  # OPEN
+        time.sleep(1.1)
+        # Don't call should_block() manually -- let call_with_retry do the transition
+
+        async def api_call():
+            raise _make_api_error(400)  # non-retryable
+
+        with pytest.raises(FakeAPIError, match="400"):
+            await cb.call_with_retry(api_call)
+
+        # CB must be OPEN, not stuck in HALF_OPEN
+        assert cb.state == CircuitState.OPEN
+        # Probe flag must be cleared
+        assert cb._half_open_probe_active is False
+
+    @pytest.mark.asyncio
+    async def test_cancellation_clears_half_open_probe(self):
+        """asyncio.CancelledError during probe must not wedge CB."""
+        cb = LLMCircuitBreaker(
+            config=_enabled_config(max_failures=1, reset_time_seconds=1),
+        )
+        cb.record_failure()
+        time.sleep(1.1)
+        # Let call_with_retry handle the OPEN->HALF_OPEN transition
+
+        async def api_call():
+            raise asyncio.CancelledError()
+
+        with pytest.raises(asyncio.CancelledError):
+            await cb.call_with_retry(api_call)
+
+        assert cb.state == CircuitState.OPEN
+        assert cb._half_open_probe_active is False
+
+
+class TestForceOpenRetryAfterWindow:
+    """Verify force_open honors Retry-After duration (#2 Major)."""
+
+    def test_force_open_with_long_retry_after(self):
+        """force_open with open_for_seconds=3600 keeps CB open beyond reset_time."""
+        cb = LLMCircuitBreaker(
+            config=_enabled_config(reset_time_seconds=60),
+        )
+        cb.force_open("quota exhaustion", open_for_seconds=3600)
+        assert cb.state == CircuitState.OPEN
+        # _open_until should be ~3600s from now, not 60s
+        with cb._lock:
+            remaining = cb._open_until - time.monotonic()
+        assert remaining > 3500  # still well above reset_time_seconds
+
+    @pytest.mark.asyncio
+    async def test_429_stop_honors_retry_after_window(self):
+        """429 STOP with Retry-After=600 should keep CB open for 600s."""
+        cb = LLMCircuitBreaker(
+            config=_enabled_config(retry_after_threshold_seconds=60),
+        )
+
+        async def api_call():
+            raise _make_api_error(429, retry_after=600.0)
+
+        with pytest.raises(FakeAPIError):
+            await cb.call_with_retry(api_call)
+
+        assert cb.state == CircuitState.OPEN
+        with cb._lock:
+            remaining = cb._open_until - time.monotonic()
+        assert remaining > 550  # honoring 600s, not defaulting to 60s

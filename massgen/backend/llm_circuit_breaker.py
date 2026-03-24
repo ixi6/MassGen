@@ -197,6 +197,7 @@ class LLMCircuitBreaker:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._last_failure_time = 0.0
+        self._open_until = 0.0  # monotonic deadline for OPEN state
         self._half_open_probe_active = False
 
     # -- Public interface ---------------------------------------------------
@@ -228,8 +229,8 @@ class LLMCircuitBreaker:
                 return False
 
             if self._state == CircuitState.OPEN:
-                elapsed = time.monotonic() - self._last_failure_time
-                if elapsed >= self.config.reset_time_seconds:
+                now = time.monotonic()
+                if now >= self._open_until:
                     # Transition to HALF_OPEN -- allow one probe
                     self._state = CircuitState.HALF_OPEN
                     self._half_open_probe_active = True
@@ -260,10 +261,12 @@ class LLMCircuitBreaker:
 
         with self._lock:
             self._failure_count += 1
-            self._last_failure_time = time.monotonic()
+            now = time.monotonic()
+            self._last_failure_time = now
 
             if self._state == CircuitState.HALF_OPEN:
                 self._state = CircuitState.OPEN
+                self._open_until = now + self.config.reset_time_seconds
                 self._half_open_probe_active = False
                 self._log(
                     "Probe failed, circuit breaker re-opened",
@@ -274,6 +277,7 @@ class LLMCircuitBreaker:
 
             if self._failure_count >= self.config.max_failures:
                 self._state = CircuitState.OPEN
+                self._open_until = now + self.config.reset_time_seconds
                 self._log(
                     "Circuit breaker opened",
                     failure_count=self._failure_count,
@@ -304,16 +308,25 @@ class LLMCircuitBreaker:
                     previous_state=prev_state.value,
                 )
 
-    def force_open(self, reason: str = "") -> None:
-        """Force the circuit to OPEN state (e.g. on 429 STOP)."""
+    def force_open(self, reason: str = "", open_for_seconds: float = 0) -> None:
+        """Force the circuit to OPEN state (e.g. on 429 STOP).
+
+        Args:
+            reason: Human-readable reason for logging.
+            open_for_seconds: Minimum seconds to keep OPEN. If > reset_time_seconds,
+                overrides the default. Used to honor Retry-After from 429 STOP.
+        """
         if not self.config.enabled:
             return
 
         with self._lock:
+            now = time.monotonic()
             self._state = CircuitState.OPEN
-            self._last_failure_time = time.monotonic()
+            self._last_failure_time = now
+            duration = max(self.config.reset_time_seconds, open_for_seconds)
+            self._open_until = now + duration
             self._half_open_probe_active = False
-            self._log(f"Circuit breaker force-opened: {reason}")
+            self._log(f"Circuit breaker force-opened: {reason}", open_for_seconds=duration)
 
     def reset(self) -> None:
         """Reset circuit breaker to initial CLOSED state."""
@@ -321,6 +334,7 @@ class LLMCircuitBreaker:
             self._state = CircuitState.CLOSED
             self._failure_count = 0
             self._last_failure_time = 0.0
+            self._open_until = 0.0
             self._half_open_probe_active = False
 
     # -- 429-aware retry wrapper --------------------------------------------
@@ -357,97 +371,119 @@ class LLMCircuitBreaker:
 
         last_exc: Exception | None = None
         delay = 1.0  # initial backoff for CAP / retryable errors
+        _probe_was_half_open = self.state == CircuitState.HALF_OPEN
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                result = await coro_factory()
-                self.record_success()
-                return result
-
-            except Exception as exc:
-                last_exc = exc
-                status_code = extract_status_code(exc)
-
-                # --- 429 handling with classification ---
-                if status_code == 429:
-                    retry_after = extract_retry_after(exc)
-                    action = classify_429(
-                        retry_after,
-                        self.config.retry_after_threshold_seconds,
+        try:
+            for attempt in range(1, max_retries + 1):
+                # Re-check CB state at start of each attempt
+                if attempt > 1 and self.should_block():
+                    with self._lock:
+                        state_label = self._state.value
+                    raise CircuitBreakerOpenError(
+                        f"Circuit breaker became {state_label} during retries for {self.backend_name}",
                     )
 
-                    if action == RateLimitAction.STOP:
-                        # Quota exhaustion -- open CB, do not retry
-                        self.force_open(
-                            f"429 STOP: Retry-After={retry_after}s > " f"threshold={self.config.retry_after_threshold_seconds}s",
+                try:
+                    result = await coro_factory()
+                    self.record_success()
+                    return result
+
+                except Exception as exc:
+                    last_exc = exc
+                    status_code = extract_status_code(exc)
+
+                    # --- 429 handling with classification ---
+                    if status_code == 429:
+                        retry_after = extract_retry_after(exc)
+                        action = classify_429(
+                            retry_after,
+                            self.config.retry_after_threshold_seconds,
                         )
+
+                        if action == RateLimitAction.STOP:
+                            # Quota exhaustion -- open CB for full Retry-After window
+                            self.force_open(
+                                f"429 STOP: Retry-After={retry_after}s > " f"threshold={self.config.retry_after_threshold_seconds}s",
+                                open_for_seconds=retry_after or 0,
+                            )
+                            raise
+
+                        if action == RateLimitAction.WAIT:
+                            # Short wait -- retry without counting as failure
+                            if attempt >= max_retries:
+                                raise
+                            wait_seconds = retry_after if retry_after is not None else 1.0
+                            self._log(
+                                "429 WAIT: retrying after Retry-After",
+                                retry_after=wait_seconds,
+                                attempt=attempt,
+                                agent_id=agent_id,
+                            )
+                            await asyncio.sleep(wait_seconds)
+                            continue
+
+                        # CAP -- no Retry-After, backoff + record failure
+                        self.record_failure(
+                            error_type="429_cap",
+                            error_message=str(exc)[:200],
+                        )
+                        if attempt < max_retries:
+                            jittered = delay * random.uniform(0.8, 1.2)  # noqa: S311
+                            self._log(
+                                "429 CAP: backoff retry",
+                                delay=round(jittered, 2),
+                                attempt=attempt,
+                                agent_id=agent_id,
+                            )
+                            await asyncio.sleep(jittered)
+                            delay = min(
+                                delay * self.config.backoff_multiplier,
+                                self.config.max_backoff_seconds,
+                            )
+                            continue
                         raise
 
-                    if action == RateLimitAction.WAIT:
-                        # Short wait -- retry without counting as failure
-                        if attempt >= max_retries:
-                            # Last attempt exhausted; do not sleep, just raise
-                            raise
-                        wait_seconds = retry_after if retry_after is not None else 1.0
-                        self._log(
-                            "429 WAIT: retrying after Retry-After",
-                            retry_after=wait_seconds,
-                            attempt=attempt,
-                            agent_id=agent_id,
+                    # --- Other retryable status codes ---
+                    if status_code in self.config.retryable_status_codes:
+                        self.record_failure(
+                            error_type=f"http_{status_code}",
+                            error_message=str(exc)[:200],
                         )
-                        await asyncio.sleep(wait_seconds)
-                        continue
+                        if attempt < max_retries and not self.should_block():
+                            jittered = delay * random.uniform(0.8, 1.2)  # noqa: S311
+                            self._log(
+                                f"Retryable error (HTTP {status_code}), backing off",
+                                delay=round(jittered, 2),
+                                attempt=attempt,
+                                agent_id=agent_id,
+                            )
+                            await asyncio.sleep(jittered)
+                            delay = min(
+                                delay * self.config.backoff_multiplier,
+                                self.config.max_backoff_seconds,
+                            )
+                            continue
+                        raise
 
-                    # CAP -- no Retry-After, backoff + record failure
-                    self.record_failure(
-                        error_type="429_cap",
-                        error_message=str(exc)[:200],
-                    )
-                    if attempt < max_retries:
-                        jittered = delay * random.uniform(0.8, 1.2)
-                        self._log(
-                            "429 CAP: backoff retry",
-                            delay=round(jittered, 2),
-                            attempt=attempt,
-                            agent_id=agent_id,
-                        )
-                        await asyncio.sleep(jittered)
-                        delay = min(
-                            delay * self.config.backoff_multiplier,
-                            self.config.max_backoff_seconds,
-                        )
-                        continue
+                    # --- Non-retryable error ---
                     raise
 
-                # --- Other retryable status codes ---
-                if status_code in self.config.retryable_status_codes:
-                    self.record_failure(
-                        error_type=f"http_{status_code}",
-                        error_message=str(exc)[:200],
-                    )
-                    if attempt < max_retries and not self.should_block():
-                        jittered = delay * random.uniform(0.8, 1.2)
-                        self._log(
-                            f"Retryable error (HTTP {status_code}), backing off",
-                            delay=round(jittered, 2),
-                            attempt=attempt,
-                            agent_id=agent_id,
-                        )
-                        await asyncio.sleep(jittered)
-                        delay = min(
-                            delay * self.config.backoff_multiplier,
-                            self.config.max_backoff_seconds,
-                        )
-                        continue
-                    raise
+            # Defensive fallback
+            if last_exc:
+                raise last_exc
+            raise RuntimeError("call_with_retry ended without result or exception")
 
-                # --- Non-retryable error ---
-                raise
-
-        # Defensive fallback -- all loop paths should return or raise above.
-        if last_exc:
-            raise last_exc
-        raise RuntimeError("call_with_retry ended without result or exception")
+        except BaseException:
+            # Ensure HALF_OPEN probe flag is cleared on any terminal exit
+            # to prevent wedging the CB in a permanently blocked state.
+            if _probe_was_half_open:
+                with self._lock:
+                    if self._state == CircuitState.HALF_OPEN and self._half_open_probe_active:
+                        self._state = CircuitState.OPEN
+                        self._open_until = time.monotonic() + self.config.reset_time_seconds
+                        self._half_open_probe_active = False
+                        self._log("Probe terminated abnormally, circuit breaker re-opened")
+            raise
 
     # -- Internal helpers ---------------------------------------------------
 

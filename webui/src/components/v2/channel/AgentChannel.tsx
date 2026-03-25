@@ -99,7 +99,7 @@ export function AgentChannel({ agentId }: AgentChannelProps) {
                 </div>
               </div>
             ) : (
-              <div className="py-1">
+              <div className="py-1 v2-timeline-spine">
                 <GroupedMessages messages={messages} />
               </div>
             )}
@@ -112,7 +112,7 @@ export function AgentChannel({ agentId }: AgentChannelProps) {
         </div>
 
         {/* Plan — docked right strip */}
-        <TaskPlanPanel />
+        <TaskPlanPanel agentId={agentId} />
       </div>
     </div>
   );
@@ -298,50 +298,37 @@ function GroupedMessages({ messages }: { messages: ChannelMessage[] }) {
 /** Merged view for consecutive reasoning blocks */
 function MergedThinkingView({ messages }: { messages: ContentMessage[] }) {
   const [expanded, setExpanded] = useState(false);
-
-  // Extract first line from each as a label
-  const labels = messages.map((m) => {
-    const first = m.content.trim().split('\n')[0];
-    return first.length > 60 ? first.slice(0, 57) + '\u2026' : first;
-  });
+  const allContent = messages.map((m) => m.content.trim()).join('\n\n');
+  const preview = messages[0].content.trim().split('\n')[0];
+  const previewTruncated = preview.length > 80 ? preview.slice(0, 77) + '\u2026' : preview;
 
   return (
-    <div className="px-4 py-1">
-      <div
-        className={cn(
-          'border-l-2 border-violet-400/30 pl-3 cursor-pointer',
-          'hover:border-violet-400/50 transition-colors duration-150',
+    <div
+      className={cn('v2-reasoning-block cursor-pointer', expanded && 'v2-reasoning-expanded')}
+      onClick={() => setExpanded(!expanded)}
+    >
+      <div className="v2-reasoning-node" />
+      <div className={cn('v2-reasoning-row flex items-start gap-1.5')}>
+        <svg
+          className="v2-hover-chevron w-2.5 h-2.5 shrink-0 text-v2-text-muted"
+          style={{ marginLeft: '-14px', marginRight: '-5px', marginTop: '4px' }}
+          viewBox="0 0 12 12"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        >
+          <path d="M4 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        {!expanded && (
+          <span className="text-xs text-v2-text-muted italic opacity-70 truncate">
+            {previewTruncated}
+            <span className="text-v2-text-muted ml-1 not-italic">×{messages.length}</span>
+          </span>
         )}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-1.5">
-          <svg
-            className={cn(
-              'w-2.5 h-2.5 text-v2-text-muted transition-transform duration-150 shrink-0',
-              expanded && 'rotate-90'
-            )}
-            viewBox="0 0 12 12"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-          >
-            <path d="M4 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          <span className="text-[11px] font-medium uppercase tracking-wider text-violet-400/70">
-            Reasoning
-          </span>
-          <span className="text-[11px] text-v2-text-muted">
-            ×{messages.length} blocks
-          </span>
-        </div>
         {expanded && (
-          <div className="mt-1 space-y-1 animate-v2-fade-in">
-            {messages.map((m, i) => (
-              <p key={m.id} className="text-xs text-v2-text-muted italic">
-                {labels[i]}
-              </p>
-            ))}
-          </div>
+          <pre className="text-xs text-v2-text-muted italic opacity-70 whitespace-pre-wrap leading-relaxed animate-v2-fade-in flex-1 min-w-0 max-h-[300px] overflow-y-auto">
+            {allContent}
+          </pre>
         )}
       </div>
     </div>

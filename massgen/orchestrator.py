@@ -2172,6 +2172,9 @@ class Orchestrator(ChatAgent):
         consensus = result.get("output", "")
         workspace_changes = result.get("workspace_changes", [])
 
+        # Copy subprocess logs into parent's log directory (like subagents)
+        manager._copy_subprocess_logs()
+
         if result.get("success"):
             manager.cleanup()
         else:
@@ -2179,7 +2182,7 @@ class Orchestrator(ChatAgent):
             consensus = f"Checkpoint failed: {error}"
             ws_path = manager._checkpoint_workspace
             logger.error(
-                f"[Checkpoint] Subprocess failed: {error}. " f"Logs preserved at: {ws_path}",
+                f"[Checkpoint] Subprocess failed: {error}. " f"Workspace preserved at: {ws_path}",
             )
 
         # Track completion

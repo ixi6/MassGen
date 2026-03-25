@@ -5879,6 +5879,13 @@ def _apply_mode_overrides(config: dict, overrides: dict | None) -> None:
             coord["checkpoint_gated_patterns"] = gated_patterns
         # Mark the main agent in config (MCP injection handled by orchestrator)
         main_agent_id = overrides.get("main_agent")
+        # Default to first agent if not specified
+        if not main_agent_id:
+            agents_list = config.get("agents", [])
+            for agent in agents_list:
+                if isinstance(agent, dict) and agent.get("id"):
+                    main_agent_id = agent["id"]
+                    break
         if main_agent_id:
             agents_list = config.get("agents", [])
             for agent in agents_list:

@@ -250,6 +250,35 @@
   animation-delay: 0.4s;
 }
 
+/* Waiting dots — slower, subtler pulse for idle/waiting state */
+@keyframes waiting-dot {
+  0%, 30% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  70%, 100% {
+    opacity: 0.25;
+  }
+}
+
+.waiting-dot {
+  animation: waiting-dot 2s infinite ease-in-out;
+}
+
+.waiting-dot:nth-child(1) {
+  animation-delay: 0s;
+}
+
+.waiting-dot:nth-child(2) {
+  animation-delay: 0.35s;
+}
+
+.waiting-dot:nth-child(3) {
+  animation-delay: 0.7s;
+}
+
 /* Streaming ellipses animation */
 @keyframes streaming-dot {
   0%, 20% {
@@ -301,4 +330,97 @@
     rgba(88, 101, 242, 0.08) 0%,
     transparent 70%
   );
+}
+
+/* ============================================================================
+   Timeline spine
+   ============================================================================ */
+.v2-timeline-spine {
+  position: relative;
+}
+.v2-timeline-spine::before {
+  content: '';
+  position: absolute;
+  left: 32px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(255,255,255,0.06);
+  pointer-events: none;
+}
+
+.v2-step-group {
+  position: relative;
+  padding-left: 50px;
+  padding-right: 12px;
+  margin-bottom: 2px;
+}
+
+.v2-step-node {
+  position: absolute;
+  left: 32px;
+  top: 13px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--v2-text-muted, #6b6b82);
+  transform: translateX(-50%);
+  z-index: 2;
+  transition: background 0.2s;
+}
+.v2-step-group:hover .v2-step-node {
+  background: var(--v2-accent, #7b8cff);
+}
+
+.v2-reasoning-block {
+  position: relative;
+  padding-left: 50px;
+  padding-right: 12px;
+  margin-bottom: 2px;
+}
+
+.v2-reasoning-node {
+  position: absolute;
+  left: 32px;
+  top: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--v2-text-muted, #6b6b82);
+  opacity: 0.25;
+  transform: translateX(-50%);
+  z-index: 2;
+}
+
+/* Hover-reveal chevron */
+.v2-hover-chevron {
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.v2-tool-row:hover .v2-hover-chevron,
+.v2-tool-row-expanded .v2-hover-chevron {
+  opacity: 1;
+}
+.v2-tool-row-expanded .v2-hover-chevron {
+  transform: rotate(90deg);
+}
+
+.v2-reasoning-row:hover .v2-hover-chevron,
+.v2-reasoning-expanded .v2-hover-chevron {
+  opacity: 0.5;
+}
+.v2-reasoning-expanded .v2-hover-chevron {
+  transform: rotate(90deg);
+}
+
+.v2-sub-chevron {
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.v2-sub-row:hover .v2-sub-chevron,
+.v2-sub-row-expanded .v2-sub-chevron {
+  opacity: 0.5;
+}
+.v2-sub-row-expanded .v2-sub-chevron {
+  transform: rotate(90deg);
 }

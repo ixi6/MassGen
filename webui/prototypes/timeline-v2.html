@@ -1,0 +1,1445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MassGen Timeline v2 — Prototype</title>
+<style>
+  /* ================================================================
+     DESIGN TOKENS — mirrors the v2 dark theme
+     ================================================================ */
+  :root {
+    --bg:              #1a1a2e;
+    --bg-surface:      #1e1e34;
+    --bg-raised:       #252540;
+    --bg-hover:        rgba(255,255,255,0.03);
+    --border:          rgba(255,255,255,0.08);
+    --border-subtle:   rgba(255,255,255,0.05);
+    --text:            #e2e2ef;
+    --text-secondary:  #a8a8bf;
+    --text-muted:      #6b6b82;
+    --accent:          #7b8cff;
+    --accent-dim:      rgba(123,140,255,0.12);
+    --green:           #23a559;
+    --green-dim:       rgba(35,165,89,0.10);
+    --violet:          #a78bfa;
+    --violet-dim:      rgba(167,139,250,0.08);
+    --yellow:          #f0b232;
+    --yellow-dim:      rgba(240,178,50,0.08);
+    --red:             #f87171;
+    --red-dim:         rgba(248,113,113,0.08);
+    --cyan:            #22d3ee;
+    --cyan-dim:        rgba(34,211,238,0.08);
+    --purple:          #c084fc;
+    --purple-dim:      rgba(192,132,252,0.08);
+    --emerald:         #34d399;
+
+    --spine-color:     rgba(255,255,255,0.06);
+    --spine-left:      20px;
+    --node-size:       7px;
+
+    --radius:          6px;
+    --radius-sm:       4px;
+
+    --font-body:       'IBM Plex Sans', -apple-system, sans-serif;
+    --font-mono:       'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  /* ================================================================
+     RESET & BASE
+     ================================================================ */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  /* ================================================================
+     LAYOUT SHELL
+     ================================================================ */
+  .shell {
+    display: flex;
+    height: 100vh;
+  }
+  .sidebar {
+    width: 56px;
+    background: rgba(0,0,0,0.2);
+    border-right: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .channel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+  }
+  .channel-header .agent-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px; height: 24px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .channel-header .agent-name {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .channel-header .agent-status {
+    font-size: 11px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+  }
+  .channel-header .agent-status .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--green);
+  }
+
+  /* ================================================================
+     TIMELINE CONTAINER
+     ================================================================ */
+  .timeline {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 24px 80px 0;
+    /* The spine is drawn via pseudo-element */
+    position: relative;
+  }
+  .timeline::-webkit-scrollbar { width: 6px; }
+  .timeline::-webkit-scrollbar-track { background: transparent; }
+  .timeline::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* Continuous spine line */
+  .timeline::before {
+    content: '';
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--spine-color);
+    pointer-events: none;
+  }
+
+  /* ================================================================
+     STEP GROUP
+     A "step" = one narrative thought + its subordinate actions
+     ================================================================ */
+  .step-group {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 2px;
+  }
+
+  /* Node on the spine */
+  .step-group > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 6px;
+    width: var(--node-size);
+    height: var(--node-size);
+    border-radius: 50%;
+    background: var(--text-muted);
+    transform: translateX(-50%);
+    z-index: 2;
+    transition: background 0.2s;
+  }
+  .step-group:hover > .node {
+    background: var(--accent);
+  }
+
+  /* ================================================================
+     NARRATIVE — the primary scannable content
+     ================================================================ */
+  .narrative {
+    padding: 6px 0 4px 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+  .narrative strong {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* ================================================================
+     TOOL CALLS — subordinate to narrative
+     ================================================================ */
+  .tool-group {
+    padding: 2px 0 6px 0;
+  }
+
+  .tool-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+    margin-bottom: 3px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+  }
+  .tool-card:hover {
+    border-color: var(--border);
+  }
+
+  .tool-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    cursor: pointer;
+    user-select: none;
+    font-size: 12px;
+    min-height: 30px;
+  }
+  .tool-header:hover {
+    background: var(--bg-hover);
+  }
+
+  .tool-chevron {
+    width: 12px;
+    height: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+  }
+  .tool-card.expanded .tool-chevron {
+    transform: rotate(90deg);
+  }
+
+  .tool-status-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tool-status-dot.success { background: var(--green); }
+  .tool-status-dot.pending { background: #60a5fa; animation: pulse 2s ease-in-out infinite; }
+  .tool-status-dot.failed  { background: var(--red); }
+
+  .tool-name {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    background: rgba(123,140,255,0.08);
+    border: 1px solid rgba(123,140,255,0.12);
+    white-space: nowrap;
+  }
+
+  .tool-hint {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tool-count {
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .tool-elapsed {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .tool-body {
+    display: none;
+    padding: 0 10px 8px 30px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .tool-card.expanded .tool-body {
+    display: block;
+  }
+
+  .tool-body-section {
+    margin-top: 6px;
+  }
+  .tool-body-label {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+  }
+  .tool-body-content {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  /* Batched tool — tree lines */
+  .tool-batch-tree {
+    padding: 0 10px 6px 30px;
+    border-top: 1px solid var(--border-subtle);
+    display: none;
+  }
+  .tool-card.expanded .tool-batch-tree {
+    display: block;
+  }
+  .tool-batch-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    border-left: 1px solid var(--border-subtle);
+    padding-left: 10px;
+    margin-left: 2px;
+  }
+  .tool-batch-item .tool-hint { font-size: 11px; }
+
+  /* ================================================================
+     REASONING / THINKING
+     ================================================================ */
+  .reasoning-block {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 2px;
+  }
+  .reasoning-block > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 8px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--violet);
+    opacity: 0.4;
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+
+  .reasoning-inner {
+    padding: 4px 0;
+    cursor: pointer;
+    user-select: none;
+  }
+  .reasoning-label-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .reasoning-chevron {
+    width: 10px;
+    height: 10px;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+  }
+  .reasoning-block.expanded .reasoning-chevron {
+    transform: rotate(90deg);
+  }
+  .reasoning-label {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--violet);
+    opacity: 0.6;
+  }
+  .reasoning-count {
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+  .reasoning-preview {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 600px;
+    margin-left: 16px;
+  }
+  .reasoning-content {
+    display: none;
+    margin-top: 4px;
+    margin-left: 16px;
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    font-style: italic;
+    white-space: pre-wrap;
+    border-left: 2px solid rgba(167,139,250,0.15);
+    max-height: 400px;
+    overflow-y: auto;
+  }
+  .reasoning-block.expanded .reasoning-content {
+    display: block;
+    animation: fadeIn 0.15s ease;
+  }
+  .reasoning-block.expanded .reasoning-preview {
+    display: none;
+  }
+
+  /* ================================================================
+     ROUND DIVIDER
+     ================================================================ */
+  .round-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 24px 14px calc(24px + var(--spine-left) + 20px);
+    position: relative;
+  }
+  .round-divider::before {
+    content: '';
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1.5px solid var(--text-muted);
+    background: var(--bg);
+    transform: translate(-50%, -50%);
+    z-index: 2;
+  }
+  .round-divider .line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  .round-divider .label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  /* ================================================================
+     PHASE BADGE
+     ================================================================ */
+  .phase-badge {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 4px;
+  }
+  .phase-badge::before {
+    content: '';
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 50%;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: var(--accent);
+    transform: translate(-50%, -50%) rotate(45deg);
+    z-index: 2;
+  }
+  .phase-inner {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    background: var(--accent-dim);
+    border: 1px solid rgba(123,140,255,0.15);
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--accent);
+  }
+  .phase-inner .phase-dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  /* ================================================================
+     ANSWER
+     ================================================================ */
+  .answer-block {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 4px;
+  }
+  .answer-block > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 12px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--yellow);
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .answer-card {
+    background: var(--yellow-dim);
+    border: 1px solid rgba(240,178,50,0.15);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+    cursor: pointer;
+  }
+  .answer-card:hover {
+    background: rgba(240,178,50,0.12);
+  }
+  .answer-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .answer-icon {
+    color: var(--yellow);
+    font-size: 13px;
+  }
+  .answer-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--yellow);
+    padding: 1px 6px;
+    background: rgba(240,178,50,0.12);
+    border-radius: var(--radius-sm);
+  }
+  .answer-sub {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: auto;
+  }
+  .answer-preview {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .answer-block.expanded .answer-preview {
+    display: none;
+  }
+  .answer-full {
+    display: none;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+  .answer-block.expanded .answer-full {
+    display: block;
+    animation: fadeIn 0.15s ease;
+  }
+
+  /* ================================================================
+     VOTE
+     ================================================================ */
+  .vote-block {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 4px;
+  }
+  .vote-block > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 10px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--violet);
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .vote-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    background: var(--violet-dim);
+    border: 1px solid rgba(167,139,250,0.12);
+    border-radius: var(--radius);
+    font-size: 12px;
+  }
+  .vote-icon { color: var(--violet); font-size: 12px; }
+  .vote-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--violet);
+    padding: 1px 5px;
+    background: rgba(167,139,250,0.12);
+    border-radius: var(--radius-sm);
+  }
+  .vote-target {
+    color: var(--text-secondary);
+    font-size: 12px;
+  }
+  .vote-target strong { color: var(--text); font-weight: 500; }
+  .vote-reason {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-style: italic;
+    margin-left: auto;
+    max-width: 300px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* ================================================================
+     BROADCAST
+     ================================================================ */
+  .broadcast-block {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 2px;
+  }
+  .broadcast-block > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 8px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--purple);
+    opacity: 0.5;
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .broadcast-inner {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 0;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .broadcast-icon { color: var(--purple); opacity: 0.6; font-size: 11px; }
+  .broadcast-to {
+    color: var(--purple);
+    opacity: 0.7;
+    font-size: 10px;
+    font-weight: 500;
+  }
+  .broadcast-msg {
+    color: var(--text-muted);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+
+  /* ================================================================
+     SUBAGENT SPAWN
+     ================================================================ */
+  .subagent-block {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 2px;
+  }
+  .subagent-block > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 8px;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--cyan);
+    opacity: 0.5;
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .subagent-inner {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    background: var(--cyan-dim);
+    border: 1px solid rgba(34,211,238,0.12);
+    border-radius: var(--radius);
+    font-size: 11px;
+  }
+  .subagent-icon { color: var(--cyan); font-size: 11px; }
+  .subagent-label { color: var(--cyan); font-weight: 500; font-size: 11px; }
+  .subagent-task { color: var(--text-muted); font-size: 11px; max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* ================================================================
+     ERROR
+     ================================================================ */
+  .error-block {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 4px;
+  }
+  .error-block > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 10px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--red);
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .error-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 10px;
+    background: var(--red-dim);
+    border: 1px solid rgba(248,113,113,0.15);
+    border-radius: var(--radius);
+  }
+  .error-icon { color: var(--red); font-size: 13px; flex-shrink: 0; margin-top: 1px; }
+  .error-msg { color: #fca5a5; font-size: 12px; line-height: 1.5; }
+
+  /* ================================================================
+     CHECKPOINT DELEGATION
+     ================================================================ */
+  .checkpoint-block {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 4px;
+  }
+  .checkpoint-block > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 12px;
+    width: 9px;
+    height: 9px;
+    border-radius: 2px;
+    background: #60a5fa;
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .checkpoint-card {
+    background: rgba(96,165,250,0.06);
+    border: 1px solid rgba(96,165,250,0.18);
+    border-radius: var(--radius);
+    padding: 8px 12px;
+  }
+  .checkpoint-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .checkpoint-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: #60a5fa;
+  }
+  .checkpoint-elapsed {
+    margin-left: auto;
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .checkpoint-task {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 6px;
+  }
+  .checkpoint-criteria {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .checkpoint-tag {
+    font-size: 10px;
+    padding: 1px 6px;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    color: var(--text-muted);
+  }
+
+  /* ================================================================
+     COMPLETION MARKER
+     ================================================================ */
+  .completion-marker {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 20px 24px 12px calc(24px + var(--spine-left) + 20px);
+    position: relative;
+  }
+  .completion-marker::before {
+    content: '';
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 50%;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: var(--emerald);
+    transform: translate(-50%, -50%);
+    z-index: 2;
+    box-shadow: 0 0 0 3px rgba(52,211,153,0.15);
+  }
+  .completion-marker .line {
+    flex: 1;
+    height: 1px;
+    background: rgba(52,211,153,0.25);
+  }
+  .completion-marker .label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--emerald);
+  }
+  .completion-marker .label svg {
+    width: 12px; height: 12px;
+  }
+
+  /* ================================================================
+     STATUS (inline)
+     ================================================================ */
+  .status-inline {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    margin-bottom: 1px;
+  }
+  .status-inline .inner {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 0;
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.6;
+  }
+  .status-inline .dot {
+    width: 5px; height: 5px;
+    border-radius: 50%;
+  }
+
+  /* ================================================================
+     STREAMING INDICATOR
+     ================================================================ */
+  .streaming {
+    position: relative;
+    padding-left: calc(24px + var(--spine-left) + 20px);
+    padding-top: 6px;
+    padding-bottom: 8px;
+  }
+  .streaming > .node {
+    position: absolute;
+    left: calc(24px + var(--spine-left));
+    top: 12px;
+    width: var(--node-size);
+    height: var(--node-size);
+    border-radius: 50%;
+    background: var(--accent);
+    transform: translateX(-50%);
+    z-index: 2;
+    animation: pulse 2s ease-in-out infinite;
+  }
+  .streaming .dots {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+  }
+  .streaming .dots span {
+    width: 4px; height: 4px;
+    border-radius: 50%;
+    background: var(--accent);
+    animation: streamDot 1s ease-in-out infinite;
+  }
+  .streaming .dots span:nth-child(2) { animation-delay: 0.15s; }
+  .streaming .dots span:nth-child(3) { animation-delay: 0.3s; }
+  .streaming-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-left: 8px;
+  }
+
+  /* ================================================================
+     ANIMATIONS
+     ================================================================ */
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  @keyframes streamDot {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 1; }
+  }
+
+  /* ================================================================
+     COMPARISON TOGGLE
+     ================================================================ */
+  .comparison-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg-raised);
+    border-top: 1px solid var(--border);
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    z-index: 100;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .comparison-bar .toggle-btn {
+    padding: 4px 12px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-family: var(--font-body);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .comparison-bar .toggle-btn:hover {
+    background: var(--bg-hover);
+    border-color: var(--accent);
+    color: var(--text);
+  }
+  .comparison-bar .toggle-btn.active {
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .comparison-bar .sep {
+    width: 1px;
+    height: 20px;
+    background: var(--border);
+  }
+  .comparison-bar .note {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-left: auto;
+  }
+
+  /* ================================================================
+     FLAT MODE (original-ish style for comparison)
+     ================================================================ */
+  body.flat-mode .timeline::before { display: none; }
+  body.flat-mode .step-group > .node,
+  body.flat-mode .reasoning-block > .node,
+  body.flat-mode .broadcast-block > .node,
+  body.flat-mode .subagent-block > .node,
+  body.flat-mode .error-block > .node,
+  body.flat-mode .answer-block > .node,
+  body.flat-mode .vote-block > .node,
+  body.flat-mode .checkpoint-block > .node,
+  body.flat-mode .streaming > .node,
+  body.flat-mode .round-divider::before,
+  body.flat-mode .completion-marker::before { display: none; }
+
+  body.flat-mode .step-group,
+  body.flat-mode .reasoning-block,
+  body.flat-mode .broadcast-block,
+  body.flat-mode .subagent-block,
+  body.flat-mode .error-block,
+  body.flat-mode .answer-block,
+  body.flat-mode .vote-block,
+  body.flat-mode .checkpoint-block,
+  body.flat-mode .streaming,
+  body.flat-mode .status-inline {
+    padding-left: 24px;
+  }
+  body.flat-mode .round-divider,
+  body.flat-mode .completion-marker {
+    padding-left: 24px;
+  }
+  body.flat-mode .narrative {
+    border-left: 2px solid rgba(123,140,255,0.25);
+    padding-left: 12px;
+  }
+
+  /* ================================================================
+     DENSE MODE
+     ================================================================ */
+  body.dense-mode .step-group { margin-bottom: 0; }
+  body.dense-mode .narrative { padding: 3px 0 2px 0; font-size: 12px; }
+  body.dense-mode .tool-group { padding: 1px 0 3px 0; }
+  body.dense-mode .tool-header { padding: 3px 8px; min-height: 24px; }
+  body.dense-mode .tool-name { font-size: 10.5px; padding: 0 5px; }
+  body.dense-mode .tool-hint { font-size: 10px; }
+  body.dense-mode .tool-elapsed { font-size: 10px; }
+  body.dense-mode .round-divider { padding-top: 8px; padding-bottom: 8px; }
+
+</style>
+</head>
+<body>
+
+<div class="shell">
+  <div class="sidebar"></div>
+  <div class="main">
+
+    <!-- Header -->
+    <div class="channel-header">
+      <span class="agent-badge">3</span>
+      <span class="agent-name">agent b-ckpt1</span>
+      <span class="agent-status">
+        <span class="dot"></span>
+        Working
+      </span>
+    </div>
+
+    <!-- Timeline -->
+    <div class="timeline">
+
+      <!-- ============ ROUND 1 ============ -->
+      <div class="round-divider">
+        <div class="line"></div>
+        <span class="label">Round 1</span>
+        <div class="line"></div>
+      </div>
+
+      <!-- Phase -->
+      <div class="phase-badge">
+        <div class="phase-inner">
+          <span class="phase-dot"></span>
+          Implementing
+        </div>
+      </div>
+
+      <!-- Reasoning (merged, 3 blocks) -->
+      <div class="reasoning-block" onclick="this.classList.toggle('expanded')">
+        <div class="node"></div>
+        <div class="reasoning-inner">
+          <div class="reasoning-label-row">
+            <svg class="reasoning-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="reasoning-label">Reasoning</span>
+            <span class="reasoning-count">&times; 3 blocks</span>
+          </div>
+          <div class="reasoning-preview">I need to analyze the existing hero section, interactive components, and closing sections to understand the current design system before making changes...</div>
+          <div class="reasoning-content">I need to analyze the existing hero section, interactive components, and closing sections to understand the current design system before making changes.
+
+The user wants a more distinctive "chamber" treatment for the hero visual. Let me check what responsive rules exist first so I don't break anything.
+
+Looking at the stylesheet, the card-depth refinements use CSS custom properties for layering. I should place my overrides after the existing surface styles to maintain specificity without !important.</div>
+        </div>
+      </div>
+
+      <!-- Step 1: narrative + tool -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero section layout and responsive rules to understand the design constraints.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">codex_shell</span>
+              <span class="tool-hint">/bin/bash -lc 'cd /workspace/site && cat src/components/Hero.tsx'</span>
+              <span class="tool-elapsed">4ms</span>
+            </div>
+            <div class="tool-body">
+              <div class="tool-body-section">
+                <div class="tool-body-label">Arguments</div>
+                <div class="tool-body-content">{"command": "/bin/bash -lc 'cd /workspace/site && cat src/components/Hero.tsx'"}</div>
+              </div>
+              <div class="tool-body-section">
+                <div class="tool-body-label">Result</div>
+                <div class="tool-body-content">import React from 'react';
+import { motion } from 'framer-motion';
+
+export function Hero() {
+  return (
+    &lt;section className="hero-container"&gt;
+      ...
+    &lt;/section&gt;
+  );
+}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: narrative + batched tools -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the lower stylesheet and existing surface styles so I can place overrides cleanly without breaking responsive rules.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">codex_shell</span>
+              <span class="tool-count">&times;2</span>
+              <span class="tool-elapsed">11ms</span>
+            </div>
+            <div class="tool-batch-tree">
+              <div class="tool-batch-item">
+                <span class="tool-status-dot success"></span>
+                <span class="tool-hint">cat src/styles/surfaces.css</span>
+                <span class="tool-elapsed">5ms</span>
+              </div>
+              <div class="tool-batch-item">
+                <span class="tool-status-dot success"></span>
+                <span class="tool-hint">cat src/styles/responsive.css | tail -40</span>
+                <span class="tool-elapsed">6ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Broadcast -->
+      <div class="broadcast-block">
+        <div class="node"></div>
+        <div class="broadcast-inner">
+          <span class="broadcast-icon">&#9993;</span>
+          <span class="broadcast-to">to all agents</span>
+          <span class="broadcast-msg">I've finished analyzing the design system. The hero section uses CSS custom properties for depth layering. Starting implementation now.</span>
+        </div>
+      </div>
+
+      <!-- Step 3: narrative + planning tool (hidden, shows in sidebar) -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Creating a task plan for the refinement work based on what I found in the stylesheet analysis.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">massgen_checklist/propose_improvements</span>
+              <span class="tool-elapsed">14ms</span>
+            </div>
+            <div class="tool-body">
+              <div class="tool-body-section">
+                <div class="tool-body-label">Result</div>
+                <div class="tool-body-content">{"status": "ok", "improvements": ["Refine hero gradient layering", "Add chamber depth treatment", "Improve card contrast"]}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Subagent spawn -->
+      <div class="subagent-block">
+        <div class="node"></div>
+        <div class="subagent-inner">
+          <span class="subagent-icon">&#8660;</span>
+          <span class="subagent-label">Spawned subagent</span>
+          <span class="subagent-task">&mdash; Refactor responsive breakpoints for hero container</span>
+        </div>
+      </div>
+
+      <!-- Step 4: narrative + tool -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Copying the candidate deliverable into my workspace and locating the sections that need structural refinement.</div>
+        <div class="tool-group">
+          <div class="tool-card expanded" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">codex_shell</span>
+              <span class="tool-count">&times;2</span>
+              <span class="tool-elapsed">12ms</span>
+            </div>
+            <div class="tool-batch-tree">
+              <div class="tool-batch-item">
+                <span class="tool-status-dot success"></span>
+                <span class="tool-hint">cp -r /shared/candidate/* /workspace/site/</span>
+                <span class="tool-elapsed">4ms</span>
+              </div>
+              <div class="tool-batch-item">
+                <span class="tool-status-dot success"></span>
+                <span class="tool-hint">grep -n "hero-visual\|chamber" /workspace/site/src/styles/*.css</span>
+                <span class="tool-elapsed">8ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Reasoning (single block) -->
+      <div class="reasoning-block" onclick="this.classList.toggle('expanded')">
+        <div class="node"></div>
+        <div class="reasoning-inner">
+          <div class="reasoning-label-row">
+            <svg class="reasoning-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="reasoning-label">Reasoning</span>
+          </div>
+          <div class="reasoning-preview">Now that I have the files, I need to patch the hero, interactive, universal-love, and closing sections surgically instead of blindly rewriting...</div>
+          <div class="reasoning-content">Now that I have the files, I need to patch the hero, interactive, universal-love, and closing sections surgically instead of blindly rewriting. The existing surface styles use a 3-layer depth system with CSS custom properties:
+
+--surface-1: base layer (cards)
+--surface-2: raised elements (buttons, badges)
+--surface-3: overlays (modals, tooltips)
+
+The chamber treatment should introduce a --surface-0 for the hero backdrop, creating a recessed effect. I'll add a subtle inner shadow and reduce the border-radius slightly to feel more architectural than bubbly.</div>
+        </div>
+      </div>
+
+      <!-- Step 5, 6, 7: rapid fire narrative + tools -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero, interactive, universal-love, and closing sections so I can patch them surgically instead of blindly rewriting.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">codex_shell</span>
+              <span class="tool-hint">/bin/bash -lc "cd /workspace/site && cat src/components/Interactive.tsx"</span>
+              <span class="tool-elapsed">5ms</span>
+            </div>
+            <div class="tool-body">
+              <div class="tool-body-section">
+                <div class="tool-body-label">Result</div>
+                <div class="tool-body-content">// Interactive.tsx content...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the lower part of the stylesheet so I can place overrides cleanly without breaking existing responsive rules.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">codex_shell</span>
+              <span class="tool-hint">/bin/bash -lc "cd /workspace/site && tail -60 src/styles/main.css"</span>
+              <span class="tool-elapsed">2ms</span>
+            </div>
+            <div class="tool-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Finding the existing surface styles so the contrast and card-depth refinements layer on top cleanly.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">codex_shell</span>
+              <span class="tool-hint">/bin/bash -lc "cd /workspace/site && grep -n surface src/styles/*.css"</span>
+              <span class="tool-elapsed">1ms</span>
+            </div>
+            <div class="tool-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Error -->
+      <div class="error-block">
+        <div class="node"></div>
+        <div class="error-card">
+          <span class="error-icon">&#9888;</span>
+          <span class="error-msg">Tool execution failed: ENOENT /workspace/site/src/styles/variables.css — file does not exist. The stylesheet may have been renamed during the candidate copy.</span>
+        </div>
+      </div>
+
+      <!-- Step 8: recovery -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">The variables file was renamed. Finding the correct path before continuing with the chamber treatment.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">codex_shell</span>
+              <span class="tool-hint">find /workspace/site/src -name "*.css" -path "*/styles/*"</span>
+              <span class="tool-elapsed">3ms</span>
+            </div>
+            <div class="tool-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Checkpoint delegation -->
+      <div class="checkpoint-block">
+        <div class="node"></div>
+        <div class="checkpoint-card">
+          <div class="checkpoint-header">
+            <span>&#128203;</span>
+            <span class="checkpoint-label">Checkpoint Delegation</span>
+            <span class="checkpoint-elapsed">pending</span>
+          </div>
+          <div class="checkpoint-task">Apply the chamber depth treatment to the hero section using the new --surface-0 custom property, ensuring responsive breakpoints remain intact.</div>
+          <div class="checkpoint-criteria">
+            <span class="checkpoint-tag">Hero has recessed backdrop</span>
+            <span class="checkpoint-tag">Responsive rules preserved</span>
+            <span class="checkpoint-tag">Card contrast improved</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ ROUND 2 ============ -->
+      <div class="round-divider">
+        <div class="line"></div>
+        <span class="label">Round 2 &mdash; Evaluating</span>
+        <div class="line"></div>
+      </div>
+
+      <div class="phase-badge">
+        <div class="phase-inner">
+          <span class="phase-dot"></span>
+          Presenting
+        </div>
+      </div>
+
+      <!-- Answer -->
+      <div class="answer-block" onclick="this.classList.toggle('expanded')">
+        <div class="node"></div>
+        <div class="answer-card">
+          <div class="answer-header">
+            <span class="answer-icon">&#9733;</span>
+            <span class="answer-label">Answer</span>
+            <span class="answer-sub">submitted</span>
+          </div>
+          <div class="answer-preview">I've completed the hero refinement with a new chamber depth treatment. The implementation introduces a --surface-0 custom property creating a recessed backdrop effect. Key changes include: reduced border-radius from 16px to 12px for a more architectural feel, inner box-shadow with 2-layer depth, gradient overlay using the existing color system...</div>
+          <div class="answer-full">I've completed the hero refinement with a new chamber depth treatment. The implementation introduces a --surface-0 custom property creating a recessed backdrop effect.
+
+Key changes include:
+- Reduced border-radius from 16px to 12px for a more architectural feel
+- Inner box-shadow with 2-layer depth
+- Gradient overlay using the existing color system
+- All responsive breakpoints preserved and tested
+- Card contrast improved from 3.2:1 to 4.8:1 ratio
+
+The deliverable is in /workspace/site/dist/ ready for review.</div>
+        </div>
+      </div>
+
+      <!-- Vote -->
+      <div class="vote-block">
+        <div class="node"></div>
+        <div class="vote-card">
+          <span class="vote-icon">&#9745;</span>
+          <span class="vote-label">Vote</span>
+          <span class="vote-target">Voted for <strong>agent a-ckpt1</strong></span>
+          <span class="vote-reason">Cleaner gradient transitions and better mobile handling</span>
+        </div>
+      </div>
+
+      <!-- Step with tool call -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Closing the scoring task now that the checklist verdict and report are in place.</div>
+        <div class="tool-group">
+          <div class="tool-card" onclick="this.classList.toggle('expanded')">
+            <div class="tool-header">
+              <svg class="tool-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="tool-status-dot success"></span>
+              <span class="tool-name">planning_8586bcb9/get_task_plan</span>
+              <span class="tool-elapsed">24ms</span>
+            </div>
+            <div class="tool-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Streaming -->
+      <div class="streaming">
+        <div class="node"></div>
+        <div class="dots">
+          <span></span><span></span><span></span>
+          <span class="streaming-label">Generating</span>
+        </div>
+      </div>
+
+      <!-- Completion -->
+      <div class="completion-marker">
+        <div class="line"></div>
+        <span class="label">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 8.5l3.5 3.5 6.5-7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Complete
+        </span>
+        <div class="line"></div>
+      </div>
+
+    </div><!-- /timeline -->
+  </div>
+</div>
+
+<!-- Comparison bar -->
+<div class="comparison-bar">
+  <span style="font-weight:500; color: var(--text);">Timeline Prototype</span>
+  <div class="sep"></div>
+  <button class="toggle-btn active" onclick="setMode('spine')">Spine</button>
+  <button class="toggle-btn" onclick="setMode('flat')">Flat (current)</button>
+  <div class="sep"></div>
+  <button class="toggle-btn" id="dense-btn" onclick="toggleDense()">Dense</button>
+  <span class="note">Click any tool card or reasoning block to expand/collapse</span>
+</div>
+
+<script>
+  function setMode(mode) {
+    document.body.classList.toggle('flat-mode', mode === 'flat');
+    document.querySelectorAll('.comparison-bar .toggle-btn').forEach(b => {
+      if (b.id === 'dense-btn') return;
+      b.classList.toggle('active', b.textContent.trim().toLowerCase().startsWith(mode));
+    });
+  }
+  function toggleDense() {
+    document.body.classList.toggle('dense-mode');
+    document.getElementById('dense-btn').classList.toggle('active');
+  }
+</script>
+
+</body>
+</html>

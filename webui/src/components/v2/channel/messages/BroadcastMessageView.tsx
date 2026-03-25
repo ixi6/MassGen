@@ -10,7 +10,8 @@ export function BroadcastMessageView({ message }: BroadcastMessageViewProps) {
     : 'all agents';
 
   return (
-    <div className="px-4 py-1.5">
+    <div className="v2-step-group py-0.5">
+      <div className="v2-step-node" />
       <div className="flex items-center gap-2 rounded px-2 py-1.5 bg-purple-500/5 border border-purple-500/20">
         <span className="text-purple-400 shrink-0">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">

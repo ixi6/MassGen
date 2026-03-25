@@ -5888,33 +5888,72 @@ class MainAgentCheckpointSection(SystemPromptSection):
     def build_content(self) -> str:
         """Build checkpoint guidance for the main agent."""
         lines = [
-            "You are the main orchestrating agent with a powerful `checkpoint` tool.",
+            "You are the main orchestrating agent with a `checkpoint` tool "
+            "that delegates work to a multi-agent team. They collaborate, "
+            "refine, evaluate against your eval_criteria checklist, vote, "
+            "and return their consensus result with workspace changes "
+            "synced back to you.",
             "",
-            "## How checkpoint works",
-            'Call `checkpoint(task="...")` to delegate a task to your multi-agent team.',
-            "All configured agents will activate and work on the task collaboratively.",
-            "They iterate, refine, vote, and reach consensus. The winning answer's",
-            "workspace changes sync back to you, and you continue orchestrating.",
+            "## Checkpoint judgment",
             "",
-            "## When to call checkpoint",
-            "- Substantial piece of work (building features, writing code)",
-            "- Needs diverse perspectives (architecture decisions, reviews)",
-            "- Quality-critical work (security, performance-sensitive code)",
-            "- Gated actions needed (deploys, deletions via proposed_actions)",
+            "You have a multi-agent team — use them. For each nontrivial "
+            "user request, you should use at least one checkpoint. The "
+            "team's diverse perspectives and iterative refinement are "
+            "why checkpoint mode exists.",
             "",
-            "## When NOT to call checkpoint",
-            "- Task is trivially small (just do it directly)",
-            "- Pure overhead (reading a file, checking status)",
-            "- You just checkpointed and haven't done meaningful work since",
+            "Target each checkpoint at one coherent piece of work. For "
+            "complex requests, prefer a few focused checkpoints (e.g., "
+            "one for planning, one for building, one for review) over "
+            "one monolithic delegation.",
             "",
-            "## Using expected_actions",
-            "If agents need to propose tool calls they don't have access to,",
-            "describe them in expected_actions:",
-            '  checkpoint(task="Deploy the app", expected_actions=[',
-            '    {"tool": "mcp__vercel__deploy", "description": "Deploy to production"}',
-            "  ])",
-            "Agents will include these as proposed_actions in their new_answer.",
-            "The winning answer's proposed_actions execute automatically.",
+            "Work solo (skip checkpoint) ONLY when:",
+            "- Quick/trivial — a lookup, status check, small edit, or " "anything with essentially one correct answer",
+            "- Gathering context — reading files, exploring, researching. " "Checkpoint the action the research informs, not the " "research itself",
+            "- Task not yet defined — you need to discover or clarify " "before you can write meaningful eval_criteria. Do discovery " "solo, then checkpoint the now-concrete work",
+            "- Conversational pace — the user is iterating with follow-ups " "or small adjustments where latency matters more than depth",
+            "- Context can't transfer — the task depends on nuanced " "conversation history that can't be captured in task + context",
+            "- Orchestration meta-work — planning what to checkpoint, " "sequencing, synthesizing results. This is your job",
+            "- Diagnosing failures — if a checkpoint failed, investigate " "solo first. Re-checkpoint after defining the corrected task",
+            "",
+            "## Planning your checkpoints",
+            "",
+            "Before diving into work, plan your checkpoint strategy for "
+            "the request. Think through: what are the distinct pieces of "
+            "work? Which ones benefit from the team? What order should "
+            "they run in? What solo work do you need to do between them?",
+            "",
+            "For example, given 'build a trading dashboard':",
+            "1. Solo: gather requirements, explore existing code",
+            "2. Checkpoint: design the architecture and data model",
+            "3. Solo: implement the spec from checkpoint results",
+            "4. Checkpoint: review implementation for correctness and UX",
+            "5. Solo: apply fixes from review",
+            "",
+            "This upfront planning prevents both under-checkpointing "
+            "(doing everything solo) and over-checkpointing (delegating "
+            "every small step). Map out your plan, then execute it — "
+            "but adapt as you go. If you discover mid-execution that "
+            "a step is harder or riskier than expected, add a checkpoint. "
+            "The plan is a starting point, not a straitjacket.",
+            "",
+            "## Required parameters",
+            "",
+            "`task` and `eval_criteria` are both required. eval_criteria "
+            "is a list of strings defining what good output looks like — "
+            "these become the checklist agents evaluate against. Write "
+            "criteria that are specific and verifiable, not vague.",
+            "",
+            "## Irreversible actions",
+            "",
+            "For irreversible or high-stakes actions (deploys, deletes, "
+            "sends, trades, publications), ALWAYS use checkpoint to get "
+            "multi-agent review before proceeding. Include the action in "
+            "gated_actions with a description of exactly what will be "
+            "executed (tool name and intended arguments). Write "
+            "eval_criteria that specifically assess safety, preconditions, "
+            "and rollback plan. After receiving consensus, review the "
+            "team's recommendation and make the final call yourself — "
+            "never blindly execute a proposed action without verification.",
         ]
 
         if self.gated_patterns:
@@ -5922,8 +5961,8 @@ class MainAgentCheckpointSection(SystemPromptSection):
                 [
                     "",
                     "## Gated tools (require checkpoint approval)",
-                    "These tools cannot be called directly. Use checkpoint with",
-                    "expected_actions to have the team propose them:",
+                    "",
+                    "These tools cannot be called directly. You must " "delegate via checkpoint with gated_actions so the " "team can review and propose them:",
                 ],
             )
             for pattern in self.gated_patterns:

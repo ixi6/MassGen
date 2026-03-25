@@ -41,7 +41,7 @@ describe('GlobalInputBar launch state', () => {
       pendingToolCalls: {},
       threads: [],
       currentPhase: null,
-      taskPlan: [],
+      taskPlans: {},
       _counter: 1,
     })
 

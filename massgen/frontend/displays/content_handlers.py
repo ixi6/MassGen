@@ -101,6 +101,7 @@ def get_tool_category(tool_name: str) -> dict[str, str]:
         "human_input": "💬",
         "weather": "🌤️",
         "subagent": "🔗",
+        "checkpoint": "🏁",
         "tool": "🔧",
     }
     result["icon"] = icon_map.get(result.get("category", "tool"), "🔧")

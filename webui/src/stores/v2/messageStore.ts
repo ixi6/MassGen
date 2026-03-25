@@ -190,8 +190,8 @@ interface MessageStoreState {
   threads: ThreadInfo[];
   /** Current coordination phase (from phase_change events) */
   currentPhase: string | null;
-  /** Task plan extracted from planning tool results */
-  taskPlan: TaskItem[];
+  /** Per-agent task plans extracted from planning tool results */
+  taskPlans: Record<string, TaskItem[]>;
   /** Monotonic counter for message IDs */
   _counter: number;
 }
@@ -210,7 +210,7 @@ const initialState: MessageStoreState = {
   pendingToolCalls: {},
   threads: [],
   currentPhase: null,
-  taskPlan: [],
+  taskPlans: {},
   _counter: 0,
 };
 
@@ -255,7 +255,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
               currentRound: rounds,
               pendingToolCalls: {},
               currentPhase: null,
-              taskPlan: [],
+              taskPlans: {},
               _counter: 0,
             });
           }
@@ -470,7 +470,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
                     // update_task_status: patch existing plan with updated task
                     const updatedTask = resultData.task as Record<string, unknown>;
                     const taskId = String(updatedTask.id || '');
-                    const existingPlan = [...state.taskPlan];
+                    const existingPlan = [...(state.taskPlans[agentId] || [])];
                     const idx = existingPlan.findIndex((t) => t.id === taskId);
                     if (idx >= 0) {
                       existingPlan[idx] = {
@@ -497,7 +497,7 @@ export const useMessageStore = create<MessageStoreState & MessageStoreActions>(
 
               set({
                 messages: { ...state.messages, [agentId]: updated },
-                ...(newTaskPlan !== undefined ? { taskPlan: newTaskPlan } : {}),
+                ...(newTaskPlan !== undefined ? { taskPlans: { ...state.taskPlans, [agentId]: newTaskPlan } } : {}),
               });
               break;
             }

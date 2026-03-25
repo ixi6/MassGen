@@ -18,53 +18,49 @@ export function ContentMessageView({ message }: ContentMessageViewProps) {
   const preview = lines.slice(0, 2).join('\n');
   const previewTruncated = preview.length > 200 ? preview.slice(0, 200) + '\u2026' : preview;
 
-  // Thinking/reasoning — collapsible, purple left-border
+  // Thinking/reasoning — unlabeled italic text with hover-reveal chevron
   if (isThinking) {
+    const firstLine = lines[0];
+    const previewLine = firstLine.length > 80 ? firstLine.slice(0, 77) + '\u2026' : firstLine;
+
     return (
-      <div className="px-4 py-1">
-        <div
-          className={cn(
-            'border-l-2 border-violet-400/30 pl-3 cursor-pointer',
-            'hover:border-violet-400/50 transition-colors duration-150',
-          )}
-          onClick={() => setExpanded(!expanded)}
-        >
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <svg
-              className={cn(
-                'w-2.5 h-2.5 text-v2-text-muted transition-transform duration-150 shrink-0',
-                expanded && 'rotate-90'
-              )}
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-            >
-              <path d="M4 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span className="text-[11px] font-medium uppercase tracking-wider text-violet-400/70">
-              Reasoning
+      <div
+        className={cn('v2-reasoning-block cursor-pointer', expanded && 'v2-reasoning-expanded')}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <div className="v2-reasoning-node" />
+        <div className="v2-reasoning-row flex items-start gap-1.5">
+          <svg
+            className="v2-hover-chevron w-2.5 h-2.5 shrink-0 text-v2-text-muted"
+            style={{ marginLeft: '-14px', marginRight: '-5px', marginTop: '4px' }}
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+          >
+            <path d="M4 2l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {!expanded && (
+            <span className="text-[13px] text-v2-text-muted italic opacity-70 truncate leading-relaxed">
+              {previewLine}
             </span>
-          </div>
-          {expanded ? (
-            <pre className="whitespace-pre-wrap text-[13px] leading-relaxed break-words text-v2-text-muted italic animate-v2-fade-in">
+          )}
+          {expanded && (
+            <pre className="text-[13px] text-v2-text-muted italic opacity-70 whitespace-pre-wrap leading-relaxed break-words animate-v2-fade-in flex-1 min-w-0 max-h-[300px] overflow-y-auto v2-scrollbar">
               {content}
             </pre>
-          ) : (
-            <p className="text-xs text-v2-text-muted italic truncate">
-              {previewTruncated}
-            </p>
           )}
         </div>
       </div>
     );
   }
 
-  // Regular content — accent left-border, flush left
+  // Regular content — plain text with spine node, no border
   if (!hasMore) {
     return (
-      <div className="px-4 py-1">
-        <div className="border-l-2 border-v2-text-muted/20 pl-3">
+      <div className="v2-step-group">
+        <div className="v2-step-node" />
+        <div className="py-1.5">
           <p className="text-sm text-v2-text leading-relaxed">
             {content}
           </p>
@@ -73,13 +69,11 @@ export function ContentMessageView({ message }: ContentMessageViewProps) {
     );
   }
 
-  // Longer content: collapsible with accent border
+  // Longer content: collapsible
   return (
-    <div className="px-4 py-1">
-      <div
-        className="border-l-2 border-v2-text-muted/20 pl-3 cursor-pointer"
-        onClick={() => setExpanded(!expanded)}
-      >
+    <div className="v2-step-group">
+      <div className="v2-step-node" />
+      <div className="py-1.5 cursor-pointer" onClick={() => setExpanded(!expanded)}>
         {expanded ? (
           <div className="animate-v2-fade-in">
             <pre className="whitespace-pre-wrap text-sm text-v2-text leading-relaxed break-words">

@@ -103,6 +103,75 @@ class CheckpointSubprocessManager:
         )
         return ws
 
+    def _get_checkpoint_log_dir(self) -> Path | None:
+        """Get/create the checkpoint log directory in the parent's log tree.
+
+        Returns:
+            Path like ``{parent_log}/checkpoint_1/``, or None.
+        """
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            parent_log_dir = get_log_session_dir()
+            if not parent_log_dir:
+                return None
+            log_dir = Path(parent_log_dir) / f"checkpoint_{self._checkpoint_number}"
+            log_dir.mkdir(parents=True, exist_ok=True)
+            return log_dir
+        except Exception:
+            return None
+
+    def _create_live_log_symlink(self, workspace: Path) -> None:
+        """Create ``live_logs`` symlink in the checkpoint log dir.
+
+        Points at the checkpoint workspace so you can follow subprocess
+        logs in real-time. Same pattern as SubagentManager.
+        """
+        log_dir = self._get_checkpoint_log_dir()
+        if not log_dir:
+            return
+        link = log_dir / "live_logs"
+        try:
+            target = workspace.resolve() / ".massgen" / "massgen_logs"
+            if link.is_symlink():
+                link.unlink()
+            link.symlink_to(target)
+            logger.info(f"[CheckpointSubprocess] Live logs: {link}")
+        except Exception as e:
+            logger.debug(f"[CheckpointSubprocess] Symlink failed: {e}")
+
+    def _copy_subprocess_logs(self) -> None:
+        """Copy subprocess logs into the parent's log directory.
+
+        Copies ``{workspace}/.massgen/massgen_logs/log_*/`` to
+        ``{parent_log}/checkpoint_N/full_logs/``. Same pattern as
+        SubagentManager._write_subprocess_log_reference().
+        """
+        if not self._checkpoint_workspace:
+            return
+        log_dir = self._get_checkpoint_log_dir()
+        if not log_dir:
+            return
+
+        sub_logs_base = self._checkpoint_workspace / ".massgen" / "massgen_logs"
+        if not sub_logs_base.exists():
+            return
+
+        dest = log_dir / "full_logs"
+        try:
+            log_dirs = sorted(sub_logs_base.iterdir())
+            if log_dirs:
+                if dest.exists():
+                    shutil.rmtree(dest)
+                shutil.copytree(log_dirs[-1], dest, symlinks=True, ignore_dangling_symlinks=True)
+                logger.info(f"[CheckpointSubprocess] Logs copied to: {dest}")
+            # Remove live_logs symlink now that we have the real logs
+            live_link = log_dir / "live_logs"
+            if live_link.is_symlink():
+                live_link.unlink()
+        except Exception as e:
+            logger.warning(f"[CheckpointSubprocess] Failed to copy logs: {e}")
+
     def _build_command(
         self,
         config_path: Path,
@@ -171,6 +240,10 @@ class CheckpointSubprocessManager:
         logger.info(
             f"[CheckpointSubprocess] Spawning checkpoint #{self._checkpoint_number}: " f"{task[:80]}",
         )
+
+        # Create a symlink in the parent's log directory pointing to the
+        # live checkpoint workspace so users can find it during the run.
+        self._create_live_log_symlink(workspace)
 
         try:
             self._process = await asyncio.create_subprocess_exec(

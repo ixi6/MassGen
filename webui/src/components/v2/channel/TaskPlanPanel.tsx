@@ -3,6 +3,7 @@ import type { MouseEvent as ReactMouseEvent } from 'react';
 import { cn } from '../../../lib/utils';
 import { useMessageStore } from '../../../stores/v2/messageStore';
 
+const EMPTY_PLAN: never[] = [];
 const DEFAULT_WIDTH = 360;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 560;
@@ -37,11 +38,11 @@ interface TaskMeta {
   dependencies?: string[];
 }
 
-export function TaskPlanPanel() {
+export function TaskPlanPanel({ agentId }: { agentId: string }) {
   const [collapsed, setCollapsed] = useState(false);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_WIDTH);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
-  const taskPlan = useMessageStore((s) => s.taskPlan);
+  const taskPlan = useMessageStore((s) => s.taskPlans[agentId] ?? EMPTY_PLAN);
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   useEffect(() => {

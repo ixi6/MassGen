@@ -3,28 +3,32 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { useMessageStore } from '../../../stores/v2/messageStore'
 import { TaskPlanPanel } from './TaskPlanPanel'
 
+const AGENT_ID = 'agent-alpha'
+
 describe('TaskPlanPanel', () => {
   beforeEach(() => {
     useMessageStore.getState().reset()
     useMessageStore.setState({
-      taskPlan: [
-        {
-          id: 'task-1',
-          description: 'Build the first artifact',
-          status: 'in_progress',
-          priority: 'high',
-        },
-        {
-          id: 'task-2',
-          description: 'Verify the result',
-          status: 'pending',
-        },
-      ],
+      taskPlans: {
+        [AGENT_ID]: [
+          {
+            id: 'task-1',
+            description: 'Build the first artifact',
+            status: 'in_progress',
+            priority: 'high',
+          },
+          {
+            id: 'task-2',
+            description: 'Verify the result',
+            status: 'pending',
+          },
+        ],
+      },
     })
   })
 
   it('renders docked at default width and supports drag-resize', () => {
-    render(<TaskPlanPanel />)
+    render(<TaskPlanPanel agentId={AGENT_ID} />)
 
     const panel = screen.getByTestId('task-plan-panel')
     expect(panel).toHaveStyle({ width: '360px' })
@@ -38,7 +42,7 @@ describe('TaskPlanPanel', () => {
   })
 
   it('clicking a task expands its metadata', () => {
-    render(<TaskPlanPanel />)
+    render(<TaskPlanPanel agentId={AGENT_ID} />)
 
     // Click first task
     fireEvent.click(screen.getByText(/Build the first artifact/))
@@ -50,7 +54,7 @@ describe('TaskPlanPanel', () => {
   })
 
   it('collapses to a vertical icon strip and re-expands', () => {
-    render(<TaskPlanPanel />)
+    render(<TaskPlanPanel agentId={AGENT_ID} />)
 
     // Find the collapse button (the chevron in header)
     const header = screen.getByTestId('task-plan-panel').querySelector('button:last-child')
@@ -66,8 +70,24 @@ describe('TaskPlanPanel', () => {
   })
 
   it('returns null when no task plan exists', () => {
-    useMessageStore.setState({ taskPlan: [] })
-    const { container } = render(<TaskPlanPanel />)
+    useMessageStore.setState({ taskPlans: {} })
+    const { container } = render(<TaskPlanPanel agentId={AGENT_ID} />)
     expect(container.innerHTML).toBe('')
+  })
+
+  it('shows only the tasks for the given agent', () => {
+    useMessageStore.setState({
+      taskPlans: {
+        [AGENT_ID]: [
+          { id: 't1', description: 'Alpha task', status: 'pending' },
+        ],
+        'agent-beta': [
+          { id: 't2', description: 'Beta task', status: 'pending' },
+        ],
+      },
+    })
+    render(<TaskPlanPanel agentId={AGENT_ID} />)
+    expect(screen.getByText(/Alpha task/)).toBeInTheDocument()
+    expect(screen.queryByText(/Beta task/)).toBeNull()
   })
 })

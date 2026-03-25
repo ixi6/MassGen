@@ -205,6 +205,12 @@ TOOL_CATEGORIES = {
             "mcp__weather",
         ],
     },
+    "checkpoint": {
+        "color": "#d4a050",  # Warm gold - coordination checkpoint
+        "patterns": [
+            "checkpoint",
+        ],
+    },
 }
 
 

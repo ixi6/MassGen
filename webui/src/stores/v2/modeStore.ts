@@ -551,10 +551,15 @@ export const useModeStore = create<ModeState & ModeActions>()((set, get) => ({
       const updates: Partial<ModeState> = { configLocked: true };
       if (data.agents && Array.isArray(data.agents)) {
         updates.configAgents = data.agents;
-        // Default main agent to first agent so checkpoint mode works immediately
-        if (data.agents.length > 0 && !get().selectedMainAgent) {
-          updates.selectedMainAgent = data.agents[0].id;
-          updates.selectedSingleAgent = data.agents[0].id;
+        // Default main agent to first agent so checkpoint mode works immediately.
+        // Also reset if current selection isn't in the new agent list (stale ID).
+        if (data.agents.length > 0) {
+          const currentMain = get().selectedMainAgent;
+          const agentIds = data.agents.map((a: { id: string }) => a.id);
+          if (!currentMain || !agentIds.includes(currentMain)) {
+            updates.selectedMainAgent = data.agents[0].id;
+            updates.selectedSingleAgent = data.agents[0].id;
+          }
         }
       }
       if (data.max_answers !== undefined && data.max_answers !== null) {

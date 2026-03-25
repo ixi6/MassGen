@@ -274,11 +274,13 @@ function ModelChip({
   index,
   config,
   isSelected,
+  isMainAgent,
   onClick,
 }: {
   index: number;
   config: AgentConfigOverride;
   isSelected?: boolean;
+  isMainAgent?: boolean;
   onClick?: () => void;
 }) {
   const letter = String.fromCharCode(65 + index);
@@ -299,10 +301,12 @@ function ModelChip({
       className={cn(
         'inline-flex items-center px-2 py-1 rounded text-[11px] font-medium transition-all whitespace-nowrap',
         onClick && 'cursor-pointer hover:ring-1 hover:ring-v2-accent/40',
-        isSelected && 'ring-2 ring-v2-accent ring-offset-1 ring-offset-[var(--v2-input-bg)]'
+        isSelected && 'ring-2 ring-v2-accent ring-offset-1 ring-offset-[var(--v2-input-bg)]',
+        isMainAgent && 'ring-1 ring-amber-400/50'
       )}
       style={{ background: hasConfig ? colors.bg : defaultChipColor.bg, color: hasConfig ? colors.text : defaultChipColor.text }}
     >
+      {isMainAgent && <span className="text-amber-400 mr-1" title="Main agent">&#9733;</span>}
       <span className="font-bold mr-1.5 opacity-70">{letter}</span>
       {hasConfig ? (
         <>
@@ -324,10 +328,13 @@ function AgentSummaryButton({ onClick }: { onClick: () => void }) {
   const configAgents = useModeStore((s) => s.configAgents);
   const configLockedVal = useModeStore((s) => s.configLocked);
   const agentMode = useModeStore((s) => s.agentMode);
+  const coordinationMode = useModeStore((s) => s.coordinationMode);
+  const selectedMainAgent = useModeStore((s) => s.selectedMainAgent);
   const selectedSingleAgent = useModeStore((s) => s.selectedSingleAgent);
   const setSelectedSingleAgent = useModeStore((s) => s.setSelectedSingleAgent);
 
   const isSingleMode = agentMode === 'single';
+  const isCheckpointMode = coordinationMode === 'checkpoint';
 
   // When config is locked or agentCount is null, show agents from the parsed YAML
   const useConfigAgents = (configLockedVal || agentCount === null) && configAgents.length > 0;
@@ -387,15 +394,24 @@ function AgentSummaryButton({ onClick }: { onClick: () => void }) {
       )}
     >
       <div className="flex gap-1 items-center">
-        {effectiveConfigs.slice(0, chipCount || effectiveConfigs.length).map((config, i) => (
-          <ModelChip
-            key={i}
-            index={i}
-            config={config}
-            isSelected={isSingleMode && (selectedIndex === -1 ? i === 0 : i === selectedIndex)}
-            onClick={isSingleMode ? () => handleChipClick(i) : undefined}
-          />
-        ))}
+        {effectiveConfigs.slice(0, chipCount || effectiveConfigs.length).map((config, i) => {
+          const chipAgentId = useConfigAgents && configAgents[i]
+            ? configAgents[i].id
+            : `agent_${String.fromCharCode(97 + i)}`;
+          const isMain = isCheckpointMode && (
+            selectedMainAgent ? selectedMainAgent === chipAgentId : i === 0
+          );
+          return (
+            <ModelChip
+              key={i}
+              index={i}
+              config={config}
+              isSelected={isSingleMode && (selectedIndex === -1 ? i === 0 : i === selectedIndex)}
+              isMainAgent={isMain}
+              onClick={isSingleMode ? () => handleChipClick(i) : undefined}
+            />
+          );
+        })}
       </div>
       <span
         className="text-sm text-v2-text-muted leading-none hover:text-v2-text transition-colors"
@@ -593,8 +609,11 @@ function AgentCard({ index }: { index: number }) {
     : agentConfigs[index];
   const letter = String.fromCharCode(65 + index);
   const agentId = configAgent?.id ?? `agent_${String.fromCharCode(97 + index)}`;
-  const isMainAgent = selectedMainAgent === agentId;
   const showMainToggle = coordinationMode === 'checkpoint';
+  // Default first agent to main if none selected in checkpoint mode
+  const isMainAgent = selectedMainAgent
+    ? selectedMainAgent === agentId
+    : (showMainToggle && index === 0);
 
   const selectedProvider = config?.provider ?? '';
   const providerInfo = providers.find((p) => p.id === selectedProvider);
@@ -924,6 +943,22 @@ function AgentConfigDrawer({
   const agentCount = useModeStore((s) => s.agentCount);
   const configAgents = useModeStore((s) => s.configAgents);
   const configLockedDrawer = useModeStore((s) => s.configLocked);
+  const coordinationMode = useModeStore((s) => s.coordinationMode);
+  const selectedMainAgent = useModeStore((s) => s.selectedMainAgent);
+  const setSelectedMainAgent = useModeStore((s) => s.setSelectedMainAgent);
+
+  // Auto-select first agent as main when drawer opens in checkpoint mode
+  useEffect(() => {
+    if (!open || coordinationMode !== 'checkpoint') return;
+    const firstId = configLockedDrawer && configAgents.length > 0
+      ? configAgents[0].id
+      : agentCount && agentCount > 0
+        ? `agent_${String.fromCharCode(97)}`
+        : null;
+    if (firstId && !selectedMainAgent) {
+      setSelectedMainAgent(firstId);
+    }
+  }, [open, coordinationMode, configAgents, configLockedDrawer, agentCount, selectedMainAgent, setSelectedMainAgent]);
 
   const cardCount = configLockedDrawer ? configAgents.length : agentCount;
   if (!open || cardCount === null || cardCount === 0) return null;

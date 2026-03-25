@@ -196,7 +196,7 @@ class ToolCallCard(Static):
             True if this is a terminal tool, False otherwise.
         """
         name_lower = tool_name.lower()
-        return any(t in name_lower for t in ("new_answer", "vote"))
+        return any(t in name_lower for t in ("new_answer", "vote", "checkpoint"))
 
     def on_mount(self) -> None:
         """Start the elapsed time timer and complete appearance animation."""
@@ -307,16 +307,17 @@ class ToolCallCard(Static):
         status_icon = self.STATUS_ICONS.get(self._status, "◉")
         elapsed = self._get_elapsed_str()
 
-        # Header line with gold/amber styling for terminal tools
+        # Header line with category-aware styling for terminal tools
+        header_color = self._category.get("color", "#ffa500")
         if self._status == "running":
-            text.append("▶ ", style="bold #ffa500")
-            text.append(self._display_name, style="bold #ffa500")
+            text.append("▶ ", style=f"bold {header_color}")
+            text.append(self._display_name, style=f"bold {header_color}")
             text.append(" ")
-            text.append(status_icon, style="#ffa500")
+            text.append(status_icon, style=header_color)
             text.append(" ...", style="dim italic")
         else:
-            text.append("★ ", style="bold #ffa500")
-            text.append(self._display_name, style="bold #ffa500")
+            text.append("★ ", style=f"bold {header_color}")
+            text.append(self._display_name, style=f"bold {header_color}")
             text.append(" ")
             if self._status == "success":
                 text.append(status_icon, style="green")
@@ -427,6 +428,68 @@ class ToolCallCard(Static):
                 text.append("\n  ")
                 args_display = self._truncate_params_display(params_str, 100)
                 text.append(args_display, style="dim")
+
+        elif "checkpoint" in tool_lower:
+            # Checkpoint hero card: task + eval criteria as inline tags
+            task = None
+            eval_criteria = None
+            context = None
+
+            if params_str:
+                try:
+                    params = json.loads(params_str)
+                    if isinstance(params, dict):
+                        task = params.get("task")
+                        eval_criteria = params.get("eval_criteria")
+                        context = params.get("context")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            # Show task prominently
+            if task:
+                text.append("\n  ")
+                task_text = str(task).replace("\n", " ")
+                if len(task_text) > 140:
+                    task_text = task_text[:137] + "..."
+                text.append(task_text, style="#c9d1d9")
+
+            # Show eval criteria as inline tag boxes
+            if eval_criteria and isinstance(eval_criteria, list):
+                text.append("\n  ")
+                for i, criterion in enumerate(eval_criteria):
+                    crit_text = str(criterion)
+                    # Truncate long criteria for tag display
+                    if len(crit_text) > 40:
+                        crit_text = crit_text[:37] + "..."
+                    text.append(f" {crit_text} ", style="on #2d2d3d #a0a0c0")
+                    # Spacing between tags
+                    if i < len(eval_criteria) - 1:
+                        text.append(" ")
+
+            # Show context summary if present (and no task to avoid redundancy)
+            if context and not task:
+                text.append("\n  ")
+                ctx_text = str(context).replace("\n", " ")
+                if len(ctx_text) > 100:
+                    ctx_text = ctx_text[:97] + "..."
+                text.append(ctx_text, style="dim italic")
+
+            # Show result message on completion
+            if self._status == "success" and self._result:
+                result_msg = None
+                try:
+                    result_data = json.loads(self._result)
+                    if isinstance(result_data, dict):
+                        result_msg = result_data.get("message")
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                if result_msg:
+                    text.append("\n  ")
+                    text.append("→ ", style="dim green")
+                    msg_text = str(result_msg)
+                    if len(msg_text) > 120:
+                        msg_text = msg_text[:117] + "..."
+                    text.append(msg_text, style="dim green")
 
         # Show error if any
         if self._error:

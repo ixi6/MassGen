@@ -1,0 +1,1077 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Card Options — MassGen Timeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+  :root {
+    --bg:              #1a1a2e;
+    --bg-surface:      #1e1e34;
+    --bg-raised:       #252540;
+    --bg-hover:        rgba(255,255,255,0.03);
+    --border:          rgba(255,255,255,0.08);
+    --border-subtle:   rgba(255,255,255,0.05);
+    --text:            #e2e2ef;
+    --text-secondary:  #a8a8bf;
+    --text-muted:      #6b6b82;
+    --accent:          #7b8cff;
+    --accent-dim:      rgba(123,140,255,0.12);
+    --green:           #23a559;
+    --red:             #f87171;
+    --violet:          #a78bfa;
+    --yellow:          #f0b232;
+
+    --spine-color:     rgba(255,255,255,0.06);
+    --spine-left:      20px;
+    --node-size:       7px;
+    --radius:          6px;
+    --radius-sm:       4px;
+    --font-body:       'IBM Plex Sans', -apple-system, sans-serif;
+    --font-mono:       'IBM Plex Mono', 'SF Mono', monospace;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-body);
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ================================================================
+     LAYOUT — 3 columns
+     ================================================================ */
+  .page-header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: var(--bg-raised);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 32px;
+    display: flex;
+    align-items: baseline;
+    gap: 24px;
+  }
+  .page-header h1 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+  }
+  .page-header .subtitle {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    min-height: calc(100vh - 50px);
+  }
+
+  .column {
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .column:last-child { border-right: none; }
+
+  .col-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    flex-shrink: 0;
+  }
+  .col-header .option-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+  .col-header .option-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 2px;
+  }
+  .col-header .option-desc {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.5;
+  }
+
+  .col-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 0 60px 0;
+    position: relative;
+  }
+  .col-body::-webkit-scrollbar { width: 5px; }
+  .col-body::-webkit-scrollbar-track { background: transparent; }
+  .col-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* spine */
+  .col-body::before {
+    content: '';
+    position: absolute;
+    left: calc(12px + var(--spine-left));
+    top: 0; bottom: 0;
+    width: 1px;
+    background: var(--spine-color);
+    pointer-events: none;
+  }
+
+  /* ================================================================
+     SHARED: step group, narrative, spine nodes, reasoning
+     ================================================================ */
+  .step-group {
+    position: relative;
+    padding-left: calc(12px + var(--spine-left) + 18px);
+    padding-right: 12px;
+    margin-bottom: 2px;
+  }
+  .step-group > .node {
+    position: absolute;
+    left: calc(12px + var(--spine-left));
+    top: 6px;
+    width: var(--node-size);
+    height: var(--node-size);
+    border-radius: 50%;
+    background: var(--text-muted);
+    transform: translateX(-50%);
+    z-index: 2;
+    transition: background 0.2s;
+  }
+  .step-group:hover > .node { background: var(--accent); }
+
+  .narrative {
+    padding: 6px 0 4px 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .reasoning-block {
+    position: relative;
+    padding-left: calc(12px + var(--spine-left) + 18px);
+    padding-right: 12px;
+    margin-bottom: 2px;
+  }
+  .reasoning-block > .node {
+    position: absolute;
+    left: calc(12px + var(--spine-left));
+    top: 8px;
+    width: 5px; height: 5px;
+    border-radius: 50%;
+    background: var(--violet);
+    opacity: 0.4;
+    transform: translateX(-50%);
+    z-index: 2;
+  }
+  .reasoning-inner {
+    padding: 4px 0;
+    cursor: pointer;
+    user-select: none;
+  }
+  .reasoning-label-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .reasoning-chevron {
+    width: 10px; height: 10px;
+    color: var(--text-muted);
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+  }
+  .reasoning-block.expanded .reasoning-chevron { transform: rotate(90deg); }
+  .reasoning-label {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--violet);
+    opacity: 0.6;
+  }
+  .reasoning-preview {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 500px;
+    margin-left: 16px;
+  }
+  .reasoning-content {
+    display: none;
+    margin: 4px 0 0 16px;
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    font-style: italic;
+    white-space: pre-wrap;
+    border-left: 2px solid rgba(167,139,250,0.15);
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .reasoning-block.expanded .reasoning-content { display: block; }
+  .reasoning-block.expanded .reasoning-preview { display: none; }
+
+  /* ================================================================
+     SHARED: status dots, chevrons, elapsed, tool name badge
+     ================================================================ */
+  .dot-success { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+  .dot-pending { width: 6px; height: 6px; border-radius: 50%; background: #60a5fa; flex-shrink: 0; animation: pulse 2s ease-in-out infinite; }
+  .dot-failed  { width: 6px; height: 6px; border-radius: 50%; background: var(--red); flex-shrink: 0; }
+
+  .chevron-icon {
+    width: 12px; height: 12px;
+    color: var(--text-muted);
+    flex-shrink: 0;
+    transition: transform 0.15s ease;
+  }
+
+  .elapsed {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .hint {
+    flex: 1;
+    min-width: 0;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tool-badge {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .count { color: var(--text-muted); font-size: 11px; }
+
+  /* shared expand body for all three */
+  .expand-body {
+    display: none;
+    overflow: hidden;
+  }
+  .expanded .expand-body {
+    display: block;
+    animation: fadeIn 0.15s ease;
+  }
+  .expanded .chevron-icon { transform: rotate(90deg); }
+  .body-section { margin-top: 6px; }
+  .body-label {
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 3px;
+  }
+  .body-content {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 6px 8px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 180px;
+    overflow-y: auto;
+  }
+
+  /* batch items shared */
+  .batch-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-2px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* ================================================================
+     OPTION A: "Inline Trace"
+     No card border or background. Tools are just indented monospace
+     lines with a dot — like terminal output / git log. The card
+     chrome only appears on expand.
+     ================================================================ */
+  .opt-a .tool-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 3px 0;
+    cursor: pointer;
+    user-select: none;
+    border-radius: var(--radius-sm);
+    transition: background 0.1s;
+  }
+  .opt-a .tool-row:hover {
+    background: var(--bg-hover);
+  }
+  .opt-a .tool-badge {
+    color: var(--text-muted);
+    opacity: 0.8;
+  }
+  .opt-a .tool-group {
+    padding: 0 0 4px 0;
+  }
+  .opt-a .expand-body {
+    margin-left: 25px;
+    padding: 4px 0 6px 12px;
+    border-left: 1px solid var(--border-subtle);
+  }
+  /* batch sub-items */
+  .opt-a .batch-tree {
+    display: none;
+    margin-left: 25px;
+    padding: 2px 0 4px 12px;
+    border-left: 1px solid var(--border-subtle);
+  }
+  .opt-a .expanded .batch-tree { display: block; }
+  .opt-a .batch-item {
+    padding: 2px 0;
+  }
+
+  /* ================================================================
+     OPTION B: "Soft Pill"
+     Tool calls as small rounded pills that sit snugly under the
+     narrative. Very low visual weight — tinted background only,
+     no border. Feels like a tag or annotation rather than a card.
+     ================================================================ */
+  .opt-b .tool-group {
+    padding: 2px 0 6px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .opt-b .tool-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 10px;
+    background: rgba(255,255,255,0.025);
+    border-radius: 20px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s;
+    align-self: flex-start;
+  }
+  .opt-b .tool-pill:hover {
+    background: rgba(255,255,255,0.05);
+  }
+  .opt-b .tool-badge {
+    color: var(--text-muted);
+  }
+  .opt-b .expand-body {
+    margin: 4px 0 2px 10px;
+    padding: 6px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+  }
+  .opt-b .batch-tree {
+    display: none;
+    margin: 4px 0 0 10px;
+    padding: 4px 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+  }
+  .opt-b .expanded .batch-tree { display: block; }
+  .opt-b .batch-item { padding: 3px 0; }
+
+  /* ================================================================
+     OPTION C: "Gutter Annotation"
+     Tool calls rendered as compact annotations in a left-indented
+     gutter, connected to the spine with a subtle horizontal tick.
+     Minimal text — just the essentials. Feels like margin notes.
+     ================================================================ */
+  .opt-c .tool-group {
+    padding: 1px 0 4px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+  }
+  .opt-c .tool-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 0 2px 0;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    margin-left: -6px;
+    padding-left: 6px;
+    border-radius: var(--radius-sm);
+    transition: background 0.1s;
+  }
+  .opt-c .tool-line:hover {
+    background: var(--bg-hover);
+  }
+  /* Horizontal tick from spine */
+  .opt-c .tool-line::before {
+    content: '';
+    position: absolute;
+    left: -18px;
+    top: 50%;
+    width: 12px;
+    height: 1px;
+    background: var(--border-subtle);
+  }
+  .opt-c .tool-badge {
+    font-size: 10.5px;
+    color: var(--text-muted);
+    opacity: 0.7;
+  }
+  .opt-c .hint {
+    font-size: 10.5px;
+    opacity: 0.6;
+  }
+  .opt-c .elapsed {
+    font-size: 10px;
+    opacity: 0.5;
+  }
+  .opt-c .count {
+    font-size: 10px;
+    opacity: 0.5;
+  }
+  .opt-c .chevron-icon {
+    width: 10px; height: 10px;
+    opacity: 0.5;
+  }
+  .opt-c .dot-success { width: 4px; height: 4px; }
+
+  .opt-c .expand-body {
+    margin: 2px 0 4px 0;
+    padding: 6px 10px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius);
+  }
+  .opt-c .batch-tree {
+    display: none;
+    margin: 2px 0 2px 0;
+    padding: 2px 0 2px 20px;
+  }
+  .opt-c .expanded .batch-tree { display: block; }
+  .opt-c .batch-item {
+    padding: 1px 0;
+    font-size: 10.5px;
+    opacity: 0.6;
+    position: relative;
+    margin-left: -6px;
+    padding-left: 6px;
+  }
+  .opt-c .batch-item::before {
+    content: '';
+    position: absolute;
+    left: -12px;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: var(--border-subtle);
+  }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Tool Card Options</h1>
+  <span class="subtitle">Same spine layout, 3 approaches to tool calls. Click any tool to expand.</span>
+</div>
+
+<div class="columns">
+
+  <!-- ================================================================
+       OPTION A: Inline Trace
+       ================================================================ -->
+  <div class="column opt-a">
+    <div class="col-header">
+      <div class="option-label">Option A</div>
+      <div class="option-name">Inline Trace</div>
+      <div class="option-desc">No card chrome. Tools are just indented monospace lines &mdash; like terminal output. Card detail only appears on expand. Minimal vertical footprint.</div>
+    </div>
+    <div class="col-body">
+
+      <!-- Reasoning -->
+      <div class="reasoning-block" onclick="this.classList.toggle('expanded')">
+        <div class="node"></div>
+        <div class="reasoning-inner">
+          <div class="reasoning-label-row">
+            <svg class="reasoning-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="reasoning-label">Reasoning</span>
+          </div>
+          <div class="reasoning-preview">I need to analyze the existing hero section and closing sections to understand the design system...</div>
+          <div class="reasoning-content">I need to analyze the existing hero section, interactive components, and closing sections to understand the current design system before making changes. The card-depth refinements use CSS custom properties for layering.</div>
+        </div>
+      </div>
+
+      <!-- Step 1: single tool -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero section layout and responsive rules to understand the design constraints.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-row">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">cat src/components/Hero.tsx</span>
+              <span class="elapsed">4ms</span>
+            </div>
+            <div class="expand-body">
+              <div class="body-section">
+                <div class="body-label">Arguments</div>
+                <div class="body-content">{"command": "/bin/bash -lc 'cd /workspace/site && cat src/components/Hero.tsx'"}</div>
+              </div>
+              <div class="body-section">
+                <div class="body-label">Result</div>
+                <div class="body-content">import React from 'react';
+export function Hero() { return &lt;section&gt;...&lt;/section&gt;; }</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 2: batched tools -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the lower stylesheet and existing surface styles so I can place overrides cleanly.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-row">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="count">&times;2</span>
+              <span class="elapsed">11ms</span>
+            </div>
+            <div class="batch-tree">
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cat src/styles/surfaces.css</span>
+                <span class="elapsed">5ms</span>
+              </div>
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cat src/styles/responsive.css | tail -40</span>
+                <span class="elapsed">6ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Creating a task plan for the refinement work based on the stylesheet analysis.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-row">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">massgen_checklist/propose_improvements</span>
+              <span class="elapsed">14ms</span>
+            </div>
+            <div class="expand-body">
+              <div class="body-section">
+                <div class="body-label">Result</div>
+                <div class="body-content">{"status": "ok", "improvements": ["Refine hero gradient", "Add chamber depth", "Improve card contrast"]}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 4: narrative + expanded batch -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Copying the candidate deliverable and locating sections that need structural refinement.</div>
+        <div class="tool-group">
+          <div class="expanded" onclick="this.classList.toggle('expanded')">
+            <div class="tool-row">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="count">&times;2</span>
+              <span class="elapsed">12ms</span>
+            </div>
+            <div class="batch-tree">
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cp -r /shared/candidate/* /workspace/site/</span>
+                <span class="elapsed">4ms</span>
+              </div>
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">grep -n "hero-visual\|chamber" /workspace/site/src/styles/*.css</span>
+                <span class="elapsed">8ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 5 -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero, interactive, and closing sections so I can patch them surgically.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-row">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">cat src/components/Interactive.tsx</span>
+              <span class="elapsed">5ms</span>
+            </div>
+            <div class="expand-body">
+              <div class="body-section">
+                <div class="body-label">Result</div>
+                <div class="body-content">// Interactive.tsx — 142 lines</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 6 -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Finding the existing surface styles so the contrast and card-depth refinements layer cleanly.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-row">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">grep -n surface src/styles/*.css</span>
+              <span class="elapsed">1ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Step 7 -->
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the hero-visual rules before adding a more distinctive chamber treatment.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-row">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">cd /workspace/site && head -30 src/styles/hero.css</span>
+              <span class="elapsed">2ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ================================================================
+       OPTION B: Soft Pill
+       ================================================================ -->
+  <div class="column opt-b">
+    <div class="col-header">
+      <div class="option-label">Option B</div>
+      <div class="option-name">Soft Pill</div>
+      <div class="option-desc">Tools as small rounded pills with barely-there tinted background. Feels like a tag or annotation &mdash; not a card. Very low visual weight.</div>
+    </div>
+    <div class="col-body">
+
+      <div class="reasoning-block" onclick="this.classList.toggle('expanded')">
+        <div class="node"></div>
+        <div class="reasoning-inner">
+          <div class="reasoning-label-row">
+            <svg class="reasoning-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="reasoning-label">Reasoning</span>
+          </div>
+          <div class="reasoning-preview">I need to analyze the existing hero section and closing sections to understand the design system...</div>
+          <div class="reasoning-content">I need to analyze the existing hero section, interactive components, and closing sections to understand the current design system before making changes. The card-depth refinements use CSS custom properties for layering.</div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero section layout and responsive rules to understand the design constraints.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-pill">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">cat src/components/Hero.tsx</span>
+              <span class="elapsed">4ms</span>
+            </div>
+            <div class="expand-body">
+              <div class="body-section">
+                <div class="body-label">Arguments</div>
+                <div class="body-content">{"command": "/bin/bash -lc 'cd /workspace/site && cat src/components/Hero.tsx'"}</div>
+              </div>
+              <div class="body-section">
+                <div class="body-label">Result</div>
+                <div class="body-content">import React from 'react';
+export function Hero() { return &lt;section&gt;...&lt;/section&gt;; }</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the lower stylesheet and existing surface styles so I can place overrides cleanly.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-pill">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="count">&times;2</span>
+              <span class="elapsed">11ms</span>
+            </div>
+            <div class="batch-tree">
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cat src/styles/surfaces.css</span>
+                <span class="elapsed">5ms</span>
+              </div>
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cat src/styles/responsive.css | tail -40</span>
+                <span class="elapsed">6ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Creating a task plan for the refinement work based on the stylesheet analysis.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-pill">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">massgen_checklist/propose_improvements</span>
+              <span class="elapsed">14ms</span>
+            </div>
+            <div class="expand-body">
+              <div class="body-section">
+                <div class="body-label">Result</div>
+                <div class="body-content">{"status": "ok", "improvements": ["Refine hero gradient", "Add chamber depth", "Improve card contrast"]}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Copying the candidate deliverable and locating sections that need structural refinement.</div>
+        <div class="tool-group">
+          <div class="expanded" onclick="this.classList.toggle('expanded')">
+            <div class="tool-pill">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="count">&times;2</span>
+              <span class="elapsed">12ms</span>
+            </div>
+            <div class="batch-tree">
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cp -r /shared/candidate/* /workspace/site/</span>
+                <span class="elapsed">4ms</span>
+              </div>
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">grep -n "hero-visual\|chamber" /workspace/site/src/styles/*.css</span>
+                <span class="elapsed">8ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero, interactive, and closing sections so I can patch them surgically.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-pill">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">cat src/components/Interactive.tsx</span>
+              <span class="elapsed">5ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Finding the existing surface styles so the contrast and card-depth refinements layer cleanly.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-pill">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">grep -n surface src/styles/*.css</span>
+              <span class="elapsed">1ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the hero-visual rules before adding a more distinctive chamber treatment.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-pill">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">head -30 src/styles/hero.css</span>
+              <span class="elapsed">2ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ================================================================
+       OPTION C: Gutter Annotation
+       ================================================================ -->
+  <div class="column opt-c">
+    <div class="col-header">
+      <div class="option-label">Option C</div>
+      <div class="option-name">Gutter Annotation</div>
+      <div class="option-desc">Ultra-compact. Tools as tiny lines with horizontal ticks from the spine. Like margin notes &mdash; visible but never the focus. Maximum narrative clarity.</div>
+    </div>
+    <div class="col-body">
+
+      <div class="reasoning-block" onclick="this.classList.toggle('expanded')">
+        <div class="node"></div>
+        <div class="reasoning-inner">
+          <div class="reasoning-label-row">
+            <svg class="reasoning-chevron" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            <span class="reasoning-label">Reasoning</span>
+          </div>
+          <div class="reasoning-preview">I need to analyze the existing hero section and closing sections to understand the design system...</div>
+          <div class="reasoning-content">I need to analyze the existing hero section, interactive components, and closing sections to understand the current design system before making changes. The card-depth refinements use CSS custom properties for layering.</div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero section layout and responsive rules to understand the design constraints.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-line">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">cat src/components/Hero.tsx</span>
+              <span class="elapsed">4ms</span>
+            </div>
+            <div class="expand-body">
+              <div class="body-section">
+                <div class="body-label">Arguments</div>
+                <div class="body-content">{"command": "/bin/bash -lc 'cd /workspace/site && cat src/components/Hero.tsx'"}</div>
+              </div>
+              <div class="body-section">
+                <div class="body-label">Result</div>
+                <div class="body-content">import React from 'react';
+export function Hero() { return &lt;section&gt;...&lt;/section&gt;; }</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the lower stylesheet and existing surface styles so I can place overrides cleanly.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-line">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="count">&times;2</span>
+              <span class="elapsed">11ms</span>
+            </div>
+            <div class="batch-tree">
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cat src/styles/surfaces.css</span>
+                <span class="elapsed">5ms</span>
+              </div>
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cat src/styles/responsive.css | tail -40</span>
+                <span class="elapsed">6ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Creating a task plan for the refinement work based on the stylesheet analysis.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-line">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">massgen_checklist/propose_improvements</span>
+              <span class="elapsed">14ms</span>
+            </div>
+            <div class="expand-body">
+              <div class="body-section">
+                <div class="body-label">Result</div>
+                <div class="body-content">{"status": "ok", "improvements": ["Refine hero gradient", "Add chamber depth", "Improve card contrast"]}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Copying the candidate deliverable and locating sections that need structural refinement.</div>
+        <div class="tool-group">
+          <div class="expanded" onclick="this.classList.toggle('expanded')">
+            <div class="tool-line">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="count">&times;2</span>
+              <span class="elapsed">12ms</span>
+            </div>
+            <div class="batch-tree">
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">cp -r /shared/candidate/* /workspace/site/</span>
+                <span class="elapsed">4ms</span>
+              </div>
+              <div class="batch-item">
+                <span class="dot-success"></span>
+                <span class="hint">grep -n "hero-visual\|chamber" /workspace/site/src/styles/*.css</span>
+                <span class="elapsed">8ms</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Reading the current hero, interactive, and closing sections so I can patch them surgically.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-line">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">cat src/components/Interactive.tsx</span>
+              <span class="elapsed">5ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Finding the existing surface styles so the contrast and card-depth refinements layer cleanly.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-line">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">grep -n surface src/styles/*.css</span>
+              <span class="elapsed">1ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step-group">
+        <div class="node"></div>
+        <div class="narrative">Checking the hero-visual rules before adding a more distinctive chamber treatment.</div>
+        <div class="tool-group">
+          <div onclick="this.classList.toggle('expanded')">
+            <div class="tool-line">
+              <svg class="chevron-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M4 2l4 4-4 4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              <span class="dot-success"></span>
+              <span class="tool-badge">codex_shell</span>
+              <span class="hint">head -30 src/styles/hero.css</span>
+              <span class="elapsed">2ms</span>
+            </div>
+            <div class="expand-body"></div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

@@ -3151,15 +3151,6 @@ class ClaudeCodeBackend(NativeToolBackendMixin, StreamingBufferMixin, LLMBackend
             await client.query(combined_query)
             logger.info(f"[ClaudeCodeBackend] Query sent ({len(combined_query)} chars), waiting for response...")
 
-            # Surface a "thinking" indicator so the TUI/display shows activity
-            # while the model processes the prompt (can take minutes for large contexts).
-            log_stream_chunk("backend.claude_code", "reasoning", "Thinking...", agent_id)
-            yield StreamChunk(
-                type="reasoning",
-                content="Thinking...",
-                reasoning_delta="Thinking...",
-                source="claude_code",
-            )
         else:
             log_stream_chunk("backend.claude_code", "error", "All user messages were empty", agent_id)
             yield StreamChunk(type="error", error="All user messages were empty", source="claude_code")

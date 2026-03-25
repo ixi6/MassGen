@@ -10,7 +10,8 @@ export function AnswerMessageView({ message }: AnswerMessageViewProps) {
   const [expanded, setExpanded] = useState(false);
 
   return (
-    <div className="px-4 py-2">
+    <div className="v2-step-group py-1">
+      <div className="v2-step-node" />
       <div
         data-testid="answer-card"
         onClick={() => setExpanded(!expanded)}
